@@ -1,0 +1,183 @@
+name: E2E Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'server/**'
+      - 'web/**'
+      - 'Dockerfile'
+      - 'deploy/**'
+      - 'scripts/**'
+      - '.github/workflows/e2e-tests.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'server/**'
+      - 'web/**'
+      - 'Dockerfile'
+      - 'deploy/**'
+      - 'scripts/**'
+      - '.github/workflows/e2e-tests.yml'
+  workflow_dispatch:
+
+# Cancel in-progress runs on new commits
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '22'
+
+jobs:
+  # ============================================
+  # E2E Tests with Kind Cluster (OSS)
+  # Runs sequentially against multiple KRO versions
+  # ============================================
+  e2e:
+    name: E2E Tests (KRO ${{ matrix.kro_version }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: true
+      max-parallel: 1
+      matrix:
+        kro_version: ['0.8.4', '0.8.5']
+
+    env:
+      KIND_CLUSTER: knodex-e2e
+      KRO_VERSION: ${{ matrix.kro_version }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web dependencies
+        run: cd web && npm ci
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('web/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
+
+      - name: Install Playwright browsers
+        run: cd web && npx playwright install --with-deps chromium
+
+      - name: Create Kind cluster
+        run: |
+          # Install Kind
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.25.0/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+
+          # Create cluster using CI config (no extraPortMappings)
+          kind create cluster --name ${{ env.KIND_CLUSTER }} --config scripts/kind-config-ci.yaml --wait 120s
+          kubectl cluster-info --context kind-${{ env.KIND_CLUSTER }}
+          kubectl config use-context kind-${{ env.KIND_CLUSTER }}
+
+      - name: Install cluster prerequisites
+        run: ./scripts/ensure-prereqs.sh
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build OSS image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          load: true
+          tags: knodex-server:local
+          cache-from: type=gha,scope=e2e-oss
+          cache-to: type=gha,mode=max,scope=e2e-oss,ignore-error=true
+
+      - name: Build mock OIDC server
+        uses: docker/build-push-action@v6
+        with:
+          context: server
+          file: server/test/mocks/oidc/Dockerfile
+          load: true
+          tags: mock-oidc:local
+          cache-from: type=gha,scope=e2e-mock-oidc
+          cache-to: type=gha,mode=max,scope=e2e-mock-oidc,ignore-error=true
+
+      - name: Load images into Kind
+        run: |
+          kind load docker-image knodex-server:local --name ${{ env.KIND_CLUSTER }}
+          kind load docker-image mock-oidc:local --name ${{ env.KIND_CLUSTER }}
+
+      - name: Deploy application
+        run: ./scripts/qa-deploy.sh deploy-only
+
+      - name: Wait for deployment
+        run: |
+          kubectl wait --for=condition=available --timeout=300s deployment/knodex-server -n knodex
+
+      - name: Port forward services
+        run: |
+          # Use port-forward with auto-restart wrapper
+          (
+            while true; do
+              echo "[port-forward] Starting kubectl port-forward..."
+              kubectl port-forward -n knodex svc/knodex-server 8080:8080 2>&1 || true
+              echo "[port-forward] Process exited, restarting in 1s..."
+              sleep 1
+            done
+          ) &
+          echo $! > /tmp/port-forward-wrapper.pid
+
+          echo "Waiting for server..."
+          timeout 120 bash -c 'until curl -sf http://127.0.0.1:8080/healthz > /dev/null 2>&1; do sleep 2; done'
+          echo "Backend ready"
+
+      - name: Run E2E tests
+        run: |
+          cd web
+          npx playwright test
+        env:
+          E2E_BASE_URL: http://localhost:8080
+          CI: true
+
+      - name: Stop port forward
+        if: always()
+        run: |
+          if [ -f /tmp/port-forward-wrapper.pid ]; then
+            kill $(cat /tmp/port-forward-wrapper.pid) 2>/dev/null || true
+          fi
+          pkill -f "kubectl port-forward" 2>/dev/null || true
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report-kro-${{ matrix.kro_version }}
+          path: |
+            web/playwright-report/
+            web/test-results/
+          retention-days: 14
+
+      - name: Generate summary
+        if: always()
+        run: |
+          echo "## E2E Test Summary (KRO ${{ matrix.kro_version }})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "### All E2E tests passed! (KRO ${{ matrix.kro_version }})" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### E2E tests failed (KRO ${{ matrix.kro_version }})" >> $GITHUB_STEP_SUMMARY
+            echo "Check workflow logs for detailed failure information." >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Cleanup Kind cluster
+        if: always()
+        run: kind delete cluster --name ${{ env.KIND_CLUSTER }} || true
