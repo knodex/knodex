@@ -110,5 +110,5 @@ func processFile(path string) error {
 		out = append(out, line)
 	}
 
-	return os.WriteFile(path, []byte(strings.Join(out, "\n")), 0644)
+	return os.WriteFile(path, []byte(strings.Join(out, "\n")), 0600)
 }
