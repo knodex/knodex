@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: knodex-audit-config
+  labels:
+    app.kubernetes.io/name: knodex
+    app.kubernetes.io/component: audit
+data:
+  # JSON configuration for audit trail settings.
+  # Changes to this ConfigMap are hot-reloaded without pod restart.
+  #
+  # Fields:
+  #   enabled          - Enable/disable audit event recording (default: true)
+  #   retentionDays    - Days to keep audit events, must be >= 1 (default: 90)
+  #   maxStreamLength  - Max events per Redis Stream, must be >= 1000 (default: 100000)
+  #   excludeActions   - Action types to exclude from recording (default: [])
+  #   excludeResources - Resource types to exclude from recording (default: [])
+  config.json: |
+    {
+      "enabled": true,
+      "retentionDays": 90,
+      "maxStreamLength": 100000,
+      "excludeActions": [],
+      "excludeResources": []
+    }

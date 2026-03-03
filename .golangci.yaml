@@ -1,0 +1,131 @@
+# golangci-lint v2 configuration
+# https://golangci-lint.run/usage/configuration/
+#
+# This configuration starts with a baseline that passes on the existing codebase.
+# To incrementally improve code quality, enable additional linters over time.
+#
+# Future improvements (uncomment when ready to fix violations):
+# - Enable errcheck for production code
+# - Enable gocritic for style improvements
+# - Enable revive for additional lint rules
+# - Lower gocyclo min-complexity from 50 to 15
+
+version: "2"
+
+run:
+  go: '1.24'
+  tests: false  # Exclude test files from linting
+  allow-parallel-runners: true
+
+output:
+  formats:
+    text:
+      path: stdout
+
+linters:
+  # Use only default linters that are known to pass
+  default: none
+  enable:
+    # Core linters that should always pass
+    - govet         # Go vet - report suspicious constructs
+    - ineffassign   # Detect ineffectual assignments
+    - staticcheck   # Advanced static analysis
+
+    # Security linter
+    - gosec         # Security checks (replaces standalone gosec)
+
+    # Code quality (temporarily lenient settings)
+    - gocyclo       # Cyclomatic complexity
+    - misspell      # Spelling in comments/strings
+
+  settings:
+    gocyclo:
+      # Start very lenient to establish baseline
+      # TODO: Lower to 15 after refactoring complex functions
+      min-complexity: 100
+
+    gosec:
+      excludes:
+        - G101  # Hardcoded credentials (false positives on secret key names)
+        - G104  # Audit errors not checked (covered by errcheck)
+        - G115  # Integer overflow conversion (too noisy)
+        - G304  # File path from variable (intentional for CRD loading)
+        - G404  # Weak random number generator - acceptable for non-crypto use
+        - G602  # Slice bounds check (false positives in base64 decoding)
+
+    misspell:
+      locale: US
+
+    staticcheck:
+      checks:
+        - all
+        - -ST1000  # Package comments (not all packages need comments)
+        - -ST1003  # Naming conventions (hasApiGroupFilter -> hasAPIGroupFilter)
+        - -ST1005  # Error strings should not be capitalized
+        - -ST1020  # Comment format on exported methods
+        - -ST1021  # Comment format on exported types
+        - -QF1001  # De Morgan's law (style preference)
+        - -QF1007  # Merge conditional assignment (style preference)
+        - -QF1008  # Embedded field removal (style preference)
+        - -S1002   # Omit comparison to bool constant (style preference)
+        - -S1009   # Nil check before len (style preference)
+        - -S1011   # Replace loop with append (style preference)
+        - -S1017   # Use TrimPrefix unconditionally (style preference)
+        - -S1039   # Unnecessary fmt.Sprintf (style preference)
+        - -SA1019  # Deprecated API (will fix separately)
+
+    govet:
+      enable-all: false
+      enable:
+        - assign
+        - atomic
+        - bools
+        - buildtag
+        - copylocks
+        - httpresponse
+        - loopclosure
+        - lostcancel
+        - nilfunc
+        - printf
+        - shift
+        - stdmethods
+        - structtag
+        - tests
+        - unmarshal
+        - unreachable
+        - unusedresult
+
+  exclusions:
+    presets:
+      - std-error-handling
+    paths:
+      - test/
+      - ".*_test\\.go$"
+    rules:
+      # Exclude mock files
+      - path: test/mocks/
+        linters:
+          - gosec
+          - gocyclo
+
+      # Exclude generated files
+      - path: generated
+        linters:
+          - gosec
+
+formatters:
+  enable:
+    - goimports
+
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/knodex/knodex
+
+  exclusions:
+    paths:
+      - test/
+
+issues:
+  max-issues-per-linter: 50
+  max-same-issues: 5

@@ -1,0 +1,84 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: knodex
+
+resources:
+  - ../../../deploy/server
+  - ../../../deploy/redis
+
+# Use local images for Kind cluster
+images:
+  - name: knodex-server
+    newName: knodex-server
+    newTag: local
+
+# Patches for local development
+patches:
+  # Set imagePullPolicy to Never for local images
+  - target:
+      kind: Deployment
+      name: knodex-server
+    patch: |
+      - op: replace
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: Never
+
+  # Use NodePort for server service (serves both API and embedded web)
+  - target:
+      kind: Service
+      name: knodex-server
+    patch: |
+      - op: replace
+        path: /spec/type
+        value: NodePort
+      - op: add
+        path: /spec/ports/0/nodePort
+        value: 30080
+
+  # Enable Redis for auth service and secret creation testing
+  - target:
+      kind: ConfigMap
+      name: knodex-config
+    patch: |
+      - op: add
+        path: /data/REDIS_ADDRESS
+        value: "knodex-redis:6379"
+
+  # Add auth configuration for local admin
+  # NOTE: ADMIN_PASSWORD is intentionally omitted to trigger auto-generation
+  - target:
+      kind: ConfigMap
+      name: knodex-config
+    patch: |
+      - op: add
+        path: /data/ADMIN_USERNAME
+        value: "admin"
+      - op: add
+        path: /data/CASBIN_ADMIN_USERS
+        value: "user-global-admin"
+
+  # Enable OIDC authentication (providers are in knodex-sso-providers ConfigMap)
+  - target:
+      kind: ConfigMap
+      name: knodex-config
+    patch: |
+      - op: add
+        path: /data/OIDC_ENABLED
+        value: "true"
+
+  # Set JWT signing key for E2E test token validation
+  - target:
+      kind: Secret
+      name: knodex-secret
+    patch: |
+      - op: replace
+        path: /stringData/server.secretkey
+        value: "test-jwt-secret-key-for-qa-testing-only"
+
+  # Strategic merge patch for SSO provider config (overrides base empty values)
+  - path: sso-providers.yaml
+
+# Labels for dev environment
+commonLabels:
+  environment: dev

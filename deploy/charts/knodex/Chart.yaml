@@ -1,0 +1,26 @@
+apiVersion: v2
+name: knodex
+description: >-
+  A Helm chart for deploying Knodex - a Kubernetes-native UI for browsing and
+  deploying Kro ResourceGraphDefinitions
+type: application
+version: 0.0.16
+appVersion: 0.0.16
+keywords:
+  - kro
+  - kubernetes
+  - dashboard
+  - resourcegraphdefinition
+  - knodex
+maintainers:
+  - name: Provops
+    email: tparis@provops.com
+dependencies:
+  - name: kro
+    version: 0.8.5
+    repository: oci://registry.k8s.io/kro/charts
+    condition: kro.enabled
+  - name: redis
+    version: 18.19.4
+    repository: https://charts.bitnami.com/bitnami
+    condition: redis.enabled

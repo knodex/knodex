@@ -1,0 +1,55 @@
+# Air configuration for Go hot-reloading
+# https://github.com/air-verse/air
+
+root = "."
+tmp_dir = "tmp"
+
+[build]
+# Build command
+cmd = "go build -tags=enterprise -o ./tmp/main ."
+# Binary to run
+bin = "./tmp/main"
+# Watch all directories
+include_dir = ["internal", "ee", "cmd"]
+# Watch all Go files
+include_ext = ["go", "tpl", "tmpl", "html"]
+# Exclude directories
+exclude_dir = ["tmp", "vendor", "testdata"]
+# Exclude files
+exclude_file = []
+# Exclude patterns (regex)
+exclude_regex = ["_test\\.go"]
+# Exclude unchanged files
+exclude_unchanged = true
+# Follow symlinks
+follow_symlink = false
+# Log output
+log = "air.log"
+# Polling interval
+poll = false
+poll_interval = 500
+# Delay after change detected (milliseconds)
+delay = 1000
+# Stop running old binary before starting new one
+stop_on_error = true
+# Send interrupt signal before killing
+send_interrupt = true
+# Delay after interrupt (milliseconds)
+kill_delay = 500
+
+[log]
+# Show log time
+time = true
+# Only show main log
+main_only = false
+
+[color]
+# Colors for different outputs
+main = "magenta"
+watcher = "cyan"
+build = "yellow"
+runner = "green"
+
+[misc]
+# Cleanup on exit
+clean_on_exit = true

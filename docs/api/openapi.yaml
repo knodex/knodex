@@ -1,0 +1,3349 @@
+openapi: 3.0.3
+info:
+  title: Knodex API
+  description: |
+    REST API for Knodex — a Kubernetes Resource Orchestrator (KRO) visualization
+    and management platform.
+
+    Knodex provides a web interface for browsing RGD catalogs, deploying instances,
+    managing projects and RBAC, and monitoring OPA Gatekeeper compliance.
+
+    ## Authentication
+
+    Most endpoints require a JWT Bearer token obtained via:
+    - **Local login**: `POST /api/v1/auth/local/login` with username/password
+    - **OIDC login**: Browser flow via `GET /api/v1/auth/oidc/login`
+
+    Include the token in the `Authorization` header:
+    ```
+    Authorization: Bearer <token>
+    ```
+
+    Tokens expire after 1 hour (HS256). There is no refresh mechanism — re-authenticate
+    after expiry.
+
+    ## Enterprise Features
+
+    Endpoints tagged **enterprise** require an enterprise license. In OSS builds they
+    return `402 Payment Required` or `404 Not Found`.
+
+    ## Rate Limiting
+
+    Authentication endpoints are rate-limited per IP. Protected endpoints are
+    rate-limited per authenticated user (default 100 req/min).
+  version: 1.0.0
+  contact:
+    name: Provops
+    url: https://github.com/knodex/knodex
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+
+servers:
+  - url: http://localhost:8080
+    description: Local development server (Tilt)
+  - url: http://knodex.knodex.svc.cluster.local:8080
+    description: In-cluster service
+
+tags:
+  - name: health
+    description: Health check endpoints for Kubernetes probes
+  - name: auth
+    description: Authentication (local login, OIDC, token exchange, logout)
+  - name: rgds
+    description: RGD (ResourceGraphDefinition) catalog operations
+  - name: instances
+    description: Instance deployment, listing, and lifecycle management
+  - name: history
+    description: Deployment history and timeline
+  - name: projects
+    description: Project CRUD and validation
+  - name: role-bindings
+    description: Project-scoped role assignment for users and groups
+  - name: account
+    description: Current user account info and permission checks
+  - name: namespaces
+    description: Kubernetes namespace listing
+  - name: settings
+    description: Platform-level settings (organization, SSO, audit)
+  - name: repositories
+    description: Git repository configuration for GitOps deployments
+  - name: sso
+    description: SSO/OIDC provider management
+  - name: license
+    description: Enterprise license status and management
+  - name: compliance
+    description: OPA Gatekeeper compliance (enterprise)
+  - name: audit
+    description: Audit trail events and configuration (enterprise)
+  - name: views
+    description: Custom category views (enterprise)
+  - name: websocket
+    description: WebSocket ticket and metrics
+  - name: rbac-metrics
+    description: RBAC policy and cache metrics
+  - name: kubernetes
+    description: Kubernetes resource and API discovery
+
+# ---------------------------------------------------------------------------
+# PATHS
+# ---------------------------------------------------------------------------
+paths:
+  # -------------------------------------------------------------------------
+  # Health
+  # -------------------------------------------------------------------------
+  /healthz:
+    get:
+      summary: Liveness probe
+      description: Returns healthy status if the service is running.
+      tags: [health]
+      operationId: healthz
+      responses:
+        '200':
+          description: Service is alive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+
+  /readyz:
+    get:
+      summary: Readiness probe
+      description: Returns healthy status if all components (Redis, Kubernetes, watchers) are ready.
+      tags: [health]
+      operationId: readyz
+      responses:
+        '200':
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+        '503':
+          description: Service is not ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+
+  # -------------------------------------------------------------------------
+  # Authentication
+  # -------------------------------------------------------------------------
+  /api/v1/auth/local/login:
+    post:
+      summary: Local admin login
+      description: |
+        Authenticate with username and password. Returns a JWT token (HS256, 1hr expiry).
+        Rate limited to 5 requests/minute per IP.
+      tags: [auth]
+      operationId: localLogin
+      x-ratelimit-requests-per-minute: 5
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LocalLoginRequest'
+            example:
+              username: admin
+              password: my-secret-password
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/auth/logout:
+    post:
+      summary: Logout
+      description: Logs out the current user and records an audit event.
+      tags: [auth]
+      operationId: logout
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Logged out
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: logged out
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/auth/token-exchange:
+    post:
+      summary: Exchange auth code for JWT
+      description: |
+        After OIDC callback, the frontend receives an opaque auth code via redirect.
+        Exchange it for a JWT token. Rate limited to 5 requests/minute per IP.
+      tags: [auth]
+      operationId: tokenExchange
+      x-ratelimit-requests-per-minute: 5
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code:
+                  type: string
+                  description: Opaque auth code from OIDC callback redirect
+            example:
+              code: abc123-opaque-code
+      responses:
+        '200':
+          description: Token issued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                    description: JWT Bearer token
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/auth/oidc/login:
+    get:
+      summary: Initiate OIDC login
+      description: |
+        Redirects to the OIDC provider authorization endpoint.
+        Rate limited to 20 requests/minute per IP.
+      tags: [auth]
+      operationId: oidcLogin
+      x-ratelimit-requests-per-minute: 20
+      parameters:
+        - name: provider
+          in: query
+          description: OIDC provider name
+          schema:
+            type: string
+          example: default
+        - name: redirect
+          in: query
+          description: URL to redirect after successful auth
+          schema:
+            type: string
+          example: http://localhost:5173
+      responses:
+        '302':
+          description: Redirect to OIDC provider
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/v1/auth/oidc/callback:
+    get:
+      summary: OIDC callback
+      description: |
+        Handles the OIDC provider callback. Exchanges the authorization code,
+        generates a JWT, stores an opaque auth code in Redis, and redirects
+        the browser with the auth code. Rate limited to 5 requests/minute per IP.
+      tags: [auth]
+      operationId: oidcCallback
+      x-ratelimit-requests-per-minute: 5
+      parameters:
+        - name: code
+          in: query
+          required: true
+          description: Authorization code from OIDC provider
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: true
+          description: State parameter for CSRF protection
+          schema:
+            type: string
+      responses:
+        '302':
+          description: Redirect to frontend with auth code
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/auth/oidc/providers:
+    get:
+      summary: List OIDC providers
+      description: |
+        Returns available OIDC providers for the login page. Unauthenticated.
+        Rate limited to 30 requests/minute per IP.
+      tags: [auth]
+      operationId: listOIDCProviders
+      x-ratelimit-requests-per-minute: 30
+      responses:
+        '200':
+          description: List of OIDC providers
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  providers:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OIDCProvider'
+
+  # -------------------------------------------------------------------------
+  # RGD Catalog
+  # -------------------------------------------------------------------------
+  /api/v1/rgds:
+    get:
+      summary: List catalog RGDs
+      description: |
+        Returns a paginated list of ResourceGraphDefinitions marked for catalog
+        inclusion with the `knodex.io/catalog: "true"` annotation.
+        Filtered by project visibility and organization.
+      tags: [rgds]
+      operationId: listRGDs
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/NamespaceQuery'
+        - name: category
+          in: query
+          description: Filter by category
+          schema:
+            type: string
+        - name: tags
+          in: query
+          description: Filter by tags (comma-separated, AND logic)
+          schema:
+            type: string
+        - name: search
+          in: query
+          description: Search in name and description (case-insensitive)
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: sortBy
+          in: query
+          description: Sort field
+          schema:
+            type: string
+            enum: [name, namespace, createdAt, updatedAt, category]
+            default: name
+        - name: sortOrder
+          in: query
+          description: Sort direction
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: asc
+      responses:
+        '200':
+          description: Paginated list of RGDs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListRGDsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/rgds/count:
+    get:
+      summary: Get RGD count
+      description: Returns the total count of catalog RGDs visible to the user.
+      tags: [rgds]
+      operationId: getRGDCount
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: RGD count
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+                    example: 15
+
+  /api/v1/rgds/filters:
+    get:
+      summary: Get available filter values
+      description: Returns distinct categories, tags, and namespaces for filtering.
+      tags: [rgds]
+      operationId: getRGDFilters
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Filter options
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  categories:
+                    type: array
+                    items:
+                      type: string
+                  tags:
+                    type: array
+                    items:
+                      type: string
+                  namespaces:
+                    type: array
+                    items:
+                      type: string
+
+  /api/v1/rgds/{name}:
+    get:
+      summary: Get RGD by name
+      description: Returns a single RGD. Searches across all namespaces if namespace is not specified.
+      tags: [rgds]
+      operationId: getRGD
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RGDName'
+        - $ref: '#/components/parameters/NamespaceQuery'
+      responses:
+        '200':
+          description: RGD details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RGDResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/rgds/{name}/resources:
+    get:
+      summary: Get RGD resource graph
+      description: Returns the internal resource graph (templates and external refs) within an RGD.
+      tags: [rgds]
+      operationId: getRGDResourceGraph
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RGDName'
+        - $ref: '#/components/parameters/NamespaceQuery'
+      responses:
+        '200':
+          description: Resource graph
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceGraphResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/rgds/{name}/schema:
+    get:
+      summary: Get RGD form schema
+      description: Returns the form schema extracted from the CRD for a specific RGD.
+      tags: [rgds]
+      operationId: getRGDSchema
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RGDName'
+        - $ref: '#/components/parameters/NamespaceQuery'
+      responses:
+        '200':
+          description: Schema response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SchemaResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/rgds/{name}/schema/invalidate:
+    post:
+      summary: Invalidate schema cache
+      description: Invalidates the cached schema for a specific RGD. Requires `settings:update` permission.
+      tags: [rgds]
+      operationId: invalidateSchemaCache
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RGDName'
+        - $ref: '#/components/parameters/NamespaceQuery'
+      responses:
+        '200':
+          description: Cache invalidated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  message:
+                    type: string
+                    example: schema cache invalidated
+                  rgd:
+                    type: string
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # -------------------------------------------------------------------------
+  # Instances
+  # -------------------------------------------------------------------------
+  /api/v1/instances:
+    get:
+      summary: List instances
+      description: Returns a paginated list of deployed instances, filtered by project visibility.
+      tags: [instances]
+      operationId: listInstances
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/NamespaceQuery'
+        - name: rgdName
+          in: query
+          description: Filter by RGD name
+          schema:
+            type: string
+        - name: health
+          in: query
+          description: Filter by health status
+          schema:
+            type: string
+        - name: deploymentMode
+          in: query
+          description: Filter by deployment mode
+          schema:
+            type: string
+            enum: [direct, gitops, hybrid]
+        - name: projectId
+          in: query
+          description: Filter by project ID
+          schema:
+            type: string
+        - name: search
+          in: query
+          description: Search by name
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: sortBy
+          in: query
+          schema:
+            type: string
+        - name: sortOrder
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+      responses:
+        '200':
+          description: Paginated list of instances
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListInstancesResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      summary: Deploy a new instance
+      description: |
+        Creates a new instance of an RGD. Supports direct, GitOps, and hybrid
+        deployment modes. Protected by DeploymentValidator middleware that checks
+        project existence, user deploy permission, and destination policies.
+      tags: [instances]
+      operationId: createInstance
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateInstanceRequest'
+      responses:
+        '201':
+          description: Instance created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateInstanceResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Instance already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Deployment mode not allowed for this RGD
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/instances/count:
+    get:
+      summary: Get instance count
+      description: Returns the total count of instances visible to the user.
+      tags: [instances]
+      operationId: getInstanceCount
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Instance count
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+
+  /api/v1/instances/{namespace}/{kind}/{name}:
+    get:
+      summary: Get instance details
+      description: Returns details for a specific instance.
+      tags: [instances]
+      operationId: getInstance
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/InstanceNamespace'
+        - $ref: '#/components/parameters/InstanceKind'
+        - $ref: '#/components/parameters/InstanceName'
+      responses:
+        '200':
+          description: Instance details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstanceDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      summary: Delete an instance
+      description: Deletes a deployed instance from the cluster.
+      tags: [instances]
+      operationId: deleteInstance
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/InstanceNamespace'
+        - $ref: '#/components/parameters/InstanceKind'
+        - $ref: '#/components/parameters/InstanceName'
+      responses:
+        '200':
+          description: Instance deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: deleted
+                  name:
+                    type: string
+                  namespace:
+                    type: string
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/instances/pending:
+    get:
+      summary: List pending GitOps instances
+      description: Returns instances awaiting cluster sync after GitOps push. Only available when GitOps monitoring is enabled.
+      tags: [instances]
+      operationId: getPendingInstances
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Pending instances
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PendingInstance'
+                  total:
+                    type: integer
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/instances/stuck:
+    get:
+      summary: List stuck GitOps instances
+      description: Returns instances stuck in PushedToGit state beyond the configured threshold.
+      tags: [instances]
+      operationId: getStuckInstances
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Stuck instances
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PendingInstance'
+                  total:
+                    type: integer
+
+  /api/v1/instances/timeline/{instanceId}:
+    get:
+      summary: Get GitOps status timeline
+      description: Returns the status transition history for a GitOps-deployed instance.
+      tags: [instances]
+      operationId: getStatusTimeline
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: instanceId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Status timeline
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusTimelineResponse'
+
+  # -------------------------------------------------------------------------
+  # Deployment History
+  # -------------------------------------------------------------------------
+  /api/v1/instances/{namespace}/{kind}/{name}/history:
+    get:
+      summary: Get deployment history
+      description: Returns the deployment history for an instance.
+      tags: [history]
+      operationId: getHistory
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/InstanceNamespace'
+        - $ref: '#/components/parameters/InstanceKind'
+        - $ref: '#/components/parameters/InstanceName'
+      responses:
+        '200':
+          description: Deployment history
+          content:
+            application/json:
+              schema:
+                type: object
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/instances/{namespace}/{kind}/{name}/history/export:
+    get:
+      summary: Export deployment history
+      description: Exports deployment history in JSON or CSV format.
+      tags: [history]
+      operationId: exportHistory
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/InstanceNamespace'
+        - $ref: '#/components/parameters/InstanceKind'
+        - $ref: '#/components/parameters/InstanceName'
+        - name: format
+          in: query
+          description: Export format
+          schema:
+            type: string
+            enum: [json, csv]
+            default: json
+      responses:
+        '200':
+          description: Exported history
+          content:
+            application/json:
+              schema:
+                type: object
+            text/csv:
+              schema:
+                type: string
+
+  /api/v1/instances/{namespace}/{kind}/{name}/timeline:
+    get:
+      summary: Get deployment timeline
+      description: Returns a timeline view of deployment events for an instance.
+      tags: [history]
+      operationId: getTimeline
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/InstanceNamespace'
+        - $ref: '#/components/parameters/InstanceKind'
+        - $ref: '#/components/parameters/InstanceName'
+      responses:
+        '200':
+          description: Deployment timeline
+          content:
+            application/json:
+              schema:
+                type: object
+
+  # -------------------------------------------------------------------------
+  # Kubernetes Resources
+  # -------------------------------------------------------------------------
+  /api/v1/resources:
+    get:
+      summary: List Kubernetes resources
+      description: Lists Kubernetes resources by apiVersion, kind, and optional namespace. Used for ExternalRef selectors.
+      tags: [kubernetes]
+      operationId: listK8sResources
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: apiVersion
+          in: query
+          required: true
+          description: Kubernetes API version (e.g., v1, apps/v1)
+          schema:
+            type: string
+        - name: kind
+          in: query
+          required: true
+          description: Resource kind (e.g., ConfigMap, Secret)
+          schema:
+            type: string
+        - $ref: '#/components/parameters/NamespaceQuery'
+      responses:
+        '200':
+          description: Resource list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/K8sResourceListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/v1/kubernetes/api-resources:
+    get:
+      summary: List API resources
+      description: Returns available Kubernetes API groups and kinds from the cluster. Cached for 5 minutes.
+      tags: [kubernetes]
+      operationId: listAPIResources
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: search
+          in: query
+          description: Filter by kind name (case-insensitive)
+          schema:
+            type: string
+        - name: apiGroup
+          in: query
+          description: Filter by API group (use "core" for core API group)
+          schema:
+            type: string
+      responses:
+        '200':
+          description: API resources
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIResourcesResponse'
+
+  # -------------------------------------------------------------------------
+  # Repositories
+  # -------------------------------------------------------------------------
+  /api/v1/repositories:
+    get:
+      summary: List repository configurations
+      description: Returns all repository configurations visible to the user.
+      tags: [repositories]
+      operationId: listRepositories
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: query
+          description: Filter by project ID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Repository list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RepositoryConfigInfo'
+                  count:
+                    type: integer
+    post:
+      summary: Create repository configuration
+      description: Creates a new Git repository configuration for GitOps deployments.
+      tags: [repositories]
+      operationId: createRepository
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRepositoryRequest'
+      responses:
+        '201':
+          description: Repository created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RepositoryConfigInfo'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: Repository already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/repositories/{repoId}:
+    get:
+      summary: Get repository configuration
+      description: Returns details for a specific repository configuration.
+      tags: [repositories]
+      operationId: getRepository
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RepoId'
+      responses:
+        '200':
+          description: Repository details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RepositoryConfigInfo'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      summary: Update repository configuration
+      description: Partially updates a repository configuration.
+      tags: [repositories]
+      operationId: updateRepository
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RepoId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateRepositoryRequest'
+      responses:
+        '200':
+          description: Repository updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RepositoryConfigInfo'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      summary: Delete repository configuration
+      description: Deletes a repository configuration.
+      tags: [repositories]
+      operationId: deleteRepository
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RepoId'
+      responses:
+        '200':
+          description: Repository deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/repositories/test-connection:
+    post:
+      summary: Test repository connection
+      description: Tests connectivity to a Git repository before saving the configuration.
+      tags: [repositories]
+      operationId: testConnection
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TestConnectionRequest'
+      responses:
+        '200':
+          description: Connection test result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TestConnectionResponse'
+
+  /api/v1/repositories/{repoId}/test:
+    post:
+      summary: Test existing repository connection
+      description: Tests connectivity using the saved configuration for a repository.
+      tags: [repositories]
+      operationId: testRepositoryConnection
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RepoId'
+      responses:
+        '200':
+          description: Connection test result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TestConnectionResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # -------------------------------------------------------------------------
+  # WebSocket
+  # -------------------------------------------------------------------------
+  /api/v1/ws/ticket:
+    post:
+      summary: Create WebSocket ticket
+      description: Generates a single-use ticket for authenticating WebSocket connections.
+      tags: [websocket]
+      operationId: createWSTicket
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: WebSocket ticket
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ticket:
+                    type: string
+                    description: Single-use ticket for WS authentication
+                  expiresAt:
+                    type: string
+                    format: date-time
+
+  /api/v1/ws/metrics:
+    get:
+      summary: Get WebSocket metrics
+      description: Returns current WebSocket connection metrics.
+      tags: [websocket]
+      operationId: getWSMetrics
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: WebSocket metrics
+          content:
+            application/json:
+              schema:
+                type: object
+
+  # -------------------------------------------------------------------------
+  # RBAC Metrics
+  # -------------------------------------------------------------------------
+  /api/v1/rbac/metrics:
+    get:
+      summary: Get RBAC metrics
+      description: Returns policy cache and enforcement metrics for the RBAC system.
+      tags: [rbac-metrics]
+      operationId: getRBACMetrics
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: RBAC metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RBACMetricsResponse'
+
+  # -------------------------------------------------------------------------
+  # Projects
+  # -------------------------------------------------------------------------
+  /api/v1/projects:
+    get:
+      summary: List projects
+      description: Returns projects visible to the current user based on RBAC policies.
+      tags: [projects]
+      operationId: listProjects
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Project list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectListResponse'
+    post:
+      summary: Create a project
+      description: Creates a new Project CRD in the cluster. Requires `projects:create` permission.
+      tags: [projects]
+      operationId: createProject
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProjectRequest'
+      responses:
+        '201':
+          description: Project created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: Project already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/projects/validate:
+    post:
+      summary: Validate project creation
+      description: Validates a project creation request without persisting it.
+      tags: [projects]
+      operationId: validateProjectCreation
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProjectRequest'
+      responses:
+        '200':
+          description: Validation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationResult'
+
+  /api/v1/projects/{name}:
+    get:
+      summary: Get project details
+      description: Returns details for a specific project.
+      tags: [projects]
+      operationId: getProject
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectName'
+      responses:
+        '200':
+          description: Project details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      summary: Update a project
+      description: Updates an existing project. Requires `projects:update` permission.
+      tags: [projects]
+      operationId: updateProject
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProjectRequest'
+      responses:
+        '200':
+          description: Project updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Resource version conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      summary: Delete a project
+      description: Deletes a project. Requires `projects:delete` permission.
+      tags: [projects]
+      operationId: deleteProject
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectName'
+      responses:
+        '200':
+          description: Project deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/projects/{name}/validate:
+    post:
+      summary: Validate project update
+      description: Validates a project update request without persisting it.
+      tags: [projects]
+      operationId: validateProjectUpdate
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProjectRequest'
+      responses:
+        '200':
+          description: Validation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationResult'
+
+  # -------------------------------------------------------------------------
+  # Role Bindings
+  # -------------------------------------------------------------------------
+  /api/v1/projects/{name}/role-bindings:
+    get:
+      summary: List role bindings
+      description: Returns all role bindings for a project.
+      tags: [role-bindings]
+      operationId: listRoleBindings
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectName'
+      responses:
+        '200':
+          description: Role bindings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListRoleBindingsResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/projects/{name}/roles/{role}/users/{user}:
+    post:
+      summary: Assign user role
+      description: Assigns a role to a user in a project.
+      tags: [role-bindings]
+      operationId: assignUserRole
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectName'
+        - $ref: '#/components/parameters/RoleName'
+        - name: user
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Role assigned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleBindingResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    delete:
+      summary: Remove user role
+      description: Removes a role from a user in a project.
+      tags: [role-bindings]
+      operationId: removeUserRole
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectName'
+        - $ref: '#/components/parameters/RoleName'
+        - name: user
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Role removed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+
+  /api/v1/projects/{name}/roles/{role}/groups/{group}:
+    post:
+      summary: Assign group role
+      description: Assigns a role to a group in a project.
+      tags: [role-bindings]
+      operationId: assignGroupRole
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectName'
+        - $ref: '#/components/parameters/RoleName'
+        - name: group
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Role assigned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleBindingResponse'
+    delete:
+      summary: Remove group role
+      description: Removes a role from a group in a project.
+      tags: [role-bindings]
+      operationId: removeGroupRole
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectName'
+        - $ref: '#/components/parameters/RoleName'
+        - name: group
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Role removed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+
+  # -------------------------------------------------------------------------
+  # Account
+  # -------------------------------------------------------------------------
+  /api/v1/account/can-i/{resource}/{action}/{subresource}:
+    get:
+      summary: Check permission
+      description: |
+        ArgoCD-style permission check. Returns whether the current user
+        can perform the given action on the given resource.
+      tags: [account]
+      operationId: canI
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: resource
+          in: path
+          required: true
+          description: Resource type (e.g., projects, instances, settings)
+          schema:
+            type: string
+        - name: action
+          in: path
+          required: true
+          description: Action (e.g., get, create, update, delete)
+          schema:
+            type: string
+        - name: subresource
+          in: path
+          required: true
+          description: Subresource or object (e.g., project name, *)
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Permission check result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  value:
+                    type: string
+                    enum: ["yes", "no"]
+
+  /api/v1/account/info:
+    get:
+      summary: Get current user info
+      description: Returns identity and authorization details for the current user.
+      tags: [account]
+      operationId: accountInfo
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Account info
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountInfoResponse'
+
+  # -------------------------------------------------------------------------
+  # Namespaces
+  # -------------------------------------------------------------------------
+  /api/v1/namespaces:
+    get:
+      summary: List namespaces
+      description: Returns Kubernetes namespaces visible to the current user.
+      tags: [namespaces]
+      operationId: listNamespaces
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: exclude_system
+          in: query
+          description: Exclude system namespaces (kube-system, etc.)
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: Namespace list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NamespaceListResponse'
+
+  /api/v1/projects/{name}/namespaces:
+    get:
+      summary: List project namespaces
+      description: |
+        Returns namespaces allowed by a project's destination policies.
+        Rate limited to 20 req/min to prevent namespace enumeration.
+      tags: [namespaces]
+      operationId: listProjectNamespaces
+      security:
+        - bearerAuth: []
+      x-ratelimit-requests-per-minute: 20
+      parameters:
+        - $ref: '#/components/parameters/ProjectName'
+      responses:
+        '200':
+          description: Project namespaces
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NamespaceListResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # -------------------------------------------------------------------------
+  # Settings
+  # -------------------------------------------------------------------------
+  /api/v1/settings:
+    get:
+      summary: Get platform settings
+      description: Returns platform-level settings. Any authenticated user can read.
+      tags: [settings]
+      operationId: getSettings
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettingsResponse'
+
+  # -------------------------------------------------------------------------
+  # SSO Provider Management
+  # -------------------------------------------------------------------------
+  /api/v1/settings/sso/providers:
+    get:
+      summary: List SSO providers
+      description: Returns all configured SSO/OIDC providers. Requires `settings:get` permission.
+      tags: [sso]
+      operationId: listSSOProviders
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: SSO provider list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  providers:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SSOProviderResponse'
+    post:
+      summary: Create SSO provider
+      description: Creates a new SSO/OIDC provider. Requires `settings:update` permission.
+      tags: [sso]
+      operationId: createSSOProvider
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SSOProviderRequest'
+      responses:
+        '201':
+          description: Provider created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SSOProviderResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: Provider already exists
+
+  /api/v1/settings/sso/providers/{name}:
+    get:
+      summary: Get SSO provider
+      tags: [sso]
+      operationId: getSSOProvider
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Provider details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SSOProviderResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      summary: Update SSO provider
+      tags: [sso]
+      operationId: updateSSOProvider
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SSOProviderRequest'
+      responses:
+        '200':
+          description: Provider updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SSOProviderResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      summary: Delete SSO provider
+      tags: [sso]
+      operationId: deleteSSOProvider
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Provider deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # -------------------------------------------------------------------------
+  # License (Enterprise)
+  # -------------------------------------------------------------------------
+  /api/v1/license:
+    get:
+      summary: Get license status
+      description: Returns current enterprise license status.
+      tags: [license]
+      operationId: getLicenseStatus
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: License status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LicenseStatus'
+    post:
+      summary: Update license
+      description: Updates the enterprise license token. Requires `settings:update` permission.
+      tags: [license]
+      operationId: updateLicense
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+                  description: License token string
+      responses:
+        '200':
+          description: License updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LicenseStatus'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # -------------------------------------------------------------------------
+  # Compliance (Enterprise)
+  # -------------------------------------------------------------------------
+  /api/v1/compliance/status:
+    get:
+      summary: Get compliance status
+      description: Returns whether OPA Gatekeeper is available and enterprise license is valid.
+      tags: [compliance]
+      operationId: getComplianceStatus
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Compliance status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ComplianceStatus'
+        '402':
+          description: Enterprise license required (OSS build)
+
+  /api/v1/compliance/summary:
+    get:
+      summary: Get compliance summary
+      description: Returns aggregate compliance statistics.
+      tags: [compliance]
+      operationId: getComplianceSummary
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Compliance summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ComplianceSummary'
+        '402':
+          description: Enterprise license required
+
+  /api/v1/compliance/templates:
+    get:
+      summary: List constraint templates
+      description: Returns all OPA Gatekeeper ConstraintTemplates.
+      tags: [compliance]
+      operationId: listComplianceTemplates
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: search
+          in: query
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Template list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ConstraintTemplate'
+                  totalCount:
+                    type: integer
+
+  /api/v1/compliance/templates/{name}:
+    get:
+      summary: Get constraint template
+      tags: [compliance]
+      operationId: getComplianceTemplate
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Template details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConstraintTemplate'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/compliance/constraints:
+    get:
+      summary: List constraints
+      description: Returns all OPA Gatekeeper constraints.
+      tags: [compliance]
+      operationId: listComplianceConstraints
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: enforcement
+          in: query
+          schema:
+            type: string
+            enum: [deny, dryrun, warn]
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Constraint list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Constraint'
+                  totalCount:
+                    type: integer
+    post:
+      summary: Create constraint
+      description: Creates a new OPA Gatekeeper constraint from a ConstraintTemplate.
+      tags: [compliance]
+      operationId: createConstraint
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateConstraintRequest'
+      responses:
+        '201':
+          description: Constraint created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Constraint'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/v1/compliance/constraints/{kind}/{name}:
+    get:
+      summary: Get constraint
+      tags: [compliance]
+      operationId: getConstraint
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: kind
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Constraint details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Constraint'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/compliance/constraints/{kind}/{name}/enforcement:
+    patch:
+      summary: Update constraint enforcement
+      description: Updates a constraint's enforcementAction field.
+      tags: [compliance]
+      operationId: updateConstraintEnforcement
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: kind
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enforcementAction]
+              properties:
+                enforcementAction:
+                  type: string
+                  enum: [deny, dryrun, warn]
+      responses:
+        '200':
+          description: Enforcement updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Constraint'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/compliance/violations:
+    get:
+      summary: List violations
+      description: Returns all OPA Gatekeeper violations across all constraints.
+      tags: [compliance]
+      operationId: listViolations
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: constraintKind
+          in: query
+          schema:
+            type: string
+        - name: constraintName
+          in: query
+          schema:
+            type: string
+        - name: resourceKind
+          in: query
+          schema:
+            type: string
+        - name: resourceNamespace
+          in: query
+          schema:
+            type: string
+        - name: resourceName
+          in: query
+          schema:
+            type: string
+        - name: search
+          in: query
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Violation list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Violation'
+                  totalCount:
+                    type: integer
+
+  /api/v1/compliance/violations/history:
+    get:
+      summary: List violation history
+      description: Returns historical violation snapshots over time.
+      tags: [compliance]
+      operationId: listViolationHistory
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Violation history
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/v1/compliance/violations/history/count:
+    get:
+      summary: Count violation history entries
+      tags: [compliance]
+      operationId: countViolationHistory
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Count
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+
+  /api/v1/compliance/violations/history/export:
+    get:
+      summary: Export violation history
+      description: Exports violation history in CSV format.
+      tags: [compliance]
+      operationId: exportViolationHistory
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: CSV export
+          content:
+            text/csv:
+              schema:
+                type: string
+
+  # -------------------------------------------------------------------------
+  # Custom Views (Enterprise)
+  # -------------------------------------------------------------------------
+  /api/v1/ee/views:
+    get:
+      summary: List custom views
+      description: Returns custom category views. Enterprise feature.
+      tags: [views]
+      operationId: listViews
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Views list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  views:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CustomView'
+
+  /api/v1/ee/views/{slug}:
+    get:
+      summary: Get custom view
+      tags: [views]
+      operationId: getView
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: View details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomView'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # -------------------------------------------------------------------------
+  # Audit Trail (Enterprise)
+  # -------------------------------------------------------------------------
+  /api/v1/settings/audit/events:
+    get:
+      summary: List audit events
+      description: Returns paginated audit events. Requires `settings/audit:get` permission.
+      tags: [audit]
+      operationId: listAuditEvents
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: query
+          schema:
+            type: string
+        - name: action
+          in: query
+          schema:
+            type: string
+        - name: resource
+          in: query
+          schema:
+            type: string
+        - name: project
+          in: query
+          schema:
+            type: string
+        - name: result
+          in: query
+          schema:
+            type: string
+        - name: from
+          in: query
+          description: Start time (RFC3339)
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          description: End time (RFC3339)
+          schema:
+            type: string
+            format: date-time
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Audit event list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditEventList'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/settings/audit/events/{id}:
+    get:
+      summary: Get audit event
+      tags: [audit]
+      operationId: getAuditEvent
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Audit event ULID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Audit event
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditEvent'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/settings/audit/stats:
+    get:
+      summary: Get audit statistics
+      description: Returns aggregate audit statistics (total events, events today, top users).
+      tags: [audit]
+      operationId: getAuditStats
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Audit stats
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditStats'
+
+  /api/v1/settings/audit/config:
+    get:
+      summary: Get audit configuration
+      tags: [audit]
+      operationId: getAuditConfig
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Audit config
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditConfig'
+    put:
+      summary: Update audit configuration
+      description: Updates audit trail settings. Requires `settings/audit:update` permission.
+      tags: [audit]
+      operationId: updateAuditConfig
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuditConfig'
+      responses:
+        '200':
+          description: Config updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditConfig'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: Concurrent modification
+
+# ---------------------------------------------------------------------------
+# COMPONENTS
+# ---------------------------------------------------------------------------
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token from local login or OIDC flow (HS256, 1hr expiry)
+
+  # -------------------------------------------------------------------------
+  # Reusable parameters
+  # -------------------------------------------------------------------------
+  parameters:
+    Page:
+      name: page
+      in: query
+      description: Page number (1-indexed)
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    PageSize:
+      name: pageSize
+      in: query
+      description: Items per page
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    NamespaceQuery:
+      name: namespace
+      in: query
+      description: Kubernetes namespace filter
+      schema:
+        type: string
+    RGDName:
+      name: name
+      in: path
+      required: true
+      description: RGD resource name
+      schema:
+        type: string
+    ProjectName:
+      name: name
+      in: path
+      required: true
+      description: Project name
+      schema:
+        type: string
+    RoleName:
+      name: role
+      in: path
+      required: true
+      description: Role name (e.g., admin, developer, readonly)
+      schema:
+        type: string
+    RepoId:
+      name: repoId
+      in: path
+      required: true
+      description: Repository configuration ID
+      schema:
+        type: string
+    InstanceNamespace:
+      name: namespace
+      in: path
+      required: true
+      description: Instance namespace
+      schema:
+        type: string
+    InstanceKind:
+      name: kind
+      in: path
+      required: true
+      description: Instance kind (e.g., PostgresCluster)
+      schema:
+        type: string
+    InstanceName:
+      name: name
+      in: path
+      required: true
+      description: Instance name
+      schema:
+        type: string
+
+  # -------------------------------------------------------------------------
+  # Reusable responses
+  # -------------------------------------------------------------------------
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: UNAUTHORIZED
+            message: missing Authorization header
+    Forbidden:
+      description: Permission denied
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: FORBIDDEN
+            message: permission denied
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ServiceUnavailable:
+      description: Service unavailable
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  # -------------------------------------------------------------------------
+  # Schemas
+  # -------------------------------------------------------------------------
+  schemas:
+    # --- Common ---
+    ErrorResponse:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: Machine-readable error code
+          enum:
+            - NOT_FOUND
+            - BAD_REQUEST
+            - UNAUTHORIZED
+            - FORBIDDEN
+            - SERVICE_UNAVAILABLE
+            - INTERNAL_ERROR
+            - VALIDATION_FAILED
+            - RATE_LIMIT_EXCEEDED
+            - METHOD_NOT_ALLOWED
+            - CONFLICT
+            - DEPLOYMENT_MODE_NOT_ALLOWED
+            - GITOPS_ERROR
+        message:
+          type: string
+          description: Human-readable error message
+        details:
+          type: object
+          additionalProperties: true
+          description: Additional error context (field-level errors, etc.)
+
+    # --- Health ---
+    HealthStatus:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+        components:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              status:
+                type: string
+                enum: [healthy, degraded, unhealthy]
+              message:
+                type: string
+
+    # --- Auth ---
+    LocalLoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+
+    LoginResponse:
+      type: object
+      properties:
+        user:
+          type: object
+          properties:
+            id:
+              type: string
+            email:
+              type: string
+            displayName:
+              type: string
+        token:
+          type: string
+          description: JWT Bearer token (HS256, 1hr expiry)
+
+    OIDCProvider:
+      type: object
+      properties:
+        name:
+          type: string
+        displayName:
+          type: string
+
+    # --- RGD Catalog ---
+    RGDResponse:
+      type: object
+      properties:
+        name:
+          type: string
+        namespace:
+          type: string
+        description:
+          type: string
+        version:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        category:
+          type: string
+        icon:
+          type: string
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        instances:
+          type: integer
+        apiVersion:
+          type: string
+        kind:
+          type: string
+        allowedDeploymentModes:
+          type: array
+          items:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ListRGDsResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RGDResponse'
+        totalCount:
+          type: integer
+        page:
+          type: integer
+        pageSize:
+          type: integer
+
+    ResourceGraphResponse:
+      type: object
+      properties:
+        rgdName:
+          type: string
+        rgdNamespace:
+          type: string
+        resources:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              apiVersion:
+                type: string
+              kind:
+                type: string
+              isTemplate:
+                type: boolean
+              isConditional:
+                type: boolean
+              conditionExpr:
+                type: string
+              dependsOn:
+                type: array
+                items:
+                  type: string
+              externalRef:
+                type: object
+                properties:
+                  apiVersion:
+                    type: string
+                  kind:
+                    type: string
+                  nameExpr:
+                    type: string
+                  namespaceExpr:
+                    type: string
+                  usesSchemaSpec:
+                    type: boolean
+                  schemaField:
+                    type: string
+        edges:
+          type: array
+          items:
+            type: object
+            properties:
+              from:
+                type: string
+              to:
+                type: string
+              type:
+                type: string
+
+    SchemaResponse:
+      type: object
+      properties:
+        rgd:
+          type: string
+        crdFound:
+          type: boolean
+        schema:
+          type: object
+          description: JSON Schema for the CRD spec
+        error:
+          type: string
+
+    # --- Instances ---
+    ListInstancesResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/InstanceDetail'
+        totalCount:
+          type: integer
+        page:
+          type: integer
+        pageSize:
+          type: integer
+
+    InstanceDetail:
+      type: object
+      properties:
+        name:
+          type: string
+        namespace:
+          type: string
+        kind:
+          type: string
+        apiVersion:
+          type: string
+        rgdName:
+          type: string
+        status:
+          type: string
+        health:
+          type: string
+        deploymentMode:
+          type: string
+        conditions:
+          type: array
+          items:
+            type: object
+        spec:
+          type: object
+        createdAt:
+          type: string
+          format: date-time
+
+    CreateInstanceRequest:
+      type: object
+      required: [name, namespace, rgdName]
+      properties:
+        name:
+          type: string
+          description: DNS-1123 compliant instance name
+        namespace:
+          type: string
+        projectId:
+          type: string
+        rgdName:
+          type: string
+        rgdNamespace:
+          type: string
+        spec:
+          type: object
+          description: Instance spec values
+        deploymentMode:
+          type: string
+          enum: [direct, gitops, hybrid]
+          default: direct
+        repositoryId:
+          type: string
+          description: Required for gitops/hybrid modes
+        gitBranch:
+          type: string
+        gitPath:
+          type: string
+
+    CreateInstanceResponse:
+      type: object
+      properties:
+        name:
+          type: string
+        namespace:
+          type: string
+        rgdName:
+          type: string
+        apiGroup:
+          type: string
+        kind:
+          type: string
+        version:
+          type: string
+        status:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        deploymentMode:
+          type: string
+        gitInfo:
+          type: object
+          properties:
+            commitSha:
+              type: string
+            path:
+              type: string
+            pushStatus:
+              type: string
+
+    PendingInstance:
+      type: object
+      properties:
+        instanceId:
+          type: string
+        name:
+          type: string
+        namespace:
+          type: string
+        rgdName:
+          type: string
+        deploymentMode:
+          type: string
+        status:
+          type: string
+        pushedAt:
+          type: string
+          format: date-time
+        commitSha:
+          type: string
+        isStuck:
+          type: boolean
+
+    StatusTimelineResponse:
+      type: object
+      properties:
+        instanceId:
+          type: string
+        name:
+          type: string
+        currentStatus:
+          type: string
+        deploymentMode:
+          type: string
+        pushedAt:
+          type: string
+          format: date-time
+        isStuck:
+          type: boolean
+        timeline:
+          type: array
+          items:
+            type: object
+            properties:
+              fromStatus:
+                type: string
+              toStatus:
+                type: string
+              timestamp:
+                type: string
+                format: date-time
+              reason:
+                type: string
+
+    # --- Projects ---
+    ProjectListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProjectResponse'
+        totalCount:
+          type: integer
+
+    ProjectResponse:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        destinations:
+          type: array
+          items:
+            type: object
+            properties:
+              namespace:
+                type: string
+              server:
+                type: string
+        roles:
+          type: array
+          items:
+            type: object
+        resourceVersion:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        createdBy:
+          type: string
+        updatedAt:
+          type: string
+          format: date-time
+        updatedBy:
+          type: string
+
+    CreateProjectRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        destinations:
+          type: array
+          items:
+            type: object
+            properties:
+              namespace:
+                type: string
+              server:
+                type: string
+
+    UpdateProjectRequest:
+      type: object
+      required: [resourceVersion]
+      properties:
+        description:
+          type: string
+        destinations:
+          type: array
+          items:
+            type: object
+            properties:
+              namespace:
+                type: string
+              server:
+                type: string
+        roles:
+          type: array
+          items:
+            type: object
+        resourceVersion:
+          type: string
+          description: Required for optimistic concurrency
+
+    ValidationResult:
+      type: object
+      properties:
+        valid:
+          type: boolean
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+              message:
+                type: string
+
+    # --- Role Bindings ---
+    RoleBindingResponse:
+      type: object
+      properties:
+        project:
+          type: string
+        role:
+          type: string
+        subject:
+          type: string
+        type:
+          type: string
+          enum: [user, group]
+
+    ListRoleBindingsResponse:
+      type: object
+      properties:
+        project:
+          type: string
+        bindings:
+          type: array
+          items:
+            $ref: '#/components/schemas/RoleBindingResponse'
+
+    # --- Account ---
+    AccountInfoResponse:
+      type: object
+      properties:
+        userId:
+          type: string
+        email:
+          type: string
+        displayName:
+          type: string
+        groups:
+          type: array
+          items:
+            type: string
+        casbinRoles:
+          type: array
+          items:
+            type: string
+        projects:
+          type: array
+          items:
+            type: string
+        roles:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+        issuer:
+          type: string
+        tokenExpiresAt:
+          type: string
+          format: date-time
+        tokenIssuedAt:
+          type: string
+          format: date-time
+
+    # --- Namespaces ---
+    NamespaceListResponse:
+      type: object
+      properties:
+        namespaces:
+          type: array
+          items:
+            type: string
+        count:
+          type: integer
+
+    # --- Settings ---
+    SettingsResponse:
+      type: object
+      properties:
+        organization:
+          type: string
+
+    # --- SSO ---
+    SSOProviderResponse:
+      type: object
+      properties:
+        name:
+          type: string
+        issuerURL:
+          type: string
+        clientID:
+          type: string
+        redirectURL:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+
+    SSOProviderRequest:
+      type: object
+      required: [name, issuerURL, clientID, clientSecret]
+      properties:
+        name:
+          type: string
+        issuerURL:
+          type: string
+        clientID:
+          type: string
+        clientSecret:
+          type: string
+          format: password
+        redirectURL:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+
+    # --- Repositories ---
+    RepositoryConfigInfo:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        projectId:
+          type: string
+        repoURL:
+          type: string
+        authType:
+          type: string
+          enum: [https, ssh, github-app]
+        defaultBranch:
+          type: string
+        enabled:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+
+    CreateRepositoryRequest:
+      type: object
+      required: [name, projectId, repoURL, authType]
+      properties:
+        name:
+          type: string
+        projectId:
+          type: string
+        repoURL:
+          type: string
+        authType:
+          type: string
+          enum: [https, ssh, github-app]
+        defaultBranch:
+          type: string
+          default: main
+        enabled:
+          type: boolean
+          default: true
+        sshAuth:
+          type: object
+          properties:
+            privateKey:
+              type: string
+              format: password
+        httpsAuth:
+          type: object
+          properties:
+            username:
+              type: string
+            password:
+              type: string
+              format: password
+            bearerToken:
+              type: string
+              format: password
+        githubAppAuth:
+          type: object
+          properties:
+            appId:
+              type: string
+            installationId:
+              type: string
+            privateKey:
+              type: string
+              format: password
+
+    UpdateRepositoryRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        repoURL:
+          type: string
+        authType:
+          type: string
+        defaultBranch:
+          type: string
+        enabled:
+          type: boolean
+
+    TestConnectionRequest:
+      type: object
+      required: [repoURL, authType]
+      properties:
+        repoURL:
+          type: string
+        authType:
+          type: string
+
+    TestConnectionResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        defaultBranch:
+          type: string
+
+    # --- License ---
+    LicenseStatus:
+      type: object
+      properties:
+        licensed:
+          type: boolean
+        enterprise:
+          type: boolean
+        status:
+          type: string
+        message:
+          type: string
+
+    # --- Compliance ---
+    ComplianceStatus:
+      type: object
+      properties:
+        available:
+          type: boolean
+        enterprise:
+          type: boolean
+        message:
+          type: string
+        gatekeeper:
+          type: object
+
+    ComplianceSummary:
+      type: object
+      properties:
+        totalTemplates:
+          type: integer
+        totalConstraints:
+          type: integer
+        totalViolations:
+          type: integer
+        byEnforcement:
+          type: object
+          additionalProperties:
+            type: integer
+
+    ConstraintTemplate:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        kind:
+          type: string
+        parameters:
+          type: object
+        constraintCount:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+
+    Constraint:
+      type: object
+      properties:
+        name:
+          type: string
+        kind:
+          type: string
+        templateName:
+          type: string
+        enforcementAction:
+          type: string
+          enum: [deny, dryrun, warn]
+        violationCount:
+          type: integer
+        match:
+          type: object
+        parameters:
+          type: object
+        createdAt:
+          type: string
+          format: date-time
+
+    CreateConstraintRequest:
+      type: object
+      required: [name, templateName]
+      properties:
+        name:
+          type: string
+        templateName:
+          type: string
+        enforcementAction:
+          type: string
+          enum: [deny, dryrun, warn]
+          default: dryrun
+        parameters:
+          type: object
+        match:
+          type: object
+          properties:
+            namespaces:
+              type: array
+              items:
+                type: string
+            scope:
+              type: string
+            kinds:
+              type: array
+              items:
+                type: object
+                properties:
+                  apiGroups:
+                    type: array
+                    items:
+                      type: string
+                  kinds:
+                    type: array
+                    items:
+                      type: string
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+
+    Violation:
+      type: object
+      properties:
+        constraintKind:
+          type: string
+        constraintName:
+          type: string
+        enforcementAction:
+          type: string
+        message:
+          type: string
+        resourceKind:
+          type: string
+        resourceNamespace:
+          type: string
+        resourceName:
+          type: string
+        resourceApiVersion:
+          type: string
+
+    # --- Audit ---
+    AuditEventList:
+      type: object
+      properties:
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditEvent'
+        total:
+          type: integer
+        page:
+          type: integer
+        pageSize:
+          type: integer
+
+    AuditEvent:
+      type: object
+      properties:
+        id:
+          type: string
+          description: ULID identifier
+        timestamp:
+          type: string
+          format: date-time
+        userId:
+          type: string
+        userEmail:
+          type: string
+        sourceIP:
+          type: string
+        action:
+          type: string
+        resource:
+          type: string
+        name:
+          type: string
+        project:
+          type: string
+        namespace:
+          type: string
+        requestId:
+          type: string
+        result:
+          type: string
+          enum: [success, denied, error]
+        details:
+          type: object
+
+    AuditStats:
+      type: object
+      properties:
+        totalEvents:
+          type: integer
+        eventsToday:
+          type: integer
+        topUsers:
+          type: array
+          items:
+            type: object
+            properties:
+              userId:
+                type: string
+              count:
+                type: integer
+        deniedAttempts:
+          type: integer
+        byActionToday:
+          type: object
+          additionalProperties:
+            type: integer
+        byResultToday:
+          type: object
+          additionalProperties:
+            type: integer
+
+    AuditConfig:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        retentionDays:
+          type: integer
+        maxStreamLength:
+          type: integer
+        excludeActions:
+          type: array
+          items:
+            type: string
+        excludeResources:
+          type: array
+          items:
+            type: string
+
+    # --- Views ---
+    CustomView:
+      type: object
+      properties:
+        slug:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        icon:
+          type: string
+        filter:
+          type: object
+
+    # --- Kubernetes Resources ---
+    K8sResourceListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+        count:
+          type: integer
+
+    APIResourcesResponse:
+      type: object
+      properties:
+        resources:
+          type: array
+          items:
+            type: object
+            properties:
+              apiGroup:
+                type: string
+              kind:
+                type: string
+        count:
+          type: integer
+
+    # --- RBAC Metrics ---
+    RBACMetricsResponse:
+      type: object
+      properties:
+        cache:
+          type: object
+        policy:
+          type: object
+        cacheManager:
+          type: object
+
+security:
+  - bearerAuth: []

@@ -1,0 +1,41 @@
+package helpers
+
+import (
+	"fmt"
+	"net/http"
+
+	"github.com/provops-org/knodex/server/internal/api/response"
+)
+
+// ValidationErrors collects field validation errors
+type ValidationErrors map[string]string
+
+// NewValidationErrors creates an empty validation error map
+func NewValidationErrors() ValidationErrors {
+	return make(map[string]string)
+}
+
+// Add adds a validation error for a field
+func (v ValidationErrors) Add(field, message string) {
+	v[field] = message
+}
+
+// AddIndexed adds a validation error for an indexed field (e.g., "items[0]")
+func (v ValidationErrors) AddIndexed(field string, index int, message string) {
+	v[fmt.Sprintf("%s[%d]", field, index)] = message
+}
+
+// HasErrors returns true if there are any validation errors
+func (v ValidationErrors) HasErrors() bool {
+	return len(v) > 0
+}
+
+// WriteResponse writes a 400 response if there are errors.
+// Returns true if errors were written, false if no errors.
+func (v ValidationErrors) WriteResponse(w http.ResponseWriter) bool {
+	if !v.HasErrors() {
+		return false
+	}
+	response.BadRequest(w, "Validation failed", v)
+	return true
+}

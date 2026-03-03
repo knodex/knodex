@@ -1,0 +1,25 @@
+<svg width="32" height="32" viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="g3" x1="0" y1="0" x2="80" y2="80" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#4aeadc"/>
+      <stop offset="100%" stop-color="#9b6dff"/>
+    </linearGradient>
+    <linearGradient id="g3a" x1="0" y1="0" x2="80" y2="80" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#4aeadc" stop-opacity="0.3"/>
+      <stop offset="100%" stop-color="#9b6dff" stop-opacity="0.3"/>
+    </linearGradient>
+    <linearGradient id="g3b" x1="0" y1="0" x2="80" y2="80" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#4aeadc" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#9b6dff" stop-opacity="0.6"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="72" height="72" rx="16" fill="#111118" stroke="url(#g3)" stroke-width="2"/>
+  <rect x="18" y="14" width="40" height="28" rx="4" fill="url(#g3a)" transform="rotate(-6 38 28)"/>
+  <rect x="19" y="22" width="40" height="28" rx="4" fill="url(#g3b)" transform="rotate(-2 39 36)"/>
+  <rect x="20" y="30" width="40" height="28" rx="4" fill="url(#g3)"/>
+  <line x1="26" y1="38" x2="42" y2="38" stroke="#0a0a0f" stroke-width="2" stroke-linecap="round"/>
+  <line x1="26" y1="43" x2="38" y2="43" stroke="#0a0a0f" stroke-width="1.5" stroke-linecap="round" opacity="0.6"/>
+  <line x1="26" y1="48" x2="35" y2="48" stroke="#0a0a0f" stroke-width="1.5" stroke-linecap="round" opacity="0.4"/>
+  <rect x="48" y="30" width="10" height="6" rx="2" fill="#4aeadc"/>
+  <rect x="47" y="22" width="10" height="6" rx="2" fill="#7ab8ff" opacity="0.6" transform="rotate(-2 52 25)"/>
+</svg>

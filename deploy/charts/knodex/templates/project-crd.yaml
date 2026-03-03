@@ -1,0 +1,230 @@
+{{- if .Values.crds.install }}
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: projects.knodex.io
+  labels:
+    {{- include "knodex.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rbac
+  annotations:
+    argocd-reference: "Based on ArgoCD AppProject CRD structure"
+spec:
+  group: knodex.io
+  names:
+    kind: Project
+    listKind: ProjectList
+    plural: projects
+    singular: project
+    shortNames:
+      - proj
+  scope: Cluster
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          required:
+            - spec
+          properties:
+            spec:
+              type: object
+              required:
+                - destinations
+              properties:
+                description:
+                  type: string
+                  description: "Project description"
+                  maxLength: 1024
+
+                # Destination restrictions (ArgoCD AppProject pattern)
+                destinations:
+                  type: array
+                  description: "List of allowed deployment destinations (clusters and namespaces)."
+                  minItems: 1
+                  items:
+                    type: object
+                    properties:
+                      server:
+                        type: string
+                        description: "Kubernetes cluster API server URL. Use '*' for any cluster."
+                        maxLength: 2048
+                      namespace:
+                        type: string
+                        description: "Kubernetes namespace. Supports wildcards (*, namespace-*)."
+                        maxLength: 253
+                        pattern: "^(\\*|[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\*)?|\\*[a-z0-9]([-a-z0-9]*[a-z0-9])?)$"
+                      name:
+                        type: string
+                        description: "Cluster name (alternative to server URL)"
+                        maxLength: 253
+
+                # Cluster-scoped resource whitelist (ArgoCD AppProject pattern)
+                clusterResourceWhitelist:
+                  type: array
+                  description: "Whitelist of cluster-scoped Kubernetes resource types that can be deployed."
+                  items:
+                    type: object
+                    required:
+                      - group
+                      - kind
+                    properties:
+                      group:
+                        type: string
+                        description: "Kubernetes API group (e.g., 'apps', ''). Use '*' for all groups."
+                        maxLength: 253
+                      kind:
+                        type: string
+                        description: "Kubernetes resource kind (e.g., 'Deployment'). Use '*' for all kinds."
+                        minLength: 1
+                        maxLength: 63
+
+                # Cluster-scoped resource blacklist (ArgoCD AppProject pattern)
+                clusterResourceBlacklist:
+                  type: array
+                  description: "Blacklist of cluster-scoped Kubernetes resource types (deny rules, take precedence over whitelist)."
+                  items:
+                    type: object
+                    required:
+                      - group
+                      - kind
+                    properties:
+                      group:
+                        type: string
+                        description: "Kubernetes API group"
+                        maxLength: 253
+                      kind:
+                        type: string
+                        description: "Kubernetes resource kind"
+                        minLength: 1
+                        maxLength: 63
+
+                # Namespace-scoped resource whitelist (ArgoCD AppProject pattern)
+                namespaceResourceWhitelist:
+                  type: array
+                  description: "Whitelist of namespace-scoped Kubernetes resource types that can be deployed."
+                  items:
+                    type: object
+                    required:
+                      - group
+                      - kind
+                    properties:
+                      group:
+                        type: string
+                        description: "Kubernetes API group. Empty string for core resources."
+                        maxLength: 253
+                      kind:
+                        type: string
+                        description: "Kubernetes resource kind."
+                        minLength: 1
+                        maxLength: 63
+
+                # Namespace-scoped resource blacklist (ArgoCD AppProject pattern)
+                namespaceResourceBlacklist:
+                  type: array
+                  description: "Blacklist of namespace-scoped Kubernetes resource types (deny rules, take precedence over whitelist)."
+                  items:
+                    type: object
+                    required:
+                      - group
+                      - kind
+                    properties:
+                      group:
+                        type: string
+                        description: "Kubernetes API group"
+                        maxLength: 253
+                      kind:
+                        type: string
+                        description: "Kubernetes resource kind"
+                        minLength: 1
+                        maxLength: 63
+
+                # Project-specific roles with Casbin policies (ArgoCD AppProject pattern)
+                roles:
+                  type: array
+                  description: "Project-specific RBAC roles with Casbin policy definitions."
+                  items:
+                    type: object
+                    required:
+                      - name
+                      - policies
+                    properties:
+                      name:
+                        type: string
+                        description: "Role name (e.g., 'developer', 'viewer')"
+                        pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+                        minLength: 1
+                        maxLength: 63
+                      description:
+                        type: string
+                        description: "Role description"
+                        maxLength: 1024
+                      policies:
+                        type: array
+                        description: "Casbin policy strings. Format: 'p, subject, resource, action, object, effect'"
+                        minItems: 1
+                        items:
+                          type: string
+                          minLength: 1
+                          maxLength: 2048
+                      groups:
+                        type: array
+                        description: "OIDC group names bound to this role"
+                        items:
+                          type: string
+                          minLength: 1
+                          maxLength: 253
+
+            status:
+              type: object
+              properties:
+                conditions:
+                  type: array
+                  description: "Current state conditions"
+                  items:
+                    type: object
+                    required:
+                      - type
+                      - status
+                    properties:
+                      type:
+                        type: string
+                        description: "Condition type"
+                        enum:
+                          - Ready
+                          - ValidationError
+                          - SyncError
+                      status:
+                        type: string
+                        description: "Condition status"
+                        enum:
+                          - "True"
+                          - "False"
+                          - "Unknown"
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                        description: "Last time the condition transitioned"
+                      reason:
+                        type: string
+                        description: "Reason for the condition's last transition"
+                        maxLength: 256
+                      message:
+                        type: string
+                        description: "Human-readable message for the condition"
+                        maxLength: 1024
+
+      subresources:
+        status: {}
+
+      additionalPrinterColumns:
+        - name: Description
+          type: string
+          description: Project description
+          jsonPath: .spec.description
+        - name: Age
+          type: date
+          description: Time since creation
+          jsonPath: .metadata.creationTimestamp
+{{- end }}

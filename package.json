@@ -1,0 +1,23 @@
+{
+  "name": "knodex",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Kubernetes ResourceGraphDefinition Dashboard",
+  "scripts": {
+    "prepare": "husky",
+    "lint": "cd web && npm run lint",
+    "format": "cd web && npx prettier --write src/"
+  },
+  "devDependencies": {
+    "husky": "^9.1.7",
+    "lint-staged": "^15.2.10"
+  },
+  "lint-staged": {
+    "*.go": [
+      "gofmt -w"
+    ],
+    "web/src/**/*.{ts,tsx}": [
+      "web/node_modules/.bin/eslint --config web/eslint.config.js --no-warn-ignored --max-warnings 0"
+    ]
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Launch Server",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/server",
+      "env": {
+        "SERVER_ADDRESS": ":8080",
+        "REDIS_ADDRESS": "localhost:6379",
+        "KUBERNETES_IN_CLUSTER": "false"
+      }
+    },
+    {
+      "name": "Debug Server",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/server",
+      "env": {
+        "SERVER_ADDRESS": ":8080",
+        "REDIS_ADDRESS": "localhost:6379",
+        "KUBERNETES_IN_CLUSTER": "false"
+      }
+    },
+    {
+      "name": "Launch Web",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"]
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Full Stack",
+      "configurations": ["Launch Server", "Launch Web"]
+    }
+  ]
+}

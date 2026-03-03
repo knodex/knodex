@@ -1,0 +1,105 @@
+import { useEffect, useState, useCallback } from "react";
+import { Outlet, useNavigate } from "react-router-dom";
+import { Sidebar, TopBar, Breadcrumbs } from "@/components/layout";
+import { ProtectedRoute } from "@/components/auth";
+import { WebSocketProvider, useWebSocketContext } from "@/context";
+import { Announcer } from "@/components/accessibility";
+import { useAnnouncements } from "@/hooks/useAnnouncements";
+import { useAuth } from "@/hooks/useAuth";
+
+function DashboardLayoutInner() {
+  const navigate = useNavigate();
+  const { logout, refreshUser, isTokenExpired } = useAuth();
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
+
+  // Accessibility: announcements
+  const { announcements, announce, handleAnnouncementRead } = useAnnouncements();
+  const { status: wsStatus, error: wsError } = useWebSocketContext();
+
+  // Initialize user on app startup and check token expiry periodically
+  useEffect(() => {
+    // Guard: only call refreshUser if a token exists in localStorage.
+    // Without a token, refreshUser is a no-op (userStore already guards for this),
+    // but this avoids an unnecessary function call during initial unauthenticated renders.
+    const token = localStorage.getItem('jwt_token');
+    if (token) {
+      refreshUser();
+    }
+
+    // Check token expiry every minute
+    const interval = setInterval(() => {
+      if (isTokenExpired()) {
+        logout();
+        navigate('/login');
+      }
+    }, 60000); // Check every minute
+
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Only run on mount - Zustand store actions are stable
+
+  // Sanitize messages to prevent XSS
+  const sanitizeMessage = useCallback((msg: string): string => {
+    // Strip HTML tags and limit length
+    return msg.replace(/<[^>]*>/g, '').substring(0, 200);
+  }, []);
+
+  // Announce WebSocket connection status changes
+  useEffect(() => {
+    if (wsStatus === "connected") {
+      announce("Connected to server", "polite");
+    } else if (wsStatus === "error" || wsError) {
+      announce(sanitizeMessage(wsError || "Connection error"), "assertive");
+    } else if (wsStatus === "disconnected") {
+      announce("Disconnected from server", "polite");
+    }
+  }, [wsStatus, wsError, announce, sanitizeMessage]);
+
+  return (
+    <div className="min-h-screen bg-background">
+      {/* Accessibility: Screen reader announcements */}
+      <Announcer
+        announcements={announcements}
+        onAnnouncementRead={handleAnnouncementRead}
+      />
+
+      {/* Skip link */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-50 focus:rounded-md focus:bg-primary focus:px-4 focus:py-2 focus:text-primary-foreground"
+      >
+        Skip to main content
+      </a>
+
+      {/* Sidebar Navigation */}
+      <Sidebar
+        isMobileOpen={isMobileMenuOpen}
+        onMobileClose={() => setIsMobileMenuOpen(false)}
+      />
+
+      {/* Top Bar */}
+      <TopBar onMobileMenuToggle={() => setIsMobileMenuOpen(!isMobileMenuOpen)} />
+
+      {/* Main Content Area - Always offset by collapsed sidebar width */}
+      <div className="transition-all duration-300 pt-16 ml-0 lg:ml-16">
+        {/* Breadcrumbs */}
+        <Breadcrumbs />
+
+        {/* Main Content - child routes render here */}
+        <main id="main-content" className="min-h-[calc(100vh-4rem)] px-6 py-6">
+          <Outlet />
+        </main>
+      </div>
+    </div>
+  );
+}
+
+export function DashboardLayout() {
+  return (
+    <ProtectedRoute>
+      <WebSocketProvider debug={import.meta.env.DEV}>
+        <DashboardLayoutInner />
+      </WebSocketProvider>
+    </ProtectedRoute>
+  );
+}

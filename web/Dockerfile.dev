@@ -1,0 +1,18 @@
+# Development Dockerfile for Tilt live reload
+# Runs Vite dev server with HMR instead of nginx with static files
+FROM node:22-alpine
+
+WORKDIR /app
+
+# Install dependencies first for better caching
+COPY package*.json ./
+RUN npm ci
+
+# Copy source code
+COPY . .
+
+# Vite dev server port
+EXPOSE 3000
+
+# Run Vite dev server with host binding for container access
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "3000"]

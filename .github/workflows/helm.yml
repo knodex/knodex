@@ -1,0 +1,65 @@
+name: Helm Chart
+
+on:
+  pull_request:
+    paths:
+      - 'deploy/charts/**'
+      - '.github/configs/ct-*.yaml'
+      - '.github/configs/lintconf.yaml'
+      - '.github/workflows/helm.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  chart-lint-test:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Helm
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+        with:
+          version: v3.17.0
+
+      - name: Add Helm repos
+        run: |
+          helm repo add bitnami https://charts.bitnami.com/bitnami
+          helm repo update
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Set up chart-testing
+        uses: helm/chart-testing-action@6ec842c01de15ebb84c8627d2744a0c2f2755c9f # v2.8.0
+
+      - name: List changed charts
+        id: list-changed
+        run: |
+          changed=$(ct --config ./.github/configs/ct-lint.yaml list-changed)
+          if [[ -n "$changed" ]]; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run chart-testing (lint)
+        run: ct lint --config ./.github/configs/ct-lint.yaml --lint-conf ./.github/configs/lintconf.yaml
+
+      - name: Run helm template
+        run: |
+          helm dependency build deploy/charts/knodex
+          helm template knodex deploy/charts/knodex --values deploy/charts/knodex/values.yaml > /dev/null
+
+      - name: Create kind cluster
+        uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0
+        if: steps.list-changed.outputs.changed == 'true'
+
+      - name: Run chart-testing (install)
+        if: steps.list-changed.outputs.changed == 'true'
+        run: ct install --config ./.github/configs/ct-install.yaml
