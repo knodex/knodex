@@ -86,7 +86,8 @@ jobs:
           CGO_ENABLED: 1
         run: |
           cd server
-          go test -v -race -coverprofile=coverage.out $(go list ./internal/... | grep -v /static)
+          # Exclude: static (needs real web dist), test/ (e2e/integration needs cluster), mocks (standalone servers)
+          go test -v -race -coverprofile=coverage.out $(go list ./... | grep -v -e /static -e /test/ -e /mocks/)
 
       - name: Upload coverage
         uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de # v5.5.2
