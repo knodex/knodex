@@ -41,6 +41,7 @@ jobs:
       contents: read
       packages: write
       security-events: write
+      actions: read
 
     outputs:
       tags: ${{ steps.meta.outputs.tags }}
