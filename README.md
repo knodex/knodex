@@ -1,9 +1,9 @@
 # Knodex - Kubernetes Resource Orchestrator Dashboard
 
-[![CI](https://github.com/knodex/knodex-ee/actions/workflows/ci.yml/badge.svg)](https://github.com/knodex/knodex-ee/actions/workflows/ci.yml)
-[![E2E Tests](https://github.com/knodex/knodex-ee/actions/workflows/e2e-tests.yml/badge.svg)](https://github.com/knodex/knodex-ee/actions/workflows/e2e-tests.yml)
-[![KRO 0.8.4](https://img.shields.io/badge/tested_with-KRO_0.8.4-blue)](https://github.com/knodex/knodex-ee/actions/workflows/e2e-tests.yml)
-[![KRO 0.8.5](https://img.shields.io/badge/tested_with-KRO_0.8.5-blue)](https://github.com/knodex/knodex-ee/actions/workflows/e2e-tests.yml)
+[![CI](https://github.com/knodex/knodex/actions/workflows/ci.yml/badge.svg)](https://github.com/knodex/knodex/actions/workflows/ci.yml)
+[![E2E Tests](https://github.com/knodex/knodex/actions/workflows/e2e-tests.yml/badge.svg)](https://github.com/knodex/knodex/actions/workflows/e2e-tests.yml)
+[![KRO 0.8.4](https://img.shields.io/badge/tested_with-KRO_0.8.4-blue)](https://github.com/knodex/knodex/actions/workflows/e2e-tests.yml)
+[![KRO 0.8.5](https://img.shields.io/badge/tested_with-KRO_0.8.5-blue)](https://github.com/knodex/knodex/actions/workflows/e2e-tests.yml)
 
 ## What is Knodex?
 
