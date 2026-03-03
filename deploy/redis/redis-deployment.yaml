@@ -19,25 +19,30 @@ spec:
     spec:
       securityContext:
         runAsNonRoot: true
-        runAsUser: 999
-        runAsGroup: 999
-        fsGroup: 999
+        runAsUser: 1001
+        runAsGroup: 0
+        fsGroup: 1001
         seccompProfile:
           type: RuntimeDefault
       containers:
         - name: redis
-          image: redis:7-alpine
+          # Same Bitnami Redis image used in the Helm chart (pinned by digest).
+          # To update: docker pull bitnami/redis:latest && docker inspect --format='{{index .RepoDigests 0}}' bitnami/redis:latest
+          image: bitnami/redis@sha256:5179ef5fcc0aee9b3a16e8030ea7b1a81f94033c06e1676c0c4b18c237de2e82
+          env:
+            - name: ALLOW_EMPTY_PASSWORD
+              value: "yes"
           ports:
             - containerPort: 6379
               name: redis
               protocol: TCP
           resources:
             requests:
-              cpu: 100m
-              memory: 128Mi
+              cpu: 50m
+              memory: 64Mi
             limits:
               cpu: 200m
-              memory: 256Mi
+              memory: 128Mi
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -46,7 +51,15 @@ spec:
                 - ALL
           volumeMounts:
             - name: redis-data
-              mountPath: /data
+              mountPath: /bitnami/redis/data
+            - name: redis-tmp
+              mountPath: /opt/bitnami/redis/tmp
+            - name: redis-logs
+              mountPath: /opt/bitnami/redis/logs
+            - name: redis-etc
+              mountPath: /opt/bitnami/redis/etc
+            - name: tmp
+              mountPath: /tmp
           livenessProbe:
             tcpSocket:
               port: 6379
@@ -61,4 +74,12 @@ spec:
             periodSeconds: 5
       volumes:
         - name: redis-data
+          emptyDir: {}
+        - name: redis-tmp
+          emptyDir: {}
+        - name: redis-logs
+          emptyDir: {}
+        - name: redis-etc
+          emptyDir: {}
+        - name: tmp
           emptyDir: {}

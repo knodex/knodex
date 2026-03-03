@@ -111,10 +111,16 @@ jobs:
           cache-from: type=gha,scope=e2e-mock-oidc
           cache-to: type=gha,mode=max,scope=e2e-mock-oidc,ignore-error=true
 
+      - name: Pre-pull Redis image
+        run: |
+          # Pull the same Bitnami Redis image used in deploy/redis (pinned by digest)
+          docker pull bitnami/redis@sha256:5179ef5fcc0aee9b3a16e8030ea7b1a81f94033c06e1676c0c4b18c237de2e82
+
       - name: Load images into Kind
         run: |
           kind load docker-image knodex-server:local --name ${{ env.KIND_CLUSTER }}
           kind load docker-image mock-oidc:local --name ${{ env.KIND_CLUSTER }}
+          kind load docker-image bitnami/redis@sha256:5179ef5fcc0aee9b3a16e8030ea7b1a81f94033c06e1676c0c4b18c237de2e82 --name ${{ env.KIND_CLUSTER }}
 
       - name: Deploy application
         run: ./scripts/qa-deploy.sh deploy-only
