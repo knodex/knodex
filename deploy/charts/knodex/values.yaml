@@ -21,9 +21,10 @@ server:
   replicaCount: 1
 
   image:
-    repository: ghcr.io/provops-org/knodex
+    repository: ghcr.io/knodex/knodex
     pullPolicy: IfNotPresent
-    tag: "0.0.1"
+    # -- Overrides the image tag. Defaults to the chart appVersion.
+    tag: ""
 
   service:
     type: ClusterIP
@@ -294,7 +295,7 @@ enterprise:
   enabled: false
   # -- Enterprise image configuration (overrides server.image.repository when enterprise.enabled=true)
   image:
-    repository: ghcr.io/provops-org/knodex-ee
+    repository: ghcr.io/knodex/knodex-ee
   # -- Organization identity for multi-tenant RGD catalog filtering (Enterprise feature).
   # When set, only RGDs labeled with `knodex.io/organization: <value>` (or unlabeled shared RGDs)
   # are visible in the catalog. Must be ≤63 characters (Kubernetes label value limit).
