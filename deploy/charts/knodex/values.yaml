@@ -405,13 +405,20 @@ gateway:
 # Bitnami auto-generates a password Secret when auth.enabled=true.
 # Existing dev environments using helm upgrade may need to set redis.auth.password
 # or delete the existing Redis PVC/Secret before upgrading.
+#
+# NOTE: Bitnami removed semver tags from Docker Hub. The image is pinned by digest
+# to ensure reproducible deployments. Update the digest when upgrading Redis.
+# Current image: bitnami/redis (Redis 8.6.1)
 redis:
   enabled: true
   architecture: standalone
   auth:
     enabled: true
   image:
-    tag: "7.2.4"
+    # Bitnami no longer publishes semver tags — pin by digest for reproducibility.
+    # To update: docker pull bitnami/redis:latest && docker inspect --format='{{index .RepoDigests 0}}' bitnami/redis:latest
+    digest: "sha256:5179ef5fcc0aee9b3a16e8030ea7b1a81f94033c06e1676c0c4b18c237de2e82"
+    tag: ""
   master:
     persistence:
       enabled: false
