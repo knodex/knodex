@@ -19,6 +19,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 EE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 OSS_DIR="${1:-$(cd "$EE_DIR/.." && pwd)/knodex}"
+# Resolve to absolute path (relative paths break after cd operations)
+OSS_DIR="$(cd "$OSS_DIR" 2>/dev/null && pwd || echo "$OSS_DIR")"
 OSS_REPO="knodex/knodex"
 
 # Colors
@@ -134,8 +136,6 @@ rsync -a --delete \
     --exclude='deploy/charts/knodex/charts/' \
     --exclude='deploy/charts/knodex/Chart.lock' \
     --exclude='deploy/examples/gatekeeper/' \
-    --exclude='deploy/examples/instances/' \
-    --exclude='deploy/examples/projects/' \
     --exclude='deploy/examples/rgds/microservices-platform.yaml' \
     --exclude='deploy/examples/test-users.yaml' \
     --exclude='deploy/test/' \
@@ -182,8 +182,6 @@ rm -f "$OSS_DIR"/server/test/e2e/license_*
 
 # Enterprise-only manifests
 rm -rf "$OSS_DIR/deploy/examples/gatekeeper"
-rm -rf "$OSS_DIR/deploy/examples/instances"
-rm -rf "$OSS_DIR/deploy/examples/projects"
 rm -f  "$OSS_DIR/deploy/examples/rgds/microservices-platform.yaml"
 rm -f  "$OSS_DIR/deploy/examples/test-users.yaml"
 rm -rf "$OSS_DIR/deploy/test"
@@ -275,6 +273,33 @@ if [ -f "$OSS_DIR/docs/architecture/SOLUTION_ARCHITECTURE.md" ]; then
     sedi \
         -e '/bmad/d' \
         "$OSS_DIR/docs/architecture/SOLUTION_ARCHITECTURE.md"
+fi
+
+# =============================================================================
+# Step 7b: Fix OSS-specific values overwritten by rsync
+# =============================================================================
+log "Applying OSS-specific fixups..."
+
+# README badges: point to knodex/knodex (not knodex/knodex-ee)
+if [ -f "$OSS_DIR/README.md" ]; then
+    sedi \
+        -e 's|knodex/knodex-ee/actions|knodex/knodex/actions|g' \
+        -e 's|knodex/knodex-ee)|knodex/knodex)|g' \
+        "$OSS_DIR/README.md"
+fi
+
+# Helm chart: server.image default should be OSS (not enterprise)
+# Only fix server.image.repository (under "server:" block), NOT enterprise.image.repository.
+# Use awk to replace only the first occurrence.
+if [ -f "$OSS_DIR/deploy/charts/knodex/values.yaml" ]; then
+    awk '{
+        if (!done && /repository: ghcr.io\/knodex\/knodex-ee/) {
+            sub(/repository: ghcr.io\/knodex\/knodex-ee/, "repository: ghcr.io/knodex/knodex")
+            done=1
+        }
+        print
+    }' "$OSS_DIR/deploy/charts/knodex/values.yaml" > "$OSS_DIR/deploy/charts/knodex/values.yaml.tmp" \
+        && mv "$OSS_DIR/deploy/charts/knodex/values.yaml.tmp" "$OSS_DIR/deploy/charts/knodex/values.yaml"
 fi
 
 # =============================================================================
