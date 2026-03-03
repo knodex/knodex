@@ -50,7 +50,7 @@ jobs:
         run: cd web && npm ci
 
       - name: Install golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v7
         with:
           version: v2.9
           working-directory: server
