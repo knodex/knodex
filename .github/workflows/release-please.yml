@@ -40,8 +40,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-      security-events: write
-      actions: read
 
     outputs:
       tags: ${{ steps.meta.outputs.tags }}
@@ -87,16 +85,9 @@ jobs:
         uses: aquasecurity/trivy-action@97e0b3872f55f89b95b2f65b3dbab56962816478 # 0.34.2
         with:
           image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.release-please.outputs.version }}
-          format: 'sarif'
-          output: 'trivy-results.sarif'
+          format: 'table'
           severity: 'CRITICAL,HIGH'
           exit-code: '0'
-
-      - name: Upload Trivy scan results
-        uses: github/codeql-action/upload-sarif@ccdb31a30b64f237d5e093766753e134dd045e07 # v3.32.5
-        continue-on-error: true # Requires GitHub Advanced Security; non-fatal if not enabled
-        with:
-          sarif_file: 'trivy-results.sarif'
 
   # ============================================
   # Package and push Helm chart on release
