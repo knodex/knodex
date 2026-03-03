@@ -7,6 +7,18 @@
 
 * **build:** resolve relative path breakage in sync script ([3877388](https://github.com/knodex/knodex/commit/3877388a752124d211598ffb1bf6e418779c944f))
 
+
+### Miscellaneous Chores
+
+* re-release 0.0.18 ([304cc62](https://github.com/knodex/knodex/commit/304cc6296716408f0e3bc1648a1d4881353b2096))
+
+## [0.0.18](https://github.com/knodex/knodex/compare/v0.0.17...v0.0.18) (2026-03-03)
+
+
+### Bug Fixes
+
+* **build:** resolve relative path breakage in sync script ([3877388](https://github.com/knodex/knodex/commit/3877388a752124d211598ffb1bf6e418779c944f))
+
 ## [0.0.17](https://github.com/knodex/knodex/compare/v0.0.16...v0.0.17) (2026-03-03)
 
 
