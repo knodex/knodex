@@ -5,15 +5,14 @@ import {
   Package,
   Clock,
   Layers,
-  FileCode,
   Box,
   Loader2,
   AlertCircle,
   ExternalLink,
   FolderKanban,
 } from "lucide-react";
-import { useRGD, useRGDSchema, useRGDResourceGraph } from "@/hooks/useRGDs";
-import type { CatalogRGD, FormProperty } from "@/types/rgd";
+import { useRGD, useRGDResourceGraph } from "@/hooks/useRGDs";
+import type { CatalogRGD } from "@/types/rgd";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
@@ -23,7 +22,7 @@ const ResourceGraphView = lazy(() =>
   import("@/components/graph").then((m) => ({ default: m.ResourceGraphView }))
 );
 
-type TabId = "overview" | "schema" | "resources";
+type TabId = "overview" | "resources";
 
 interface Tab {
   id: TabId;
@@ -33,7 +32,6 @@ interface Tab {
 
 const TABS: Tab[] = [
   { id: "overview", label: "Overview", icon: <Layers className="h-4 w-4" /> },
-  { id: "schema", label: "Schema", icon: <FileCode className="h-4 w-4" /> },
   { id: "resources", label: "Resources", icon: <Box className="h-4 w-4" /> },
 ];
 
@@ -172,9 +170,6 @@ export function RGDDetailView({ rgd, onBack, onDeploy }: RGDDetailViewProps) {
         {activeTab === "overview" && (
           <OverviewTab rgd={displayRGD} />
         )}
-        {activeTab === "schema" && (
-          <SchemaTab rgd={displayRGD} />
-        )}
         {activeTab === "resources" && (
           <ResourcesTab rgd={displayRGD} />
         )}
@@ -245,173 +240,6 @@ function OverviewTab({ rgd }: { rgd: CatalogRGD }) {
               </span>
             ))}
           </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function SchemaTab({ rgd }: { rgd: CatalogRGD }) {
-  const { data: schemaResponse, isLoading, error } = useRGDSchema(rgd.name, rgd.namespace);
-
-  if (isLoading) {
-    return (
-      <div className="rounded-lg border border-border bg-card p-6">
-        <div className="flex items-center gap-3 mb-4">
-          <FileCode className="h-5 w-5 text-muted-foreground" />
-          <h3 className="text-sm font-medium text-foreground">Input Schema</h3>
-        </div>
-        <div className="h-[200px] flex items-center justify-center">
-          <div className="flex items-center gap-2 text-muted-foreground">
-            <Loader2 className="h-5 w-5 animate-spin" />
-            <span className="text-sm">Loading schema...</span>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="rounded-lg border border-border bg-card p-6">
-        <div className="flex items-center gap-3 mb-4">
-          <FileCode className="h-5 w-5 text-muted-foreground" />
-          <h3 className="text-sm font-medium text-foreground">Input Schema</h3>
-        </div>
-        <div className="h-[200px] flex flex-col items-center justify-center gap-2">
-          <AlertCircle className="h-6 w-6 text-destructive" />
-          <p className="text-sm text-destructive">Failed to load schema</p>
-          <p className="text-xs text-muted-foreground">
-            {error instanceof Error ? error.message : "Unknown error"}
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  if (!schemaResponse?.crdFound || !schemaResponse.schema) {
-    return (
-      <div className="rounded-lg border border-border bg-card p-6">
-        <div className="flex items-center gap-3 mb-4">
-          <FileCode className="h-5 w-5 text-muted-foreground" />
-          <h3 className="text-sm font-medium text-foreground">Input Schema</h3>
-        </div>
-        <div className="h-[200px] flex flex-col items-center justify-center gap-2">
-          <FileCode className="h-8 w-8 text-muted-foreground/50" />
-          <p className="text-sm text-muted-foreground">No CRD schema found</p>
-          <p className="text-xs text-muted-foreground">
-            {schemaResponse?.error || "The CRD for this RGD may not exist yet."}
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  const { schema } = schemaResponse;
-
-  return (
-    <div className="rounded-lg border border-border bg-card p-6">
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-3">
-          <FileCode className="h-5 w-5 text-muted-foreground" />
-          <h3 className="text-sm font-medium text-foreground">Input Schema</h3>
-        </div>
-        <span className="text-xs font-mono text-muted-foreground bg-secondary px-2 py-1 rounded">
-          {schema.group}/{schema.version}
-        </span>
-      </div>
-
-      {schema.description && (
-        <p className="text-sm text-muted-foreground mb-4 pb-4 border-b border-border">
-          {schema.description}
-        </p>
-      )}
-
-      <div className="space-y-3">
-        <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-          Properties ({Object.keys(schema.properties).length})
-        </h4>
-        <div className="space-y-2">
-          {Object.entries(schema.properties).map(([name, prop]) => (
-            <SchemaProperty
-              key={name}
-              name={name}
-              property={prop}
-              required={schema.required?.includes(name)}
-            />
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function SchemaProperty({
-  name,
-  property,
-  required,
-  depth = 0,
-}: {
-  name: string;
-  property: FormProperty;
-  required?: boolean;
-  depth?: number;
-}) {
-  const hasNestedProps = property.type === "object" && property.properties && Object.keys(property.properties).length > 0;
-
-  return (
-    <div
-      className={cn(
-        "rounded-md border border-border bg-secondary/30 p-3",
-        depth > 0 && "ml-4"
-      )}
-    >
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-sm text-foreground">{name}</span>
-          {required && (
-            <span className="text-[10px] font-medium text-destructive uppercase">required</span>
-          )}
-        </div>
-        <span className="text-xs font-mono text-muted-foreground bg-secondary px-1.5 py-0.5 rounded">
-          {property.type}
-          {property.format && ` (${property.format})`}
-        </span>
-      </div>
-
-      {property.description && (
-        <p className="mt-1 text-xs text-muted-foreground">{property.description}</p>
-      )}
-
-      {property.enum && property.enum.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1">
-          <span className="text-[10px] text-muted-foreground uppercase mr-1">enum:</span>
-          {property.enum.map((val, i) => (
-            <span key={i} className="text-xs font-mono text-muted-foreground bg-secondary px-1.5 py-0.5 rounded">
-              {String(val)}
-            </span>
-          ))}
-        </div>
-      )}
-
-      {property.default !== undefined && (
-        <div className="mt-2 text-xs">
-          <span className="text-muted-foreground">default: </span>
-          <span className="font-mono text-foreground">{JSON.stringify(property.default)}</span>
-        </div>
-      )}
-
-      {hasNestedProps && (
-        <div className="mt-3 space-y-2">
-          {Object.entries(property.properties!).map(([nestedName, nestedProp]) => (
-            <SchemaProperty
-              key={nestedName}
-              name={nestedName}
-              property={nestedProp}
-              required={property.required?.includes(nestedName)}
-              depth={depth + 1}
-            />
-          ))}
         </div>
       )}
     </div>

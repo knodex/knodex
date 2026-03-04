@@ -24,7 +24,7 @@ export function AuditSettings() {
   }
 
   return (
-    <div className="container mx-auto py-6 px-4 sm:px-6 lg:px-8">
+    <div className="py-6">
       {/* Header */}
       <div className="mb-8">
         <Link

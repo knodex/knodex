@@ -62,6 +62,8 @@ export interface CreateProjectRequest {
   description?: string;
   /** Allowed deployment destinations */
   destinations?: Destination[];
+  /** Roles to create with the project */
+  roles?: ProjectRole[];
 }
 
 /**

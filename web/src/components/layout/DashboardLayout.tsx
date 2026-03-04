@@ -86,7 +86,7 @@ function DashboardLayoutInner() {
         <Breadcrumbs />
 
         {/* Main Content - child routes render here */}
-        <main id="main-content" className="min-h-[calc(100vh-4rem)] px-6 py-6">
+        <main id="main-content" className="container mx-auto min-h-[calc(100vh-4rem)] px-4 sm:px-6 lg:px-8 py-6">
           <Outlet />
         </main>
       </div>

@@ -88,7 +88,7 @@ export const InstanceCard = React.memo(function InstanceCard({
       </div>
 
       {/* Footer */}
-      <div className="flex items-center justify-between pt-3 border-t border-border/50 text-xs text-muted-foreground">
+      <div className="flex items-center justify-between pt-3 text-xs text-muted-foreground">
         <span className="flex items-center gap-1.5 font-medium">
           <Clock className="h-3.5 w-3.5 text-muted-foreground/70" />
           {formattedTime}

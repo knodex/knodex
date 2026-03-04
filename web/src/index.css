@@ -117,8 +117,8 @@
   --accent-foreground: 0 0% 100%;    /* White */
   --destructive: 350 89% 60%;        /* Rose-500: #f43f5e */
   --destructive-foreground: 0 0% 100%; /* White */
-  --border: 220 13% 90%;             /* Gray-200: #e5e7eb */
-  --input: 220 13% 90%;              /* Gray-200: #e5e7eb */
+  --border: 220 13% 93%;             /* Subtle light border */
+  --input: 220 13% 93%;              /* Match border */
   --ring: 168 80% 59%;               /* Teal-400: #2dd4bf */
   --chart-1: 168 76% 42%;            /* Teal */
   --chart-2: 263 70% 60%;            /* Violet */
@@ -131,7 +131,7 @@
   --sidebar-primary-foreground: 0 0% 100%;
   --sidebar-accent: 263 70% 60%;     /* Violet-500 */
   --sidebar-accent-foreground: 0 0% 100%;
-  --sidebar-border: 220 13% 90%;     /* Gray-200 */
+  --sidebar-border: 220 13% 93%;     /* Match border */
   --sidebar-ring: 168 80% 59%;       /* Teal-400 */
 
   /* Typography */
@@ -174,15 +174,15 @@
 }
 
 .dark {
-  /* ShadCN Dark Mode - Slate palette like presentation (#0f172a) */
-  --background: 222 47% 11%;         /* Slate-900: #0f172a */
+  /* ShadCN Dark Mode - Deep navy (#141722) */
+  --background: 227 26% 11%;         /* Deep navy: #141722 */
   --foreground: 210 20% 98%;         /* Gray-50: #f9fafb */
-  --card: 222 39% 15%;               /* Slightly lighter than bg for contrast */
+  --card: 228 24% 14%;               /* Slightly lighter than bg for contrast */
   --card-foreground: 210 20% 98%;    /* Gray-50: #f9fafb */
-  --popover: 222 39% 14%;            /* Slate-800: #1e293b */
+  --popover: 228 24% 13%;            /* Match sidebar */
   --popover-foreground: 210 20% 98%; /* Gray-50: #f9fafb */
   --primary: 168 76% 50%;            /* Teal-400 desaturated */
-  --primary-foreground: 222 47% 11%; /* Slate-900: #0f172a */
+  --primary-foreground: 227 26% 11%; /* Match background */
   --secondary: 217 19% 27%;          /* Slate-700: #334155 */
   --secondary-foreground: 210 20% 98%; /* Gray-50: #f9fafb */
   --muted: 217 19% 27%;              /* Slate-700: #334155 */
@@ -191,21 +191,21 @@
   --accent-foreground: 0 0% 100%;    /* White */
   --destructive: 350 89% 60%;        /* Rose-500: #f43f5e */
   --destructive-foreground: 0 0% 100%;
-  --border: 217 19% 27%;             /* Slate-700: #334155 */
-  --input: 217 19% 27%;              /* Slate-700: #334155 */
+  --border: 227 20% 18%;             /* Subtle dark border */
+  --input: 227 20% 18%;              /* Match border */
   --ring: 168 76% 50%;               /* Match primary */
   --chart-1: 168 76% 50%;            /* Teal (match primary) */
   --chart-2: 263 70% 60%;            /* Violet */
   --chart-3: 213 94% 68%;            /* Blue */
   --chart-4: 142 76% 50%;            /* Green */
   --chart-5: 43 96% 56%;             /* Amber */
-  --sidebar: 222 39% 14%;            /* Slate-800: #1e293b */
+  --sidebar: 228 24% 13%;            /* Slightly lighter than bg */
   --sidebar-foreground: 210 20% 98%; /* Gray-50 */
   --sidebar-primary: 168 76% 50%;    /* Match primary */
-  --sidebar-primary-foreground: 222 47% 11%;
+  --sidebar-primary-foreground: 227 26% 11%;
   --sidebar-accent: 263 70% 60%;     /* Violet-500 */
   --sidebar-accent-foreground: 0 0% 100%;
-  --sidebar-border: 217 19% 27%;     /* Slate-700 */
+  --sidebar-border: 227 20% 18%;     /* Match border */
   --sidebar-ring: 168 76% 50%;       /* Match primary */
 
   /* Dark mode shadows - deeper */
@@ -220,11 +220,11 @@
 
   /* Semantic Colors - Dark mode */
   --success: 142 76% 50%;            /* Green-500 */
-  --success-foreground: 222 47% 11%;
+  --success-foreground: 227 26% 11%;
   --warning: 43 96% 56%;             /* Amber-400 */
-  --warning-foreground: 222 47% 11%;
+  --warning-foreground: 227 26% 11%;
   --info: 213 94% 68%;               /* Blue-400 */
-  --info-foreground: 222 47% 11%;
+  --info-foreground: 227 26% 11%;
 
   /* Graph/Resource Type Colors - Dark mode */
   --graph-template: 213 94% 68%;     /* Blue for templates */

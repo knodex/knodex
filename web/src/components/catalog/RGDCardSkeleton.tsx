@@ -22,7 +22,7 @@ export function RGDCardSkeleton() {
         <div className="h-[22px] w-10 rounded-md bg-muted animate-shimmer" />
       </div>
 
-      <div className="flex justify-between pt-3 border-t border-border">
+      <div className="flex justify-between pt-3">
         <div className="h-3 w-20 rounded bg-muted animate-shimmer" />
         <div className="h-3 w-16 rounded bg-muted animate-shimmer" />
       </div>

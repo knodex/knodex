@@ -245,7 +245,7 @@ export function SSOSettings() {
 
   if (is403Error) {
     return (
-      <div className="container mx-auto py-6 px-4 sm:px-6 lg:px-8">
+      <div className="py-6">
         <div className="mb-8">
           <Link
             to="/settings"
@@ -289,7 +289,7 @@ export function SSOSettings() {
     const isPending = createMutation.isPending || updateMutation.isPending;
 
     return (
-      <div className="container mx-auto py-6 px-4 sm:px-6 lg:px-8">
+      <div className="py-6">
         <div className="mb-8">
           <button
             onClick={closeForm}
@@ -317,7 +317,7 @@ export function SSOSettings() {
 
         <Card>
           <CardContent className="pt-6">
-            <form onSubmit={handleSubmit} className="space-y-6 max-w-xl">
+            <form onSubmit={handleSubmit} className="space-y-6">
               {/* Name (create only) */}
               {isCreate && (
                 <div className="space-y-2">
@@ -446,7 +446,7 @@ export function SSOSettings() {
   // --- List view ---
 
   return (
-    <div className="container mx-auto py-6 px-4 sm:px-6 lg:px-8">
+    <div className="py-6">
       {/* Header */}
       <div className="mb-8">
         <Link
@@ -519,12 +519,6 @@ export function SSOSettings() {
               <p className="text-xs mt-2">
                 Add an OIDC provider to enable single sign-on authentication.
               </p>
-              {(isLoadingCreate || isErrorCreate || canCreate) && (
-                <Button className="mt-4" variant="outline" onClick={openCreateForm}>
-                  <Plus className="h-4 w-4 mr-2" />
-                  Add Provider
-                </Button>
-              )}
             </div>
           ) : (
             <div className="space-y-3">

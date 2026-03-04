@@ -112,7 +112,7 @@ export function ProjectsSettings() {
   // Render form view
   if (showForm) {
     return (
-      <div className="container mx-auto py-6 px-4 sm:px-6 lg:px-8">
+      <div className="py-6">
         <div className="mb-8">
           <Link
             to="/settings/projects"
@@ -162,7 +162,7 @@ export function ProjectsSettings() {
   // Render access denied view for 403 errors
   if (is403Error) {
     return (
-      <div className="container mx-auto py-6 px-4 sm:px-6 lg:px-8">
+      <div className="py-6">
         <div className="mb-8">
           <Link
             to="/settings"
@@ -203,7 +203,7 @@ export function ProjectsSettings() {
 
   // Render list view
   return (
-    <div className="container mx-auto py-6 px-4 sm:px-6 lg:px-8">
+    <div className="py-6">
       {/* Header with back navigation */}
       <div className="mb-8">
         <Link

@@ -14,6 +14,8 @@ type CreateProjectRequest struct {
 	Description string `json:"description,omitempty"`
 	// Destinations defines allowed deployment destinations
 	Destinations []DestinationRequest `json:"destinations,omitempty"`
+	// Roles defines initial roles to create with the project
+	Roles []RoleRequest `json:"roles,omitempty"`
 }
 
 // DestinationRequest represents a deployment destination in requests
@@ -151,12 +153,22 @@ func toProjectSpec(req *CreateProjectRequest) rbac.ProjectSpec {
 	spec := rbac.ProjectSpec{
 		Description:  req.Description,
 		Destinations: make([]rbac.Destination, 0, len(req.Destinations)),
+		Roles:        make([]rbac.ProjectRole, 0, len(req.Roles)),
 	}
 
 	for _, d := range req.Destinations {
 		spec.Destinations = append(spec.Destinations, rbac.Destination{
 			Namespace: d.Namespace,
 			Name:      d.Name,
+		})
+	}
+
+	for _, r := range req.Roles {
+		spec.Roles = append(spec.Roles, rbac.ProjectRole{
+			Name:        r.Name,
+			Description: r.Description,
+			Policies:    r.Policies,
+			Groups:      r.Groups,
 		})
 	}
 

@@ -323,7 +323,7 @@ export function Sidebar({
           onMouseEnter={handleMouseEnter}
           onMouseLeave={handleMouseLeave}
           className={cn(
-            "fixed left-0 top-0 z-50 h-screen bg-sidebar border-r border-border transition-all duration-200 ease-in-out",
+            "fixed left-0 top-0 z-50 h-screen bg-sidebar transition-all duration-200 ease-in-out",
             // Mobile: overlay mode, hidden by default
             "w-64",
             isMobileOpen ? "translate-x-0" : "-translate-x-full",
@@ -364,11 +364,6 @@ export function Sidebar({
             {/* Views Section */}
             {viewNavItems.length > 0 && (
               <div className="mt-4">
-                {/* Section Divider */}
-                {isExpanded && (
-                  <div className="mx-3 mb-2 border-t border-sidebar-border" />
-                )}
-
                 {/* Views Header */}
                 <div
                   className="relative"
@@ -380,13 +375,13 @@ export function Sidebar({
                   {/* Flyout Menu (collapsed sidebar only) */}
                   {!isExpanded && showFlyout && (
                     <div
-                      className="absolute left-full top-0 ml-2 min-w-48 bg-sidebar border border-sidebar-border rounded-lg shadow-lg py-2 z-[60]"
+                      className="absolute left-full top-0 ml-2 min-w-48 bg-sidebar rounded-lg shadow-lg py-2 z-[60]"
                       role="menu"
                       aria-label="Views navigation"
                       onMouseEnter={handleFlyoutEnter}
                       onMouseLeave={handleFlyoutLeave}
                     >
-                      <div className="px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-sidebar-foreground/50 border-b border-sidebar-border mb-1">
+                      <div className="px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-sidebar-foreground/50 mb-1">
                         Views
                       </div>
                       {viewNavItems.map((item) => {
@@ -436,16 +431,13 @@ export function Sidebar({
             {/* Enterprise Nav Items */}
             {enterpriseNavItems.length > 0 && (
               <div className={cn("space-y-1", viewNavItems.length > 0 ? "mt-4" : "mt-1")}>
-                {isExpanded && viewNavItems.length > 0 && (
-                  <div className="mx-3 mb-2 border-t border-sidebar-border" />
-                )}
                 {enterpriseNavItems.map((item) => renderNavItem(item))}
               </div>
             )}
           </nav>
 
           {/* Settings Section - Always visible, API handles 403 for unauthorized access */}
-          <div className="px-2 py-2 border-t border-sidebar-border">
+          <div className="px-2 py-2">
             {!isExpanded ? (
               <Tooltip>
                 <TooltipTrigger asChild>

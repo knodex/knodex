@@ -63,8 +63,8 @@ export function TopBar({ onMobileMenuToggle }: TopBarProps) {
 
   return (
     <TooltipProvider>
-      <header className="fixed top-0 left-0 right-0 z-30 h-16 border-b border-border bg-background/95 backdrop-blur-sm lg:pl-16">
-        <div className="flex h-full items-center justify-between px-4 lg:px-6">
+      <header className="fixed top-0 left-0 right-0 z-30 h-16 bg-background/95 backdrop-blur-sm lg:pl-16">
+        <div className="container mx-auto flex h-full items-center justify-between px-4 sm:px-6 lg:px-8">
           {/* Left Section: Mobile Menu + Org Name */}
           <div className="flex items-center gap-3">
             {/* Mobile Menu Button */}
@@ -131,7 +131,7 @@ export function TopBar({ onMobileMenuToggle }: TopBarProps) {
 
             {/* User Profile & Logout */}
             {user && (
-              <div className="flex items-center gap-2 pl-2 border-l border-border">
+              <div className="flex items-center gap-2 pl-2">
                 <button
                   className="flex items-center gap-2 rounded-md px-1 py-1 hover:bg-accent transition-colors cursor-pointer"
                   onClick={() => navigate('/user-info')}

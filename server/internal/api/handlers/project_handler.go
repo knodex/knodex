@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/provops-org/knodex/server/internal/api/helpers"
@@ -282,6 +283,18 @@ func (h *ProjectHandler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, rbac.ErrAlreadyExists) {
 			response.WriteError(w, http.StatusConflict, "CONFLICT",
 				"Project already exists: "+req.Name, nil)
+			return
+		}
+		// Surface validation errors from the project service as 400 Bad Request
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "invalid project") {
+			slog.Warn("project validation failed",
+				"requestId", requestID,
+				"userId", userCtx.UserID,
+				"project", req.Name,
+				"error", err,
+			)
+			response.BadRequest(w, errMsg, nil)
 			return
 		}
 		slog.Error("failed to create project",
@@ -601,6 +614,24 @@ func validateCreateProjectRequest(req *CreateProjectRequest) map[string]string {
 	for i, dest := range req.Destinations {
 		if dest.Namespace == "" {
 			errors[fmt.Sprintf("destinations[%d]", i)] = "namespace is required"
+		}
+	}
+
+	// Validate roles if provided
+	for i, role := range req.Roles {
+		if role.Name == "" {
+			errors[fmt.Sprintf("roles[%d].name", i)] = "role name is required"
+		} else if !isValidProjectName(role.Name) {
+			errors[fmt.Sprintf("roles[%d].name", i)] = "role name must be a valid DNS-1123 subdomain"
+		}
+		if len(role.Policies) == 0 {
+			errors[fmt.Sprintf("roles[%d].policies", i)] = "at least one policy is required"
+		}
+		// Check for duplicate role names
+		for j := i + 1; j < len(req.Roles); j++ {
+			if role.Name == req.Roles[j].Name {
+				errors[fmt.Sprintf("roles[%d].name", i)] = fmt.Sprintf("duplicate role name: %s", role.Name)
+			}
 		}
 	}
 

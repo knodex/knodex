@@ -223,7 +223,7 @@ export default function AuditPage() {
 
   if (is403Error) {
     return (
-      <div className="container mx-auto py-6 px-4 sm:px-6 lg:px-8">
+      <div className="py-6">
         <div className="mb-8">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
@@ -254,7 +254,7 @@ export default function AuditPage() {
   }
 
   return (
-    <div className="container mx-auto py-6 px-4 sm:px-6 lg:px-8">
+    <div className="py-6">
       {/* Header */}
       <div className="mb-8 flex items-center justify-between">
         <div className="flex items-center gap-3">

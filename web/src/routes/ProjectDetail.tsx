@@ -40,7 +40,7 @@ export function ProjectDetail() {
   // Loading state
   if (isLoading) {
     return (
-      <div className="container mx-auto py-6 px-4 sm:px-6 lg:px-8">
+      <div className="py-6">
         <div className="flex items-center justify-center py-12">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>
@@ -54,7 +54,7 @@ export function ProjectDetail() {
   // 403 Access Denied state
   if (is403Error) {
     return (
-      <div className="container mx-auto py-6 px-4 sm:px-6 lg:px-8">
+      <div className="py-6">
         <div className="mb-8">
           <Link
             to="/settings/projects"
@@ -87,7 +87,7 @@ export function ProjectDetail() {
   // Other error state (not found, etc.)
   if (error || !project) {
     return (
-      <div className="container mx-auto py-6 px-4 sm:px-6 lg:px-8">
+      <div className="py-6">
         <div className="mb-8">
           <Link
             to="/settings/projects"
@@ -130,7 +130,7 @@ export function ProjectDetail() {
   const destinationCount = project.destinations?.length || 0;
 
   return (
-    <div className="container mx-auto py-6 px-4 sm:px-6 lg:px-8">
+    <div className="py-6">
       {/* Header with back navigation */}
       <div className="mb-8">
         <Link

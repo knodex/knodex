@@ -1475,3 +1475,189 @@ func TestProjectHandler_PolicyReloadError_DoesNotFailRequest(t *testing.T) {
 		t.Errorf("expected InvalidateCacheForProject to NOT be called when LoadProjectPolicies fails, got %d calls", len(enforcer.invalidateCacheForProjCalls))
 	}
 }
+
+func TestProjectHandler_CreateProjectWithRoles(t *testing.T) {
+	t.Parallel()
+
+	svc := newMockProjectService()
+	enforcer := &mockPolicyEnforcer{canAccessResult: true}
+	handler := NewProjectHandler(svc, enforcer, nil)
+
+	reqBody := CreateProjectRequest{
+		Name:        "my-project",
+		Description: "Project with roles",
+		Destinations: []DestinationRequest{
+			{Namespace: "default"},
+		},
+		Roles: []RoleRequest{
+			{
+				Name:        "admin",
+				Description: "Full project management access",
+				Policies:    []string{"p, proj:my-project:admin, projects, *, my-project, allow"},
+				Groups:      []string{"team-admins"},
+			},
+			{
+				Name:        "developer",
+				Description: "Deploy and manage instances",
+				Policies:    []string{"p, proj:my-project:developer, instances, *, my-project/*, allow"},
+				Groups:      []string{"team-devs"},
+			},
+		},
+	}
+	body, _ := json.Marshal(reqBody)
+
+	userCtx := &middleware.UserContext{UserID: "admin-user"}
+	req := newRequestWithUserContext(http.MethodPost, "/api/v1/projects", body, userCtx)
+	rec := httptest.NewRecorder()
+
+	handler.CreateProject(rec, req)
+
+	resp := rec.Result()
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		t.Errorf("expected status %d, got %d", http.StatusCreated, resp.StatusCode)
+	}
+
+	var projectResp ProjectResponse
+	if err := json.NewDecoder(resp.Body).Decode(&projectResp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if projectResp.Name != "my-project" {
+		t.Errorf("expected project name 'my-project', got '%s'", projectResp.Name)
+	}
+	if len(projectResp.Roles) != 2 {
+		t.Fatalf("expected 2 roles, got %d", len(projectResp.Roles))
+	}
+	if projectResp.Roles[0].Name != "admin" {
+		t.Errorf("expected first role name 'admin', got '%s'", projectResp.Roles[0].Name)
+	}
+	if projectResp.Roles[1].Name != "developer" {
+		t.Errorf("expected second role name 'developer', got '%s'", projectResp.Roles[1].Name)
+	}
+	if len(projectResp.Roles[0].Groups) != 1 || projectResp.Roles[0].Groups[0] != "team-admins" {
+		t.Errorf("expected admin role groups ['team-admins'], got %v", projectResp.Roles[0].Groups)
+	}
+}
+
+func TestProjectHandler_CreateProjectWithInvalidRoles(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		roles    []RoleRequest
+		errField string
+		errMsg   string
+	}{
+		{
+			name: "empty role name",
+			roles: []RoleRequest{
+				{Name: "", Policies: []string{"p, proj:test:role, *, get, test/*, allow"}},
+			},
+			errField: "roles[0].name",
+			errMsg:   "role name is required",
+		},
+		{
+			name: "invalid role name format",
+			roles: []RoleRequest{
+				{Name: "INVALID_NAME!", Policies: []string{"p, proj:test:role, *, get, test/*, allow"}},
+			},
+			errField: "roles[0].name",
+			errMsg:   "role name must be a valid DNS-1123 subdomain",
+		},
+		{
+			name: "no policies",
+			roles: []RoleRequest{
+				{Name: "viewer", Policies: []string{}},
+			},
+			errField: "roles[0].policies",
+			errMsg:   "at least one policy is required",
+		},
+		{
+			name: "nil policies",
+			roles: []RoleRequest{
+				{Name: "viewer"},
+			},
+			errField: "roles[0].policies",
+			errMsg:   "at least one policy is required",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			svc := newMockProjectService()
+			enforcer := &mockPolicyEnforcer{canAccessResult: true}
+			handler := NewProjectHandler(svc, enforcer, nil)
+
+			reqBody := CreateProjectRequest{
+				Name:  "test-project",
+				Roles: tc.roles,
+			}
+			body, _ := json.Marshal(reqBody)
+
+			userCtx := &middleware.UserContext{UserID: "admin-user"}
+			req := newRequestWithUserContext(http.MethodPost, "/api/v1/projects", body, userCtx)
+			rec := httptest.NewRecorder()
+
+			handler.CreateProject(rec, req)
+
+			resp := rec.Result()
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Errorf("expected status %d, got %d", http.StatusBadRequest, resp.StatusCode)
+			}
+
+			var errResp response.ErrorResponse
+			if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
+				t.Fatalf("failed to decode error response: %v", err)
+			}
+
+			if errResp.Details[tc.errField] != tc.errMsg {
+				t.Errorf("expected error '%s' for field '%s', got '%v'", tc.errMsg, tc.errField, errResp.Details[tc.errField])
+			}
+		})
+	}
+}
+
+func TestProjectHandler_CreateProjectWithDuplicateRoleNames(t *testing.T) {
+	t.Parallel()
+
+	svc := newMockProjectService()
+	enforcer := &mockPolicyEnforcer{canAccessResult: true}
+	handler := NewProjectHandler(svc, enforcer, nil)
+
+	reqBody := CreateProjectRequest{
+		Name: "test-project",
+		Roles: []RoleRequest{
+			{Name: "admin", Policies: []string{"p, proj:test:admin, *, *, test/*, allow"}},
+			{Name: "admin", Policies: []string{"p, proj:test:admin, projects, get, test, allow"}},
+		},
+	}
+	body, _ := json.Marshal(reqBody)
+
+	userCtx := &middleware.UserContext{UserID: "admin-user"}
+	req := newRequestWithUserContext(http.MethodPost, "/api/v1/projects", body, userCtx)
+	rec := httptest.NewRecorder()
+
+	handler.CreateProject(rec, req)
+
+	resp := rec.Result()
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, resp.StatusCode)
+	}
+
+	var errResp response.ErrorResponse
+	if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
+		t.Fatalf("failed to decode error response: %v", err)
+	}
+
+	if errResp.Details["roles[0].name"] != "duplicate role name: admin" {
+		t.Errorf("expected duplicate role name error, got %v", errResp.Details["roles[0].name"])
+	}
+}

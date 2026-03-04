@@ -2,8 +2,8 @@
  * Project Roles Tab - Manage project roles and permissions
  * Refactored to use ArgoCD-style PolicyRulesTable and OIDCGroupsManager
  */
-import { useState, useCallback } from "react";
-import { Plus, Trash2, Users, Shield, ChevronDown, ChevronRight, Edit2, Save, X } from "lucide-react";
+import { useState, useCallback, useMemo } from "react";
+import { Plus, Trash2, Users, Shield, ChevronDown, ChevronRight, Edit2, Save, X, Sparkles } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -14,6 +14,8 @@ import type { Project, ProjectRole, UpdateProjectRequest } from "@/types/project
 import { PolicyRulesTable } from "../PolicyRulesTable";
 import { OIDCGroupsManager } from "../OIDCGroupsManager";
 import { DeleteRoleDialog } from "../DeleteRoleDialog";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { ROLE_PRESETS, resolvePresetPolicies } from "@/lib/role-presets";
 import { logger } from "@/lib/logger";
 
 interface ProjectRolesTabProps {
@@ -24,7 +26,7 @@ interface ProjectRolesTabProps {
 }
 
 // Built-in roles that cannot be deleted
-const BUILT_IN_ROLES = ["admin", "developer", "viewer"];
+const BUILT_IN_ROLES = ["admin", "developer", "viewer", "readonly"];
 
 export function ProjectRolesTab({
   project,
@@ -43,8 +45,10 @@ export function ProjectRolesTab({
   const [deleteRoleError, setDeleteRoleError] = useState<string | null>(null);
   const [isAdding, setIsAdding] = useState(false);
   const [addRoleError, setAddRoleError] = useState<string | null>(null);
+  const [newRolePolicies, setNewRolePolicies] = useState<string[]>([]);
+  const [newRoleGroups, setNewRoleGroups] = useState<string[]>([]);
 
-  const roles = project.roles || [];
+  const roles = useMemo(() => project.roles || [], [project.roles]);
 
   const toggleRoleExpanded = (roleName: string) => {
     const newExpanded = new Set(expandedRoles);
@@ -138,15 +142,15 @@ export function ProjectRolesTab({
       return;
     }
 
-    // Generate a default "get" policy for the new role
-    // Backend validation requires at least one policy per role
-    const defaultPolicy = `p, proj:${project.name}:${roleName}, *, get, ${project.name}/*, allow`;
+    const policies = newRolePolicies.length > 0
+      ? newRolePolicies
+      : [`p, proj:${project.name}:${roleName}, *, get, ${project.name}/*, allow`];
 
     const newRole: ProjectRole = {
       name: roleName,
       description: newRoleDescription.trim() || undefined,
-      policies: [defaultPolicy],
-      groups: [],
+      policies,
+      groups: newRoleGroups.length > 0 ? newRoleGroups : [],
     };
 
     setIsAdding(true);
@@ -157,6 +161,8 @@ export function ProjectRolesTab({
       setShowAddForm(false);
       setNewRoleName("");
       setNewRoleDescription("");
+      setNewRolePolicies([]);
+      setNewRoleGroups([]);
       // Clear any pending changes since we just saved
       setPendingChanges(new Map());
     } catch (error) {
@@ -249,6 +255,54 @@ export function ProjectRolesTab({
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            {/* Preset Buttons */}
+            <div className="flex flex-wrap gap-2">
+              {ROLE_PRESETS.map((preset) => {
+                const exists = roles.some(r => r.name === preset.name);
+                return (
+                  <Tooltip key={preset.name}>
+                    <TooltipTrigger asChild>
+                      <span>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={exists || isAdding}
+                          onClick={() => {
+                            setNewRoleName(preset.name);
+                            setNewRoleDescription(preset.description);
+                            setNewRolePolicies(resolvePresetPolicies(preset, project.name));
+                            setNewRoleGroups([]);
+                            if (addRoleError) setAddRoleError(null);
+                          }}
+                        >
+                          <Sparkles className="h-4 w-4 mr-1" />
+                          {preset.label}
+                        </Button>
+                      </span>
+                    </TooltipTrigger>
+                    {exists && <TooltipContent>Role already exists</TooltipContent>}
+                  </Tooltip>
+                );
+              })}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={isAdding}
+                onClick={() => {
+                  setNewRoleName("");
+                  setNewRoleDescription("");
+                  setNewRolePolicies([]);
+                  setNewRoleGroups([]);
+                  if (addRoleError) setAddRoleError(null);
+                }}
+              >
+                <Plus className="h-4 w-4 mr-1" />
+                Custom Role
+              </Button>
+            </div>
+
             <div>
               <Label htmlFor="role-name">Role Name</Label>
               <Input
@@ -273,6 +327,29 @@ export function ProjectRolesTab({
                 rows={2}
               />
             </div>
+
+            {/* Policy Rules */}
+            <div>
+              <Label className="text-muted-foreground mb-2 block">Policy Rules</Label>
+              <PolicyRulesTable
+                key={newRoleName}
+                projectId={project.name}
+                roleName={newRoleName.trim().toLowerCase().replace(/\s+/g, "-") || "new-role"}
+                policies={newRolePolicies}
+                onPoliciesChange={setNewRolePolicies}
+                canEdit={true}
+                isLoading={isAdding}
+              />
+            </div>
+
+            {/* OIDC Groups */}
+            <OIDCGroupsManager
+              groups={newRoleGroups}
+              onGroupsChange={setNewRoleGroups}
+              canEdit={true}
+              isLoading={isAdding}
+            />
+
             {addRoleError && (
               <p className="text-sm text-destructive">{addRoleError}</p>
             )}
@@ -283,6 +360,8 @@ export function ProjectRolesTab({
                   setShowAddForm(false);
                   setNewRoleName("");
                   setNewRoleDescription("");
+                  setNewRolePolicies([]);
+                  setNewRoleGroups([]);
                   setAddRoleError(null);
                 }}
                 disabled={isAdding}

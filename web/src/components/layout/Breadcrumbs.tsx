@@ -54,8 +54,8 @@ export function Breadcrumbs({ className }: BreadcrumbsProps) {
   }
 
   return (
-    <div className="border-b border-border bg-card/30">
-      <div className="px-6 py-3">
+    <div className="bg-card/30">
+      <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-3">
         <nav
           aria-label="Breadcrumb"
           className={cn("flex items-center text-sm", className)}

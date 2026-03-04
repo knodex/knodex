@@ -13,7 +13,7 @@ import { isEnterprise } from "@/hooks/useCompliance";
  */
 export function Settings() {
   return (
-    <div className="container mx-auto py-6 px-4 sm:px-6 lg:px-8">
+    <div className="py-6">
       {/* Header */}
       <div className="mb-8">
         <h2 className="text-sm font-medium text-foreground">Settings</h2>

@@ -23,7 +23,7 @@ export function InstanceCardSkeleton() {
       </div>
 
       {/* Footer */}
-      <div className="flex items-center justify-between pt-3 border-t border-border">
+      <div className="flex items-center justify-between pt-3">
         <div className="h-3 w-16 bg-secondary rounded" />
         <div className="h-3 w-20 bg-secondary rounded" />
       </div>
