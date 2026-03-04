@@ -32,6 +32,14 @@ vi.mock('./DeploymentTimeline', () => ({
   DeploymentTimeline: () => <div data-testid="deployment-timeline">Deployment Timeline</div>,
 }));
 
+vi.mock('./EditInstanceSpecDialog', () => ({
+  EditInstanceSpecDialog: () => <div data-testid="edit-instance-spec-dialog" />,
+}));
+
+vi.mock('./GitOpsDriftBanner', () => ({
+  GitOpsDriftBanner: () => null,
+}));
+
 vi.mock('./InstanceStatusCard', () => ({
   InstanceStatusCard: ({ status, conditions }: { status?: Record<string, unknown>; conditions?: unknown[] }) => (
     <div data-testid="instance-status-card">
@@ -429,7 +437,8 @@ describe('InstanceDetailView', () => {
         <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
       );
 
-      expect(screen.getByRole('button', { name: /spec/i })).toBeInTheDocument();
+      // Use exact name "Spec" to distinguish from "Edit Spec" button
+      expect(screen.getByRole('button', { name: /^Spec$/i })).toBeInTheDocument();
     });
 
     it('expands spec section when clicked', async () => {
@@ -438,7 +447,7 @@ describe('InstanceDetailView', () => {
         <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
       );
 
-      const specButton = screen.getByRole('button', { name: /spec/i });
+      const specButton = screen.getByRole('button', { name: /^Spec$/i });
       await user.click(specButton);
 
       expect(screen.getByText(/"replicas": 3/)).toBeInTheDocument();
@@ -451,7 +460,7 @@ describe('InstanceDetailView', () => {
         <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
       );
 
-      const specButton = screen.getByRole('button', { name: /spec/i });
+      const specButton = screen.getByRole('button', { name: /^Spec$/i });
       await user.click(specButton);
       expect(screen.getByText(/"replicas": 3/)).toBeInTheDocument();
 
@@ -491,7 +500,8 @@ describe('InstanceDetailView', () => {
         <InstanceDetailView instance={instanceWithoutSpec} onBack={mockOnBack} />
       );
 
-      expect(screen.queryByRole('button', { name: /spec/i })).not.toBeInTheDocument();
+      // Collapsible "Spec" section should not render, but "Edit Spec" button may still exist
+      expect(screen.queryByRole('button', { name: /^Spec$/i })).not.toBeInTheDocument();
     });
 
     it('does not render status section when status is empty', () => {

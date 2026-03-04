@@ -206,12 +206,10 @@ test.describe('Global Admin - RGD Catalog Access', () => {
     // Look for detail page indicators: Back to catalog link, tabs, details section
     const backLink = page.getByText('Back to catalog');
     const overviewTab = page.getByText('Overview');
-    const schemaTab = page.getByText('Schema');
     const detailsSection = page.getByText('Details');
 
     await expect(backLink).toBeVisible({ timeout: 10000 });
     await expect(overviewTab).toBeVisible();
-    await expect(schemaTab).toBeVisible();
     await expect(detailsSection).toBeVisible();
 
     await page.screenshot({

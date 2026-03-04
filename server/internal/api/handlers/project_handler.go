@@ -317,6 +317,23 @@ func (h *ProjectHandler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		"project", req.Name,
 	)
 
+	// Build audit details with destination and role names
+	createDetails := map[string]any{"description": req.Description}
+	if len(req.Destinations) > 0 {
+		destNames := make([]string, len(req.Destinations))
+		for i, d := range req.Destinations {
+			destNames[i] = d.Namespace
+		}
+		createDetails["destinations"] = destNames
+	}
+	if len(req.Roles) > 0 {
+		roleNames := make([]string, len(req.Roles))
+		for i, r := range req.Roles {
+			roleNames[i] = r.Name
+		}
+		createDetails["roles"] = roleNames
+	}
+
 	audit.RecordEvent(h.recorder, ctx, audit.Event{
 		UserID:    userCtx.UserID,
 		UserEmail: userCtx.Email,
@@ -327,7 +344,7 @@ func (h *ProjectHandler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		Project:   req.Name,
 		RequestID: requestID,
 		Result:    "success",
-		Details:   map[string]any{"description": req.Description},
+		Details:   createDetails,
 	})
 
 	response.WriteJSON(w, http.StatusCreated, toProjectResponse(project))
@@ -445,6 +462,19 @@ func (h *ProjectHandler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Capture old state BEFORE mutation for audit change tracking
+	oldDescription := project.Spec.Description
+	oldDestinations := make([]string, len(project.Spec.Destinations))
+	for i, d := range project.Spec.Destinations {
+		oldDestinations[i] = d.Namespace
+	}
+	oldRoles := make([]string, len(project.Spec.Roles))
+	oldRolePolicies := make(map[string][]string, len(project.Spec.Roles))
+	for i, r := range project.Spec.Roles {
+		oldRoles[i] = r.Name
+		oldRolePolicies[r.Name] = r.Policies
+	}
+
 	// Apply updates to the project
 	applyUpdateToProject(project, req)
 
@@ -476,13 +506,50 @@ func (h *ProjectHandler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 		"project", name,
 	)
 
-	updateDetails := map[string]any{"description": req.Description}
-	if len(req.Destinations) > 0 {
-		updateDetails["destinationsCount"] = len(req.Destinations)
+	// Build change details for audit
+	changes := map[string]any{}
+	if oldDescription != updatedProject.Spec.Description {
+		changes["description"] = audit.SafeChanges(oldDescription, updatedProject.Spec.Description)
 	}
-	if len(req.Roles) > 0 {
-		updateDetails["rolesCount"] = len(req.Roles)
+
+	// Compute destination changes
+	newDestinations := make([]string, len(updatedProject.Spec.Destinations))
+	for i, d := range updatedProject.Spec.Destinations {
+		newDestinations[i] = d.Namespace
 	}
+	addedDests, removedDests := diffStringSlices(oldDestinations, newDestinations)
+	if len(addedDests) > 0 {
+		changes["addedDestinations"] = addedDests
+	}
+	if len(removedDests) > 0 {
+		changes["removedDestinations"] = removedDests
+	}
+
+	// Compute role changes (added, removed, modified)
+	newRoles := make([]string, len(updatedProject.Spec.Roles))
+	newRolePolicies := make(map[string][]string, len(updatedProject.Spec.Roles))
+	for i, r := range updatedProject.Spec.Roles {
+		newRoles[i] = r.Name
+		newRolePolicies[r.Name] = r.Policies
+	}
+	addedRoles, removedRoles := diffStringSlices(oldRoles, newRoles)
+	if len(addedRoles) > 0 {
+		changes["addedRoles"] = addedRoles
+	}
+	if len(removedRoles) > 0 {
+		changes["removedRoles"] = removedRoles
+	}
+	// Detect roles that exist in both but have different policies
+	modifiedRoles := detectModifiedRoles(oldRolePolicies, newRolePolicies)
+	if len(modifiedRoles) > 0 {
+		changes["modifiedRoles"] = modifiedRoles
+	}
+
+	updateDetails := map[string]any{}
+	if len(changes) > 0 {
+		updateDetails["changes"] = changes
+	}
+
 	audit.RecordEvent(h.recorder, ctx, audit.Event{
 		UserID:    userCtx.UserID,
 		UserEmail: userCtx.Email,
@@ -547,6 +614,16 @@ func (h *ProjectHandler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Fetch project state before deletion for audit snapshot
+	projectSnapshot, snapshotErr := h.projectService.GetProject(ctx, name)
+	var deleteDescription string
+	var deleteDestsCount, deleteRolesCount int
+	if snapshotErr == nil && projectSnapshot != nil {
+		deleteDescription = projectSnapshot.Spec.Description
+		deleteDestsCount = len(projectSnapshot.Spec.Destinations)
+		deleteRolesCount = len(projectSnapshot.Spec.Roles)
+	}
+
 	// Remove project policies from enforcer before deletion
 	if h.policyEnforcer != nil {
 		if err := h.policyEnforcer.RemoveProjectPolicies(ctx, name); err != nil {
@@ -591,6 +668,11 @@ func (h *ProjectHandler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 		Project:   name,
 		RequestID: requestID,
 		Result:    "success",
+		Details: map[string]any{
+			"description":       deleteDescription,
+			"destinationsCount": deleteDestsCount,
+			"rolesCount":        deleteRolesCount,
+		},
 	})
 
 	response.WriteJSON(w, http.StatusOK, map[string]string{
@@ -716,4 +798,61 @@ func (h *ProjectHandler) reloadProjectPolicies(ctx context.Context, project *rba
 		"project", project.Name,
 		"duration_ms", time.Since(start).Milliseconds(),
 	)
+}
+
+// diffStringSlices returns the elements added to and removed from oldSlice to produce newSlice.
+func diffStringSlices(oldSlice, newSlice []string) (added, removed []string) {
+	oldSet := make(map[string]bool, len(oldSlice))
+	for _, s := range oldSlice {
+		oldSet[s] = true
+	}
+	newSet := make(map[string]bool, len(newSlice))
+	for _, s := range newSlice {
+		newSet[s] = true
+	}
+	for _, s := range newSlice {
+		if !oldSet[s] {
+			added = append(added, s)
+		}
+	}
+	for _, s := range oldSlice {
+		if !newSet[s] {
+			removed = append(removed, s)
+		}
+	}
+	return added, removed
+}
+
+// detectModifiedRoles returns names of roles that exist in both old and new
+// but have different policy sets.
+func detectModifiedRoles(oldPolicies, newPolicies map[string][]string) []string {
+	var modified []string
+	for name, oldP := range oldPolicies {
+		newP, exists := newPolicies[name]
+		if !exists {
+			continue // removed role, handled by diffStringSlices
+		}
+		if !stringSlicesEqual(oldP, newP) {
+			modified = append(modified, name)
+		}
+	}
+	return modified
+}
+
+// stringSlicesEqual returns true if both slices contain the same elements regardless of order.
+func stringSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	counts := make(map[string]int, len(a))
+	for _, v := range a {
+		counts[v]++
+	}
+	for _, v := range b {
+		counts[v]--
+		if counts[v] < 0 {
+			return false
+		}
+	}
+	return true
 }

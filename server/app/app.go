@@ -41,6 +41,8 @@ import (
 	"github.com/provops-org/knodex/server/internal/bootstrap"
 	"github.com/provops-org/knodex/server/internal/clients"
 	"github.com/provops-org/knodex/server/internal/config"
+	"github.com/provops-org/knodex/server/internal/deployment"
+	"github.com/provops-org/knodex/server/internal/drift"
 	"github.com/provops-org/knodex/server/internal/health"
 	"github.com/provops-org/knodex/server/internal/history"
 	"github.com/provops-org/knodex/server/internal/models"
@@ -609,6 +611,9 @@ func (a *App) Run(ctx context.Context) error {
 		slog.Info("audit API service initialized (enterprise feature)")
 	}
 
+	// Create shared drift detection service (used by both CRUD handler and InstanceTracker callback)
+	driftSvc := drift.NewService(redisClient, slog.Default())
+
 	// Create API server
 	router := api.NewRouterWithConfig(healthChecker, rgdWatcher, instanceTracker, schemaExtractor, api.RouterConfig{
 		SPAHandler:              static.SPAHandler(),
@@ -639,6 +644,7 @@ func (a *App) Run(ctx context.Context) error {
 		AuditRecorder:           auditRecorder,
 		AuditLoginMiddleware:    auditLoginMiddleware,
 		AuditAPIService:         auditAPIService,
+		DriftService:            driftSvc,
 	})
 
 	server := &http.Server{
@@ -749,6 +755,20 @@ func (a *App) Run(ctx context.Context) error {
 		instanceTracker.SetOnUpdateCallback(
 			newInstanceUpdateCallback(historyService, rgdWatcher, instanceTracker, k8sClient, projectService, wsHub),
 		)
+
+		// Register GitOps drift reconciliation callback
+		// When an instance is updated and its live spec matches the desired spec in Redis,
+		// the drift entry is cleared (ArgoCD/Flux has reconciled the change).
+		instanceTracker.SetOnUpdateCallback(func(action watcher.InstanceAction, namespace, kind, name string, instance *models.Instance) {
+			if action != watcher.InstanceActionUpdate || instance == nil || instance.Spec == nil {
+				return
+			}
+			deployMode := deployment.ParseDeploymentMode(instance.Labels[models.DeploymentModeLabel])
+			if deployMode != deployment.ModeGitOps && deployMode != deployment.ModeHybrid {
+				return
+			}
+			driftSvc.CheckAndClearIfReconciled(context.Background(), namespace, kind, name, instance.Spec)
+		})
 
 		if err := instanceTracker.Start(runCtx); err != nil {
 			slog.Error("failed to start instance tracker", "error", err)

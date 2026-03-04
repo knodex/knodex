@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import {
   ArrowLeft,
   Box,
+  Pencil,
   Trash2,
   Clock,
   AlertCircle,
@@ -9,6 +10,8 @@ import {
   ChevronUp,
 } from "lucide-react";
 import { InstanceStatusCard } from "./InstanceStatusCard";
+import { EditInstanceSpecDialog } from "./EditInstanceSpecDialog";
+import { GitOpsDriftBanner } from "./GitOpsDriftBanner";
 import { Button } from "@/components/ui/button";
 import type { Instance } from "@/types/rgd";
 import { HealthBadge } from "./HealthBadge";
@@ -32,10 +35,12 @@ export function InstanceDetailView({
 }: InstanceDetailViewProps) {
   const [showSpec, setShowSpec] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showEditDialog, setShowEditDialog] = useState(false);
 
   const deleteInstance = useDeleteInstance();
-  // Real-time permission check via backend Casbin enforcer
+  // Real-time permission checks via backend Casbin enforcer
   const { allowed: canDelete, isLoading: isLoadingCanDelete, isError: isErrorCanDelete } = useCanI('instances', 'delete', instance?.namespace || '-');
+  const { allowed: canUpdate, isLoading: isLoadingCanUpdate, isError: isErrorCanUpdate } = useCanI('instances', 'update', instance?.namespace || '-');
 
   const handleDelete = useCallback(async () => {
     try {
@@ -65,19 +70,32 @@ export function InstanceDetailView({
             Back
           </Button>
         </div>
-        {/* Only show delete button if user has permission (optimistic during loading) */}
-        {(isLoadingCanDelete || isErrorCanDelete || canDelete) && (
-          <div className="flex items-center gap-2">
-            {!showDeleteConfirm ? (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowDeleteConfirm(true)}
-                className="gap-1.5 text-destructive border-destructive/30 hover:bg-destructive/10"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-                Delete
-              </Button>
+        <div className="flex items-center gap-2">
+          {/* Edit Spec button — shown optimistically during loading (same pattern as delete) */}
+          {(isLoadingCanUpdate || isErrorCanUpdate || canUpdate) && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowEditDialog(true)}
+              className="gap-1.5"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+              Edit Spec
+            </Button>
+          )}
+          {/* Delete button — only shown if user has delete permission (optimistic during loading) */}
+          {(isLoadingCanDelete || isErrorCanDelete || canDelete) && (
+            <>
+              {!showDeleteConfirm ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowDeleteConfirm(true)}
+                  className="gap-1.5 text-destructive border-destructive/30 hover:bg-destructive/10"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Delete
+                </Button>
             ) : (
               <div className="flex flex-col gap-2 p-3 rounded-lg border border-destructive/30 bg-destructive/5">
                 <div className="flex items-center gap-2 text-sm text-destructive">
@@ -106,8 +124,9 @@ export function InstanceDetailView({
                 </div>
               </div>
             )}
-          </div>
-        )}
+            </>
+          )}
+        </div>
       </div>
 
       {/* Instance info card */}
@@ -170,6 +189,9 @@ export function InstanceDetailView({
         annotations={instance.annotations}
       />
 
+      {/* GitOps Drift Banner */}
+      <GitOpsDriftBanner instance={instance} />
+
       {/* Status Timeline (for GitOps/Hybrid deployments) */}
       {(instance.deploymentMode === "gitops" || instance.deploymentMode === "hybrid") && (
         <StatusTimeline
@@ -228,6 +250,13 @@ export function InstanceDetailView({
           </div>
         </div>
       )}
+
+      {/* Edit Spec Dialog */}
+      <EditInstanceSpecDialog
+        instance={instance}
+        open={showEditDialog}
+        onOpenChange={setShowEditDialog}
+      />
     </div>
   );
 }

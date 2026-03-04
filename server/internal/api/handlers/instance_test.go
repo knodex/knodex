@@ -9,8 +9,16 @@ import (
 	"strings"
 	"testing"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	fakedynamic "k8s.io/client-go/dynamic/fake"
+	k8stesting "k8s.io/client-go/testing"
+
 	"github.com/provops-org/knodex/server/internal/api/middleware"
 	"github.com/provops-org/knodex/server/internal/api/response"
+	"github.com/provops-org/knodex/server/internal/deployment"
 	"github.com/provops-org/knodex/server/internal/models"
 	"github.com/provops-org/knodex/server/internal/watcher"
 )
@@ -709,5 +717,909 @@ func TestSanitizeConnectionError(t *testing.T) {
 				t.Errorf("expected %q, got %q", tt.expected, result)
 			}
 		})
+	}
+}
+
+// --- UpdateInstance tests ---
+
+// newUpdateTestSetup creates common test infrastructure for UpdateInstance tests.
+// Returns handler, mockAuditRecorder, and fakeDynClient for test assertions.
+func newUpdateTestSetup(t *testing.T) (*InstanceCRUDHandler, *mockAuditRecorder, *fakedynamic.FakeDynamicClient) {
+	t.Helper()
+	cache := watcher.NewInstanceCache()
+	cache.Set(&models.Instance{
+		Name:        "test-instance",
+		Namespace:   "production",
+		Kind:        "WebApp",
+		APIVersion:  "kro.run/v1alpha1",
+		RGDName:     "webapp-rgd",
+		Health:      models.HealthHealthy,
+		ProjectName: "alpha",
+		Labels: map[string]string{
+			models.DeploymentModeLabel: string(deployment.ModeDirect),
+		},
+		Spec: map[string]interface{}{
+			"replicas": float64(2),
+			"image":    "nginx:1.0",
+		},
+	})
+
+	scheme := runtime.NewScheme()
+	obj := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "kro.run/v1alpha1",
+			"kind":       "WebApp",
+			"metadata": map[string]interface{}{
+				"name":            "test-instance",
+				"namespace":       "production",
+				"resourceVersion": "12345",
+			},
+			"spec": map[string]interface{}{
+				"replicas": float64(2),
+				"image":    "nginx:1.0",
+			},
+		},
+	}
+	gvrToListKind := map[schema.GroupVersionResource]string{
+		{Group: "kro.run", Version: "v1alpha1", Resource: "webapps"}: "WebAppList",
+	}
+	fakeDynClient := fakedynamic.NewSimpleDynamicClientWithCustomListKinds(scheme, gvrToListKind, obj)
+
+	tracker := watcher.NewInstanceTrackerForTest(cache, fakeDynClient)
+
+	recorder := &mockAuditRecorder{}
+	handler := NewInstanceCRUDHandler(InstanceCRUDHandlerConfig{
+		InstanceTracker: tracker,
+		DynamicClient:   fakeDynClient,
+		AuditRecorder:   recorder,
+	})
+
+	return handler, recorder, fakeDynClient
+}
+
+// TestUpdateInstance_Success tests successful spec update (Task 3.1)
+func TestUpdateInstance_Success(t *testing.T) {
+	t.Parallel()
+	handler, recorder, _ := newUpdateTestSetup(t)
+
+	body := `{"spec": {"replicas": 3, "image": "nginx:2.0"}}`
+	userCtx := &middleware.UserContext{UserID: "dev-user", Email: "dev@test.local"}
+	req := newRequestWithUserContext(http.MethodPatch, "/api/v1/instances/production/WebApp/test-instance",
+		[]byte(body), userCtx)
+	req.SetPathValue("namespace", "production")
+	req.SetPathValue("kind", "WebApp")
+	req.SetPathValue("name", "test-instance")
+	rec := httptest.NewRecorder()
+
+	handler.UpdateInstance(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp UpdateInstanceResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp.Name != "test-instance" {
+		t.Errorf("expected name 'test-instance', got %q", resp.Name)
+	}
+	if resp.Namespace != "production" {
+		t.Errorf("expected namespace 'production', got %q", resp.Namespace)
+	}
+	if resp.Kind != "WebApp" {
+		t.Errorf("expected kind 'WebApp', got %q", resp.Kind)
+	}
+	if resp.Status != "updated" {
+		t.Errorf("expected status 'updated', got %q", resp.Status)
+	}
+	if resp.DeploymentMode != "direct" {
+		t.Errorf("expected deploymentMode 'direct', got %q", resp.DeploymentMode)
+	}
+
+	// Verify audit event was recorded
+	if len(recorder.events) != 1 {
+		t.Fatalf("expected 1 audit event, got %d", len(recorder.events))
+	}
+	e := recorder.lastEvent()
+	if e.Action != "update" {
+		t.Errorf("expected action 'update', got %q", e.Action)
+	}
+	if e.Resource != "instances" {
+		t.Errorf("expected resource 'instances', got %q", e.Resource)
+	}
+	if e.Name != "test-instance" {
+		t.Errorf("expected name 'test-instance', got %q", e.Name)
+	}
+	if e.Namespace != "production" {
+		t.Errorf("expected namespace 'production', got %q", e.Namespace)
+	}
+	if e.Project != "alpha" {
+		t.Errorf("expected project 'alpha', got %q", e.Project)
+	}
+	if e.UserEmail != "dev@test.local" {
+		t.Errorf("expected email 'dev@test.local', got %q", e.UserEmail)
+	}
+	if e.Result != "success" {
+		t.Errorf("expected result 'success', got %q", e.Result)
+	}
+	// Verify audit details contain metadata (not spec)
+	if e.Details["rgdName"] != "webapp-rgd" {
+		t.Errorf("expected rgdName 'webapp-rgd', got %v", e.Details["rgdName"])
+	}
+	if e.Details["kind"] != "WebApp" {
+		t.Errorf("expected kind 'WebApp', got %v", e.Details["kind"])
+	}
+	if e.Details["deploymentMode"] != "direct" {
+		t.Errorf("expected deploymentMode 'direct', got %v", e.Details["deploymentMode"])
+	}
+	// Spec must NOT be in audit details (may contain secrets)
+	if _, hasSpec := e.Details["spec"]; hasSpec {
+		t.Errorf("audit details must NOT contain spec (may contain secrets)")
+	}
+}
+
+// TestUpdateInstance_Unauthorized tests that unauthenticated users get 401 (Task 3.2)
+func TestUpdateInstance_Unauthorized(t *testing.T) {
+	t.Parallel()
+	handler, _, _ := newUpdateTestSetup(t)
+
+	body := `{"spec": {"replicas": 3}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/instances/production/WebApp/test-instance",
+		strings.NewReader(body))
+	req.SetPathValue("namespace", "production")
+	req.SetPathValue("kind", "WebApp")
+	req.SetPathValue("name", "test-instance")
+	rec := httptest.NewRecorder()
+
+	handler.UpdateInstance(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", rec.Code)
+	}
+}
+
+// TestUpdateInstance_NotFound tests that non-existent instances return 404 (Task 3.3)
+func TestUpdateInstance_NotFound(t *testing.T) {
+	t.Parallel()
+	handler, _, _ := newUpdateTestSetup(t)
+
+	body := `{"spec": {"replicas": 3}}`
+	userCtx := &middleware.UserContext{UserID: "dev-user", Email: "dev@test.local"}
+	req := newRequestWithUserContext(http.MethodPatch, "/api/v1/instances/production/WebApp/nonexistent",
+		[]byte(body), userCtx)
+	req.SetPathValue("namespace", "production")
+	req.SetPathValue("kind", "WebApp")
+	req.SetPathValue("name", "nonexistent")
+	rec := httptest.NewRecorder()
+
+	handler.UpdateInstance(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestUpdateInstance_InvalidSpec tests that empty/nil spec returns 400 (Task 3.4)
+func TestUpdateInstance_InvalidSpec(t *testing.T) {
+	t.Parallel()
+	handler, _, _ := newUpdateTestSetup(t)
+
+	tests := []struct {
+		name string
+		body string
+	}{
+		{"empty spec", `{"spec": {}}`},
+		{"null spec", `{"spec": null}`},
+		{"missing spec", `{}`},
+		{"invalid json", `{invalid`},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			userCtx := &middleware.UserContext{UserID: "dev-user", Email: "dev@test.local"}
+			req := newRequestWithUserContext(http.MethodPatch, "/api/v1/instances/production/WebApp/test-instance",
+				[]byte(tt.body), userCtx)
+			req.SetPathValue("namespace", "production")
+			req.SetPathValue("kind", "WebApp")
+			req.SetPathValue("name", "test-instance")
+			rec := httptest.NewRecorder()
+
+			handler.UpdateInstance(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("expected 400, got %d; body: %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+// TestUpdateInstance_NilTracker tests that UpdateInstance returns 503 when tracker is nil
+func TestUpdateInstance_NilTracker(t *testing.T) {
+	t.Parallel()
+	handler := NewInstanceCRUDHandler(InstanceCRUDHandlerConfig{})
+
+	body := `{"spec": {"replicas": 3}}`
+	userCtx := &middleware.UserContext{UserID: "dev-user", Email: "dev@test.local"}
+	req := newRequestWithUserContext(http.MethodPatch, "/api/v1/instances/default/WebApp/test",
+		[]byte(body), userCtx)
+	req.SetPathValue("namespace", "default")
+	req.SetPathValue("kind", "WebApp")
+	req.SetPathValue("name", "test")
+	rec := httptest.NewRecorder()
+
+	handler.UpdateInstance(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected 503, got %d", rec.Code)
+	}
+}
+
+// TestUpdateInstance_NilDynamicClient tests 503 when dynamic client is nil
+func TestUpdateInstance_NilDynamicClient(t *testing.T) {
+	t.Parallel()
+	cache := watcher.NewInstanceCache()
+	tracker := watcher.NewInstanceTrackerWithCache(cache)
+	handler := NewInstanceCRUDHandler(InstanceCRUDHandlerConfig{
+		InstanceTracker: tracker,
+	})
+
+	body := `{"spec": {"replicas": 3}}`
+	userCtx := &middleware.UserContext{UserID: "dev-user", Email: "dev@test.local"}
+	req := newRequestWithUserContext(http.MethodPatch, "/api/v1/instances/default/WebApp/test",
+		[]byte(body), userCtx)
+	req.SetPathValue("namespace", "default")
+	req.SetPathValue("kind", "WebApp")
+	req.SetPathValue("name", "test")
+	rec := httptest.NewRecorder()
+
+	handler.UpdateInstance(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected 503, got %d", rec.Code)
+	}
+}
+
+// TestUpdateInstance_MissingPathParams tests 400 when path parameters are missing
+func TestUpdateInstance_MissingPathParams(t *testing.T) {
+	t.Parallel()
+	handler, _, _ := newUpdateTestSetup(t)
+
+	body := `{"spec": {"replicas": 3}}`
+	userCtx := &middleware.UserContext{UserID: "dev-user", Email: "dev@test.local"}
+	req := newRequestWithUserContext(http.MethodPatch, "/api/v1/instances///",
+		[]byte(body), userCtx)
+	// Intentionally not setting path values
+	rec := httptest.NewRecorder()
+
+	handler.UpdateInstance(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", rec.Code)
+	}
+}
+
+// TestHandleUpdateError_NoRawErrorLeakage tests that handleUpdateError does not
+// leak raw K8s error messages to the client (Task 3.5)
+func TestHandleUpdateError_NoRawErrorLeakage(t *testing.T) {
+	t.Parallel()
+	handler := NewInstanceCRUDHandler(InstanceCRUDHandlerConfig{})
+
+	tests := []struct {
+		name           string
+		err            error
+		expectedStatus int
+	}{
+		{
+			name:           "not found error",
+			err:            fmt.Errorf("webapps.kro.run \"test\" not found"),
+			expectedStatus: http.StatusNotFound,
+		},
+		{
+			name:           "forbidden error",
+			err:            fmt.Errorf("webapps.kro.run is forbidden"),
+			expectedStatus: http.StatusForbidden,
+		},
+		{
+			name:           "conflict error - object modified",
+			err:            fmt.Errorf("Operation cannot be fulfilled: the object has been modified"),
+			expectedStatus: http.StatusConflict,
+		},
+		{
+			name:           "validation error",
+			err:            fmt.Errorf("admission webhook denied: invalid spec"),
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:           "generic internal error",
+			err:            fmt.Errorf("connection refused: dial tcp 10.96.0.1:443"),
+			expectedStatus: http.StatusInternalServerError,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			rec := httptest.NewRecorder()
+			handler.handleUpdateError(rec, "default", "WebApp", "test", tt.err)
+
+			if rec.Code != tt.expectedStatus {
+				t.Errorf("expected status %d, got %d", tt.expectedStatus, rec.Code)
+			}
+
+			// Verify no raw error message leaked
+			var errResp response.ErrorResponse
+			if err := json.NewDecoder(rec.Body).Decode(&errResp); err != nil {
+				t.Fatalf("failed to decode error response: %v", err)
+			}
+			rawErr := tt.err.Error()
+			if errResp.Message == rawErr {
+				t.Errorf("raw error message leaked to client: %q", rawErr)
+			}
+		})
+	}
+}
+
+// TestGVRFromAPIVersionAndKind tests the GVR resolution helper
+func TestGVRFromAPIVersionAndKind(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		apiVersion string
+		kind       string
+		wantGroup  string
+		wantVer    string
+		wantRes    string
+	}{
+		{
+			name:       "kro.run alpha",
+			apiVersion: "kro.run/v1alpha1",
+			kind:       "WebApp",
+			wantGroup:  "kro.run",
+			wantVer:    "v1alpha1",
+			wantRes:    "webapps",
+		},
+		{
+			name:       "custom group",
+			apiVersion: "example.com/v1",
+			kind:       "Database",
+			wantGroup:  "example.com",
+			wantVer:    "v1",
+			wantRes:    "databases",
+		},
+		{
+			name:       "version only alpha",
+			apiVersion: "v1alpha1",
+			kind:       "Widget",
+			wantGroup:  "kro.run",
+			wantVer:    "v1alpha1",
+			wantRes:    "widgets",
+		},
+		{
+			name:       "version only stable",
+			apiVersion: "v1",
+			kind:       "Pod",
+			wantGroup:  "",
+			wantVer:    "v1",
+			wantRes:    "pods",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			gvr := gvrFromAPIVersionAndKind(tt.apiVersion, tt.kind)
+			if gvr.Group != tt.wantGroup {
+				t.Errorf("group: expected %q, got %q", tt.wantGroup, gvr.Group)
+			}
+			if gvr.Version != tt.wantVer {
+				t.Errorf("version: expected %q, got %q", tt.wantVer, gvr.Version)
+			}
+			if gvr.Resource != tt.wantRes {
+				t.Errorf("resource: expected %q, got %q", tt.wantRes, gvr.Resource)
+			}
+		})
+	}
+}
+
+// --- Deployment mode update tests (Task 2) ---
+
+// newGitOpsUpdateTestSetup creates a test instance with gitops deployment mode label.
+// The handler has NO deploymentController or repoService to test error paths.
+func newGitOpsUpdateTestSetup(t *testing.T, deployMode deployment.DeploymentMode) (*InstanceCRUDHandler, *mockAuditRecorder) {
+	t.Helper()
+	cache := watcher.NewInstanceCache()
+	cache.Set(&models.Instance{
+		Name:         "gitops-instance",
+		Namespace:    "staging",
+		Kind:         "WebApp",
+		APIVersion:   "kro.run/v1alpha1",
+		RGDName:      "webapp-rgd",
+		RGDNamespace: "kro-system",
+		Health:       models.HealthHealthy,
+		ProjectName:  "beta",
+		ProjectID:    "proj-beta",
+		Labels: map[string]string{
+			models.DeploymentModeLabel: string(deployMode),
+		},
+		Spec: map[string]interface{}{
+			"replicas": float64(1),
+		},
+	})
+
+	schm := runtime.NewScheme()
+	obj := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "kro.run/v1alpha1",
+			"kind":       "WebApp",
+			"metadata": map[string]interface{}{
+				"name":            "gitops-instance",
+				"namespace":       "staging",
+				"resourceVersion": "999",
+			},
+			"spec": map[string]interface{}{
+				"replicas": float64(1),
+			},
+		},
+	}
+	gvrToListKind := map[schema.GroupVersionResource]string{
+		{Group: "kro.run", Version: "v1alpha1", Resource: "webapps"}: "WebAppList",
+	}
+	fakeDynClient := fakedynamic.NewSimpleDynamicClientWithCustomListKinds(schm, gvrToListKind, obj)
+	tracker := watcher.NewInstanceTrackerForTest(cache, fakeDynClient)
+	recorder := &mockAuditRecorder{}
+
+	handler := NewInstanceCRUDHandler(InstanceCRUDHandlerConfig{
+		InstanceTracker: tracker,
+		DynamicClient:   fakeDynClient,
+		AuditRecorder:   recorder,
+	})
+
+	return handler, recorder
+}
+
+// TestUpdateInstance_GitOps_NoRepositoryID tests that gitops mode requires repositoryId.
+// When deploymentController is nil, the handler returns 503 before checking repositoryId.
+// When deploymentController IS available but repositoryId is missing, it returns 400.
+func TestUpdateInstance_GitOps_NoRepositoryID(t *testing.T) {
+	t.Parallel()
+
+	// Without controller: 503 "not configured" (checked first in pushSpecUpdateToGit)
+	t.Run("no_controller", func(t *testing.T) {
+		t.Parallel()
+		handler, _ := newGitOpsUpdateTestSetup(t, deployment.ModeGitOps)
+
+		body := `{"spec": {"replicas": 3}}`
+		userCtx := &middleware.UserContext{UserID: "dev-user", Email: "dev@test.local"}
+		req := newRequestWithUserContext(http.MethodPatch, "/api/v1/instances/staging/WebApp/gitops-instance",
+			[]byte(body), userCtx)
+		req.SetPathValue("namespace", "staging")
+		req.SetPathValue("kind", "WebApp")
+		req.SetPathValue("name", "gitops-instance")
+		rec := httptest.NewRecorder()
+
+		handler.UpdateInstance(rec, req)
+
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Errorf("expected 503, got %d; body: %s", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+// TestUpdateInstance_GitOps_NoController tests that gitops mode returns 503 when controller is nil
+func TestUpdateInstance_GitOps_NoController(t *testing.T) {
+	t.Parallel()
+	handler, _ := newGitOpsUpdateTestSetup(t, deployment.ModeGitOps)
+
+	body := `{"spec": {"replicas": 3}, "repositoryId": "repo-1"}`
+	userCtx := &middleware.UserContext{UserID: "dev-user", Email: "dev@test.local"}
+	req := newRequestWithUserContext(http.MethodPatch, "/api/v1/instances/staging/WebApp/gitops-instance",
+		[]byte(body), userCtx)
+	req.SetPathValue("namespace", "staging")
+	req.SetPathValue("kind", "WebApp")
+	req.SetPathValue("name", "gitops-instance")
+	rec := httptest.NewRecorder()
+
+	handler.UpdateInstance(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected 503, got %d; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestUpdateInstance_GitOps_DoesNotPatchK8s tests that gitops mode does NOT patch the K8s resource
+func TestUpdateInstance_GitOps_DoesNotPatchK8s(t *testing.T) {
+	t.Parallel()
+	handler, _ := newGitOpsUpdateTestSetup(t, deployment.ModeGitOps)
+
+	// Send request without repositoryId — this will error before any K8s patch
+	body := `{"spec": {"replicas": 5}}`
+	userCtx := &middleware.UserContext{UserID: "dev-user", Email: "dev@test.local"}
+	req := newRequestWithUserContext(http.MethodPatch, "/api/v1/instances/staging/WebApp/gitops-instance",
+		[]byte(body), userCtx)
+	req.SetPathValue("namespace", "staging")
+	req.SetPathValue("kind", "WebApp")
+	req.SetPathValue("name", "gitops-instance")
+	rec := httptest.NewRecorder()
+
+	handler.UpdateInstance(rec, req)
+
+	// Should fail before patching K8s (no repositoryId)
+	if rec.Code == http.StatusOK {
+		t.Errorf("gitops mode should NOT return 200 without repositoryId")
+	}
+}
+
+// TestUpdateInstance_Hybrid_PatchesK8sEvenIfGitFails tests that hybrid mode patches K8s
+// even when Git push fails (graceful degradation)
+func TestUpdateInstance_Hybrid_PatchesK8sEvenIfGitFails(t *testing.T) {
+	t.Parallel()
+	handler, recorder := newGitOpsUpdateTestSetup(t, deployment.ModeHybrid)
+
+	// Hybrid mode: K8s patch should succeed, Git push will fail (no controller/repo)
+	// but the handler treats Git failure as non-fatal in hybrid mode
+	body := `{"spec": {"replicas": 5}}`
+	userCtx := &middleware.UserContext{UserID: "dev-user", Email: "dev@test.local"}
+	req := newRequestWithUserContext(http.MethodPatch, "/api/v1/instances/staging/WebApp/gitops-instance",
+		[]byte(body), userCtx)
+	req.SetPathValue("namespace", "staging")
+	req.SetPathValue("kind", "WebApp")
+	req.SetPathValue("name", "gitops-instance")
+	rec := httptest.NewRecorder()
+
+	handler.UpdateInstance(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for hybrid mode (K8s should succeed), got %d; body: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp UpdateInstanceResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if resp.DeploymentMode != "hybrid" {
+		t.Errorf("expected deploymentMode 'hybrid', got %q", resp.DeploymentMode)
+	}
+
+	// Verify GitInfo indicates failure
+	if resp.GitInfo == nil {
+		t.Fatal("expected gitInfo in response for hybrid mode")
+	}
+	if resp.GitInfo.PushStatus != deployment.GitPushFailed {
+		t.Errorf("expected gitInfo.pushStatus 'failed', got %q", resp.GitInfo.PushStatus)
+	}
+
+	// Verify audit event was recorded with partial result (K8s succeeded, Git failed)
+	if len(recorder.events) != 1 {
+		t.Fatalf("expected 1 audit event, got %d", len(recorder.events))
+	}
+	e := recorder.lastEvent()
+	if e.Action != "update" {
+		t.Errorf("expected action 'update', got %q", e.Action)
+	}
+	if e.Result != "partial" {
+		t.Errorf("expected audit result 'partial' (K8s OK, Git failed), got %q", e.Result)
+	}
+	if e.Details["deploymentMode"] != "hybrid" {
+		t.Errorf("expected deploymentMode 'hybrid' in audit, got %v", e.Details["deploymentMode"])
+	}
+	if e.Details["gitPushFailed"] != true {
+		t.Error("expected gitPushFailed=true in audit details for hybrid Git failure")
+	}
+}
+
+// TestUpdateInstance_DirectWithLabel tests that direct mode works correctly with label
+func TestUpdateInstance_DirectWithLabel(t *testing.T) {
+	t.Parallel()
+	handler, recorder, _ := newUpdateTestSetup(t)
+
+	body := `{"spec": {"replicas": 10}}`
+	userCtx := &middleware.UserContext{UserID: "admin", Email: "admin@test.local"}
+	req := newRequestWithUserContext(http.MethodPatch, "/api/v1/instances/production/WebApp/test-instance",
+		[]byte(body), userCtx)
+	req.SetPathValue("namespace", "production")
+	req.SetPathValue("kind", "WebApp")
+	req.SetPathValue("name", "test-instance")
+	rec := httptest.NewRecorder()
+
+	handler.UpdateInstance(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp UpdateInstanceResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp.DeploymentMode != "direct" {
+		t.Errorf("expected deploymentMode 'direct', got %q", resp.DeploymentMode)
+	}
+	// Direct mode should have no GitInfo
+	if resp.GitInfo != nil {
+		t.Errorf("direct mode should not have gitInfo, got %+v", resp.GitInfo)
+	}
+
+	// Verify audit records deployment mode
+	if len(recorder.events) != 1 {
+		t.Fatalf("expected 1 audit event, got %d", len(recorder.events))
+	}
+	if recorder.lastEvent().Details["deploymentMode"] != "direct" {
+		t.Errorf("expected deploymentMode 'direct' in audit, got %v", recorder.lastEvent().Details["deploymentMode"])
+	}
+}
+
+// TestUpdateInstance_GitOps_RepositoryIdAccepted verifies that repositoryId is parsed
+// from the request body (fails with 503 because no deployment controller is configured).
+func TestUpdateInstance_GitOps_RepositoryIdAccepted(t *testing.T) {
+	t.Parallel()
+	handler, _ := newGitOpsUpdateTestSetup(t, deployment.ModeGitOps)
+
+	body := `{"spec": {"replicas": 3}, "repositoryId": "my-repo-123"}`
+	userCtx := &middleware.UserContext{UserID: "dev-user", Email: "dev@test.local"}
+	req := newRequestWithUserContext(http.MethodPatch, "/api/v1/instances/staging/WebApp/gitops-instance",
+		[]byte(body), userCtx)
+	req.SetPathValue("namespace", "staging")
+	req.SetPathValue("kind", "WebApp")
+	req.SetPathValue("name", "gitops-instance")
+	rec := httptest.NewRecorder()
+
+	handler.UpdateInstance(rec, req)
+
+	// Fails with 503 because no deployment controller — but validates request parsing
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected 503 (no controller), got %d; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestUpdateInstance_AuditSpecChanges verifies that audit events record which spec keys changed.
+// Old spec: {"replicas": 2, "image": "nginx:1.0"}
+// New spec: {"replicas": 10, "env": "production"} → replicas modified, image removed, env added
+func TestUpdateInstance_AuditSpecChanges(t *testing.T) {
+	t.Parallel()
+	handler, recorder, _ := newUpdateTestSetup(t)
+
+	body := `{"spec": {"replicas": 10, "env": "production"}}`
+	userCtx := &middleware.UserContext{UserID: "admin", Email: "admin@test.local"}
+	req := newRequestWithUserContext(http.MethodPatch, "/api/v1/instances/production/WebApp/test-instance",
+		[]byte(body), userCtx)
+	req.SetPathValue("namespace", "production")
+	req.SetPathValue("kind", "WebApp")
+	req.SetPathValue("name", "test-instance")
+	rec := httptest.NewRecorder()
+
+	handler.UpdateInstance(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", rec.Code, rec.Body.String())
+	}
+
+	if len(recorder.events) != 1 {
+		t.Fatalf("expected 1 audit event, got %d", len(recorder.events))
+	}
+	e := recorder.lastEvent()
+
+	// Verify specChanges present in audit details
+	specChanges, ok := e.Details["specChanges"].(map[string]any)
+	if !ok {
+		t.Fatal("expected specChanges in audit details")
+	}
+
+	// "env" is new (added)
+	if added, ok := specChanges["added"].([]string); ok {
+		if !containsStr(added, "env") {
+			t.Errorf("expected 'env' in added keys, got %v", added)
+		}
+	} else {
+		t.Error("expected 'added' in specChanges")
+	}
+
+	// "image" was removed (not in new spec)
+	if removed, ok := specChanges["removed"].([]string); ok {
+		if !containsStr(removed, "image") {
+			t.Errorf("expected 'image' in removed keys, got %v", removed)
+		}
+	} else {
+		t.Error("expected 'removed' in specChanges")
+	}
+
+	// "replicas" changed from 2 to 10 (modified)
+	if modified, ok := specChanges["modified"].([]string); ok {
+		if !containsStr(modified, "replicas") {
+			t.Errorf("expected 'replicas' in modified keys, got %v", modified)
+		}
+	} else {
+		t.Error("expected 'modified' in specChanges")
+	}
+
+	// Verify NO spec values are leaked in audit (security: specs may contain secrets)
+	for _, v := range specChanges {
+		if keyList, ok := v.([]string); ok {
+			for _, keyName := range keyList {
+				if keyName == "production" || keyName == "10" || keyName == "nginx:1.0" {
+					t.Errorf("spec VALUE leaked in audit specChanges: %v", keyList)
+				}
+			}
+		}
+	}
+}
+
+func containsStr(slice []string, s string) bool {
+	for _, v := range slice {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
+// TestUpdateInstance_ResourceVersionConflict tests that a K8s resource version conflict returns 409 (Task 3.5)
+func TestUpdateInstance_ResourceVersionConflict(t *testing.T) {
+	t.Parallel()
+	handler, _, fakeDynClient := newUpdateTestSetup(t)
+
+	// Inject a reactor that returns a Conflict error for patch operations
+	fakeDynClient.PrependReactor("patch", "webapps", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewConflict(
+			schema.GroupResource{Group: "kro.run", Resource: "webapps"},
+			"test-instance",
+			fmt.Errorf("the object has been modified; please apply your changes to the latest version"),
+		)
+	})
+
+	body := `{"spec": {"replicas": 5}, "resourceVersion": "stale-version"}`
+	userCtx := &middleware.UserContext{UserID: "dev-user", Email: "dev@test.local"}
+	req := newRequestWithUserContext(http.MethodPatch, "/api/v1/instances/production/WebApp/test-instance",
+		[]byte(body), userCtx)
+	req.SetPathValue("namespace", "production")
+	req.SetPathValue("kind", "WebApp")
+	req.SetPathValue("name", "test-instance")
+	rec := httptest.NewRecorder()
+
+	handler.UpdateInstance(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409 Conflict, got %d; body: %s", rec.Code, rec.Body.String())
+	}
+
+	var errResp response.ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&errResp); err != nil {
+		t.Fatalf("failed to decode error response: %v", err)
+	}
+	if errResp.Code != "CONFLICT" {
+		t.Errorf("expected error code 'CONFLICT', got %q", errResp.Code)
+	}
+}
+
+// TestUpdateInstance_DirectPatchFailure_AuditRecorded verifies that a failed direct-mode K8s patch
+// records an audit event with result="error" (H1 fix verification)
+func TestUpdateInstance_DirectPatchFailure_AuditRecorded(t *testing.T) {
+	t.Parallel()
+	handler, recorder, fakeDynClient := newUpdateTestSetup(t)
+
+	// Inject a reactor that returns an error for patch operations
+	fakeDynClient.PrependReactor("patch", "webapps", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, fmt.Errorf("forbidden: service account cannot patch resources")
+	})
+
+	body := `{"spec": {"replicas": 5}}`
+	userCtx := &middleware.UserContext{UserID: "dev-user", Email: "dev@test.local"}
+	req := newRequestWithUserContext(http.MethodPatch, "/api/v1/instances/production/WebApp/test-instance",
+		[]byte(body), userCtx)
+	req.SetPathValue("namespace", "production")
+	req.SetPathValue("kind", "WebApp")
+	req.SetPathValue("name", "test-instance")
+	rec := httptest.NewRecorder()
+
+	handler.UpdateInstance(rec, req)
+
+	// Should return an error status
+	if rec.Code == http.StatusOK {
+		t.Fatal("expected error response, got 200")
+	}
+
+	// Verify audit event was recorded with result="error"
+	if len(recorder.events) != 1 {
+		t.Fatalf("expected 1 audit event for failed patch, got %d", len(recorder.events))
+	}
+	e := recorder.lastEvent()
+	if e.Result != "error" {
+		t.Errorf("expected audit result 'error', got %q", e.Result)
+	}
+	if e.Action != "update" {
+		t.Errorf("expected audit action 'update', got %q", e.Action)
+	}
+	if e.UserID != "dev-user" {
+		t.Errorf("expected audit userID 'dev-user', got %q", e.UserID)
+	}
+	if dm, ok := e.Details["deploymentMode"].(string); !ok || dm != "direct" {
+		t.Errorf("expected deploymentMode 'direct' in audit details, got %v", e.Details["deploymentMode"])
+	}
+}
+
+// TestUpdateInstance_HybridPatchFailure_AuditRecorded verifies that a failed hybrid-mode K8s patch
+// records an audit event with result="error" (H2 fix verification)
+func TestUpdateInstance_HybridPatchFailure_AuditRecorded(t *testing.T) {
+	t.Parallel()
+
+	// Create a hybrid-mode instance
+	cache := watcher.NewInstanceCache()
+	cache.Set(&models.Instance{
+		Name:        "hybrid-instance",
+		Namespace:   "staging",
+		Kind:        "WebApp",
+		APIVersion:  "kro.run/v1alpha1",
+		RGDName:     "webapp-rgd",
+		Health:      models.HealthHealthy,
+		ProjectName: "gamma",
+		Labels: map[string]string{
+			models.DeploymentModeLabel: string(deployment.ModeHybrid),
+		},
+		Spec: map[string]interface{}{
+			"replicas": float64(1),
+		},
+	})
+
+	scheme := runtime.NewScheme()
+	obj := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "kro.run/v1alpha1",
+			"kind":       "WebApp",
+			"metadata": map[string]interface{}{
+				"name":            "hybrid-instance",
+				"namespace":       "staging",
+				"resourceVersion": "500",
+			},
+			"spec": map[string]interface{}{
+				"replicas": float64(1),
+			},
+		},
+	}
+	gvrToListKind := map[schema.GroupVersionResource]string{
+		{Group: "kro.run", Version: "v1alpha1", Resource: "webapps"}: "WebAppList",
+	}
+	fakeDynClient := fakedynamic.NewSimpleDynamicClientWithCustomListKinds(scheme, gvrToListKind, obj)
+	tracker := watcher.NewInstanceTrackerForTest(cache, fakeDynClient)
+	recorder := &mockAuditRecorder{}
+	handler := NewInstanceCRUDHandler(InstanceCRUDHandlerConfig{
+		InstanceTracker: tracker,
+		DynamicClient:   fakeDynClient,
+		AuditRecorder:   recorder,
+	})
+
+	// Inject a reactor that fails on patch
+	fakeDynClient.PrependReactor("patch", "webapps", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, fmt.Errorf("forbidden: cannot patch")
+	})
+
+	body := `{"spec": {"replicas": 3}}`
+	userCtx := &middleware.UserContext{UserID: "hybrid-user", Email: "hybrid@test.local"}
+	req := newRequestWithUserContext(http.MethodPatch, "/api/v1/instances/staging/WebApp/hybrid-instance",
+		[]byte(body), userCtx)
+	req.SetPathValue("namespace", "staging")
+	req.SetPathValue("kind", "WebApp")
+	req.SetPathValue("name", "hybrid-instance")
+	rec := httptest.NewRecorder()
+
+	handler.UpdateInstance(rec, req)
+
+	if rec.Code == http.StatusOK {
+		t.Fatal("expected error response, got 200")
+	}
+
+	if len(recorder.events) != 1 {
+		t.Fatalf("expected 1 audit event for failed hybrid patch, got %d", len(recorder.events))
+	}
+	e := recorder.lastEvent()
+	if e.Result != "error" {
+		t.Errorf("expected audit result 'error', got %q", e.Result)
+	}
+	if dm, ok := e.Details["deploymentMode"].(string); !ok || dm != "hybrid" {
+		t.Errorf("expected deploymentMode 'hybrid' in audit details, got %v", e.Details["deploymentMode"])
 	}
 }

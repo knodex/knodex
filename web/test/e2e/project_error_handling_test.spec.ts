@@ -156,6 +156,11 @@ test.describe("Project Creation Error Handling", () => {
       await expect(nameInput).toBeVisible();
       await nameInput.fill("existing-project");
 
+      // Add a destination (required by form validation)
+      // The namespace input auto-populates with the project name
+      const addDestButton = page.locator('form button[type="button"]').filter({ has: page.locator('svg.lucide-plus') }).first();
+      await addDestButton.click();
+
       // Submit form
       const submitButton = page.getByRole("button", { name: /create|save|submit/i });
       await expect(submitButton).toBeVisible();
@@ -235,6 +240,10 @@ test.describe("Project Creation Error Handling", () => {
       const nameInput = page.locator('input[name="name"]');
       await expect(nameInput).toBeVisible();
       await nameInput.fill("test-project");
+
+      // Add a destination (required by form validation)
+      const addDestButton = page.locator('form button[type="button"]').filter({ has: page.locator('svg.lucide-plus') }).first();
+      await addDestButton.click();
 
       // Submit form (first attempt - should fail)
       const submitButton = page.getByRole("button", { name: /create|save|submit/i });
@@ -549,6 +558,10 @@ test.describe("Project Creation Error Handling", () => {
       const nameInput = page.locator('input[name="name"]');
       await expect(nameInput).toBeVisible();
       await nameInput.fill("new-project");
+
+      // Add a destination (required by form validation)
+      const addDestButton = page.locator('form button[type="button"]').filter({ has: page.locator('svg.lucide-plus') }).first();
+      await addDestButton.click();
 
       // Submit form
       const submitButton = page.getByRole("button", { name: /create|save|submit/i });

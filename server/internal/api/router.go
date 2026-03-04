@@ -15,6 +15,8 @@ import (
 	swaggerui "github.com/provops-org/knodex/server/internal/api/swagger"
 	"github.com/provops-org/knodex/server/internal/audit"
 	"github.com/provops-org/knodex/server/internal/auth"
+	"github.com/provops-org/knodex/server/internal/deployment"
+	"github.com/provops-org/knodex/server/internal/drift"
 	"github.com/provops-org/knodex/server/internal/health"
 	"github.com/provops-org/knodex/server/internal/history"
 	"github.com/provops-org/knodex/server/internal/rbac"
@@ -52,6 +54,7 @@ type RouterConfig struct {
 	AuditRecorder           audit.Recorder                   // Audit event recorder (nil in OSS builds)
 	AuditLoginMiddleware    func(http.Handler) http.Handler  // Enterprise feature: Wraps login routes to record audit events (nil in OSS builds)
 	AuditAPIService         services.AuditAPIService         // Enterprise feature: Audit trail API
+	DriftService            *drift.Service                   // GitOps drift detection service (nil = created internally from RedisClient)
 	K8sClient               kubernetes.Interface
 	RedisClient             *redis.Client
 	AllowedRedirectOrigins  []string // Allowed redirect origins for OIDC callbacks
@@ -122,13 +125,28 @@ func NewRouterWithConfig(healthChecker *health.Checker, rgdWatcher *watcher.RGDW
 		discoveryClient = cfg.K8sClient.Discovery()
 	}
 
+	// Create shared deployment controller for GitOps operations
+	var deployCtrl *deployment.Controller
+	if dynamicClient != nil && cfg.K8sClient != nil {
+		deployCtrl = deployment.NewController(dynamicClient, cfg.K8sClient, logger)
+	}
+
+	// Use provided drift service or create one for GitOps spec drift tracking
+	driftService := cfg.DriftService
+	if driftService == nil {
+		driftService = drift.NewService(cfg.RedisClient, logger)
+	}
+
 	// Create domain-specific instance handlers
 	crudHandler := handlers.NewInstanceCRUDHandler(handlers.InstanceCRUDHandlerConfig{
-		InstanceTracker: instanceTracker,
-		DynamicClient:   dynamicClient,
-		AuthService:     authService,
-		AuditRecorder:   cfg.AuditRecorder,
-		Logger:          logger,
+		InstanceTracker:      instanceTracker,
+		DynamicClient:        dynamicClient,
+		AuthService:          authService,
+		DeploymentController: deployCtrl,
+		RepoService:          cfg.RepositoryService,
+		DriftService:         driftService,
+		AuditRecorder:        cfg.AuditRecorder,
+		Logger:               logger,
 	})
 
 	deploymentHandler := handlers.NewInstanceDeploymentHandler(handlers.InstanceDeploymentHandlerConfig{
@@ -183,6 +201,7 @@ func NewRouterWithConfig(healthChecker *health.Checker, rgdWatcher *watcher.RGDW
 		})
 	}
 
+	protectedMux.HandleFunc("PATCH /api/v1/instances/{namespace}/{kind}/{name}", crudHandler.UpdateInstance)
 	protectedMux.HandleFunc("DELETE /api/v1/instances/{namespace}/{kind}/{name}", crudHandler.DeleteInstance)
 
 	// Protected API v1 routes - Deployment history (require authentication)

@@ -417,6 +417,19 @@ func (h *InstanceDeploymentHandler) CreateInstance(w http.ResponseWriter, r *htt
 		}
 	}
 
+	// Build audit details — NEVER include instance Spec (may contain secrets)
+	deployDetails := map[string]any{
+		"rgdName":        req.RGDName,
+		"deploymentMode": string(deployMode),
+		"rgdNamespace":   rgd.Namespace,
+		"kind":           kind,
+	}
+	if deployMode == deployment.ModeGitOps || deployMode == deployment.ModeHybrid {
+		deployDetails["gitBranch"] = deployReq.GitBranch
+		deployDetails["gitPath"] = deployReq.GitPath
+		deployDetails["repositoryId"] = req.RepositoryID
+	}
+
 	audit.RecordEvent(h.recorder, r.Context(), audit.Event{
 		UserID:    userCtx.UserID,
 		UserEmail: userCtx.Email,
@@ -428,7 +441,7 @@ func (h *InstanceDeploymentHandler) CreateInstance(w http.ResponseWriter, r *htt
 		Namespace: namespace,
 		RequestID: r.Header.Get("X-Request-ID"),
 		Result:    "success",
-		Details:   map[string]any{"rgdName": req.RGDName, "deploymentMode": string(deployMode)},
+		Details:   deployDetails,
 	})
 
 	response.WriteJSON(w, http.StatusCreated, resp)

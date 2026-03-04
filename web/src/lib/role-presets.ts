@@ -3,6 +3,7 @@
  * Used in ProjectRolesTab (add role) and ProjectForm (create project)
  */
 import type { ProjectRole } from '@/types/project';
+import { isEnterprise } from '@/hooks/useCompliance';
 
 export interface RolePreset {
   name: string;
@@ -17,6 +18,7 @@ const ADMIN_POLICIES = [
   'p, proj:{project}:{role}, rgds, get, *, allow',
   'p, proj:{project}:{role}, rgds, list, *, allow',
   'p, proj:{project}:{role}, repositories, *, {project}/*, allow',
+  ...(isEnterprise() ? ['p, proj:{project}:{role}, compliance, get, {project}/*, allow'] : []),
 ];
 
 /**

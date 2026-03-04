@@ -1042,7 +1042,13 @@ func (h *ComplianceHandler) UpdateConstraintEnforcement(w http.ResponseWriter, r
 		Name:      name,
 		RequestID: requestID,
 		Result:    "success",
-		Details:   map[string]any{"kind": kind, "oldAction": oldAction, "newAction": req.EnforcementAction},
+		Details: map[string]any{
+			"constraintName":            name,
+			"kind":                      kind,
+			"templateName":              currentConstraint.TemplateName,
+			"enforcementAction":         req.EnforcementAction,
+			"previousEnforcementAction": oldAction,
+		},
 	})
 
 	// 10. Return updated constraint
@@ -1178,7 +1184,12 @@ func (h *ComplianceHandler) CreateConstraint(w http.ResponseWriter, r *http.Requ
 		Name:      constraint.Name,
 		RequestID: requestID,
 		Result:    "success",
-		Details:   map[string]any{"kind": constraint.Kind, "templateName": constraint.TemplateName, "enforcementAction": constraint.EnforcementAction},
+		Details: map[string]any{
+			"constraintName":    constraint.Name,
+			"kind":              constraint.Kind,
+			"templateName":      constraint.TemplateName,
+			"enforcementAction": constraint.EnforcementAction,
+		},
 	})
 
 	// 9. Return created constraint

@@ -337,6 +337,9 @@ func (h *SSOSettingsHandler) UpdateProvider(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// Fetch old provider state for audit change tracking (safe fields only)
+	oldProvider, _ := h.store.Get(ctx, name)
+
 	provider := sso.SSOProvider{
 		Name:         name,
 		IssuerURL:    req.IssuerURL,
@@ -369,6 +372,28 @@ func (h *SSOSettingsHandler) UpdateProvider(w http.ResponseWriter, r *http.Reque
 		"provider", name,
 	)
 
+	// Build audit details with before/after for safe fields (never log clientSecret)
+	settingsUpdateDetails := map[string]any{"settingsType": "sso_provider"}
+	if oldProvider != nil {
+		if oldProvider.IssuerURL != req.IssuerURL {
+			settingsUpdateDetails["issuerURL"] = audit.SafeChanges(oldProvider.IssuerURL, req.IssuerURL)
+		}
+		if oldProvider.ClientID != req.ClientID {
+			settingsUpdateDetails["clientID"] = audit.SafeChanges(oldProvider.ClientID, req.ClientID)
+		}
+		if oldProvider.RedirectURL != req.RedirectURL {
+			settingsUpdateDetails["redirectURL"] = audit.SafeChanges(oldProvider.RedirectURL, req.RedirectURL)
+		}
+		// Track credential change without storing value
+		if req.ClientSecret != "" && req.ClientSecret != oldProvider.ClientSecret {
+			settingsUpdateDetails["credentialsUpdated"] = true
+		}
+		// Track scope changes
+		if !stringSlicesEqual(oldProvider.Scopes, req.Scopes) {
+			settingsUpdateDetails["scopes"] = audit.SafeChanges(oldProvider.Scopes, req.Scopes)
+		}
+	}
+
 	audit.RecordEvent(h.recorder, ctx, audit.Event{
 		UserID:    userCtx.UserID,
 		UserEmail: userCtx.Email,
@@ -378,7 +403,7 @@ func (h *SSOSettingsHandler) UpdateProvider(w http.ResponseWriter, r *http.Reque
 		Name:      name,
 		RequestID: requestID,
 		Result:    "success",
-		Details:   map[string]any{"settingsType": "sso_provider"},
+		Details:   settingsUpdateDetails,
 	})
 
 	// Re-read provider to return current state (secret fields omitted)

@@ -207,7 +207,11 @@ func (h *RepositoryHandler) CreateRepositoryConfig(w http.ResponseWriter, r *htt
 		Project:   req.ProjectID,
 		RequestID: requestID,
 		Result:    "success",
-		Details:   map[string]any{"authType": req.AuthType},
+		Details: map[string]any{
+			"repoURL":       req.RepoURL,
+			"authType":      req.AuthType,
+			"defaultBranch": req.DefaultBranch,
+		},
 	})
 
 	response.WriteJSON(w, http.StatusCreated, repoConfig.ToRepositoryConfigInfo())
@@ -404,6 +408,12 @@ func (h *RepositoryHandler) UpdateRepositoryConfig(w http.ResponseWriter, r *htt
 		return
 	}
 
+	// Capture old state BEFORE any mutation for audit change tracking
+	oldRepoURL := repoConfig.Spec.RepoURL
+	oldAuthType := repoConfig.Spec.AuthType
+	oldDefaultBranch := repoConfig.Spec.DefaultBranch
+	oldName := repoConfig.Spec.Name
+
 	// Update metadata fields (only update non-empty fields from request)
 	if req.Name != "" {
 		repoConfig.Spec.Name = req.Name
@@ -499,6 +509,25 @@ func (h *RepositoryHandler) UpdateRepositoryConfig(w http.ResponseWriter, r *htt
 		"updated_by", updatedBy,
 	)
 
+	// Build audit change details (only include fields that actually changed)
+	updateDetails := map[string]any{}
+	if oldRepoURL != repoConfig.Spec.RepoURL {
+		updateDetails["repoURL"] = audit.SafeChanges(oldRepoURL, repoConfig.Spec.RepoURL)
+	}
+	if oldAuthType != repoConfig.Spec.AuthType {
+		updateDetails["authType"] = audit.SafeChanges(oldAuthType, repoConfig.Spec.AuthType)
+	}
+	if oldDefaultBranch != repoConfig.Spec.DefaultBranch {
+		updateDetails["defaultBranch"] = audit.SafeChanges(oldDefaultBranch, repoConfig.Spec.DefaultBranch)
+	}
+	if oldName != repoConfig.Spec.Name {
+		updateDetails["name"] = audit.SafeChanges(oldName, repoConfig.Spec.Name)
+	}
+	// Track credential changes without storing secret values
+	if req.SSHAuth != nil || req.HTTPSAuth != nil || req.GitHubAppAuth != nil {
+		updateDetails["credentialsUpdated"] = true
+	}
+
 	audit.RecordEvent(h.recorder, r.Context(), audit.Event{
 		UserID:    userCtx.UserID,
 		UserEmail: userCtx.Email,
@@ -509,6 +538,7 @@ func (h *RepositoryHandler) UpdateRepositoryConfig(w http.ResponseWriter, r *htt
 		Project:   repoConfig.Spec.ProjectID,
 		RequestID: requestID,
 		Result:    "success",
+		Details:   updateDetails,
 	})
 
 	response.WriteJSON(w, http.StatusOK, updatedRepoConfig.ToRepositoryConfigInfo())
@@ -599,6 +629,10 @@ func (h *RepositoryHandler) DeleteRepositoryConfig(w http.ResponseWriter, r *htt
 		Project:   repoConfig.Spec.ProjectID,
 		RequestID: requestID,
 		Result:    "success",
+		Details: map[string]any{
+			"repoURL":  repoConfig.Spec.RepoURL,
+			"authType": repoConfig.Spec.AuthType,
+		},
 	})
 
 	// Return 204 No Content on successful deletion

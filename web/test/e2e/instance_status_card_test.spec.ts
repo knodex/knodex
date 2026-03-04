@@ -151,8 +151,8 @@ test.describe('Instance Status Card (Unified Status Display)', () => {
 
   test('AC-9: raw JSON status section is removed', async ({ page }) => {
     // There should be no collapsible "Status" button (the old raw JSON section)
-    // Only the Spec collapsible button should exist
-    const specButton = page.getByRole('button', { name: /spec/i })
+    // Only the Spec collapsible button should exist (exact match to avoid matching "Edit Spec")
+    const specButton = page.getByRole('button', { name: 'Spec', exact: true })
     await expect(specButton).toBeVisible()
 
     // No "Status" collapsible button should exist
@@ -163,7 +163,7 @@ test.describe('Instance Status Card (Unified Status Display)', () => {
   })
 
   test('AC-9: spec raw JSON section still exists', async ({ page }) => {
-    const specButton = page.getByRole('button', { name: /spec/i })
+    const specButton = page.getByRole('button', { name: 'Spec', exact: true })
     await expect(specButton).toBeVisible()
 
     // Click to expand spec section

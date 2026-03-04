@@ -19,6 +19,10 @@ data:
   # Assign users to project-scoped roles via OIDC group mappings instead.
   RBAC_DEFAULT_ROLE: ""
 
+  # Audit redaction fields (comma-separated, case-insensitive)
+  # Field names stripped from audit event details as a defense-in-depth safety net.
+  AUDIT_REDACT_FIELDS: "privateKey,password,bearerToken,token,secret,tlsClientCert,tlsClientKey,clientSecret"
+
   # Enterprise license configuration (Enterprise builds only)
   # Path to the license JWT file (mounted from knodex-license Secret)
   KNODEX_LICENSE_PATH: "/etc/knodex/license.jwt"

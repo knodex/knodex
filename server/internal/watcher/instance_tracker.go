@@ -105,6 +105,14 @@ func NewInstanceTrackerWithCache(cache *InstanceCache) *InstanceTracker {
 	return t
 }
 
+// NewInstanceTrackerForTest creates a tracker with cache and dynamic client.
+// Enables handler tests that need both GetInstance (cache) and DeleteInstance (dynamic client).
+func NewInstanceTrackerForTest(cache *InstanceCache, dynamicClient dynamic.Interface) *InstanceTracker {
+	t := NewInstanceTrackerWithCache(cache)
+	t.dynamicClient = dynamicClient
+	return t
+}
+
 // Start begins watching for instances of all known RGD types
 func (t *InstanceTracker) Start(ctx context.Context) error {
 	if t.running.Load() {

@@ -205,6 +205,11 @@ spec:
             - name: CASBIN_ADMIN_USERS
               value: {{ .Values.server.auth.casbin.adminUsers | join "," | quote }}
             {{- end }}
+            # Enterprise audit redaction
+            {{- if and .Values.enterprise.enabled .Values.enterprise.audit.redactFields }}
+            - name: AUDIT_REDACT_FIELDS
+              value: {{ .Values.enterprise.audit.redactFields | join "," | quote }}
+            {{- end }}
             # Enterprise compliance
             {{- if and .Values.enterprise.enabled .Values.enterprise.compliance.historyRetentionDays }}
             - name: COMPLIANCE_HISTORY_RETENTION_DAYS

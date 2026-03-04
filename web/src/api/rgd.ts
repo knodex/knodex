@@ -9,6 +9,8 @@ import type {
   InstanceListResponse,
   CreateInstanceRequest,
   CreateInstanceResponse,
+  UpdateInstanceRequest,
+  UpdateInstanceResponse,
   ResourceGraph,
   StatusTimelineResponse,
   PendingInstancesResponse,
@@ -146,6 +148,22 @@ export async function deleteInstance(namespace: string, kind: string, name: stri
   await apiClient.delete(
     `/v1/instances/${encodeURIComponent(namespace)}/${encodeURIComponent(kind)}/${encodeURIComponent(name)}`
   );
+}
+
+/**
+ * Update the spec of an existing instance
+ */
+export async function updateInstanceSpec(
+  namespace: string,
+  kind: string,
+  name: string,
+  request: UpdateInstanceRequest
+): Promise<UpdateInstanceResponse> {
+  const response = await apiClient.patch<UpdateInstanceResponse>(
+    `/v1/instances/${encodeURIComponent(namespace)}/${encodeURIComponent(kind)}/${encodeURIComponent(name)}`,
+    request
+  );
+  return response.data;
 }
 
 /**

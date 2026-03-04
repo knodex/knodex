@@ -3,9 +3,10 @@ import {
   listInstances,
   getInstance,
   deleteInstance,
+  updateInstanceSpec,
   getInstanceCount,
 } from "@/api/rgd";
-import type { InstanceListParams } from "@/types/rgd";
+import type { InstanceListParams, UpdateInstanceRequest } from "@/types/rgd";
 
 /**
  * Hook for fetching paginated instance list
@@ -60,6 +61,32 @@ export function useDeleteInstance() {
       queryClient.removeQueries({ queryKey: ["instance", namespace, kind, name] });
       queryClient.invalidateQueries({ queryKey: ["instances"] });
       queryClient.invalidateQueries({ queryKey: ["rgds"] });
+    },
+  });
+}
+
+/**
+ * Hook for updating an instance spec
+ */
+export function useUpdateInstanceSpec() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({
+      namespace,
+      kind,
+      name,
+      request,
+    }: {
+      namespace: string;
+      kind: string;
+      name: string;
+      request: UpdateInstanceRequest;
+    }) => updateInstanceSpec(namespace, kind, name, request),
+    onSuccess: (_, { namespace, kind, name }) => {
+      // Invalidate the specific instance and list caches to pick up updated spec
+      queryClient.invalidateQueries({ queryKey: ["instance", namespace, kind, name] });
+      queryClient.invalidateQueries({ queryKey: ["instances"] });
     },
   });
 }

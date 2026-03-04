@@ -8,8 +8,86 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 )
+
+// secretFieldNames stores the lowercase versions of all field names that must
+// never appear in audit Details. Lookups are case-insensitive.
+// Populated entirely from the AUDIT_REDACT_FIELDS environment variable,
+// which is set via the Helm chart with secure defaults.
+var secretFieldNames map[string]bool
+
+func init() {
+	secretFieldNames = make(map[string]bool, 16)
+	if fields := os.Getenv("AUDIT_REDACT_FIELDS"); fields != "" {
+		for _, f := range strings.Split(fields, ",") {
+			if f = strings.TrimSpace(f); f != "" {
+				secretFieldNames[strings.ToLower(f)] = true
+			}
+		}
+	}
+}
+
+// IsSecretField reports whether the given field name is in the redaction set.
+// The check is case-insensitive.
+func IsSecretField(name string) bool {
+	return secretFieldNames[strings.ToLower(name)]
+}
+
+// SecretFieldNames returns a copy of the current redaction set (lowercase keys).
+// Useful for testing and diagnostics.
+func SecretFieldNames() map[string]bool {
+	out := make(map[string]bool, len(secretFieldNames))
+	for k, v := range secretFieldNames {
+		out[k] = v
+	}
+	return out
+}
+
+// SanitizeDetails returns a copy of details with all keys matching the
+// redaction set removed (case-insensitive), including in nested maps and slices.
+// Handlers should never add secret fields, but this function provides a
+// defense-in-depth safety net. Returns nil if the input is nil.
+func SanitizeDetails(details map[string]any) map[string]any {
+	if details == nil {
+		return nil
+	}
+	sanitized := make(map[string]any, len(details))
+	for k, v := range details {
+		if IsSecretField(k) {
+			continue
+		}
+		sanitized[k] = sanitizeValue(v)
+	}
+	return sanitized
+}
+
+// sanitizeValue recursively sanitizes maps and slices.
+func sanitizeValue(v any) any {
+	switch val := v.(type) {
+	case map[string]any:
+		return SanitizeDetails(val)
+	case []any:
+		out := make([]any, len(val))
+		for i, elem := range val {
+			out[i] = sanitizeValue(elem)
+		}
+		return out
+	default:
+		return v
+	}
+}
+
+// SafeChanges returns a map representing a before/after change for a field.
+// The returned map has "old" and "new" keys.
+// Example: SafeChanges("git@old", "git@new") → map[string]any{"old": "git@old", "new": "git@new"}
+func SafeChanges(oldVal, newVal any) map[string]any {
+	return map[string]any{
+		"old": oldVal,
+		"new": newVal,
+	}
+}
 
 // Event represents an auditable operation recorded by handlers after
 // a successful business operation. Fields map to the enterprise AuditEvent.
@@ -47,8 +125,11 @@ type Recorder interface {
 
 // RecordEvent safely records an audit event if the recorder is not nil.
 // This is the primary entry point for handler instrumentation.
+// Details are automatically sanitized (defense-in-depth) so handlers
+// do not need to call SanitizeDetails themselves.
 func RecordEvent(r Recorder, ctx context.Context, event Event) {
 	if r != nil {
+		event.Details = SanitizeDetails(event.Details)
 		r.Record(ctx, event)
 	}
 }

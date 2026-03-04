@@ -71,8 +71,8 @@ type Instance struct {
 	CreatedAt time.Time `json:"createdAt"`
 	// UpdatedAt is when the instance was last updated
 	UpdatedAt time.Time `json:"updatedAt"`
-	// ResourceVersion for optimistic concurrency
-	ResourceVersion string `json:"-"`
+	// ResourceVersion for optimistic concurrency (exposed for frontend edit conflict detection)
+	ResourceVersion string `json:"resourceVersion,omitempty"`
 	// UID is the unique identifier
 	UID string `json:"uid"`
 	// GitOps deployment fields
@@ -84,6 +84,10 @@ type Instance struct {
 	ProjectID string `json:"projectId,omitempty"`
 	// ProjectName is the display name of the project
 	ProjectName string `json:"projectName,omitempty"`
+	// GitOpsDrift indicates the live spec doesn't match the desired spec pushed to Git
+	GitOpsDrift bool `json:"gitopsDrift,omitempty"`
+	// DesiredSpec is the spec that was pushed to Git (for drift comparison)
+	DesiredSpec map[string]interface{} `json:"desiredSpec,omitempty"`
 }
 
 // InstanceCondition represents a status condition

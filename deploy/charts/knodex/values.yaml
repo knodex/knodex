@@ -342,6 +342,35 @@ enterprise:
     #     order: 3
     #     description: Network and connectivity resources
 
+  # -- Audit configuration (Enterprise feature)
+  audit:
+    # -- Field names to redact from audit event details (case-insensitive).
+    # The server strips any matching key from audit Details as a defense-in-depth
+    # safety net. Operators have full control: add custom fields or remove
+    # defaults that conflict with legitimate field names in your CRDs.
+    redactFields:
+      - privateKey
+      - password
+      - bearerToken
+      - token
+      - secret
+      - tlsClientCert
+      - tlsClientKey
+      - clientSecret
+    # To add custom fields, append to the list:
+    # redactFields:
+    #   - privateKey
+    #   - password
+    #   - bearerToken
+    #   - token
+    #   - secret
+    #   - tlsClientCert
+    #   - tlsClientKey
+    #   - clientSecret
+    #   - apiKey
+    #   - connectionString
+    #   - webhookSecret
+
   # -- Compliance configuration (Enterprise feature)
   compliance:
     # -- Violation history retention in days

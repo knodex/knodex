@@ -301,6 +301,12 @@ export interface Instance {
   updatedAt: string;
   deploymentMode?: DeploymentMode;
   gitInfo?: GitInfo;
+  /** Kubernetes resource version for optimistic concurrency control */
+  resourceVersion?: string;
+  /** True when live spec doesn't match the desired spec pushed to Git */
+  gitopsDrift?: boolean;
+  /** The desired spec that was pushed to Git (for drift comparison) */
+  desiredSpec?: Record<string, unknown>;
 }
 
 /**
@@ -436,6 +442,29 @@ export interface CreateInstanceResponse {
   version: string;
   status: string;
   createdAt: string;
+  deploymentMode?: DeploymentMode;
+  gitInfo?: GitInfo;
+}
+
+/**
+ * Request body for updating an instance spec
+ */
+export interface UpdateInstanceRequest {
+  spec: Record<string, unknown>;
+  resourceVersion?: string;
+  repositoryId?: string;
+  gitBranch?: string;
+  gitPath?: string;
+}
+
+/**
+ * Response after updating an instance spec
+ */
+export interface UpdateInstanceResponse {
+  name: string;
+  namespace: string;
+  kind: string;
+  status: string;
   deploymentMode?: DeploymentMode;
   gitInfo?: GitInfo;
 }
