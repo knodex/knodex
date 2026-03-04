@@ -9,7 +9,6 @@ const mockRepositories: RepositoryConfig[] = [
     name: "Production Deployments",
     repoURL: "https://github.com/my-org/prod-manifests",
     defaultBranch: "main",
-    enabled: true,
     authType: "ssh",
   },
   {
@@ -17,7 +16,6 @@ const mockRepositories: RepositoryConfig[] = [
     name: "Development Deployments",
     repoURL: "https://github.com/my-org/dev-manifests",
     defaultBranch: "develop",
-    enabled: true,
     authType: "token",
   },
 ];

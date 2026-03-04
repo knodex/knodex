@@ -44,7 +44,7 @@ func TestCreateRepositoryConfig_RejectsInsecureSkipTLS(t *testing.T) {
 		RepoURL:       "https://github.com/example/repo.git",
 		AuthType:      repository.AuthTypeHTTPS,
 		DefaultBranch: "main",
-		Enabled:       true,
+
 		HTTPSAuth: &repository.HTTPSAuthConfig{
 			BearerToken:           "ghp_test",
 			InsecureSkipTLSVerify: true,
@@ -82,7 +82,7 @@ func TestCreateRepositoryConfig_AllowsSecureTLS(t *testing.T) {
 		RepoURL:       "https://github.com/example/repo.git",
 		AuthType:      repository.AuthTypeHTTPS,
 		DefaultBranch: "main",
-		Enabled:       true,
+
 		HTTPSAuth: &repository.HTTPSAuthConfig{
 			BearerToken:           "ghp_test",
 			InsecureSkipTLSVerify: false,
@@ -114,7 +114,7 @@ func TestCreateRepositoryConfig_SSHAuth(t *testing.T) {
 		RepoURL:       "git@github.com:example/repo.git",
 		AuthType:      repository.AuthTypeSSH,
 		DefaultBranch: "main",
-		Enabled:       true,
+
 		SSHAuth: &repository.SSHAuthConfig{
 			PrivateKey: "-----BEGIN OPENSSH PRIVATE KEY-----\ntest\n-----END OPENSSH PRIVATE KEY-----",
 		},
@@ -144,7 +144,7 @@ func TestCreateRepositoryConfig_HTTPSAuth(t *testing.T) {
 		RepoURL:       "https://github.com/example/repo.git",
 		AuthType:      repository.AuthTypeHTTPS,
 		DefaultBranch: "main",
-		Enabled:       true,
+
 		HTTPSAuth: &repository.HTTPSAuthConfig{
 			BearerToken: "ghp_test_token_123",
 		},
@@ -173,7 +173,7 @@ func TestCreateRepositoryConfig_GitHubAppAuth(t *testing.T) {
 		RepoURL:       "https://github.com/example/repo.git",
 		AuthType:      repository.AuthTypeGitHubApp,
 		DefaultBranch: "main",
-		Enabled:       true,
+
 		GitHubAppAuth: &repository.GitHubAppAuthConfig{
 			AppType:        "github",
 			AppID:          "12345",

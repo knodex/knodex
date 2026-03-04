@@ -98,7 +98,6 @@ export function RepositorySection({
         data: {
           name: data.name,
           defaultBranch: data.defaultBranch,
-          enabled: data.enabled,
         },
       });
     } else {
@@ -109,17 +108,6 @@ export function RepositorySection({
   // Handle test connection with inline credentials
   const handleTestConnection = async (data: TestConnectionRequest): Promise<TestConnectionResponse> => {
     return await testConnection(data);
-  };
-
-  // Handle toggle enabled
-  const handleToggleEnabled = async (repoId: string, enabled: boolean) => {
-    const repo = repositoriesData?.items.find((r) => r.id === repoId);
-    if (!repo) return;
-
-    await updateMutation.mutateAsync({
-      repoId,
-      data: { enabled },
-    });
   };
 
   // Handle edit
@@ -236,7 +224,6 @@ export function RepositorySection({
             repositories={repositories}
             onEdit={(isLoadingPermission || isErrorPermission || canManage) ? handleEdit : undefined}
             onDelete={(isLoadingPermission || isErrorPermission || canManage) ? handleDelete : undefined}
-            onToggleEnabled={(isLoadingPermission || isErrorPermission || canManage) ? handleToggleEnabled : undefined}
             canManage={isLoadingPermission || isErrorPermission || canManage}
             isLoading={isLoading}
           />

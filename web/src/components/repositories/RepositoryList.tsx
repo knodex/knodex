@@ -13,7 +13,6 @@ interface RepositoryListProps {
   repositories: RepositoryConfig[];
   onEdit?: (repo: RepositoryConfig) => void;
   onDelete?: (repoID: string) => void;
-  onToggleEnabled?: (repoID: string, enabled: boolean) => void;
   onTestConnection?: (repoID: string) => Promise<void>;
   canManage?: boolean;
   isLoading?: boolean;
@@ -71,24 +70,11 @@ export function RepositoryList({
   repositories,
   onEdit,
   onDelete,
-  onToggleEnabled,
   onTestConnection,
   canManage = false,
   isLoading = false,
 }: RepositoryListProps) {
-  const [togglingRepo, setTogglingRepo] = useState<string | null>(null);
   const [testingRepo, setTestingRepo] = useState<string | null>(null);
-
-  const handleToggle = async (repoID: string, currentEnabled: boolean) => {
-    if (!onToggleEnabled) return;
-
-    setTogglingRepo(repoID);
-    try {
-      await onToggleEnabled(repoID, !currentEnabled);
-    } finally {
-      setTogglingRepo(null);
-    }
-  };
 
   const handleTestConnection = async (repoID: string) => {
     if (!onTestConnection) return;
@@ -182,20 +168,6 @@ export function RepositoryList({
                   </Badge>
                 )}
 
-                {/* Enabled Toggle */}
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={repo.enabled}
-                    onChange={() => handleToggle(repo.id, repo.enabled)}
-                    disabled={!canManage || togglingRepo === repo.id}
-                    className="rounded border-border text-primary focus:ring-primary disabled:opacity-50"
-                    data-testid="enabled-toggle"
-                  />
-                  <span className="text-xs text-muted-foreground">
-                    {repo.enabled ? "Enabled" : "Disabled"}
-                  </span>
-                </label>
               </div>
             </div>
 

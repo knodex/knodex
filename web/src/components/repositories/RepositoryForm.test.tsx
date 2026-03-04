@@ -79,19 +79,6 @@ describe("RepositoryForm", () => {
       ).toBeInTheDocument();
     });
 
-    it("renders enabled checkbox", () => {
-      render(
-        <RepositoryForm
-          projects={mockProjects}
-          onSubmit={mockOnSubmit}
-          onCancel={mockOnCancel}
-        />
-      );
-
-      expect(
-        screen.getByLabelText("Enable this repository configuration")
-      ).toBeInTheDocument();
-    });
   });
 
   describe("project selection", () => {
@@ -730,7 +717,6 @@ describe("RepositoryForm", () => {
           repoURL: "https://github.com/owner/repo.git",
           authType: "https",
           defaultBranch: "main",
-          enabled: true,
           httpsAuth: {
             username: "testuser",
             password: "testpass",
@@ -783,7 +769,6 @@ describe("RepositoryForm", () => {
           repoURL: "ssh://git@github.com/owner/repo.git",
           authType: "ssh",
           defaultBranch: "develop",
-          enabled: true,
           sshAuth: {
             privateKey: "-----BEGIN OPENSSH PRIVATE KEY-----\nkey\n-----END OPENSSH PRIVATE KEY-----",
           },
@@ -854,7 +839,6 @@ describe("RepositoryForm", () => {
         repoURL: "https://github.com/existing/repo.git",
         authType: "https" as const,
         defaultBranch: "develop",
-        enabled: false,
         resourceVersion: "1",
         createdAt: "2024-01-01T00:00:00Z",
       };
@@ -876,9 +860,6 @@ describe("RepositoryForm", () => {
         "https://github.com/existing/repo.git"
       );
       expect(screen.getByLabelText("Default Branch *")).toHaveValue("develop");
-      expect(
-        screen.getByLabelText("Enable this repository configuration")
-      ).not.toBeChecked();
     });
 
     it("shows Update Repository button in edit mode", () => {
@@ -889,7 +870,6 @@ describe("RepositoryForm", () => {
         repoURL: "https://github.com/existing/repo.git",
         authType: "https" as const,
         defaultBranch: "main",
-        enabled: true,
         resourceVersion: "1",
         createdAt: "2024-01-01T00:00:00Z",
       };

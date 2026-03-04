@@ -40,7 +40,6 @@ type CreateRepositoryConfigRequest struct {
 	RepoURL       string `json:"repoURL"`
 	AuthType      string `json:"authType"`
 	DefaultBranch string `json:"defaultBranch"`
-	Enabled       bool   `json:"enabled"`
 
 	// Auth-specific credentials (only one should be provided based on authType)
 	SSHAuth       *repository.SSHAuthConfig       `json:"sshAuth,omitempty"`
@@ -56,7 +55,6 @@ type CreateRepositoryConfigRequest struct {
 type UpdateRepositoryConfigRequest struct {
 	Name          string `json:"name,omitempty"`
 	DefaultBranch string `json:"defaultBranch,omitempty"`
-	Enabled       *bool  `json:"enabled,omitempty"`
 
 	// Credential update fields (ArgoCD-style)
 	RepoURL       string                          `json:"repoURL,omitempty"`
@@ -160,7 +158,6 @@ func (h *RepositoryHandler) CreateRepositoryConfig(w http.ResponseWriter, r *htt
 		RepoURL:       req.RepoURL,
 		AuthType:      req.AuthType,
 		DefaultBranch: req.DefaultBranch,
-		Enabled:       req.Enabled,
 		SSHAuth:       req.SSHAuth,
 		HTTPSAuth:     req.HTTPSAuth,
 		GitHubAppAuth: req.GitHubAppAuth,
@@ -414,9 +411,6 @@ func (h *RepositoryHandler) UpdateRepositoryConfig(w http.ResponseWriter, r *htt
 	if req.DefaultBranch != "" {
 		repoConfig.Spec.DefaultBranch = req.DefaultBranch
 	}
-	if req.Enabled != nil {
-		repoConfig.Spec.Enabled = *req.Enabled
-	}
 
 	// Handle credential updates if authType or auth config fields are provided
 	if req.AuthType != "" || req.SSHAuth != nil || req.HTTPSAuth != nil || req.GitHubAppAuth != nil {
@@ -445,7 +439,6 @@ func (h *RepositoryHandler) UpdateRepositoryConfig(w http.ResponseWriter, r *htt
 				RepoURL:       repoConfig.Spec.RepoURL,
 				AuthType:      authType,
 				DefaultBranch: repoConfig.Spec.DefaultBranch,
-				Enabled:       repoConfig.Spec.Enabled,
 				SSHAuth:       req.SSHAuth,
 				HTTPSAuth:     req.HTTPSAuth,
 				GitHubAppAuth: req.GitHubAppAuth,
@@ -482,7 +475,7 @@ func (h *RepositoryHandler) UpdateRepositoryConfig(w http.ResponseWriter, r *htt
 	// Save metadata changes to the Secret
 	updatedRepoConfig, err := h.repoService.UpdateRepositoryMetadata(
 		r.Context(), repoID,
-		repoConfig.Spec.Name, repoConfig.Spec.DefaultBranch, repoConfig.Spec.Enabled,
+		repoConfig.Spec.Name, repoConfig.Spec.DefaultBranch,
 		updatedBy,
 	)
 	if err != nil {

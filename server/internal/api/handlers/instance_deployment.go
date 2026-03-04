@@ -291,14 +291,6 @@ func (h *InstanceDeploymentHandler) CreateInstance(w http.ResponseWriter, r *htt
 			return
 		}
 
-		// Verify repository is enabled
-		if !repoConfig.Spec.Enabled {
-			response.BadRequest(w, "repository is disabled", map[string]string{
-				"repositoryId": "repository is disabled and cannot be used for deployments",
-			})
-			return
-		}
-
 		// Detect provider from repository URL
 		parsedURL, parseErr := vcs.ParseRepoURL(repoConfig.Spec.RepoURL)
 		provider := ""
@@ -339,7 +331,6 @@ func (h *InstanceDeploymentHandler) CreateInstance(w http.ResponseWriter, r *htt
 			Branch:        repoConfig.Spec.DefaultBranch,
 			DefaultBranch: repoConfig.Spec.DefaultBranch,
 			BasePath:      "manifests", // Default base path for GitOps
-			Enabled:       repoConfig.Spec.Enabled,
 			SecretRef: deployment.SecretReference{
 				Name:      repoConfig.Spec.SecretRef.Name,
 				Namespace: repoConfig.Spec.SecretRef.Namespace,

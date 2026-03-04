@@ -66,7 +66,6 @@ export interface RepositoryConfig {
   repo?: string;
 
   defaultBranch: string;
-  enabled: boolean;
   createdBy?: string;
   createdAt?: string;
   updatedBy?: string;
@@ -92,7 +91,6 @@ export interface CreateRepositoryRequest {
   repoURL: string;
   authType: AuthType;
   defaultBranch: string;
-  enabled: boolean;
 
   // Auth-specific credentials (only one should be provided based on authType)
   sshAuth?: SSHAuthConfig;
@@ -106,7 +104,6 @@ export interface CreateRepositoryRequest {
 export interface UpdateRepositoryRequest {
   name?: string;
   defaultBranch?: string;
-  enabled?: boolean;
 
   // Credential update fields
   repoURL?: string;

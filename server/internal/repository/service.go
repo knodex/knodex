@@ -132,9 +132,9 @@ func (s *Service) UpdateRepositorySecret(ctx context.Context, secretName string,
 	return nil
 }
 
-// UpdateRepositoryMetadata updates metadata fields (name, defaultBranch, enabled) on an existing repository secret.
+// UpdateRepositoryMetadata updates metadata fields (name, defaultBranch) on an existing repository secret.
 // This is used by the PATCH handler for non-credential updates. Credential updates use UpdateRepositorySecret.
-func (s *Service) UpdateRepositoryMetadata(ctx context.Context, repoConfigID string, name, defaultBranch string, enabled bool, updatedBy string) (*RepositoryConfig, error) {
+func (s *Service) UpdateRepositoryMetadata(ctx context.Context, repoConfigID string, name, defaultBranch string, updatedBy string) (*RepositoryConfig, error) {
 	if s.credentialManager == nil {
 		return nil, fmt.Errorf("credential manager not initialized")
 	}
@@ -156,11 +156,6 @@ func (s *Service) UpdateRepositoryMetadata(ctx context.Context, repoConfigID str
 	}
 	secret.Data[SecretKeyRepoName] = []byte(name)
 	secret.Data[SecretKeyDefaultBranch] = []byte(defaultBranch)
-	if enabled {
-		secret.Data[SecretKeyEnabled] = []byte("true")
-	} else {
-		secret.Data[SecretKeyEnabled] = []byte("false")
-	}
 
 	// Update audit annotations
 	if secret.Annotations == nil {
@@ -430,7 +425,6 @@ func (s *Service) CreateRepositoryConfigWithCredentials(ctx context.Context, req
 		RepoURL:       req.RepoURL,
 		AuthType:      req.AuthType,
 		DefaultBranch: req.DefaultBranch,
-		Enabled:       req.Enabled,
 	}
 
 	// Validate spec
@@ -448,7 +442,6 @@ func (s *Service) CreateRepositoryConfigWithCredentials(ctx context.Context, req
 		RepoURL:       req.RepoURL,
 		AuthType:      req.AuthType,
 		DefaultBranch: req.DefaultBranch,
-		Enabled:       req.Enabled,
 		SSHAuth:       req.SSHAuth,
 		HTTPSAuth:     req.HTTPSAuth,
 		GitHubAppAuth: req.GitHubAppAuth,
@@ -484,7 +477,6 @@ func (s *Service) CreateRepositoryConfigWithCredentials(ctx context.Context, req
 			RepoURL:       req.RepoURL,
 			AuthType:      req.AuthType,
 			DefaultBranch: req.DefaultBranch,
-			Enabled:       req.Enabled,
 			SecretRef: SecretReference{
 				Name:      secret.Name,
 				Namespace: secret.Namespace,
@@ -555,7 +547,6 @@ func secretToRepositoryConfig(secret *corev1.Secret) *RepositoryConfig {
 	name := string(secret.Data[SecretKeyRepoName])
 	authType := string(secret.Data[SecretKeyType])
 	defaultBranch := string(secret.Data[SecretKeyDefaultBranch])
-	enabled := string(secret.Data[SecretKeyEnabled]) == "true"
 
 	// Get audit metadata from annotations
 	createdBy := ""
@@ -584,7 +575,6 @@ func secretToRepositoryConfig(secret *corev1.Secret) *RepositoryConfig {
 			RepoURL:       repoURL,
 			AuthType:      authType,
 			DefaultBranch: defaultBranch,
-			Enabled:       enabled,
 			SecretRef: SecretReference{
 				Name:      secret.Name,
 				Namespace: secret.Namespace,

@@ -228,7 +228,7 @@ export function DeploymentModeSelector({
                 className="w-full px-3 py-2 text-sm rounded-md border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
               >
                 <option value="">Select a repository...</option>
-                {repositories.filter(repo => repo.enabled).map((repo) => (
+                {repositories.map((repo) => (
                   <option key={repo.id} value={repo.id}>
                     {repo.name} ({getRepositoryDisplayURL(repo)})
                   </option>

@@ -52,7 +52,6 @@ type CreateRepositorySecretRequest struct {
 	RepoURL       string
 	AuthType      string
 	DefaultBranch string
-	Enabled       bool
 
 	// Credential data
 	SSHAuth       *SSHAuthConfig
@@ -128,11 +127,6 @@ func (cm *CredentialManager) buildRepositorySecretData(req CreateRepositorySecre
 	data[SecretKeyRepoName] = []byte(req.Name)
 	data[SecretKeyType] = []byte(req.AuthType)
 	data[SecretKeyDefaultBranch] = []byte(req.DefaultBranch)
-	if req.Enabled {
-		data[SecretKeyEnabled] = []byte("true")
-	} else {
-		data[SecretKeyEnabled] = []byte("false")
-	}
 
 	// Add credential data based on auth type
 	switch req.AuthType {

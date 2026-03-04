@@ -191,9 +191,6 @@ type RepositoryConfigSpec struct {
 
 	// DefaultBranch is the default branch to use for commits (e.g., "main")
 	DefaultBranch string `json:"defaultBranch"`
-
-	// Enabled indicates if this repository configuration is active
-	Enabled bool `json:"enabled"`
 }
 
 // RepositoryConfigStatus defines the observed state of RepositoryConfig
@@ -237,7 +234,6 @@ type RepositoryConfigInfo struct {
 	RepoURL           string     `json:"repoURL"`
 	AuthType          string     `json:"authType"`
 	DefaultBranch     string     `json:"defaultBranch"`
-	Enabled           bool       `json:"enabled"`
 	CreatedBy         string     `json:"createdBy,omitempty"`
 	CreatedAt         *time.Time `json:"createdAt,omitempty"`
 	UpdatedBy         string     `json:"updatedBy,omitempty"`
@@ -264,7 +260,6 @@ func (r *RepositoryConfig) ToRepositoryConfigInfo() *RepositoryConfigInfo {
 		RepoURL:           r.Spec.RepoURL,
 		AuthType:          r.Spec.AuthType,
 		DefaultBranch:     r.Spec.DefaultBranch,
-		Enabled:           r.Spec.Enabled,
 		CreatedBy:         r.Status.CreatedBy,
 		UpdatedBy:         r.Status.UpdatedBy,
 		ValidationStatus:  r.Status.ValidationStatus,
@@ -313,7 +308,6 @@ func (r *RepositoryConfig) DeepCopyObject() runtime.Object {
 		Namespace: r.Spec.SecretRef.Namespace,
 	}
 	out.Spec.DefaultBranch = r.Spec.DefaultBranch
-	out.Spec.Enabled = r.Spec.Enabled
 
 	// Deep copy Status
 	out.Status.CreatedBy = r.Status.CreatedBy
@@ -380,7 +374,6 @@ type CreateRepositoryRequest struct {
 	RepoURL       string `json:"repoURL"`
 	AuthType      string `json:"authType"`
 	DefaultBranch string `json:"defaultBranch"`
-	Enabled       bool   `json:"enabled"`
 
 	// Auth-specific credentials (only one should be provided based on authType)
 	SSHAuth       *SSHAuthConfig       `json:"sshAuth,omitempty"`

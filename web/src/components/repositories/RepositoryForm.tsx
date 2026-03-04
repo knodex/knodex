@@ -25,7 +25,6 @@ const baseSchema = {
   repoURL: z.string().url("Must be a valid URL"),
   authType: z.enum(["ssh", "https", "github-app"] as const),
   defaultBranch: z.string().min(1, "Default branch is required"),
-  enabled: z.boolean(),
 };
 
 // Full repository schema with conditional auth validation
@@ -158,7 +157,6 @@ export function RepositoryForm({
       repoURL: initialData?.repoURL || "",
       authType: (initialData?.authType as AuthType) || "https",
       defaultBranch: initialData?.defaultBranch || "main",
-      enabled: initialData?.enabled ?? true,
       sshAuth: {
         privateKey: "",
       },
@@ -244,7 +242,6 @@ export function RepositoryForm({
       repoURL: data.repoURL,
       authType: data.authType,
       defaultBranch: data.defaultBranch,
-      enabled: data.enabled,
     };
 
     // Add auth-specific data
@@ -669,19 +666,6 @@ export function RepositoryForm({
           )}
         </div>
       )}
-
-      {/* Enabled Checkbox */}
-      <div className="flex items-center gap-2">
-        <input
-          type="checkbox"
-          id="enabled"
-          {...register("enabled")}
-          className="rounded border-border text-primary focus:ring-primary"
-        />
-        <label htmlFor="enabled" className="text-sm font-medium">
-          Enable this repository configuration
-        </label>
-      </div>
 
       {/* Form Actions */}
       <div className="flex justify-end gap-3 pt-4 border-t border-border">

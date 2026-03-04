@@ -261,8 +261,6 @@ type RepositoryConfig struct {
 	SecretNamespace string `json:"secretNamespace,omitempty"`
 	// SecretKey is the key within the secret containing the token (default: "token", legacy)
 	SecretKey string `json:"secretKey,omitempty"`
-	// Enabled indicates if this repository is active
-	Enabled bool `json:"enabled"`
 	// CreatedAt is when the config was created
 	CreatedAt string `json:"createdAt,omitempty"`
 	// UpdatedAt is when the config was last updated
