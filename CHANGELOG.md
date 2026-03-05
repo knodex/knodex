@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.0.19](https://github.com/knodex/knodex/compare/v0.0.18...v0.0.19) (2026-03-05)
+
+
+### Features
+
+* add instance spec editing and audit change details ([ad7746d](https://github.com/knodex/knodex/commit/ad7746dcbfc551f2b54572d9ef37f010ef1113c7))
+* **schema:** add nested externalRef dropdown resolution for composite RGDs ([0c51052](https://github.com/knodex/knodex/commit/0c510525ce0711fc17b71d99af0cdd1dd1646911))
+* **ui:** add inline role builder and improve layout consistency ([72f2fdb](https://github.com/knodex/knodex/commit/72f2fdb65a865cd439b09b96f98fde6231fceb56))
+
+
+### Bug Fixes
+
+* **repo:** remove repository enabled field ([561dc7a](https://github.com/knodex/knodex/commit/561dc7aa23eea030445a9a122416778a8c6e0a1d))
+* **tests:** register ProjectList kind in watcher manager tests ([8921947](https://github.com/knodex/knodex/commit/89219474627d455b18ada86ce9500174081f064a))
+
 ## [0.0.18](https://github.com/knodex/knodex/compare/v0.0.17...v0.0.18) (2026-03-03)
 
 
