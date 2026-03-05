@@ -15,6 +15,12 @@ import (
 	"k8s.io/client-go/tools/cache"
 )
 
+// projectListGVR maps the Project CRD GVR to its list kind so that
+// fake dynamic clients can handle LIST operations without panicking.
+var projectListGVR = map[schema.GroupVersionResource]string{
+	{Group: ProjectGroup, Version: ProjectVersion, Resource: ProjectResource}: "ProjectList",
+}
+
 // mockPolicyHandler implements ProjectPolicyHandler for testing
 type mockPolicyHandler struct {
 	mu               sync.Mutex
@@ -875,7 +881,7 @@ func TestProjectWatcherManager_Start(t *testing.T) {
 	t.Parallel()
 
 	scheme := runtime.NewScheme()
-	dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme)
+	dynamicClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, projectListGVR)
 	handler := &mockPolicyHandler{}
 
 	watcher := NewProjectWatcher(dynamicClient, handler, ProjectWatcherConfig{})
@@ -908,7 +914,7 @@ func TestProjectWatcherManager_StartAlreadyRunning(t *testing.T) {
 	t.Parallel()
 
 	scheme := runtime.NewScheme()
-	dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme)
+	dynamicClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, projectListGVR)
 	handler := &mockPolicyHandler{}
 
 	watcher := NewProjectWatcher(dynamicClient, handler, ProjectWatcherConfig{})
@@ -938,7 +944,7 @@ func TestProjectWatcherManager_StopMultipleTimes(t *testing.T) {
 	t.Parallel()
 
 	scheme := runtime.NewScheme()
-	dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme)
+	dynamicClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, projectListGVR)
 	handler := &mockPolicyHandler{}
 
 	watcher := NewProjectWatcher(dynamicClient, handler, ProjectWatcherConfig{})
