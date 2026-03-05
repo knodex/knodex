@@ -526,46 +526,7 @@ func (a *App) Run(ctx context.Context) error {
 	}
 
 	// Initialize enterprise services using init functions (monorepo build-tag bridge)
-	initCtx := context.Background()
-
-	// License service: already set via setter (defaults to NoopLicenseService)
-	if a.licenseService != nil && a.licenseService.IsLicensed() {
-		slog.Info("enterprise license active")
-	}
-
-	// Compliance service: use direct setter if set, else call init func
-	if a.complianceService == nil && a.complianceInitFunc != nil {
-		a.complianceService = a.complianceInitFunc(initCtx, &cfg.Kubernetes, wsHub, redisClient, &cfg.Compliance)
-	}
-	if a.complianceService != nil {
-		slog.Info("compliance service initialized (enterprise feature)")
-	}
-
-	// Violation history service: use direct setter if set, else call init func
-	if a.violationHistoryService == nil && a.violationHistoryInitFunc != nil {
-		a.violationHistoryService = a.violationHistoryInitFunc()
-	}
-
-	// Views service: use direct setter if set, else call init func
-	if a.viewsService == nil && a.viewsInitFunc != nil {
-		a.viewsService = a.viewsInitFunc(rgdWatcher, cfg.Views.ConfigPath)
-	}
-	if a.viewsService != nil {
-		slog.Info("views service initialized (enterprise feature)")
-	}
-
-	// Audit recorder: call init func to create enterprise audit recorder
-	var auditRecorder audit.Recorder
-	if a.auditRecorderInitFunc != nil {
-		namespace := cfg.Log.Namespace
-		if namespace == "" {
-			namespace = "default"
-		}
-		auditRecorder = a.auditRecorderInitFunc(initCtx, redisClient, k8sClient, namespace)
-	}
-	if auditRecorder != nil {
-		slog.Info("audit recorder initialized (enterprise feature)")
-	}
+	auditRecorder := a.initEnterpriseServices(cfg, rgdWatcher, wsHub, redisClient, k8sClient)
 
 	// Create repository secret watcher for declarative audit trail.
 	// Uses the same credential namespace as the repository service (cfg.Log.Namespace).
@@ -941,6 +902,59 @@ func newInstanceUpdateCallback(
 			updateAllRGDInstanceCounts(rgdWatcher, instanceTracker)
 		}
 	}
+}
+
+// initEnterpriseServices initializes enterprise-only services using init functions
+// registered by EE build-tag overlays. Returns the audit recorder (may be nil).
+func (a *App) initEnterpriseServices(
+	cfg *config.Config,
+	rgdWatcher *watcher.RGDWatcher,
+	wsHub *websocket.Hub,
+	redisClient *redis.Client,
+	k8sClient kubernetes.Interface,
+) audit.Recorder {
+	initCtx := context.Background()
+
+	// License service: already set via setter (defaults to NoopLicenseService)
+	if a.licenseService != nil && a.licenseService.IsLicensed() {
+		slog.Info("enterprise license active")
+	}
+
+	// Compliance service: use direct setter if set, else call init func
+	if a.complianceService == nil && a.complianceInitFunc != nil {
+		a.complianceService = a.complianceInitFunc(initCtx, &cfg.Kubernetes, wsHub, redisClient, &cfg.Compliance)
+	}
+	if a.complianceService != nil {
+		slog.Info("compliance service initialized (enterprise feature)")
+	}
+
+	// Violation history service: use direct setter if set, else call init func
+	if a.violationHistoryService == nil && a.violationHistoryInitFunc != nil {
+		a.violationHistoryService = a.violationHistoryInitFunc()
+	}
+
+	// Views service: use direct setter if set, else call init func
+	if a.viewsService == nil && a.viewsInitFunc != nil {
+		a.viewsService = a.viewsInitFunc(rgdWatcher, cfg.Views.ConfigPath)
+	}
+	if a.viewsService != nil {
+		slog.Info("views service initialized (enterprise feature)")
+	}
+
+	// Audit recorder: call init func to create enterprise audit recorder
+	var auditRecorder audit.Recorder
+	if a.auditRecorderInitFunc != nil {
+		namespace := cfg.Log.Namespace
+		if namespace == "" {
+			namespace = "default"
+		}
+		auditRecorder = a.auditRecorderInitFunc(initCtx, redisClient, k8sClient, namespace)
+	}
+	if auditRecorder != nil {
+		slog.Info("audit recorder initialized (enterprise feature)")
+	}
+
+	return auditRecorder
 }
 
 // shutdownServices performs graceful shutdown of all server components in the correct order.

@@ -536,6 +536,35 @@ func (w *RGDWatcher) GetRGDByName(name string) (*models.CatalogRGD, bool) {
 	return nil, false
 }
 
+// GetRGDByKind searches for an RGD by its Kind across all namespaces.
+// Returns the first match if found. If multiple RGDs share the same Kind,
+// a warning is logged since the result may be non-deterministic.
+// This is used by the schema enricher for cross-RGD externalRef Kind resolution.
+func (w *RGDWatcher) GetRGDByKind(kind string) (*models.CatalogRGD, bool) {
+	all := w.cache.All()
+	var match *models.CatalogRGD
+	var matchCount int
+	for _, rgd := range all {
+		if rgd.Kind == kind {
+			matchCount++
+			if match == nil {
+				match = rgd
+			}
+		}
+	}
+	if matchCount > 1 {
+		w.logger.Warn("multiple RGDs found with same Kind, using first match",
+			"kind", kind,
+			"matchCount", matchCount,
+			"selectedRGD", match.Name,
+			"selectedNamespace", match.Namespace)
+	}
+	if match != nil {
+		return match, true
+	}
+	return nil, false
+}
+
 // RefreshRGD forces a re-fetch of a specific RGD from the cluster
 func (w *RGDWatcher) RefreshRGD(ctx context.Context, namespace, name string) error {
 	u, err := w.dynamicClient.Resource(rgdGVR).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})

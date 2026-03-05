@@ -277,6 +277,56 @@ spec:
           namespace: ${schema.spec.externalRef.configmap.namespace}
 ```
 
+### Nested External References (Composite RGDs)
+
+When an RGD uses **template** resources whose specs reference `${schema.spec.externalRef.*}` fields, Knodex automatically resolves the target Kind by performing a cross-RGD lookup. This enables resource picker dropdowns for composite RGDs that reference other KRO-managed resources through template resources.
+
+```yaml
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: AppWithESO
+    spec:
+      externalRef:
+        argocdClusterRef:
+          name: string | default=""
+          namespace: string | default=""
+        keyVaultRef:
+          name: string | default=""
+          namespace: string | default=""
+
+  resources:
+    # Resource-level externalRef (direct — always gets a dropdown)
+    - id: argocdClusterRef
+      externalRef:
+        apiVersion: kro.run/v1alpha1
+        kind: ArgoCDAKSCluster
+        metadata:
+          name: ${schema.spec.externalRef.argocdClusterRef.name}
+          namespace: ${schema.spec.externalRef.argocdClusterRef.namespace}
+
+    # Template resource that also uses externalRef schema fields
+    # The target Kind is resolved by looking up the child RGD (AKVESOBinding)
+    - id: esoBinding
+      template:
+        apiVersion: kro.run/v1alpha1
+        kind: AKVESOBinding
+        spec:
+          externalRef:
+            keyVault:
+              name: ${schema.spec.externalRef.keyVaultRef.name}
+              namespace: ${schema.spec.externalRef.keyVaultRef.namespace}
+```
+
+**How it works:**
+
+1. The enricher detects paired `spec.externalRef.*.name/namespace` patterns in template resource schema fields
+2. It looks up the child RGD by the template resource's Kind (e.g., `AKVESOBinding`) in the catalog
+3. It parses the child RGD's resources to find the matching `externalRef` entry and extracts the target `apiVersion`/`kind`
+4. The resource picker dropdown is attached to the parent object using the resolved Kind
+
+**Graceful degradation:** If the child RGD is not in the catalog (not yet deployed or in a different cluster), the field renders as a plain text object instead of a dropdown.
+
 ### Combining with Conditional Resources
 
 External references pair well with `includeWhen` conditions. Use a boolean controlling field to show/hide the resource picker:

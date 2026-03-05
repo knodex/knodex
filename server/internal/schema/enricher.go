@@ -2,11 +2,18 @@ package schema
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/provops-org/knodex/server/internal/models"
 	"github.com/provops-org/knodex/server/internal/parser"
 )
+
+// RGDProvider abstracts RGD catalog lookups for the enricher.
+// This decouples the enricher from the watcher implementation.
+type RGDProvider interface {
+	GetRGDByKind(kind string) (*models.CatalogRGD, bool)
+}
 
 // String constants for repeated prefix operations
 const (
@@ -16,14 +23,22 @@ const (
 	advancedKey      = "advanced"
 )
 
+// defaultResourceParser is a package-level ResourceParser instance reused across calls.
+// ResourceParser is stateless, so a single instance is safe for concurrent use.
+var defaultResourceParser = parser.NewResourceParser()
+
 // EnrichSchemaFromResources enriches a FormSchema with metadata from the RGD resource graph.
 // It adds:
 // - ConditionalSections based on includeWhen conditions
 // - ExternalRefSelector metadata for fields used in externalRef name expressions
+// - Nested ExternalRefSelector metadata for template resources with ${schema.spec.externalRef.*} patterns
 // - AdvancedSection for fields under spec.advanced (hidden by default in UI)
 //
+// The optional rgdProvider enables cross-RGD Kind resolution for nested externalRef dropdowns.
+// If nil, nested externalRef enrichment is skipped.
+//
 // Returns an error if schema or resourceGraph is nil, or if validation fails.
-func EnrichSchemaFromResources(schema *models.FormSchema, resourceGraph *parser.ResourceGraph) error {
+func EnrichSchemaFromResources(schema *models.FormSchema, resourceGraph *parser.ResourceGraph, rgdProvider ...RGDProvider) error {
 	if schema == nil {
 		return fmt.Errorf("schema cannot be nil")
 	}
@@ -41,6 +56,15 @@ func EnrichSchemaFromResources(schema *models.FormSchema, resourceGraph *parser.
 	// Add externalRefSelector metadata to properties used in externalRef names
 	if err := addExternalRefSelectors(schema, resourceGraph); err != nil {
 		return fmt.Errorf("failed to add external ref selectors: %w", err)
+	}
+
+	// Add nested externalRef selectors from template resources
+	var provider RGDProvider
+	if len(rgdProvider) > 0 {
+		provider = rgdProvider[0]
+	}
+	if err := addNestedExternalRefSelectors(schema, resourceGraph, provider, defaultResourceParser); err != nil {
+		return fmt.Errorf("failed to add nested external ref selectors: %w", err)
 	}
 
 	// Extract advanced section (fields hidden by default in UI)
@@ -366,6 +390,180 @@ func attachResourcePickerToParent(props map[string]models.FormProperty, path str
 	}
 	props[parts[0]] = prop
 	return nil
+}
+
+// externalRefPrefix is the common prefix for nested externalRef schema fields.
+// Used to detect paired spec.externalRef.*.name and *.namespace patterns in template resources.
+const externalRefPrefix = "spec.externalRef."
+
+// addNestedExternalRefSelectors scans template resources for ${schema.spec.externalRef.*.name/namespace}
+// patterns and attaches ExternalRefSelectorMetadata to the corresponding schema properties.
+// It uses cross-RGD lookup via RGDProvider to resolve the target apiVersion/kind.
+//
+// This complements addExternalRefSelectors which only handles resource-level externalRef entries.
+// Template resources that reference externalRef sub-fields via ${schema.spec.*} expressions are
+// handled here.
+func addNestedExternalRefSelectors(schema *models.FormSchema, graph *parser.ResourceGraph, rgdProvider RGDProvider, resourceParser *parser.ResourceParser) error {
+	logger := slog.Default().With("component", "schema-enricher")
+
+	for _, res := range graph.Resources {
+		if !res.IsTemplate {
+			continue
+		}
+
+		// Find paired spec.externalRef.*.name / spec.externalRef.*.namespace patterns
+		// Group schema fields by their externalRef parent path
+		nameFields := make(map[string]string)     // parent -> name leaf
+		nsFields := make(map[string]string)       // parent -> namespace leaf
+		fieldParents := make(map[string]struct{}) // unique parent paths
+
+		for _, field := range res.SchemaFields {
+			if !strings.HasPrefix(field, externalRefPrefix) {
+				continue
+			}
+
+			// e.g., "spec.externalRef.keyVaultRef.name" → remainder = "keyVaultRef.name"
+			remainder := strings.TrimPrefix(field, externalRefPrefix)
+			lastDot := strings.LastIndex(remainder, ".")
+			if lastDot < 0 {
+				continue
+			}
+
+			parent := remainder[:lastDot]
+			leaf := remainder[lastDot+1:]
+
+			switch leaf {
+			case "name":
+				nameFields[parent] = leaf
+				fieldParents[parent] = struct{}{}
+			case "namespace":
+				nsFields[parent] = leaf
+				fieldParents[parent] = struct{}{}
+			}
+		}
+
+		// Process each parent that has BOTH name and namespace
+		for parent := range fieldParents {
+			nameLeaf, hasName := nameFields[parent]
+			nsLeaf, hasNS := nsFields[parent]
+			if !hasName || !hasNS {
+				continue
+			}
+
+			// The full property path in schema (without "spec." prefix since schema.Properties starts at spec level)
+			parentPath := "externalRef." + parent
+
+			// Skip if selector already attached by resource-level externalRef processing (AC-4)
+			if hasExternalRefSelector(schema.Properties, parentPath) {
+				continue
+			}
+
+			// Resolve the target apiVersion/kind via cross-RGD lookup
+			apiVersion, kind := resolveNestedExternalRefKind(res, parent, rgdProvider, resourceParser, logger)
+
+			if apiVersion == "" || kind == "" {
+				// Graceful degradation — skip the dropdown (AC-2 graceful degradation)
+				continue
+			}
+
+			// Attach resource picker metadata to the parent object property
+			if err := attachResourcePickerToParent(schema.Properties, parentPath, &models.ExternalRefSelectorMetadata{
+				APIVersion:           apiVersion,
+				Kind:                 kind,
+				UseInstanceNamespace: true,
+				AutoFillFields:       map[string]string{"name": nameLeaf, "namespace": nsLeaf},
+			}); err != nil {
+				return fmt.Errorf("failed to attach nested external ref selector to %q: %w", parentPath, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// resolveNestedExternalRefKind resolves the target apiVersion/kind for a nested externalRef
+// by performing a cross-RGD lookup. It finds the child RGD by the template resource's Kind,
+// then parses the child's resources to find the externalRef entry matching the field name.
+func resolveNestedExternalRefKind(
+	templateRes parser.ResourceDefinition,
+	externalRefFieldName string,
+	rgdProvider RGDProvider,
+	resourceParser *parser.ResourceParser,
+	logger *slog.Logger,
+) (apiVersion, kind string) {
+	if rgdProvider == nil {
+		logger.Debug("no RGD provider available for cross-RGD lookup",
+			"templateKind", templateRes.Kind)
+		return "", ""
+	}
+
+	childKind := templateRes.Kind
+	childRGD, found := rgdProvider.GetRGDByKind(childKind)
+	if !found {
+		logger.Warn("child RGD not found for cross-RGD externalRef resolution",
+			"templateKind", childKind,
+			"externalRefField", externalRefFieldName)
+		return "", ""
+	}
+
+	if childRGD.RawSpec == nil {
+		logger.Warn("child RGD has no raw spec",
+			"templateKind", childKind)
+		return "", ""
+	}
+
+	// Parse the child RGD's resources
+	childGraph, err := resourceParser.ParseRGDResources(childRGD.Name, childRGD.Namespace, childRGD.RawSpec)
+	if err != nil {
+		logger.Warn("failed to parse child RGD resources",
+			"childRGD", childRGD.Name,
+			"error", err)
+		return "", ""
+	}
+
+	// Find the externalRef resource in the child whose SchemaField matches
+	// spec.externalRef.<fieldName>.name
+	//
+	// IMPORTANT: This assumes the child RGD's externalRef schema field uses the SAME
+	// field name as the parent RGD's schema path. For example, if the parent schema has
+	// spec.externalRef.keyVaultRef.name, the child RGD must also have an externalRef
+	// resource whose SchemaField is spec.externalRef.keyVaultRef.name. If names differ
+	// (e.g., parent uses "keyVaultRef" but child uses "keyVault"), the lookup fails
+	// gracefully and the field renders as plain text.
+	targetSchemaField := "spec.externalRef." + externalRefFieldName + ".name"
+
+	for _, childRes := range childGraph.Resources {
+		if childRes.ExternalRef == nil {
+			continue
+		}
+		if childRes.ExternalRef.SchemaField == targetSchemaField {
+			return childRes.ExternalRef.APIVersion, childRes.ExternalRef.Kind
+		}
+	}
+
+	logger.Warn("no matching externalRef found in child RGD",
+		"childRGD", childRGD.Name,
+		"targetSchemaField", targetSchemaField)
+	return "", ""
+}
+
+// hasExternalRefSelector checks if a property at the given path already has ExternalRefSelectorMetadata.
+func hasExternalRefSelector(props map[string]models.FormProperty, path string) bool {
+	parts := strings.SplitN(path, ".", 2)
+
+	prop, exists := props[parts[0]]
+	if !exists {
+		return false
+	}
+
+	if len(parts) == 1 {
+		return prop.ExternalRefSelector != nil
+	}
+
+	if prop.Properties == nil {
+		return false
+	}
+	return hasExternalRefSelector(prop.Properties, parts[1])
 }
 
 // extractAdvancedSection identifies fields under spec.advanced and marks them as hidden by default.

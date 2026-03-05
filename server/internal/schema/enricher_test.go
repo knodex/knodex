@@ -1333,3 +1333,889 @@ func TestEnrichSchemaFromResources_WithAdvancedSection(t *testing.T) {
 		t.Errorf("expected at least 3 affected properties, got %d", len(schema.AdvancedSection.AffectedProperties))
 	}
 }
+
+// --- Nested ExternalRef Tests (Story 3-2) ---
+
+// mockRGDProvider implements RGDProvider for testing
+type mockRGDProvider struct {
+	rgds map[string]*models.CatalogRGD
+}
+
+func (m *mockRGDProvider) GetRGDByKind(kind string) (*models.CatalogRGD, bool) {
+	rgd, ok := m.rgds[kind]
+	return rgd, ok
+}
+
+// TestAddNestedExternalRefSelectors_BasicNestedRef tests detection of nested externalRef
+// patterns in template resource SchemaFields (AC-1)
+func TestAddNestedExternalRefSelectors_BasicNestedRef(t *testing.T) {
+	// Template resource with paired spec.externalRef.keyVaultRef.name/namespace schema fields
+	graph := &parser.ResourceGraph{
+		Resources: []parser.ResourceDefinition{
+			{
+				ID:         "0-AKVESOBinding",
+				Kind:       "AKVESOBinding",
+				IsTemplate: true,
+				SchemaFields: []string{
+					"spec.externalRef.keyVaultRef.name",
+					"spec.externalRef.keyVaultRef.namespace",
+					"spec.name",
+				},
+			},
+		},
+	}
+
+	formSchema := &models.FormSchema{
+		Properties: map[string]models.FormProperty{
+			"name": {Type: "string"},
+			"externalRef": {
+				Type: "object",
+				Properties: map[string]models.FormProperty{
+					"keyVaultRef": {
+						Type: "object",
+						Properties: map[string]models.FormProperty{
+							"name":      {Type: "string"},
+							"namespace": {Type: "string"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Child RGD has an externalRef resource pointing to AzureKeyVault
+	childRGDSpec := map[string]interface{}{
+		"resources": []interface{}{
+			map[string]interface{}{
+				"id": "keyVault",
+				"externalRef": map[string]interface{}{
+					"apiVersion": "kro.run/v1alpha1",
+					"kind":       "AzureKeyVault",
+					"metadata": map[string]interface{}{
+						"name":      "${schema.spec.externalRef.keyVaultRef.name}",
+						"namespace": "${schema.spec.externalRef.keyVaultRef.namespace}",
+					},
+				},
+			},
+		},
+	}
+
+	provider := &mockRGDProvider{
+		rgds: map[string]*models.CatalogRGD{
+			"AKVESOBinding": {
+				Name:    "akv-eso-binding",
+				Kind:    "AKVESOBinding",
+				RawSpec: childRGDSpec,
+			},
+		},
+	}
+
+	if err := addNestedExternalRefSelectors(formSchema, graph, provider, parser.NewResourceParser()); err != nil {
+		t.Fatalf("addNestedExternalRefSelectors failed: %v", err)
+	}
+
+	// Verify selector was attached to externalRef.keyVaultRef
+	extRefProp := formSchema.Properties["externalRef"]
+	keyVaultProp, exists := extRefProp.Properties["keyVaultRef"]
+	if !exists {
+		t.Fatal("keyVaultRef property not found")
+	}
+
+	if keyVaultProp.ExternalRefSelector == nil {
+		t.Fatal("ExternalRefSelector not set on keyVaultRef")
+	}
+
+	if keyVaultProp.ExternalRefSelector.APIVersion != "kro.run/v1alpha1" {
+		t.Errorf("expected APIVersion 'kro.run/v1alpha1', got %q", keyVaultProp.ExternalRefSelector.APIVersion)
+	}
+
+	if keyVaultProp.ExternalRefSelector.Kind != "AzureKeyVault" {
+		t.Errorf("expected Kind 'AzureKeyVault', got %q", keyVaultProp.ExternalRefSelector.Kind)
+	}
+
+	if !keyVaultProp.ExternalRefSelector.UseInstanceNamespace {
+		t.Error("expected UseInstanceNamespace to be true")
+	}
+
+	if keyVaultProp.ExternalRefSelector.AutoFillFields["name"] != "name" {
+		t.Errorf("expected AutoFillFields[name]='name', got %q", keyVaultProp.ExternalRefSelector.AutoFillFields["name"])
+	}
+
+	if keyVaultProp.ExternalRefSelector.AutoFillFields["namespace"] != "namespace" {
+		t.Errorf("expected AutoFillFields[namespace]='namespace', got %q", keyVaultProp.ExternalRefSelector.AutoFillFields["namespace"])
+	}
+}
+
+// TestAddNestedExternalRefSelectors_CrossRGDResolution tests that cross-RGD Kind resolution
+// correctly extracts apiVersion/kind from the child RGD (AC-2)
+func TestAddNestedExternalRefSelectors_CrossRGDResolution(t *testing.T) {
+	graph := &parser.ResourceGraph{
+		Resources: []parser.ResourceDefinition{
+			{
+				ID:         "0-AKVESOBinding",
+				Kind:       "AKVESOBinding",
+				IsTemplate: true,
+				SchemaFields: []string{
+					"spec.externalRef.keyVaultRef.name",
+					"spec.externalRef.keyVaultRef.namespace",
+				},
+			},
+		},
+	}
+
+	formSchema := &models.FormSchema{
+		Properties: map[string]models.FormProperty{
+			"externalRef": {
+				Type: "object",
+				Properties: map[string]models.FormProperty{
+					"keyVaultRef": {
+						Type: "object",
+						Properties: map[string]models.FormProperty{
+							"name":      {Type: "string"},
+							"namespace": {Type: "string"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Mock: child RGD has externalRef for keyVaultRef pointing to AzureKeyVault
+	provider := &mockRGDProvider{
+		rgds: map[string]*models.CatalogRGD{
+			"AKVESOBinding": {
+				Name: "akv-eso-binding",
+				Kind: "AKVESOBinding",
+				RawSpec: map[string]interface{}{
+					"resources": []interface{}{
+						map[string]interface{}{
+							"id": "keyVault",
+							"externalRef": map[string]interface{}{
+								"apiVersion": "kro.run/v1alpha1",
+								"kind":       "AzureKeyVault",
+								"metadata": map[string]interface{}{
+									"name":      "${schema.spec.externalRef.keyVaultRef.name}",
+									"namespace": "${schema.spec.externalRef.keyVaultRef.namespace}",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	if err := addNestedExternalRefSelectors(formSchema, graph, provider, parser.NewResourceParser()); err != nil {
+		t.Fatalf("addNestedExternalRefSelectors failed: %v", err)
+	}
+
+	prop := formSchema.Properties["externalRef"].Properties["keyVaultRef"]
+	if prop.ExternalRefSelector == nil {
+		t.Fatal("expected ExternalRefSelector on keyVaultRef")
+	}
+	if prop.ExternalRefSelector.APIVersion != "kro.run/v1alpha1" {
+		t.Errorf("expected APIVersion 'kro.run/v1alpha1', got %q", prop.ExternalRefSelector.APIVersion)
+	}
+	if prop.ExternalRefSelector.Kind != "AzureKeyVault" {
+		t.Errorf("expected Kind 'AzureKeyVault', got %q", prop.ExternalRefSelector.Kind)
+	}
+}
+
+// TestAddNestedExternalRefSelectors_GracefulDegradation tests that missing child RGD
+// doesn't crash and the field renders as plain text (AC-2 graceful degradation)
+func TestAddNestedExternalRefSelectors_GracefulDegradation(t *testing.T) {
+	graph := &parser.ResourceGraph{
+		Resources: []parser.ResourceDefinition{
+			{
+				ID:         "0-UnknownKind",
+				Kind:       "UnknownKind",
+				IsTemplate: true,
+				SchemaFields: []string{
+					"spec.externalRef.someRef.name",
+					"spec.externalRef.someRef.namespace",
+				},
+			},
+		},
+	}
+
+	formSchema := &models.FormSchema{
+		Properties: map[string]models.FormProperty{
+			"externalRef": {
+				Type: "object",
+				Properties: map[string]models.FormProperty{
+					"someRef": {
+						Type: "object",
+						Properties: map[string]models.FormProperty{
+							"name":      {Type: "string"},
+							"namespace": {Type: "string"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Provider returns false — child RGD not found
+	provider := &mockRGDProvider{
+		rgds: map[string]*models.CatalogRGD{},
+	}
+
+	// Should not panic or error
+	if err := addNestedExternalRefSelectors(formSchema, graph, provider, parser.NewResourceParser()); err != nil {
+		t.Fatalf("addNestedExternalRefSelectors failed: %v", err)
+	}
+
+	// No selector should be attached (graceful degradation)
+	prop := formSchema.Properties["externalRef"].Properties["someRef"]
+	if prop.ExternalRefSelector != nil {
+		t.Error("ExternalRefSelector should NOT be set when child RGD is not found")
+	}
+}
+
+// TestAddNestedExternalRefSelectors_NilProvider tests graceful handling when no provider is given
+func TestAddNestedExternalRefSelectors_NilProvider(t *testing.T) {
+	graph := &parser.ResourceGraph{
+		Resources: []parser.ResourceDefinition{
+			{
+				ID:         "0-SomeKind",
+				Kind:       "SomeKind",
+				IsTemplate: true,
+				SchemaFields: []string{
+					"spec.externalRef.ref.name",
+					"spec.externalRef.ref.namespace",
+				},
+			},
+		},
+	}
+
+	formSchema := &models.FormSchema{
+		Properties: map[string]models.FormProperty{
+			"externalRef": {
+				Type: "object",
+				Properties: map[string]models.FormProperty{
+					"ref": {
+						Type: "object",
+						Properties: map[string]models.FormProperty{
+							"name":      {Type: "string"},
+							"namespace": {Type: "string"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Should not panic or error with nil provider
+	if err := addNestedExternalRefSelectors(formSchema, graph, nil, parser.NewResourceParser()); err != nil {
+		t.Fatalf("addNestedExternalRefSelectors failed: %v", err)
+	}
+
+	prop := formSchema.Properties["externalRef"].Properties["ref"]
+	if prop.ExternalRefSelector != nil {
+		t.Error("ExternalRefSelector should NOT be set with nil provider")
+	}
+}
+
+// TestAddNestedExternalRefSelectors_ExistingResourceLevelRef tests that existing resource-level
+// externalRef selectors are not overwritten (AC-3, AC-4)
+func TestAddNestedExternalRefSelectors_ExistingResourceLevelRef(t *testing.T) {
+	graph := &parser.ResourceGraph{
+		Resources: []parser.ResourceDefinition{
+			// Resource-level externalRef (already processed by addExternalRefSelectors)
+			{
+				ID:         "0-ArgoCDCluster",
+				Kind:       "ArgoCDAKSCluster",
+				IsTemplate: false,
+				ExternalRef: &parser.ExternalRefInfo{
+					UsesSchemaSpec:       true,
+					SchemaField:          "spec.externalRef.argocdClusterRef.name",
+					NamespaceSchemaField: "spec.externalRef.argocdClusterRef.namespace",
+					APIVersion:           "kro.run/v1alpha1",
+					Kind:                 "ArgoCDAKSCluster",
+				},
+			},
+			// Template resource that also references the same externalRef field
+			{
+				ID:         "1-SomeTemplate",
+				Kind:       "SomeTemplate",
+				IsTemplate: true,
+				SchemaFields: []string{
+					"spec.externalRef.argocdClusterRef.name",
+					"spec.externalRef.argocdClusterRef.namespace",
+				},
+			},
+		},
+	}
+
+	formSchema := &models.FormSchema{
+		Properties: map[string]models.FormProperty{
+			"externalRef": {
+				Type: "object",
+				Properties: map[string]models.FormProperty{
+					"argocdClusterRef": {
+						Type: "object",
+						Properties: map[string]models.FormProperty{
+							"name":      {Type: "string"},
+							"namespace": {Type: "string"},
+						},
+						// Pre-existing selector from addExternalRefSelectors
+						ExternalRefSelector: &models.ExternalRefSelectorMetadata{
+							APIVersion:           "kro.run/v1alpha1",
+							Kind:                 "ArgoCDAKSCluster",
+							UseInstanceNamespace: true,
+							AutoFillFields:       map[string]string{"name": "name", "namespace": "namespace"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	provider := &mockRGDProvider{
+		rgds: map[string]*models.CatalogRGD{
+			"SomeTemplate": {
+				Name: "some-template",
+				Kind: "SomeTemplate",
+				RawSpec: map[string]interface{}{
+					"resources": []interface{}{
+						map[string]interface{}{
+							"externalRef": map[string]interface{}{
+								"apiVersion": "different/v1",
+								"kind":       "DifferentKind",
+								"metadata": map[string]interface{}{
+									"name":      "${schema.spec.externalRef.argocdClusterRef.name}",
+									"namespace": "${schema.spec.externalRef.argocdClusterRef.namespace}",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	if err := addNestedExternalRefSelectors(formSchema, graph, provider, parser.NewResourceParser()); err != nil {
+		t.Fatalf("addNestedExternalRefSelectors failed: %v", err)
+	}
+
+	// The original resource-level selector should be preserved, not overwritten
+	prop := formSchema.Properties["externalRef"].Properties["argocdClusterRef"]
+	if prop.ExternalRefSelector == nil {
+		t.Fatal("ExternalRefSelector should still be set")
+	}
+	if prop.ExternalRefSelector.Kind != "ArgoCDAKSCluster" {
+		t.Errorf("expected Kind 'ArgoCDAKSCluster' (original), got %q", prop.ExternalRefSelector.Kind)
+	}
+}
+
+// TestAddNestedExternalRefSelectors_ESOExample tests with the realistic ESO RGD example
+// (AKSApplicationExternalSecretOperator → AKVESOBinding → AzureKeyVault)
+func TestAddNestedExternalRefSelectors_ESOExample(t *testing.T) {
+	// Parent RGD: AKSApplicationExternalSecretOperator
+	// Has template resource esoBinding (kind: AKVESOBinding) that references
+	// spec.externalRef.keyVaultRef.name/namespace via ${schema.spec.*}
+	// Also has template resource clusterSecretStore that references
+	// spec.externalRef.argocdClusterRef.name/namespace
+	graph := &parser.ResourceGraph{
+		Resources: []parser.ResourceDefinition{
+			{
+				// Resource-level externalRef (already works)
+				ID:         "0-ArgoCDAKSCluster",
+				Kind:       "ArgoCDAKSCluster",
+				IsTemplate: false,
+				ExternalRef: &parser.ExternalRefInfo{
+					UsesSchemaSpec:       true,
+					SchemaField:          "spec.externalRef.argocdClusterRef.name",
+					NamespaceSchemaField: "spec.externalRef.argocdClusterRef.namespace",
+					APIVersion:           "kro.run/v1alpha1",
+					Kind:                 "ArgoCDAKSCluster",
+				},
+			},
+			{
+				// Template resource: esoBinding (kind: AKVESOBinding)
+				ID:         "1-AKVESOBinding",
+				Kind:       "AKVESOBinding",
+				IsTemplate: true,
+				SchemaFields: []string{
+					"spec.name",
+					"spec.externalRef.keyVaultRef.name",
+					"spec.externalRef.keyVaultRef.namespace",
+				},
+			},
+			{
+				// Template resource: clusterSecretStore
+				ID:         "2-ClusterSecretStore",
+				Kind:       "ClusterSecretStore",
+				IsTemplate: true,
+				SchemaFields: []string{
+					"spec.externalRef.managedClusterRef.name",
+					"spec.externalRef.managedClusterRef.namespace",
+				},
+			},
+		},
+	}
+
+	formSchema := &models.FormSchema{
+		Properties: map[string]models.FormProperty{
+			"name": {Type: "string"},
+			"externalRef": {
+				Type: "object",
+				Properties: map[string]models.FormProperty{
+					"argocdClusterRef": {
+						Type: "object",
+						Properties: map[string]models.FormProperty{
+							"name":      {Type: "string"},
+							"namespace": {Type: "string"},
+						},
+					},
+					"keyVaultRef": {
+						Type: "object",
+						Properties: map[string]models.FormProperty{
+							"name":      {Type: "string"},
+							"namespace": {Type: "string"},
+						},
+					},
+					"managedClusterRef": {
+						Type: "object",
+						Properties: map[string]models.FormProperty{
+							"name":      {Type: "string"},
+							"namespace": {Type: "string"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// First: run resource-level externalRef enrichment (for argocdClusterRef)
+	if err := addExternalRefSelectors(formSchema, graph); err != nil {
+		t.Fatalf("addExternalRefSelectors failed: %v", err)
+	}
+
+	// Then: run nested externalRef enrichment
+	provider := &mockRGDProvider{
+		rgds: map[string]*models.CatalogRGD{
+			"AKVESOBinding": {
+				Name: "akv-eso-binding",
+				Kind: "AKVESOBinding",
+				RawSpec: map[string]interface{}{
+					"resources": []interface{}{
+						map[string]interface{}{
+							"id": "keyVault",
+							"externalRef": map[string]interface{}{
+								"apiVersion": "kro.run/v1alpha1",
+								"kind":       "AzureKeyVault",
+								"metadata": map[string]interface{}{
+									"name":      "${schema.spec.externalRef.keyVaultRef.name}",
+									"namespace": "${schema.spec.externalRef.keyVaultRef.namespace}",
+								},
+							},
+						},
+					},
+				},
+			},
+			"ClusterSecretStore": {
+				Name: "cluster-secret-store",
+				Kind: "ClusterSecretStore",
+				RawSpec: map[string]interface{}{
+					"resources": []interface{}{
+						map[string]interface{}{
+							"id": "managedCluster",
+							"externalRef": map[string]interface{}{
+								"apiVersion": "kro.run/v1alpha1",
+								"kind":       "AKSManagedCluster",
+								"metadata": map[string]interface{}{
+									"name":      "${schema.spec.externalRef.managedClusterRef.name}",
+									"namespace": "${schema.spec.externalRef.managedClusterRef.namespace}",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	if err := addNestedExternalRefSelectors(formSchema, graph, provider, parser.NewResourceParser()); err != nil {
+		t.Fatalf("addNestedExternalRefSelectors failed: %v", err)
+	}
+
+	extRefProp := formSchema.Properties["externalRef"]
+
+	// argocdClusterRef: should have selector from resource-level enrichment
+	argocdProp := extRefProp.Properties["argocdClusterRef"]
+	if argocdProp.ExternalRefSelector == nil {
+		t.Fatal("argocdClusterRef should have ExternalRefSelector from resource-level enrichment")
+	}
+	if argocdProp.ExternalRefSelector.Kind != "ArgoCDAKSCluster" {
+		t.Errorf("argocdClusterRef: expected Kind 'ArgoCDAKSCluster', got %q", argocdProp.ExternalRefSelector.Kind)
+	}
+
+	// keyVaultRef: should have selector from nested enrichment
+	keyVaultProp := extRefProp.Properties["keyVaultRef"]
+	if keyVaultProp.ExternalRefSelector == nil {
+		t.Fatal("keyVaultRef should have ExternalRefSelector from nested enrichment")
+	}
+	if keyVaultProp.ExternalRefSelector.Kind != "AzureKeyVault" {
+		t.Errorf("keyVaultRef: expected Kind 'AzureKeyVault', got %q", keyVaultProp.ExternalRefSelector.Kind)
+	}
+
+	// managedClusterRef: should have selector from nested enrichment
+	managedClusterProp := extRefProp.Properties["managedClusterRef"]
+	if managedClusterProp.ExternalRefSelector == nil {
+		t.Fatal("managedClusterRef should have ExternalRefSelector from nested enrichment")
+	}
+	if managedClusterProp.ExternalRefSelector.Kind != "AKSManagedCluster" {
+		t.Errorf("managedClusterRef: expected Kind 'AKSManagedCluster', got %q", managedClusterProp.ExternalRefSelector.Kind)
+	}
+}
+
+// TestGetRGDByKind tests the RGDWatcher.GetRGDByKind method
+func TestGetRGDByKind(t *testing.T) {
+	tests := []struct {
+		name       string
+		cacheRGDs  []*models.CatalogRGD
+		lookupKind string
+		wantFound  bool
+		wantName   string
+	}{
+		{
+			name: "found by kind",
+			cacheRGDs: []*models.CatalogRGD{
+				{Name: "akv-eso-binding", Kind: "AKVESOBinding"},
+				{Name: "azure-key-vault", Kind: "AzureKeyVault"},
+			},
+			lookupKind: "AKVESOBinding",
+			wantFound:  true,
+			wantName:   "akv-eso-binding",
+		},
+		{
+			name: "not found",
+			cacheRGDs: []*models.CatalogRGD{
+				{Name: "akv-eso-binding", Kind: "AKVESOBinding"},
+			},
+			lookupKind: "NonExistentKind",
+			wantFound:  false,
+		},
+		{
+			name:       "empty cache",
+			cacheRGDs:  []*models.CatalogRGD{},
+			lookupKind: "AnyKind",
+			wantFound:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := &mockRGDProvider{
+				rgds: make(map[string]*models.CatalogRGD),
+			}
+			for _, rgd := range tt.cacheRGDs {
+				provider.rgds[rgd.Kind] = rgd
+			}
+
+			rgd, found := provider.GetRGDByKind(tt.lookupKind)
+			if found != tt.wantFound {
+				t.Errorf("GetRGDByKind(%q) found = %v, want %v", tt.lookupKind, found, tt.wantFound)
+			}
+			if found && rgd.Name != tt.wantName {
+				t.Errorf("GetRGDByKind(%q) name = %q, want %q", tt.lookupKind, rgd.Name, tt.wantName)
+			}
+		})
+	}
+}
+
+// TestHasExternalRefSelector tests the duplicate detection helper
+func TestHasExternalRefSelector(t *testing.T) {
+	props := map[string]models.FormProperty{
+		"externalRef": {
+			Type: "object",
+			Properties: map[string]models.FormProperty{
+				"withSelector": {
+					Type: "object",
+					ExternalRefSelector: &models.ExternalRefSelectorMetadata{
+						Kind: "SomeKind",
+					},
+				},
+				"withoutSelector": {
+					Type: "object",
+				},
+			},
+		},
+	}
+
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{"externalRef.withSelector", true},
+		{"externalRef.withoutSelector", false},
+		{"externalRef.nonExistent", false},
+		{"nonExistent", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			got := hasExternalRefSelector(props, tt.path)
+			if got != tt.want {
+				t.Errorf("hasExternalRefSelector(%q) = %v, want %v", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestAddNestedExternalRefSelectors_NilRawSpec tests that a child RGD with nil RawSpec
+// is handled gracefully (no crash, no selector attached)
+func TestAddNestedExternalRefSelectors_NilRawSpec(t *testing.T) {
+	graph := &parser.ResourceGraph{
+		Resources: []parser.ResourceDefinition{
+			{
+				ID:         "0-SomeKind",
+				Kind:       "SomeKind",
+				IsTemplate: true,
+				SchemaFields: []string{
+					"spec.externalRef.ref.name",
+					"spec.externalRef.ref.namespace",
+				},
+			},
+		},
+	}
+
+	formSchema := &models.FormSchema{
+		Properties: map[string]models.FormProperty{
+			"externalRef": {
+				Type: "object",
+				Properties: map[string]models.FormProperty{
+					"ref": {
+						Type: "object",
+						Properties: map[string]models.FormProperty{
+							"name":      {Type: "string"},
+							"namespace": {Type: "string"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Child RGD exists but has nil RawSpec
+	provider := &mockRGDProvider{
+		rgds: map[string]*models.CatalogRGD{
+			"SomeKind": {
+				Name:    "some-kind",
+				Kind:    "SomeKind",
+				RawSpec: nil,
+			},
+		},
+	}
+
+	// Should not panic or error
+	if err := addNestedExternalRefSelectors(formSchema, graph, provider, parser.NewResourceParser()); err != nil {
+		t.Fatalf("addNestedExternalRefSelectors failed: %v", err)
+	}
+
+	prop := formSchema.Properties["externalRef"].Properties["ref"]
+	if prop.ExternalRefSelector != nil {
+		t.Error("ExternalRefSelector should NOT be set when child RGD has nil RawSpec")
+	}
+}
+
+// TestAddNestedExternalRefSelectors_SkipsNonTemplateResources tests that non-template
+// resources are not processed by the nested enricher
+func TestAddNestedExternalRefSelectors_SkipsNonTemplateResources(t *testing.T) {
+	graph := &parser.ResourceGraph{
+		Resources: []parser.ResourceDefinition{
+			{
+				ID:         "0-ExternalRef",
+				Kind:       "SomeKind",
+				IsTemplate: false, // not a template
+				SchemaFields: []string{
+					"spec.externalRef.ref.name",
+					"spec.externalRef.ref.namespace",
+				},
+			},
+		},
+	}
+
+	formSchema := &models.FormSchema{
+		Properties: map[string]models.FormProperty{
+			"externalRef": {
+				Type: "object",
+				Properties: map[string]models.FormProperty{
+					"ref": {
+						Type: "object",
+						Properties: map[string]models.FormProperty{
+							"name":      {Type: "string"},
+							"namespace": {Type: "string"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	provider := &mockRGDProvider{
+		rgds: map[string]*models.CatalogRGD{
+			"SomeKind": {
+				Name: "some-kind",
+				Kind: "SomeKind",
+				RawSpec: map[string]interface{}{
+					"resources": []interface{}{
+						map[string]interface{}{
+							"externalRef": map[string]interface{}{
+								"apiVersion": "v1",
+								"kind":       "ConfigMap",
+								"metadata": map[string]interface{}{
+									"name":      "${schema.spec.externalRef.ref.name}",
+									"namespace": "${schema.spec.externalRef.ref.namespace}",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	if err := addNestedExternalRefSelectors(formSchema, graph, provider, parser.NewResourceParser()); err != nil {
+		t.Fatalf("addNestedExternalRefSelectors failed: %v", err)
+	}
+
+	prop := formSchema.Properties["externalRef"].Properties["ref"]
+	if prop.ExternalRefSelector != nil {
+		t.Error("ExternalRefSelector should NOT be set on non-template resources")
+	}
+}
+
+// TestEnrichSchemaFromResources_WithRGDProvider tests the full EnrichSchemaFromResources pipeline
+// with an RGDProvider, verifying that nested externalRef selectors are attached end-to-end.
+// This is the integration test ensuring the variadic rgdProvider parameter works correctly.
+func TestEnrichSchemaFromResources_WithRGDProvider(t *testing.T) {
+	graph := &parser.ResourceGraph{
+		Resources: []parser.ResourceDefinition{
+			{
+				ID:         "0-AKVESOBinding",
+				Kind:       "AKVESOBinding",
+				IsTemplate: true,
+				SchemaFields: []string{
+					"spec.externalRef.keyVaultRef.name",
+					"spec.externalRef.keyVaultRef.namespace",
+				},
+			},
+		},
+	}
+
+	formSchema := &models.FormSchema{
+		Properties: map[string]models.FormProperty{
+			"externalRef": {
+				Type: "object",
+				Properties: map[string]models.FormProperty{
+					"keyVaultRef": {
+						Type: "object",
+						Properties: map[string]models.FormProperty{
+							"name":      {Type: "string"},
+							"namespace": {Type: "string"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	provider := &mockRGDProvider{
+		rgds: map[string]*models.CatalogRGD{
+			"AKVESOBinding": {
+				Name:      "akv-eso-binding",
+				Namespace: "default",
+				Kind:      "AKVESOBinding",
+				RawSpec: map[string]interface{}{
+					"resources": []interface{}{
+						map[string]interface{}{
+							"id": "keyVault",
+							"externalRef": map[string]interface{}{
+								"apiVersion": "kro.run/v1alpha1",
+								"kind":       "AzureKeyVault",
+								"metadata": map[string]interface{}{
+									"name":      "${schema.spec.externalRef.keyVaultRef.name}",
+									"namespace": "${schema.spec.externalRef.keyVaultRef.namespace}",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Call the full pipeline with RGDProvider (integration test)
+	err := EnrichSchemaFromResources(formSchema, graph, provider)
+	if err != nil {
+		t.Fatalf("EnrichSchemaFromResources with RGDProvider failed: %v", err)
+	}
+
+	// Verify nested selector was attached via the full pipeline
+	extRefProp := formSchema.Properties["externalRef"]
+	keyVaultProp, exists := extRefProp.Properties["keyVaultRef"]
+	if !exists {
+		t.Fatal("keyVaultRef property not found after enrichment")
+	}
+
+	if keyVaultProp.ExternalRefSelector == nil {
+		t.Fatal("ExternalRefSelector not set on keyVaultRef via EnrichSchemaFromResources pipeline")
+	}
+
+	if keyVaultProp.ExternalRefSelector.APIVersion != "kro.run/v1alpha1" {
+		t.Errorf("expected APIVersion 'kro.run/v1alpha1', got %q", keyVaultProp.ExternalRefSelector.APIVersion)
+	}
+
+	if keyVaultProp.ExternalRefSelector.Kind != "AzureKeyVault" {
+		t.Errorf("expected Kind 'AzureKeyVault', got %q", keyVaultProp.ExternalRefSelector.Kind)
+	}
+}
+
+// TestEnrichSchemaFromResources_WithoutRGDProvider verifies backward compatibility
+// when no RGDProvider is passed (existing callers unaffected).
+func TestEnrichSchemaFromResources_WithoutRGDProvider(t *testing.T) {
+	graph := &parser.ResourceGraph{
+		Resources: []parser.ResourceDefinition{
+			{
+				ID:         "0-SomeTemplate",
+				Kind:       "SomeTemplate",
+				IsTemplate: true,
+				SchemaFields: []string{
+					"spec.externalRef.ref.name",
+					"spec.externalRef.ref.namespace",
+				},
+			},
+		},
+	}
+
+	formSchema := &models.FormSchema{
+		Properties: map[string]models.FormProperty{
+			"externalRef": {
+				Type: "object",
+				Properties: map[string]models.FormProperty{
+					"ref": {
+						Type: "object",
+						Properties: map[string]models.FormProperty{
+							"name":      {Type: "string"},
+							"namespace": {Type: "string"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Call without RGDProvider — should not error
+	err := EnrichSchemaFromResources(formSchema, graph)
+	if err != nil {
+		t.Fatalf("EnrichSchemaFromResources without RGDProvider failed: %v", err)
+	}
+
+	// No selector should be attached (no provider to resolve Kind)
+	prop := formSchema.Properties["externalRef"].Properties["ref"]
+	if prop.ExternalRefSelector != nil {
+		t.Error("ExternalRefSelector should NOT be set without RGDProvider")
+	}
+}

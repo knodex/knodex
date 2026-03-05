@@ -1304,3 +1304,57 @@ func TestRGDWatcher_UnstructuredToRGD_StatusField(t *testing.T) {
 		})
 	}
 }
+
+// TestRGDWatcher_GetRGDByKind tests the GetRGDByKind method used for cross-RGD resolution
+func TestRGDWatcher_GetRGDByKind(t *testing.T) {
+	cache := NewRGDCache()
+	cache.Set(&models.CatalogRGD{
+		Name:      "akv-eso-binding",
+		Namespace: "default",
+		Kind:      "AKVESOBinding",
+	})
+	cache.Set(&models.CatalogRGD{
+		Name:      "azure-key-vault",
+		Namespace: "default",
+		Kind:      "AzureKeyVault",
+	})
+
+	watcher := NewRGDWatcherWithCache(cache)
+
+	tests := []struct {
+		name      string
+		kind      string
+		wantFound bool
+		wantName  string
+	}{
+		{
+			name:      "find AKVESOBinding",
+			kind:      "AKVESOBinding",
+			wantFound: true,
+			wantName:  "akv-eso-binding",
+		},
+		{
+			name:      "find AzureKeyVault",
+			kind:      "AzureKeyVault",
+			wantFound: true,
+			wantName:  "azure-key-vault",
+		},
+		{
+			name:      "not found",
+			kind:      "NonExistentKind",
+			wantFound: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rgd, found := watcher.GetRGDByKind(tt.kind)
+			if found != tt.wantFound {
+				t.Errorf("GetRGDByKind(%q) found = %v, want %v", tt.kind, found, tt.wantFound)
+			}
+			if found && rgd.Name != tt.wantName {
+				t.Errorf("GetRGDByKind(%q) name = %q, want %q", tt.kind, rgd.Name, tt.wantName)
+			}
+		})
+	}
+}

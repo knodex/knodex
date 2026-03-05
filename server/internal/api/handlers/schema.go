@@ -102,7 +102,7 @@ func (h *SchemaHandler) GetSchema(w http.ResponseWriter, r *http.Request) {
 		if rgd.RawSpec != nil && h.resourceParser != nil {
 			resourceGraph, parseErr := h.resourceParser.ParseRGDResources(rgd.Name, rgd.Namespace, rgd.RawSpec)
 			if parseErr == nil && resourceGraph != nil {
-				if enrichErr := schema.EnrichSchemaFromResources(formSchema, resourceGraph); enrichErr != nil {
+				if enrichErr := schema.EnrichSchemaFromResources(formSchema, resourceGraph, h.watcher); enrichErr != nil {
 					// Log enrichment error but don't fail the request - return schema without enrichment
 					resp.Error = "failed to enrich schema: " + enrichErr.Error()
 				}

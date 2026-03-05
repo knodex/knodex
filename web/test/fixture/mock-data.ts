@@ -253,6 +253,142 @@ export const mockMicroservicesPlatformSchema = {
 };
 
 /**
+ * Mock composite RGD with nested externalRef selectors (cross-RGD resolved)
+ * Simulates AKSApplicationExternalSecretOperator pattern where template resources
+ * like AKVESOBinding have spec.externalRef fields resolved via cross-RGD lookup.
+ */
+export const mockCompositeRGD: CatalogRGD = {
+  name: "aks-app-eso",
+  namespace: "default",
+  description:
+    "AKS Application with External Secret Operator binding and ArgoCD cluster ref",
+  version: "v1.0.0",
+  tags: ["composite", "eso", "external-ref", "nested"],
+  category: "examples",
+  labels: { "knodex.io/catalog": "true" },
+  instances: 0,
+  apiVersion: "kro.run/v1alpha1",
+  kind: "ResourceGraphDefinition",
+  createdAt: "2025-01-22T10:00:00Z",
+  updatedAt: "2025-01-22T10:00:00Z",
+};
+
+/**
+ * Mock schema for composite RGD with both resource-level and nested externalRef selectors.
+ * - argocdClusterRef: resource-level externalRef (direct)
+ * - keyVaultRef: nested externalRef (resolved via cross-RGD lookup from AKVESOBinding)
+ */
+export const mockCompositeRGDSchema = {
+  crdFound: true,
+  schema: {
+    group: "kro.run",
+    version: "v1alpha1",
+    kind: "AKSAppESO",
+    description:
+      "AKS Application with ESO binding and ArgoCD cluster reference",
+    properties: {
+      appName: {
+        type: "string",
+        description: "Name of the application",
+      },
+      externalRef: {
+        type: "object",
+        properties: {
+          argocdClusterRef: {
+            type: "object",
+            description: "ArgoCD cluster reference (resource-level externalRef)",
+            properties: {
+              name: {
+                type: "string",
+                description: "Name of the ArgoCD cluster",
+                default: "",
+              },
+              namespace: {
+                type: "string",
+                description: "Namespace of the ArgoCD cluster",
+                default: "",
+              },
+            },
+            externalRefSelector: {
+              apiVersion: "kro.run/v1alpha1",
+              kind: "ArgoCDAKSCluster",
+              useInstanceNamespace: true,
+              autoFillFields: { name: "name", namespace: "namespace" },
+            },
+          },
+          keyVaultRef: {
+            type: "object",
+            description:
+              "Key Vault reference (nested externalRef, resolved via cross-RGD lookup)",
+            properties: {
+              name: {
+                type: "string",
+                description: "Name of the Azure Key Vault instance",
+                default: "",
+              },
+              namespace: {
+                type: "string",
+                description: "Namespace of the Azure Key Vault instance",
+                default: "",
+              },
+            },
+            externalRefSelector: {
+              apiVersion: "kro.run/v1alpha1",
+              kind: "AzureKeyVault",
+              useInstanceNamespace: true,
+              autoFillFields: { name: "name", namespace: "namespace" },
+            },
+          },
+        },
+      },
+    },
+    required: ["appName"],
+  },
+};
+
+/**
+ * Mock K8s resources for nested externalRef selectors (ArgoCDAKSCluster instances)
+ */
+export const mockArgoCDClusters = {
+  items: [
+    {
+      name: "aks-prod-cluster",
+      namespace: "argocd",
+      labels: { env: "prod" },
+      createdAt: "2025-01-15T10:00:00Z",
+    },
+    {
+      name: "aks-staging-cluster",
+      namespace: "argocd",
+      labels: { env: "staging" },
+      createdAt: "2025-01-16T11:00:00Z",
+    },
+  ],
+  count: 2,
+};
+
+/**
+ * Mock K8s resources for nested externalRef selectors (AzureKeyVault instances)
+ */
+export const mockAzureKeyVaults = {
+  items: [
+    {
+      name: "prod-keyvault",
+      namespace: "secrets",
+      labels: { env: "prod" },
+      createdAt: "2025-01-15T10:00:00Z",
+    },
+    {
+      name: "staging-keyvault",
+      namespace: "secrets",
+      labels: { env: "staging" },
+      createdAt: "2025-01-16T11:00:00Z",
+    },
+  ],
+  count: 2,
+};
+
+/**
  * Mock K8s resources for ExternalRef selectors
  */
 export const mockK8sServices = {
