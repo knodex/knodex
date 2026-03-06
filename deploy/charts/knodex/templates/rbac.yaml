@@ -30,7 +30,7 @@ rules:
   # Note: This is a catch-all for any CRD in kro.run group
   - apiGroups: ["kro.run"]
     resources: ["*"]
-    verbs: ["get", "list", "watch", "create", "update", "delete"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   # Manage ConfigMaps and Secrets for auth (account storage) and child resources view
   - apiGroups: [""]
     resources: ["configmaps", "secrets"]

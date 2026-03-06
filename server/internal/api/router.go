@@ -354,8 +354,8 @@ func NewRouterWithConfig(healthChecker *health.Checker, rgdWatcher *watcher.RGDW
 
 	// Protected API v1 routes - Custom Views (enterprise feature)
 	// Returns 404 in OSS builds (service is nil), list of views in EE builds
-	if cfg.ViewsService != nil {
-		viewsHandler := handlers.NewViewsHandler(cfg.ViewsService, logger)
+	if cfg.ViewsService != nil && cfg.PolicyEnforcer != nil {
+		viewsHandler := handlers.NewViewsHandler(cfg.ViewsService, cfg.PolicyEnforcer, logger)
 		if cfg.LicenseService != nil {
 			viewsHandler.SetLicenseService(cfg.LicenseService)
 		}

@@ -5,7 +5,9 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/provops-org/knodex/server/internal/api/helpers"
 	"github.com/provops-org/knodex/server/internal/api/response"
+	"github.com/provops-org/knodex/server/internal/rbac"
 	"github.com/provops-org/knodex/server/internal/services"
 )
 
@@ -13,17 +15,19 @@ import (
 type ViewsHandler struct {
 	service        services.ViewsService
 	licenseService services.LicenseService
+	enforcer       rbac.Authorizer
 	logger         *slog.Logger
 }
 
 // NewViewsHandler creates a new view HTTP handler.
-func NewViewsHandler(service services.ViewsService, logger *slog.Logger) *ViewsHandler {
+func NewViewsHandler(service services.ViewsService, enforcer rbac.Authorizer, logger *slog.Logger) *ViewsHandler {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &ViewsHandler{
-		service: service,
-		logger:  logger.With("component", "views-handler"),
+		service:  service,
+		enforcer: enforcer,
+		logger:   logger.With("component", "views-handler"),
 	}
 }
 
@@ -73,6 +77,15 @@ func (h *ViewsHandler) ListViews(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check Casbin authorization
+	userCtx := helpers.RequireUserContext(w, r)
+	if userCtx == nil {
+		return
+	}
+	if !helpers.RequireAccess(w, r.Context(), h.enforcer, userCtx, "views/*", "get", r.Header.Get("X-Request-Id")) {
+		return
+	}
+
 	// Check license validity
 	if h.licenseService != nil && !h.checkViewsLicense(w) {
 		return
@@ -99,15 +112,24 @@ func (h *ViewsHandler) GetView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check license validity
-	if h.licenseService != nil && !h.checkViewsLicense(w) {
-		return
-	}
-
 	// Extract slug from URL path
 	slug := r.PathValue("slug")
 	if slug == "" {
 		response.BadRequest(w, "view slug required", nil)
+		return
+	}
+
+	// Check Casbin authorization
+	userCtx := helpers.RequireUserContext(w, r)
+	if userCtx == nil {
+		return
+	}
+	if !helpers.RequireAccess(w, r.Context(), h.enforcer, userCtx, "views/"+slug, "get", r.Header.Get("X-Request-Id")) {
+		return
+	}
+
+	// Check license validity
+	if h.licenseService != nil && !h.checkViewsLicense(w) {
 		return
 	}
 

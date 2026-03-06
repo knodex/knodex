@@ -28,7 +28,7 @@ rules:
   # Manage instances (CRs created by Kro)
   - apiGroups: ["kro.run"]
     resources: ["*"]
-    verbs: ["get", "list", "watch", "create", "update", "delete"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   # Manage ConfigMaps and Secrets for auth (account storage)
   - apiGroups: [""]
     resources: ["configmaps", "secrets"]
