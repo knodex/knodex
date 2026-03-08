@@ -14,10 +14,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 
-	"github.com/provops-org/knodex/server/internal/api/handlers"
-	"github.com/provops-org/knodex/server/internal/api/middleware"
-	"github.com/provops-org/knodex/server/internal/rbac"
-	"github.com/provops-org/knodex/server/internal/testutil"
+	"github.com/knodex/knodex/server/internal/api/handlers"
+	"github.com/knodex/knodex/server/internal/api/middleware"
+	"github.com/knodex/knodex/server/internal/rbac"
+	"github.com/knodex/knodex/server/internal/testutil"
 )
 
 const (

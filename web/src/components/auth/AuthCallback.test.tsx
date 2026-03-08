@@ -33,9 +33,13 @@ const mockState = {
   roles: {},
   currentProject: null,
   isAuthenticated: false,
-  token: null,
+  groups: [],
+  issuer: null,
+  casbinRoles: [],
+  permissions: {},
+  tokenExp: null,
+  tokenIat: null,
   setCurrentProject: vi.fn(),
-  refreshUser: vi.fn(),
   isTokenExpired: mockIsTokenExpired,
 };
 
@@ -47,12 +51,10 @@ describe('AuthCallback', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
-    localStorage.clear();
   });
 
   afterEach(() => {
     vi.useRealTimers();
-    localStorage.clear();
   });
 
   it('displays error when error parameter is present', () => {
@@ -135,15 +137,13 @@ describe('AuthCallback', () => {
 
   it('exchanges code for token and navigates to dashboard with replace', async () => {
     const testCode = 'opaque-auth-code-abc123';
-    const testToken = 'test-jwt-token-from-exchange';
+    const mockResp = {
+      user: { id: 'user-123', email: 'test@example.com', displayName: 'Test' },
+      expiresAt: '2099-01-01T00:00:00Z',
+    };
 
-    // Mock exchangeAuthCode to return a JWT
-    mockExchangeAuthCode.mockResolvedValue(testToken);
-
-    // Simulate login storing token in localStorage (matching real userStore behavior)
-    mockLogin.mockImplementation((token: string) => {
-      localStorage.setItem('jwt_token', token);
-    });
+    // Mock exchangeAuthCode to return user info (cookie is set by server)
+    mockExchangeAuthCode.mockResolvedValue(mockResp);
 
     vi.useRealTimers(); // Need real timers for async operations
 
@@ -160,52 +160,13 @@ describe('AuthCallback', () => {
       expect(mockExchangeAuthCode).toHaveBeenCalledWith(testCode);
     });
 
-    // login should be called with the JWT returned from exchange
+    // login should be called with user info and expiresAt
     await waitFor(() => {
-      expect(mockLogin).toHaveBeenCalledWith(testToken);
+      expect(mockLogin).toHaveBeenCalledWith(mockResp.user, mockResp.expiresAt);
     });
 
-    // Token should be in localStorage (set by our mock login)
-    expect(localStorage.getItem('jwt_token')).toBe(testToken);
     // Should navigate to dashboard with replace:true (prevents back-button to callback)
     expect(mockNavigate).toHaveBeenCalledWith('/', { replace: true });
-  });
-
-  it('redirects to login when token fails to persist (malformed JWT from exchange)', async () => {
-    const testCode = 'opaque-auth-code-xyz';
-    const malformedToken = 'not-a-valid-jwt';
-
-    // Mock exchangeAuthCode to return a malformed token
-    mockExchangeAuthCode.mockResolvedValue(malformedToken);
-
-    // Simulate login failing to persist token (decodeToken returns null, login returns early)
-    mockLogin.mockImplementation(() => {
-      // Don't set localStorage — simulates failed JWT decode in userStore.login()
-    });
-
-    vi.useRealTimers();
-
-    render(
-      <MemoryRouter initialEntries={[`/?code=${testCode}`]}>
-        <Routes>
-          <Route path="/" element={<AuthCallback />} />
-        </Routes>
-      </MemoryRouter>
-    );
-
-    await waitFor(() => {
-      expect(mockExchangeAuthCode).toHaveBeenCalledWith(testCode);
-    });
-
-    // login should still be called (it's the component's job to try)
-    await waitFor(() => {
-      expect(mockLogin).toHaveBeenCalledWith(malformedToken);
-    });
-
-    // Token should NOT be in localStorage (login failed)
-    expect(localStorage.getItem('jwt_token')).toBeNull();
-    // Should redirect to login since token wasn't persisted
-    expect(mockNavigate).toHaveBeenCalledWith('/login', { replace: true });
   });
 
   it('shows error and redirects to login when code exchange fails', async () => {

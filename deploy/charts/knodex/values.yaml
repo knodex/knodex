@@ -180,13 +180,17 @@ server:
     #   - knodex-sso-providers ConfigMap: non-sensitive config (always created when oidc.enabled + providers)
     #   - knodex-sso-secrets Secret: credentials (only created when clientSecret is provided inline)
     #
-    # External Secrets: omit clientID and clientSecret from providers below.
-    # The chart will skip creating the Secret, and your ExternalSecret must create
-    # a Secret named <fullname>-sso-secrets with keys: <provider-name>.client-id
-    # and <provider-name>.client-secret for each provider.
+    # External Secrets: set oidc.existingSecret to the name of a Secret managed
+    # by your external secret operator (ESO, Vault, etc.). The secret must contain
+    # keys: <provider-name>.client-id and <provider-name>.client-secret for each provider.
     oidc:
       # -- Enable OIDC authentication
       enabled: false
+      # -- Name of an existing Kubernetes Secret containing SSO credentials.
+      # The secret must contain keys: `<provider-name>.client-id` and `<provider-name>.client-secret`
+      # for each configured provider. When set, the chart skips creating its own SSO secret.
+      # @default -- `""` (chart creates its own secret)
+      existingSecret: ""
       # -- OIDC token claim name that contains user groups
       # @default -- `"groups"`
       groupsClaim: "groups"
@@ -306,12 +310,11 @@ enterprise:
     # The secret **must** contain a key named `license.jwt` with the raw JWT token as its value.
     # If the key is missing, the license mount will silently be empty and enterprise features will not activate.
     # The secret must exist in the same namespace as the Knodex release.
-    # If not set, the chart creates its own license secret (empty unless `enterprise.license.text` is also set).
     # @default -- `""` (chart creates its own secret)
-    secretName: ""
+    existingSecret: ""
     # -- Inline license JWT text. When set, the chart creates a secret with key `license.jwt`
     # containing this value **and** sets the `KNODEX_LICENSE_TEXT` environment variable.
-    # If both `secretName` and `text` are set, `secretName` takes precedence for the volume mount.
+    # If both `existingSecret` and `text` are set, `existingSecret` takes precedence for the volume mount.
     # @default -- `""` (no inline license)
     text: ""
 
@@ -357,19 +360,10 @@ enterprise:
       - tlsClientCert
       - tlsClientKey
       - clientSecret
-    # To add custom fields, append to the list:
-    # redactFields:
-    #   - privateKey
-    #   - password
-    #   - bearerToken
-    #   - token
-    #   - secret
-    #   - tlsClientCert
-    #   - tlsClientKey
-    #   - clientSecret
-    #   - apiKey
-    #   - connectionString
-    #   - webhookSecret
+      # To add custom fields, append to the list:
+      # - apiKey
+      # - connectionString
+      # - webhookSecret
 
   # -- Compliance configuration (Enterprise feature)
   compliance:

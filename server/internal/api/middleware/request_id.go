@@ -1,17 +1,10 @@
 package middleware
 
 import (
-	"crypto/rand"
-	"encoding/hex"
-	"fmt"
-	"log/slog"
 	"net/http"
-	"sync/atomic"
-	"time"
-)
 
-// fallbackCounter is used when crypto/rand fails
-var fallbackCounter atomic.Uint64
+	utilrand "github.com/knodex/knodex/server/internal/util/rand"
+)
 
 // RequestID middleware adds a unique request ID to each request
 func RequestID(next http.Handler) http.Handler {
@@ -29,12 +22,5 @@ func RequestID(next http.Handler) http.Handler {
 }
 
 func generateRequestID() string {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		// Fallback to timestamp + counter if crypto/rand fails (extremely rare)
-		slog.Warn("crypto/rand.Read failed, using fallback", "error", err)
-		counter := fallbackCounter.Add(1)
-		return fmt.Sprintf("%016x%016x", time.Now().UnixNano(), counter)
-	}
-	return hex.EncodeToString(b)
+	return utilrand.GenerateRandomHex(16)
 }

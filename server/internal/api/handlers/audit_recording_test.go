@@ -7,13 +7,13 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/provops-org/knodex/server/internal/api/middleware"
-	"github.com/provops-org/knodex/server/internal/audit"
-	"github.com/provops-org/knodex/server/internal/models"
-	"github.com/provops-org/knodex/server/internal/rbac"
-	"github.com/provops-org/knodex/server/internal/repository"
-	"github.com/provops-org/knodex/server/internal/sso"
-	"github.com/provops-org/knodex/server/internal/watcher"
+	"github.com/knodex/knodex/server/internal/api/middleware"
+	"github.com/knodex/knodex/server/internal/audit"
+	"github.com/knodex/knodex/server/internal/kro/watcher"
+	"github.com/knodex/knodex/server/internal/models"
+	"github.com/knodex/knodex/server/internal/rbac"
+	"github.com/knodex/knodex/server/internal/repository"
+	"github.com/knodex/knodex/server/internal/sso"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -1115,33 +1115,5 @@ func TestInstanceCRUDHandler_DeleteInstance_AuditDetails(t *testing.T) {
 	}
 	if e.Details["health"] != "Healthy" {
 		t.Errorf("expected health 'Healthy', got %v", e.Details["health"])
-	}
-}
-
-// --- stringSlicesEqual order-independence test ---
-
-func TestStringSlicesEqual_OrderIndependent(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name     string
-		a, b     []string
-		expected bool
-	}{
-		{"same order", []string{"a", "b", "c"}, []string{"a", "b", "c"}, true},
-		{"different order", []string{"c", "a", "b"}, []string{"a", "b", "c"}, true},
-		{"different lengths", []string{"a", "b"}, []string{"a", "b", "c"}, false},
-		{"different elements", []string{"a", "b", "c"}, []string{"a", "b", "d"}, false},
-		{"duplicates equal", []string{"a", "a", "b"}, []string{"a", "b", "a"}, true},
-		{"duplicates unequal", []string{"a", "a", "b"}, []string{"a", "b", "b"}, false},
-		{"both empty", []string{}, []string{}, true},
-		{"both nil", nil, nil, true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			if got := stringSlicesEqual(tt.a, tt.b); got != tt.expected {
-				t.Errorf("stringSlicesEqual(%v, %v) = %v, want %v", tt.a, tt.b, got, tt.expected)
-			}
-		})
 	}
 }

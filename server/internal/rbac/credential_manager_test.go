@@ -10,7 +10,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
-	"github.com/provops-org/knodex/server/internal/repository"
+	"github.com/knodex/knodex/server/internal/repository"
+	"github.com/knodex/knodex/server/internal/util/sanitize"
 )
 
 // Test PEM keys for validation tests
@@ -1086,7 +1087,7 @@ func TestSanitizeK8sName(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.input, func(t *testing.T) {
-			result := sanitizeK8sName(tc.input)
+			result := sanitize.K8sName(tc.input)
 			if result != tc.expected {
 				t.Errorf("expected '%s', got '%s'", tc.expected, result)
 			}

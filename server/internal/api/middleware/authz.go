@@ -40,6 +40,18 @@ func writeJSONError(w http.ResponseWriter, statusCode int, code, message string,
 	}
 }
 
+// containsControlChars returns true if s contains any ASCII control character
+// (0x00–0x1F or DEL 0x7F) that could cause string truncation attacks.
+func containsControlChars(s string) bool {
+	for i := 0; i < len(s); i++ {
+		b := s[i]
+		if b <= 0x1F || b == 0x7F {
+			return true
+		}
+	}
+	return false
+}
+
 // matchesPathPrefix securely matches a path against a prefix
 // Prevents path traversal attacks by ensuring exact prefix matching
 // SECURITY: Rejects empty and root path prefixes to prevent matching all paths
@@ -161,6 +173,20 @@ func CasbinAuthz(config CasbinAuthzConfig) func(http.Handler) http.Handler {
 					)
 				}
 				writeJSONError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid path", nil)
+				return
+			}
+
+			// Reject null bytes and control characters in path parameters (LOG-VULN-02)
+			if containsControlChars(r.URL.Path) || (r.URL.RawPath != "" && containsControlChars(r.URL.RawPath)) {
+				if config.Logger != nil {
+					config.Logger.Warn("null byte or control character in path parameter",
+						slog.String("original_path", r.URL.Path),
+						slog.String("user_id", userCtx.UserID),
+						slog.String("method", r.Method),
+					)
+				}
+				writeJSONError(w, http.StatusBadRequest, "BAD_REQUEST",
+					"invalid path parameter: contains null byte or control character", nil)
 				return
 			}
 

@@ -8,7 +8,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/provops-org/knodex/server/internal/rbac"
+	"github.com/knodex/knodex/server/internal/rbac"
 )
 
 const (

@@ -20,7 +20,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 
-	"github.com/provops-org/knodex/server/internal/rbac"
+	"github.com/knodex/knodex/server/internal/rbac"
 )
 
 var (

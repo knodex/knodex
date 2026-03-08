@@ -21,6 +21,7 @@ type JWTClaims struct {
 	Roles          map[string]string `json:"roles,omitempty"`           // Project ID -> role name mapping for frontend permission checks
 	CasbinRoles    []string          `json:"casbin_roles,omitempty"`    // Casbin roles (e.g., ["role:serveradmin", "proj:acme:developer"])
 	Permissions    map[string]bool   `json:"permissions,omitempty"`     // Pre-computed permissions for frontend UI (ArgoCD-aligned)
+	JTI            string            `json:"jti,omitempty"`             // JWT ID for server-side revocation
 	ExpiresAt      int64             `json:"exp"`                       // Expiration timestamp
 	IssuedAt       int64             `json:"iat"`                       // Issued at timestamp
 	Issuer         string            `json:"iss,omitempty"`             // Token issuer (OIDC provider URL)
@@ -32,9 +33,11 @@ type LocalLoginRequest struct {
 	Password string `json:"password"`
 }
 
-// LoginResponse represents the response from a successful login
+// LoginResponse represents the response from a successful login.
+// The Token field is excluded from JSON serialization — the JWT is
+// delivered via HttpOnly cookie (Set-Cookie header), not in the response body.
 type LoginResponse struct {
-	Token     string    `json:"token"`     // JWT access token
+	Token     string    `json:"-"`         // JWT access token (set via HttpOnly cookie, not in JSON)
 	ExpiresAt time.Time `json:"expiresAt"` // Token expiration time
 	User      UserInfo  `json:"user"`      // User information
 }

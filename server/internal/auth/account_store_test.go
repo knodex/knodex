@@ -11,7 +11,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/provops-org/knodex/server/internal/testutil"
+	"github.com/knodex/knodex/server/internal/testutil"
 )
 
 // setupRateLimitTestStore creates an AccountStore with a known admin password

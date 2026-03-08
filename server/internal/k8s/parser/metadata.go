@@ -94,12 +94,6 @@ func GetLabel(obj *unstructured.Unstructured, key string) (string, bool) {
 	return value, ok
 }
 
-// HasLabel returns true if the object has the specified label.
-func HasLabel(obj *unstructured.Unstructured, key string) bool {
-	_, ok := GetLabel(obj, key)
-	return ok
-}
-
 // GetLabelOrDefault returns the value of a specific label, or a default value
 // if the label doesn't exist.
 func GetLabelOrDefault(obj *unstructured.Unstructured, key, defaultVal string) string {
@@ -155,15 +149,6 @@ func GetKind(obj *unstructured.Unstructured) string {
 	return obj.GetKind()
 }
 
-// GetGeneration returns the generation of a Kubernetes object.
-// Returns 0 if the object is nil.
-func GetGeneration(obj *unstructured.Unstructured) int64 {
-	if obj == nil {
-		return 0
-	}
-	return obj.GetGeneration()
-}
-
 // GetDeletionTimestamp returns the deletion timestamp of a Kubernetes object.
 // Returns nil if the object is nil or not being deleted.
 func GetDeletionTimestamp(obj *unstructured.Unstructured) *time.Time {
@@ -204,20 +189,6 @@ func HasFinalizer(obj *unstructured.Unstructured, finalizer string) bool {
 		}
 	}
 	return false
-}
-
-// GetOwnerReferencesCount returns the number of owner references on an object.
-// Returns 0 if the object is nil.
-func GetOwnerReferencesCount(obj *unstructured.Unstructured) int {
-	if obj == nil {
-		return 0
-	}
-	return len(obj.GetOwnerReferences())
-}
-
-// HasOwnerReferences returns true if the object has any owner references.
-func HasOwnerReferences(obj *unstructured.Unstructured) bool {
-	return GetOwnerReferencesCount(obj) > 0
 }
 
 // NamespacedName returns the namespaced name of a Kubernetes object in

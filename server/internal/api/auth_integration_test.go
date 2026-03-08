@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/provops-org/knodex/server/internal/auth"
-	"github.com/provops-org/knodex/server/internal/rbac"
+	"github.com/knodex/knodex/server/internal/auth"
+	"github.com/knodex/knodex/server/internal/rbac"
 	"github.com/redis/go-redis/v9"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -219,15 +219,25 @@ func TestIntegration_LocalLogin_Success(t *testing.T) {
 		t.Errorf("Content-Type = %v, want application/json", contentType)
 	}
 
-	// Parse response
-	var loginResp auth.LoginResponse
+	// Parse response body (token is NOT in body, delivered via HttpOnly cookie)
+	var loginResp struct {
+		ExpiresAt time.Time     `json:"expiresAt"`
+		User      auth.UserInfo `json:"user"`
+	}
 	if err := json.NewDecoder(resp.Body).Decode(&loginResp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 
-	// Validate token is not empty
-	if loginResp.Token == "" {
-		t.Error("expected token in response, got empty")
+	// Extract token from Set-Cookie header
+	var sessionToken string
+	for _, c := range resp.Cookies() {
+		if c.Name == "knodex_session" {
+			sessionToken = c.Value
+			break
+		}
+	}
+	if sessionToken == "" {
+		t.Fatal("expected knodex_session cookie, got none")
 	}
 
 	// Validate user information
@@ -254,8 +264,8 @@ func TestIntegration_LocalLogin_Success(t *testing.T) {
 		t.Error("token expiry should be in the future")
 	}
 
-	// Validate JWT token can be parsed
-	claims, err := authService.ValidateToken(context.Background(), loginResp.Token)
+	// Validate JWT token from cookie can be parsed
+	claims, err := authService.ValidateToken(context.Background(), sessionToken)
 	if err != nil {
 		t.Errorf("failed to validate returned token: %v", err)
 	}
@@ -508,13 +518,20 @@ func TestIntegration_LocalLogin_JWTTokenValidation(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	var loginResp auth.LoginResponse
-	if err := json.NewDecoder(resp.Body).Decode(&loginResp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
+	// Extract token from cookie (not from JSON body)
+	var sessionToken string
+	for _, c := range resp.Cookies() {
+		if c.Name == "knodex_session" {
+			sessionToken = c.Value
+			break
+		}
+	}
+	if sessionToken == "" {
+		t.Fatal("expected knodex_session cookie")
 	}
 
 	// Parse token manually to verify structure
-	token, _, err := new(jwt.Parser).ParseUnverified(loginResp.Token, jwt.MapClaims{})
+	token, _, err := new(jwt.Parser).ParseUnverified(sessionToken, jwt.MapClaims{})
 	if err != nil {
 		t.Fatalf("failed to parse token: %v", err)
 	}
@@ -556,7 +573,7 @@ func TestIntegration_LocalLogin_JWTTokenValidation(t *testing.T) {
 	}
 
 	// Verify token can be validated by auth service
-	validatedClaims, err := authService.ValidateToken(context.Background(), loginResp.Token)
+	validatedClaims, err := authService.ValidateToken(context.Background(), sessionToken)
 	if err != nil {
 		t.Errorf("auth service failed to validate token: %v", err)
 	}
@@ -596,14 +613,16 @@ func TestIntegration_LocalLogin_ConcurrentRequests(t *testing.T) {
 				return
 			}
 
-			var loginResp auth.LoginResponse
-			if err := json.NewDecoder(resp.Body).Decode(&loginResp); err != nil {
-				errChan <- err
-				return
+			// Verify token is in cookie
+			var hasSessionCookie bool
+			for _, c := range resp.Cookies() {
+				if c.Name == "knodex_session" && c.Value != "" {
+					hasSessionCookie = true
+					break
+				}
 			}
-
-			if loginResp.Token == "" {
-				errChan <- errors.New("empty token")
+			if !hasSessionCookie {
+				errChan <- errors.New("missing knodex_session cookie")
 				return
 			}
 

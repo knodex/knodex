@@ -5,6 +5,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/knodex/knodex/server/internal/util/sanitize"
 )
 
 func TestNewCasbinEnforcer(t *testing.T) {
@@ -1246,7 +1248,7 @@ func TestSanitizeGlobCharacters(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			result := sanitizeGlobCharacters(tt.input)
+			result := sanitize.GlobCharacters(tt.input)
 			assert.Equal(t, tt.expected, result)
 		})
 	}

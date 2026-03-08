@@ -3,48 +3,32 @@ package models
 import (
 	"strings"
 	"time"
+
+	"github.com/knodex/knodex/server/internal/kro"
 )
 
-// Annotation keys for RGD catalog discovery
+// Re-export KRO constants from the centralized kro package for backward compatibility.
+//
+// Deprecated: New code should import from internal/kro directly.
+// These re-exports exist only so that existing consumers outside kro/ don't need
+// mass-updated in the same change. They will be removed in a future cleanup.
 const (
-	// CatalogAnnotation indicates the RGD should be included in the catalog
-	CatalogAnnotation = "knodex.io/catalog"
-	// DescriptionAnnotation provides a human-readable description
-	DescriptionAnnotation = "knodex.io/description"
-	// TagsAnnotation provides comma-separated tags for filtering
-	TagsAnnotation = "knodex.io/tags"
-	// CategoryAnnotation provides the catalog category
-	CategoryAnnotation = "knodex.io/category"
-	// IconAnnotation provides the UI icon hint
-	IconAnnotation = "knodex.io/icon"
-	// VersionAnnotation provides the version (if not in spec)
-	VersionAnnotation = "knodex.io/version"
-	// TitleAnnotation provides a human-readable display title for the catalog
-	TitleAnnotation = "knodex.io/title"
-	// DeploymentModesAnnotation restricts allowed deployment modes (comma-separated: direct,gitops,hybrid)
-	// If missing or empty, all modes are allowed (backward compatible)
-	DeploymentModesAnnotation = "knodex.io/deployment-modes"
-)
+	CatalogAnnotation         = kro.CatalogAnnotation
+	DescriptionAnnotation     = kro.DescriptionAnnotation
+	TagsAnnotation            = kro.TagsAnnotation
+	CategoryAnnotation        = kro.CategoryAnnotation
+	IconAnnotation            = kro.IconAnnotation
+	VersionAnnotation         = kro.VersionAnnotation
+	TitleAnnotation           = kro.TitleAnnotation
+	DeploymentModesAnnotation = kro.DeploymentModesAnnotation
 
-// Label keys for RBAC project filtering on cluster-scoped RGDs
-// These are different from instance labels since RGDs don't have namespaces
-const (
-	// RGDProjectLabel associates an RGD with a specific project
-	// Value should be the namespace name (e.g., "alpha-team"), not project ID (e.g., "proj-alpha-team")
-	// When set, restricts visibility to project members only
-	RGDProjectLabel = "knodex.io/project"
-	// RGDOrganizationLabel scopes the RGD to a specific organization
-	// Empty/missing means the RGD is shared across all organizations
-	RGDOrganizationLabel = "knodex.io/organization"
-)
+	RGDProjectLabel      = kro.RGDProjectLabel
+	RGDOrganizationLabel = kro.RGDOrganizationLabel
 
-// KRO CRD information
-const (
-	// RGDGVR is the GroupVersionResource for ResourceGraphDefinitions
-	RGDGroup    = "kro.run"
-	RGDVersion  = "v1alpha1"
-	RGDResource = "resourcegraphdefinitions"
-	RGDKind     = "ResourceGraphDefinition"
+	RGDGroup    = kro.RGDGroup
+	RGDVersion  = kro.RGDVersion
+	RGDResource = kro.RGDResource
+	RGDKind     = kro.RGDKind
 )
 
 // CatalogRGD represents a ResourceGraphDefinition in the catalog

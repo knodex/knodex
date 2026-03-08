@@ -12,6 +12,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+
+	"github.com/knodex/knodex/server/internal/util/collection"
 )
 
 var (
@@ -401,10 +403,8 @@ func (s *ProjectService) AddGroupToRole(ctx context.Context, projectID string, r
 	for i, role := range project.Spec.Roles {
 		if role.Name == roleName {
 			// Check if group already exists
-			for _, g := range role.Groups {
-				if g == groupName {
-					return nil, fmt.Errorf("group %s already in role %s", groupName, roleName)
-				}
+			if collection.Contains(role.Groups, groupName) {
+				return nil, fmt.Errorf("group %s already in role %s", groupName, roleName)
 			}
 			project.Spec.Roles[i].Groups = append(project.Spec.Roles[i].Groups, groupName)
 			found = true
@@ -426,17 +426,18 @@ func (s *ProjectService) GetUserProjectsByGroup(ctx context.Context, userGroups 
 		return nil, err
 	}
 
+	// Create a set of user groups for O(1) lookup
+	userGroupSet := collection.ToSet(userGroups)
+
 	var userProjects []*Project
 	for i := range allProjects.Items {
 		project := &allProjects.Items[i]
 		// Check if any user group matches any role's groups
 		for _, role := range project.Spec.Roles {
 			for _, roleGroup := range role.Groups {
-				for _, userGroup := range userGroups {
-					if roleGroup == userGroup {
-						userProjects = append(userProjects, project)
-						goto nextProject
-					}
+				if userGroupSet[roleGroup] {
+					userProjects = append(userProjects, project)
+					goto nextProject
 				}
 			}
 		}
@@ -467,10 +468,7 @@ func (s *ProjectService) GetUserProjectRolesByGroup(ctx context.Context, userGro
 	)
 
 	// Create a set of user groups for O(1) lookup
-	userGroupSet := make(map[string]struct{}, len(userGroups))
-	for _, group := range userGroups {
-		userGroupSet[group] = struct{}{}
-	}
+	userGroupSet := collection.ToSet(userGroups)
 
 	projectRoles := make(map[string]string)
 	for i := range allProjects.Items {
@@ -493,7 +491,7 @@ func (s *ProjectService) GetUserProjectRolesByGroup(ctx context.Context, userGro
 		// Check each role to see if any user group matches
 		for _, role := range project.Spec.Roles {
 			for _, roleGroup := range role.Groups {
-				if _, ok := userGroupSet[roleGroup]; ok {
+				if userGroupSet[roleGroup] {
 					// Found a matching group, record this role for the project
 					// First matching role wins (maintains deterministic behavior)
 					if _, exists := projectRoles[project.Name]; !exists {

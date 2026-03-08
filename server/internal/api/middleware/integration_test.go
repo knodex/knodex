@@ -11,7 +11,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/provops-org/knodex/server/internal/auth"
+	"github.com/knodex/knodex/server/internal/auth"
 )
 
 // mockCasbinEnforcer implements CasbinPolicyEnforcer for testing

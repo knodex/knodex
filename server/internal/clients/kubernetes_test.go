@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/provops-org/knodex/server/internal/config"
+	"github.com/knodex/knodex/server/internal/config"
 )
 
 // TestNewKubernetesClient_Timeout tests that the client is created even when

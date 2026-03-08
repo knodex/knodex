@@ -8,8 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/provops-org/knodex/server/internal/api/middleware"
-	"github.com/provops-org/knodex/server/internal/services"
+	"github.com/knodex/knodex/server/internal/api/middleware"
+	"github.com/knodex/knodex/server/internal/services"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -73,14 +73,14 @@ type mockViewsLicenseService struct {
 	hasFeature     bool
 }
 
-func (m *mockViewsLicenseService) IsLicensed() bool                    { return m.licensed }
-func (m *mockViewsLicenseService) IsFeatureEnabled(_ string) bool      { return m.featureEnabled }
-func (m *mockViewsLicenseService) IsGracePeriod() bool                 { return m.gracePeriod }
-func (m *mockViewsLicenseService) IsReadOnly() bool                    { return m.readOnly }
-func (m *mockViewsLicenseService) HasFeature(_ string) bool            { return m.hasFeature }
-func (m *mockViewsLicenseService) GetLicense() *services.LicenseInfo   { return nil }
-func (m *mockViewsLicenseService) GetStatus() *services.LicenseStatus  { return nil }
-func (m *mockViewsLicenseService) UpdateLicense(_ string) error        { return nil }
+func (m *mockViewsLicenseService) IsLicensed() bool                   { return m.licensed }
+func (m *mockViewsLicenseService) IsFeatureEnabled(_ string) bool     { return m.featureEnabled }
+func (m *mockViewsLicenseService) IsGracePeriod() bool                { return m.gracePeriod }
+func (m *mockViewsLicenseService) IsReadOnly() bool                   { return m.readOnly }
+func (m *mockViewsLicenseService) HasFeature(_ string) bool           { return m.hasFeature }
+func (m *mockViewsLicenseService) GetLicense() *services.LicenseInfo  { return nil }
+func (m *mockViewsLicenseService) GetStatus() *services.LicenseStatus { return nil }
+func (m *mockViewsLicenseService) UpdateLicense(_ string) error       { return nil }
 
 func newViewsTestRequest(method, path string, userCtx *middleware.UserContext) *http.Request {
 	req := httptest.NewRequest(method, path, nil)

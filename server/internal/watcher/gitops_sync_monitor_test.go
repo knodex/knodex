@@ -6,8 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/provops-org/knodex/server/internal/deployment"
-	"github.com/provops-org/knodex/server/internal/models"
+	"github.com/knodex/knodex/server/internal/deployment"
+	krowatcher "github.com/knodex/knodex/server/internal/kro/watcher"
+	"github.com/knodex/knodex/server/internal/models"
 )
 
 func TestNewGitOpsSyncMonitor(t *testing.T) {
@@ -350,7 +351,7 @@ func TestHandleInstanceUpdate_WithAnnotation(t *testing.T) {
 		},
 	}
 
-	monitor.handleInstanceUpdate(InstanceActionAdd, "default", "TestKind", "app", clusterInstance)
+	monitor.handleInstanceUpdate(krowatcher.InstanceActionAdd, "default", "TestKind", "app", clusterInstance)
 
 	// Instance should be removed from pending (now Ready)
 	_, exists := monitor.GetPendingInstance(instanceID)
@@ -378,7 +379,7 @@ func TestHandleInstanceUpdate_WithProgressingHealth(t *testing.T) {
 		},
 	}
 
-	monitor.handleInstanceUpdate(InstanceActionUpdate, "default", "TestKind", "app", clusterInstance)
+	monitor.handleInstanceUpdate(krowatcher.InstanceActionUpdate, "default", "TestKind", "app", clusterInstance)
 
 	// Instance should still be pending but with updated status
 	pending, exists := monitor.GetPendingInstance(instanceID)
@@ -406,7 +407,7 @@ func TestHandleInstanceUpdate_ByNamespace(t *testing.T) {
 		Health:    models.HealthHealthy,
 	}
 
-	monitor.handleInstanceUpdate(InstanceActionAdd, "prod", "TestKind", "my-app", clusterInstance)
+	monitor.handleInstanceUpdate(krowatcher.InstanceActionAdd, "prod", "TestKind", "my-app", clusterInstance)
 
 	// Instance should be removed from pending
 	_, exists := monitor.GetPendingInstance(instanceID)
@@ -429,7 +430,7 @@ func TestHandleInstanceUpdate_Delete(t *testing.T) {
 	}
 
 	// Simulate delete event
-	monitor.handleInstanceUpdate(InstanceActionDelete, "default", "TestKind", "delete-app", nil)
+	monitor.handleInstanceUpdate(krowatcher.InstanceActionDelete, "default", "TestKind", "delete-app", nil)
 
 	if monitor.PendingInstanceCount() != 0 {
 		t.Error("expected 0 pending instances after delete")

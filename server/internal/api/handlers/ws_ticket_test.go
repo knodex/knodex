@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,8 +12,10 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/provops-org/knodex/server/internal/api/middleware"
-	"github.com/provops-org/knodex/server/internal/testutil"
+	"github.com/knodex/knodex/server/internal/api/cookie"
+	"github.com/knodex/knodex/server/internal/api/middleware"
+	"github.com/knodex/knodex/server/internal/auth"
+	"github.com/knodex/knodex/server/internal/testutil"
 )
 
 // addUserContext adds a mock user context to the request.
@@ -277,9 +280,25 @@ func TestEncodeDecodeTicketValue(t *testing.T) {
 func TestAuthCodeHandler_TokenExchange(t *testing.T) {
 	t.Parallel()
 	_, redisClient := testutil.NewRedis(t)
-	handler := NewAuthCodeHandler(redisClient)
 
-	t.Run("success - exchanges valid code", func(t *testing.T) {
+	// Mock auth service that validates "jwt-token-value" and returns test claims
+	mockAuthSvc := &MockAuthService{
+		validateTokenFunc: func(token string) (*auth.JWTClaims, error) {
+			if token == "jwt-token-value" {
+				return &auth.JWTClaims{
+					UserID:      "test-user-id",
+					Email:       "test@example.com",
+					DisplayName: "Test User",
+					ExpiresAt:   time.Now().Add(1 * time.Hour).Unix(),
+					IssuedAt:    time.Now().Unix(),
+				}, nil
+			}
+			return nil, fmt.Errorf("invalid token")
+		},
+	}
+	handler := NewAuthCodeHandler(redisClient, mockAuthSvc, cookie.Config{Secure: false})
+
+	t.Run("success - exchanges valid code and sets cookie", func(t *testing.T) {
 		t.Parallel()
 		// Store an auth code manually
 		code, err := StoreAuthCode(context.Background(), redisClient, "jwt-token-value")
@@ -298,12 +317,35 @@ func TestAuthCodeHandler_TokenExchange(t *testing.T) {
 			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 		}
 
+		// Verify no-cache headers on auth response
+		assertNoCacheHeaders(t, w)
+
+		// Verify Set-Cookie header is present with knodex_session
+		cookies := w.Result().Cookies()
+		var sessionCookie *http.Cookie
+		for _, c := range cookies {
+			if c.Name == "knodex_session" {
+				sessionCookie = c
+				break
+			}
+		}
+		if sessionCookie == nil {
+			t.Fatal("expected knodex_session cookie to be set")
+		}
+		if sessionCookie.Value != "jwt-token-value" {
+			t.Fatalf("expected cookie value 'jwt-token-value', got %q", sessionCookie.Value)
+		}
+		if !sessionCookie.HttpOnly {
+			t.Fatal("expected HttpOnly flag on session cookie")
+		}
+
+		// Verify response body contains user info (not raw token)
 		var resp authCodeResponse
 		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 			t.Fatalf("failed to decode response: %v", err)
 		}
-		if resp.Token != "jwt-token-value" {
-			t.Fatalf("expected token 'jwt-token-value', got %q", resp.Token)
+		if resp.User.Email != "test@example.com" {
+			t.Fatalf("expected user email 'test@example.com', got %q", resp.User.Email)
 		}
 	})
 
@@ -327,6 +369,7 @@ func TestAuthCodeHandler_TokenExchange(t *testing.T) {
 		if w.Code != http.StatusUnauthorized {
 			t.Fatalf("second exchange should return 401, got %d: %s", w.Code, w.Body.String())
 		}
+		assertNoCacheHeaders(t, w)
 	})
 
 	t.Run("400 - missing code", func(t *testing.T) {
@@ -338,6 +381,7 @@ func TestAuthCodeHandler_TokenExchange(t *testing.T) {
 		if w.Code != http.StatusBadRequest {
 			t.Fatalf("expected 400, got %d", w.Code)
 		}
+		assertNoCacheHeaders(t, w)
 	})
 
 	t.Run("400 - invalid body", func(t *testing.T) {
@@ -348,6 +392,7 @@ func TestAuthCodeHandler_TokenExchange(t *testing.T) {
 		if w.Code != http.StatusBadRequest {
 			t.Fatalf("expected 400, got %d", w.Code)
 		}
+		assertNoCacheHeaders(t, w)
 	})
 
 	t.Run("401 - nonexistent code", func(t *testing.T) {
@@ -359,6 +404,7 @@ func TestAuthCodeHandler_TokenExchange(t *testing.T) {
 		if w.Code != http.StatusUnauthorized {
 			t.Fatalf("expected 401, got %d: %s", w.Code, w.Body.String())
 		}
+		assertNoCacheHeaders(t, w)
 	})
 
 	t.Run("400 - oversized request body", func(t *testing.T) {
@@ -371,6 +417,36 @@ func TestAuthCodeHandler_TokenExchange(t *testing.T) {
 		handler.TokenExchange(w, req)
 		if w.Code != http.StatusBadRequest {
 			t.Fatalf("expected 400 for oversized body, got %d: %s", w.Code, w.Body.String())
+		}
+		assertNoCacheHeaders(t, w)
+	})
+
+	t.Run("500 - valid code but invalid JWT stored", func(t *testing.T) {
+		t.Parallel()
+		// Store a code whose value is NOT a valid JWT (validateTokenFunc will reject it)
+		code, err := StoreAuthCode(context.Background(), redisClient, "corrupt-jwt-value")
+		if err != nil {
+			t.Fatalf("failed to store auth code: %v", err)
+		}
+
+		body := `{"code":"` + code + `"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/token-exchange", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		handler.TokenExchange(w, req)
+
+		if w.Code != http.StatusInternalServerError {
+			t.Fatalf("expected 500 for invalid JWT, got %d: %s", w.Code, w.Body.String())
+		}
+		assertNoCacheHeaders(t, w)
+
+		// Verify error message doesn't leak internal details
+		var resp map[string]interface{}
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+		if resp["message"] != "failed to process authentication token" {
+			t.Errorf("message = %q, want generic error", resp["message"])
 		}
 	})
 }

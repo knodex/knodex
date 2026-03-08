@@ -6,37 +6,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"regexp"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/provops-org/knodex/server/internal/models"
+	"github.com/knodex/knodex/server/internal/models"
+	"github.com/knodex/knodex/server/internal/util/sanitize"
 )
-
-// redisKeyComponentRegex matches valid characters for Redis key components
-var redisKeyComponentRegex = regexp.MustCompile(`[^a-zA-Z0-9._-]`)
-
-// sanitizeRedisKeyComponent removes potentially dangerous characters from Redis key components
-// to prevent Redis pattern injection attacks
-func sanitizeRedisKeyComponent(input string) string {
-	// Replace invalid characters with underscore
-	sanitized := redisKeyComponentRegex.ReplaceAllString(input, "_")
-	// Remove Redis pattern matching characters
-	sanitized = strings.ReplaceAll(sanitized, "*", "_")
-	sanitized = strings.ReplaceAll(sanitized, "?", "_")
-	sanitized = strings.ReplaceAll(sanitized, "[", "_")
-	sanitized = strings.ReplaceAll(sanitized, "]", "_")
-	// Limit length
-	if len(sanitized) > 253 {
-		sanitized = sanitized[:253]
-	}
-	return sanitized
-}
 
 const (
 	// historyKeyPrefix is the Redis key prefix for deployment history
@@ -68,13 +47,13 @@ func NewService(redisClient *redis.Client) *Service {
 // historyKey returns the Redis key for an instance's history
 func historyKey(namespace, kind, name string) string {
 	// Sanitize inputs to prevent Redis pattern injection
-	return fmt.Sprintf("%s%s/%s/%s", historyKeyPrefix, sanitizeRedisKeyComponent(namespace), sanitizeRedisKeyComponent(kind), sanitizeRedisKeyComponent(name))
+	return fmt.Sprintf("%s%s/%s/%s", historyKeyPrefix, sanitize.RedisKey(namespace), sanitize.RedisKey(kind), sanitize.RedisKey(name))
 }
 
 // deletedHistoryKey returns the Redis key for a deleted instance's history
 func deletedHistoryKey(instanceID string) string {
 	// Sanitize input to prevent Redis pattern injection
-	return fmt.Sprintf("%s%s", deletedHistoryKeyPrefix, sanitizeRedisKeyComponent(instanceID))
+	return fmt.Sprintf("%s%s", deletedHistoryKeyPrefix, sanitize.RedisKey(instanceID))
 }
 
 // RecordEvent records a deployment event for an instance

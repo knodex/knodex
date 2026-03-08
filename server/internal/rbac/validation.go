@@ -1,13 +1,14 @@
 package rbac
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"net/mail"
 	"regexp"
 	"strings"
 	"unicode/utf8"
+
+	utilhash "github.com/knodex/knodex/server/internal/util/hash"
+	"github.com/knodex/knodex/server/internal/util/sanitize"
 )
 
 // Validation constraints
@@ -322,14 +323,7 @@ func ValidateProjectSpec(spec ProjectSpec) error {
 //   - Used in system commands (prevent command injection)
 //   - Stored in databases (defense in depth against injection attacks)
 func SanitizeInput(input string) string {
-	// Remove control characters
-	var result strings.Builder
-	for _, r := range input {
-		if r >= 32 && r != 127 {
-			result.WriteRune(r)
-		}
-	}
-	return strings.TrimSpace(result.String())
+	return sanitize.RemoveControlChars(input)
 }
 
 // GenerateProjectID generates a deterministic project ID from display name
@@ -339,8 +333,7 @@ func GenerateProjectID(displayName string) string {
 	normalized := strings.ToLower(strings.TrimSpace(displayName))
 
 	// Create a hash for uniqueness
-	hash := sha256.Sum256([]byte(normalized))
-	hashStr := hex.EncodeToString(hash[:])[:8]
+	hashStr := utilhash.Truncate(utilhash.SHA256String(normalized), 8)
 
 	// Convert to URL-safe slug
 	slug := strings.Map(func(r rune) rune {

@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -420,6 +421,198 @@ func TestCasbinAuthz_PathTraversalBlocked(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected status 400, got %d", w.Code)
+	}
+}
+
+func TestCasbinAuthz_NullByteBlocked(t *testing.T) {
+	t.Parallel()
+
+	mockEnforcer := &mockCasbinPolicyEnforcer{}
+
+	middleware := CasbinAuthz(CasbinAuthzConfig{
+		Enforcer: mockEnforcer,
+		Logger:   slog.Default(),
+	})
+
+	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("handler should not be called for null byte attempt")
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler := middleware(testHandler)
+
+	// Test null byte in path
+	req := httptest.NewRequest("GET", "/api/v1/projects/test", nil)
+	req.URL.Path = "/api/v1/projects/test\x00admin"
+	userCtx := &UserContext{
+		UserID:      "user-123",
+		CasbinRoles: []string{},
+	}
+	ctx := context.WithValue(req.Context(), UserContextKey, userCtx)
+	req = req.WithContext(ctx)
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status 400, got %d", w.Code)
+	}
+
+	// Verify response body contains correct error structure
+	var errResp struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&errResp); err != nil {
+		t.Fatalf("failed to decode error response: %v", err)
+	}
+	if errResp.Error.Code != "BAD_REQUEST" {
+		t.Errorf("expected error code BAD_REQUEST, got %q", errResp.Error.Code)
+	}
+	if errResp.Error.Message != "invalid path parameter: contains null byte or control character" {
+		t.Errorf("unexpected error message: %q", errResp.Error.Message)
+	}
+}
+
+func TestCasbinAuthz_ControlCharsBlocked(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		path string
+	}{
+		{"control_char_0x01", "/api/v1/projects/test\x01"},
+		{"control_char_0x1F", "/api/v1/projects/test\x1F"},
+		{"del_char_0x7F", "/api/v1/projects/test\x7F"},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			mockEnforcer := &mockCasbinPolicyEnforcer{}
+			middleware := CasbinAuthz(CasbinAuthzConfig{
+				Enforcer: mockEnforcer,
+				Logger:   slog.Default(),
+			})
+
+			testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				t.Error("handler should not be called for control char attempt")
+				w.WriteHeader(http.StatusOK)
+			})
+
+			handler := middleware(testHandler)
+
+			req := httptest.NewRequest("GET", "/api/v1/projects/test", nil)
+			req.URL.Path = tt.path
+			userCtx := &UserContext{
+				UserID:      "user-123",
+				CasbinRoles: []string{},
+			}
+			ctx := context.WithValue(req.Context(), UserContextKey, userCtx)
+			req = req.WithContext(ctx)
+			w := httptest.NewRecorder()
+
+			handler.ServeHTTP(w, req)
+
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("expected status 400, got %d", w.Code)
+			}
+		})
+	}
+}
+
+func TestCasbinAuthz_ValidPathsNotBlockedByControlCharCheck(t *testing.T) {
+	t.Parallel()
+
+	validPaths := []struct {
+		name string
+		path string
+	}{
+		{"simple_project", "/api/v1/projects/my-project"},
+		{"dots_and_underscores", "/api/v1/instances/default/MyKind/my_instance.v1"},
+		{"rgds", "/api/v1/rgds"},
+		{"hyphen_project", "/api/v1/projects/alpha-beta"},
+	}
+
+	for _, tt := range validPaths {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			handlerCalled := false
+			mockEnforcer := &mockCasbinPolicyEnforcer{
+				canAccessFunc: func(ctx context.Context, user, object, action string) (bool, error) {
+					return true, nil
+				},
+			}
+			middleware := CasbinAuthz(CasbinAuthzConfig{
+				Enforcer: mockEnforcer,
+				Logger:   slog.Default(),
+			})
+
+			testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				handlerCalled = true
+				w.WriteHeader(http.StatusOK)
+			})
+
+			handler := middleware(testHandler)
+
+			req := httptest.NewRequest("GET", tt.path, nil)
+			userCtx := &UserContext{
+				UserID:      "user-123",
+				CasbinRoles: []string{},
+			}
+			ctx := context.WithValue(req.Context(), UserContextKey, userCtx)
+			req = req.WithContext(ctx)
+			w := httptest.NewRecorder()
+
+			handler.ServeHTTP(w, req)
+
+			if w.Code == http.StatusBadRequest {
+				t.Errorf("valid path %q should not be blocked, got status %d", tt.path, w.Code)
+			}
+			if !handlerCalled {
+				t.Errorf("handler should have been called for valid path %q", tt.path)
+			}
+		})
+	}
+}
+
+func TestCasbinAuthz_RawPathControlCharBlocked(t *testing.T) {
+	t.Parallel()
+
+	mockEnforcer := &mockCasbinPolicyEnforcer{}
+	middleware := CasbinAuthz(CasbinAuthzConfig{
+		Enforcer: mockEnforcer,
+		Logger:   slog.Default(),
+	})
+
+	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("handler should not be called for RawPath control char attempt")
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler := middleware(testHandler)
+
+	req := httptest.NewRequest("GET", "/api/v1/projects/test", nil)
+	req.URL.Path = "/api/v1/projects/test"
+	req.URL.RawPath = "/api/v1/projects/test\x01inject"
+	userCtx := &UserContext{
+		UserID:      "user-123",
+		CasbinRoles: []string{},
+	}
+	ctx := context.WithValue(req.Context(), UserContextKey, userCtx)
+	req = req.WithContext(ctx)
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status 400 for control char in RawPath, got %d", w.Code)
 	}
 }
 

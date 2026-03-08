@@ -6,8 +6,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/provops-org/knodex/server/internal/deployment"
-	"github.com/provops-org/knodex/server/internal/models"
+	"github.com/knodex/knodex/server/internal/deployment"
+	krowatcher "github.com/knodex/knodex/server/internal/kro/watcher"
+	"github.com/knodex/knodex/server/internal/models"
 )
 
 // GitOps-related annotation keys
@@ -95,7 +96,7 @@ type GitOpsSyncMonitor struct {
 	mu               sync.RWMutex
 
 	// instanceTracker provides cluster instance updates
-	instanceTracker *InstanceTracker
+	instanceTracker *krowatcher.InstanceTracker
 
 	// config holds monitor configuration
 	config GitOpsSyncMonitorConfig
@@ -114,7 +115,7 @@ type GitOpsSyncMonitor struct {
 }
 
 // NewGitOpsSyncMonitor creates a new GitOps sync monitor
-func NewGitOpsSyncMonitor(instanceTracker *InstanceTracker, config GitOpsSyncMonitorConfig) *GitOpsSyncMonitor {
+func NewGitOpsSyncMonitor(instanceTracker *krowatcher.InstanceTracker, config GitOpsSyncMonitorConfig) *GitOpsSyncMonitor {
 	return &GitOpsSyncMonitor{
 		pendingInstances: make(map[string]*PendingGitOpsInstance),
 		instanceTracker:  instanceTracker,
@@ -309,8 +310,8 @@ func (m *GitOpsSyncMonitor) RemovePendingInstance(instanceID string) bool {
 }
 
 // handleInstanceUpdate is called when cluster instances are updated
-func (m *GitOpsSyncMonitor) handleInstanceUpdate(action InstanceAction, namespace, kind, name string, instance *models.Instance) {
-	if action == InstanceActionDelete {
+func (m *GitOpsSyncMonitor) handleInstanceUpdate(action krowatcher.InstanceAction, namespace, kind, name string, instance *models.Instance) {
+	if action == krowatcher.InstanceActionDelete {
 		// Check if this was a pending instance that got deleted
 		// Collect IDs to delete first to avoid concurrent map modification during iteration
 		m.mu.Lock()

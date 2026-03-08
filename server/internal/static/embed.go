@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/provops-org/knodex/server/internal/api/response"
+	"github.com/knodex/knodex/server/internal/api/response"
 )
 
 //go:embed all:dist

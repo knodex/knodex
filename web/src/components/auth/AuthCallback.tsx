@@ -38,22 +38,14 @@ export function AuthCallback() {
     }
 
     if (code) {
-      // Exchange opaque code for JWT token via backend
+      // Exchange opaque code for session cookie via backend
       let cancelled = false;
       exchangeAuthCode(code)
-        .then((token) => {
+        .then((resp) => {
           if (cancelled) return;
-          // Store token in Zustand store and localStorage
-          login(token);
-          // Verify token is persisted before navigating to prevent race condition
-          // where DashboardLayout mounts and makes API calls before token is available
-          const stored = localStorage.getItem('jwt_token');
-          if (stored === token) {
-            navigate('/', { replace: true });
-          } else {
-            // Token failed to persist (e.g., malformed JWT that decodeToken rejected)
-            navigate('/login', { replace: true });
-          }
+          // Store user info in Zustand store (JWT is in HttpOnly cookie)
+          login(resp.user, resp.expiresAt);
+          navigate('/', { replace: true });
         })
         .catch((err) => {
           if (cancelled) return;

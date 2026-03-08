@@ -1,11 +1,14 @@
 package handlers
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 
-	"github.com/provops-org/knodex/server/internal/api/middleware"
-	"github.com/provops-org/knodex/server/internal/api/response"
+	"github.com/knodex/knodex/server/internal/api/middleware"
+	"github.com/knodex/knodex/server/internal/api/response"
+	"github.com/knodex/knodex/server/internal/rbac"
 )
 
 // AccountInfoResponse represents the response from the account info endpoint
@@ -32,7 +35,8 @@ type CanIServiceInterface interface {
 
 // AccountHandler handles account-related endpoints (ArgoCD-style)
 type AccountHandler struct {
-	canIService CanIServiceInterface
+	canIService    CanIServiceInterface
+	projectService rbac.ProjectServiceInterface // optional, nil = skip project existence check
 }
 
 // NewAccountHandler creates a new AccountHandler
@@ -40,6 +44,60 @@ func NewAccountHandler(canIService CanIServiceInterface) *AccountHandler {
 	return &AccountHandler{
 		canIService: canIService,
 	}
+}
+
+// SetProjectService sets the project service for project existence validation in can-i.
+func (h *AccountHandler) SetProjectService(ps rbac.ProjectServiceInterface) {
+	h.projectService = ps
+}
+
+// projectScopedResources are resources that require a valid project name in the subresource.
+var projectScopedResources = map[string]bool{
+	"instances":    true,
+	"projects":     true,
+	"repositories": true,
+	"rgds":         true,
+	"compliance":   true,
+	"applications": true,
+}
+
+// isProjectScopedResource returns true if the resource requires project scoping.
+func isProjectScopedResource(resource string) bool {
+	return projectScopedResources[resource]
+}
+
+// extractProjectName extracts the project name from a subresource string.
+// For subresources like "project/namespace", returns just the project name.
+// Returns empty string if the subresource is empty or starts with "/".
+func extractProjectName(subresource string) string {
+	if idx := strings.Index(subresource, "/"); idx > 0 {
+		return subresource[:idx]
+	}
+	if strings.HasPrefix(subresource, "/") {
+		return ""
+	}
+	return subresource
+}
+
+// validateSubresource returns an error if the subresource parameter contains
+// characters that could manipulate Casbin policy evaluation or indicate injection.
+// Valid subresources: project names, "project/namespace" pairs, or "-" for none.
+func validateSubresource(subresource string) error {
+	// Allow empty string and sentinel "-"
+	if subresource == "" || subresource == "-" {
+		return nil
+	}
+	// Reject Casbin policy syntax characters (including tab which some CSV parsers treat as separator)
+	if strings.ContainsAny(subresource, "*,|\n\r\t") {
+		return errors.New("subresource contains invalid characters")
+	}
+	// Reject path traversal sequences (raw and URL-encoded, forward and backslash)
+	lower := strings.ToLower(subresource)
+	if strings.Contains(subresource, "../") || strings.Contains(subresource, "..\\") ||
+		strings.Contains(lower, "..%2f") || strings.Contains(lower, "..%5c") {
+		return errors.New("subresource contains path traversal sequence")
+	}
+	return nil
 }
 
 // CanIResponse represents the response from the can-i endpoint
@@ -115,11 +173,42 @@ func (h *AccountHandler) CanI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate subresource parameter to prevent Casbin policy injection
+	if err := validateSubresource(subresource); err != nil {
+		slog.Warn("rejected invalid subresource in can-i request",
+			"subresource", subresource,
+			"error", err,
+		)
+		response.BadRequest(w, "invalid subresource parameter", nil)
+		return
+	}
+
 	// Get user context from request (set by auth middleware)
 	userCtx, ok := middleware.GetUserContext(r)
 	if !ok || userCtx == nil {
 		response.WriteError(w, http.StatusUnauthorized, response.ErrCodeUnauthorized, "authentication required", nil)
 		return
+	}
+
+	// Project existence check (LOG-VULN-04): prevent permission enumeration for nonexistent projects.
+	// Runs BEFORE canIService.CanI() so even admins get 404 for nonexistent projects.
+	if h.projectService != nil && isProjectScopedResource(resource) && subresource != "" && subresource != "-" {
+		projectName := extractProjectName(subresource)
+		if projectName == "" {
+			response.BadRequest(w, "invalid subresource parameter", map[string]string{"subresource": subresource})
+			return
+		}
+		exists, err := h.projectService.Exists(r.Context(), projectName)
+		if err != nil {
+			slog.Error("failed to check project existence in can-i",
+				"project", projectName, "error", err)
+			response.InternalError(w, "failed to check project existence")
+			return
+		}
+		if !exists {
+			response.NotFound(w, "project", projectName)
+			return
+		}
 	}
 
 	// Check permission using the service

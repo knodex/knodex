@@ -8,6 +8,8 @@ import (
 
 	"github.com/casbin/casbin/v2"
 	"github.com/casbin/casbin/v2/model"
+
+	"github.com/knodex/knodex/server/internal/util/sanitize"
 )
 
 // Security constants for input validation
@@ -301,20 +303,6 @@ const (
 
 // --- Security Validation Functions ---
 
-// sanitizeGlobCharacters escapes glob wildcard characters to prevent injection
-func sanitizeGlobCharacters(input string) string {
-	// Escape glob metacharacters: * ? [ ] { }
-	replacer := strings.NewReplacer(
-		"*", "\\*",
-		"?", "\\?",
-		"[", "\\[",
-		"]", "\\]",
-		"{", "\\{",
-		"}", "\\}",
-	)
-	return replacer.Replace(input)
-}
-
 // ValidateSubjectIdentifier validates identifiers for users, groups, and roles
 // to prevent injection attacks via subject manipulation
 func ValidateSubjectIdentifier(id string) error {
@@ -392,7 +380,7 @@ func FormatObject(resourceType, resourceName string) (string, error) {
 	}
 
 	// Sanitize resource name to prevent glob injection
-	sanitized := sanitizeGlobCharacters(resourceName)
+	sanitized := sanitize.GlobCharacters(resourceName)
 	return resourceType + "/" + sanitized, nil
 }
 

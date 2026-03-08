@@ -6,9 +6,9 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/provops-org/knodex/server/internal/api/middleware"
-	"github.com/provops-org/knodex/server/internal/api/response"
-	"github.com/provops-org/knodex/server/internal/services"
+	"github.com/knodex/knodex/server/internal/api/middleware"
+	"github.com/knodex/knodex/server/internal/api/response"
+	"github.com/knodex/knodex/server/internal/services"
 )
 
 // licenseAccessChecker is the subset of rbac.PolicyEnforcer needed by LicenseHandler.

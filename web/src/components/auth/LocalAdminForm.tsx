@@ -76,8 +76,8 @@ export function LocalAdminForm({ onSuccess }: LocalAdminFormProps) {
     clearCountdown();
 
     try {
-      const token = await localAdminLogin(data);
-      login(token);
+      const resp = await localAdminLogin(data);
+      login(resp.user, resp.expiresAt);
       onSuccess?.();
     } catch (err: unknown) {
       logger.error('[LocalAdminForm] Login failed:', err);

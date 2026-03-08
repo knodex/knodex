@@ -6,11 +6,12 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	utilenv "github.com/knodex/knodex/server/internal/util/env"
 )
 
 // Config holds all application configuration
@@ -28,6 +29,19 @@ type Config struct {
 	Compliance     Compliance
 	Organization   string // Organization identity for multi-tenant deployments. Default: "default".
 	SwaggerEnabled bool   // Enable Swagger UI at /swagger/. Default: false. Env: SWAGGER_UI_ENABLED.
+	Cookie         Cookie // Session cookie configuration
+}
+
+// Cookie holds session cookie configuration
+type Cookie struct {
+	// Secure sets the Secure flag on the session cookie.
+	// Requires HTTPS. Set to false for local HTTP development.
+	// Default: true. Env: COOKIE_SECURE.
+	Secure bool
+
+	// Domain sets the Domain attribute on the session cookie.
+	// Default: "" (same-origin). Env: COOKIE_DOMAIN.
+	Domain string
 }
 
 // Compliance holds enterprise compliance feature configuration
@@ -198,66 +212,70 @@ type OIDCGroupMapping struct {
 func Load() (*Config, error) {
 	cfg := &Config{
 		Server: Server{
-			Address:            getEnv("SERVER_ADDRESS", ":8080"),
-			Port:               getEnvInt("SERVER_PORT", 8080),
-			CORSAllowedOrigins: getEnvStringSlice("CORS_ALLOWED_ORIGINS"),
+			Address:            utilenv.GetString("SERVER_ADDRESS", ":8080"),
+			Port:               utilenv.GetInt("SERVER_PORT", 8080),
+			CORSAllowedOrigins: utilenv.GetStringSlice("CORS_ALLOWED_ORIGINS"),
 		},
 		Kubernetes: Kubernetes{
-			InCluster:  getEnvBool("KUBERNETES_IN_CLUSTER", false),
-			Kubeconfig: getEnv("KUBECONFIG", os.Getenv("HOME")+"/.kube/config"),
+			InCluster:  utilenv.GetBool("KUBERNETES_IN_CLUSTER", false),
+			Kubeconfig: utilenv.GetString("KUBECONFIG", utilenv.GetString("HOME", "")+"/.kube/config"),
 		},
 		Redis: Redis{
-			Address:               getEnv("REDIS_ADDRESS", "localhost:6379"),
-			Password:              getEnv("REDIS_PASSWORD", ""),
-			DB:                    getEnvInt("REDIS_DB", 0),
-			Username:              getEnv("REDIS_USERNAME", ""),
-			TLSEnabled:            getEnvBool("REDIS_TLS_ENABLED", false),
-			TLSInsecureSkipVerify: getEnvBool("REDIS_TLS_INSECURE_SKIP_VERIFY", false),
+			Address:               utilenv.GetString("REDIS_ADDRESS", "localhost:6379"),
+			Password:              utilenv.GetString("REDIS_PASSWORD", ""),
+			DB:                    utilenv.GetInt("REDIS_DB", 0),
+			Username:              utilenv.GetString("REDIS_USERNAME", ""),
+			TLSEnabled:            utilenv.GetBool("REDIS_TLS_ENABLED", false),
+			TLSInsecureSkipVerify: utilenv.GetBool("REDIS_TLS_INSECURE_SKIP_VERIFY", false),
 		},
 		Log: Log{
-			Level:     getEnv("LOG_LEVEL", "info"),
-			Format:    getEnv("LOG_FORMAT", "json"),
-			PodName:   getEnv("POD_NAME", getEnv("HOSTNAME", "")),
-			Namespace: getEnv("POD_NAMESPACE", ""),
+			Level:     utilenv.GetString("LOG_LEVEL", "info"),
+			Format:    utilenv.GetString("LOG_FORMAT", "json"),
+			PodName:   utilenv.GetString("POD_NAME", utilenv.GetString("HOSTNAME", "")),
+			Namespace: utilenv.GetString("POD_NAMESPACE", ""),
 		},
 		Auth: Auth{
-			AdminUsername:          getEnv("ADMIN_USERNAME", "admin"),
+			AdminUsername:          utilenv.GetString("ADMIN_USERNAME", "admin"),
 			AdminPassword:          "", // Will be set by main.go from Kubernetes secret
 			AdminPasswordGenerated: false,
-			OIDCEnabled:            getEnvBool("OIDC_ENABLED", false),
+			OIDCEnabled:            utilenv.GetBool("OIDC_ENABLED", false),
 			OIDCGroupMappings:      nil, // Will be loaded below
-			GroupsClaim:            getEnv("OIDC_GROUPS_CLAIM", "groups"),
-			GroupMappingsFile:      getEnv("OIDC_GROUP_MAPPINGS_FILE", ""),
-			DefaultRole:            getEnv("RBAC_DEFAULT_ROLE", ""),
-			AllowedRedirectOrigins: getEnvStringSlice("ALLOWED_REDIRECT_ORIGINS"),
+			GroupsClaim:            utilenv.GetString("OIDC_GROUPS_CLAIM", "groups"),
+			GroupMappingsFile:      utilenv.GetString("OIDC_GROUP_MAPPINGS_FILE", ""),
+			DefaultRole:            utilenv.GetString("RBAC_DEFAULT_ROLE", ""),
+			AllowedRedirectOrigins: utilenv.GetStringSlice("ALLOWED_REDIRECT_ORIGINS"),
 		},
 		RateLimit: RateLimit{
-			UserRequestsPerMinute: getEnvInt("RATE_LIMIT_USER_REQUESTS_PER_MINUTE", 100),
-			UserBurstSize:         getEnvInt("RATE_LIMIT_USER_BURST_SIZE", 100),
-			TrustedProxies:        getEnvStringSlice("RATE_LIMIT_TRUSTED_PROXIES"),
+			UserRequestsPerMinute: utilenv.GetInt("RATE_LIMIT_USER_REQUESTS_PER_MINUTE", 100),
+			UserBurstSize:         utilenv.GetInt("RATE_LIMIT_USER_BURST_SIZE", 100),
+			TrustedProxies:        utilenv.GetStringSlice("RATE_LIMIT_TRUSTED_PROXIES"),
 		},
 		PolicyCache: PolicyCache{
-			Enabled:             getEnvBool("CACHE_ENABLED", true),
-			TTLSeconds:          getEnvInt("CACHE_TTL_SECONDS", 300),
-			SyncIntervalMinutes: getEnvInt("POLICY_SYNC_INTERVAL_MINUTES", 10),
-			WatchEnabled:        getEnvBool("PROJECT_WATCH_ENABLED", true),
+			Enabled:             utilenv.GetBool("CACHE_ENABLED", true),
+			TTLSeconds:          utilenv.GetInt("CACHE_TTL_SECONDS", 300),
+			SyncIntervalMinutes: utilenv.GetInt("POLICY_SYNC_INTERVAL_MINUTES", 10),
+			WatchEnabled:        utilenv.GetBool("PROJECT_WATCH_ENABLED", true),
 		},
 		CasbinRoles: CasbinRoles{
-			TTL:        getEnvDuration("CASBIN_ROLE_TTL", 24*time.Hour),
-			AdminUsers: getEnvStringSlice("CASBIN_ADMIN_USERS"),
+			TTL:        utilenv.GetDuration("CASBIN_ROLE_TTL", 24*time.Hour),
+			AdminUsers: utilenv.GetStringSlice("CASBIN_ADMIN_USERS"),
 		},
 		Views: Views{
-			ConfigPath: getEnv("VIEWS_CONFIG_PATH", "/etc/knodex/views.yaml"),
+			ConfigPath: utilenv.GetString("VIEWS_CONFIG_PATH", "/etc/knodex/views.yaml"),
 		},
 		License: License{
-			Path: getEnv("KNODEX_LICENSE_PATH", "/etc/knodex/license.jwt"),
-			Text: getEnv("KNODEX_LICENSE_TEXT", ""),
+			Path: utilenv.GetString("KNODEX_LICENSE_PATH", "/etc/knodex/license.jwt"),
+			Text: utilenv.GetString("KNODEX_LICENSE_TEXT", ""),
 		},
 		Compliance: Compliance{
-			HistoryRetentionDays: getEnvInt("COMPLIANCE_HISTORY_RETENTION_DAYS", 90),
+			HistoryRetentionDays: utilenv.GetInt("COMPLIANCE_HISTORY_RETENTION_DAYS", 90),
 		},
-		Organization:   getEnv("KNODEX_ORGANIZATION", "default"),
-		SwaggerEnabled: getEnvBool("SWAGGER_UI_ENABLED", false),
+		Organization:   utilenv.GetString("KNODEX_ORGANIZATION", "default"),
+		SwaggerEnabled: utilenv.GetBool("SWAGGER_UI_ENABLED", false),
+		Cookie: Cookie{
+			Secure: utilenv.GetBool("COOKIE_SECURE", true),
+			Domain: utilenv.GetString("COOKIE_DOMAIN", ""),
+		},
 	}
 
 	// Normalize empty/whitespace organization to "default", trim surrounding whitespace
@@ -294,64 +312,6 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
-func getEnv(key, defaultValue string) string {
-	value, exists := os.LookupEnv(key)
-	if exists {
-		return value
-	}
-	return defaultValue
-}
-
-func getEnvInt(key string, defaultValue int) int {
-	if value := os.Getenv(key); value != "" {
-		if i, err := strconv.Atoi(value); err == nil {
-			return i
-		}
-	}
-	return defaultValue
-}
-
-func getEnvBool(key string, defaultValue bool) bool {
-	if value := os.Getenv(key); value != "" {
-		if b, err := strconv.ParseBool(value); err == nil {
-			return b
-		}
-	}
-	return defaultValue
-}
-
-func getEnvStringSlice(key string) []string {
-	value := os.Getenv(key)
-	if value == "" {
-		return nil
-	}
-	var result []string
-	for _, s := range strings.Split(value, ",") {
-		s = strings.TrimSpace(s)
-		if s != "" {
-			result = append(result, s)
-		}
-	}
-	return result
-}
-
-func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
-	if value := os.Getenv(key); value != "" {
-		d, err := time.ParseDuration(value)
-		if err != nil {
-			slog.Warn("invalid duration value for environment variable, using default",
-				"key", key,
-				"value", value,
-				"default", defaultValue.String(),
-				"error", err,
-			)
-			return defaultValue
-		}
-		return d
-	}
-	return defaultValue
-}
-
 // loadOIDCGroupMappings loads OIDC group-to-project mappings from file or environment variable.
 // Priority:
 //  1. If filePath is specified, load from YAML file
@@ -371,7 +331,7 @@ func loadOIDCGroupMappings(filePath string) ([]OIDCGroupMapping, error) {
 	}
 
 	// Fall back to environment variable (JSON format)
-	value := os.Getenv("OIDC_GROUP_MAPPINGS")
+	value := utilenv.GetString("OIDC_GROUP_MAPPINGS", "")
 	if value == "" {
 		// Empty configuration is valid - no mappings defined
 		return []OIDCGroupMapping{}, nil

@@ -48,7 +48,7 @@ To get the admin password:
 Default admin username: {{ .Values.server.auth.adminUsername | default "admin" }}
 {{- end }}
 
-{{- if or .Values.enterprise.organization .Values.enterprise.license.secretName .Values.enterprise.license.text .Values.enterprise.gatekeeper.enabled .Values.enterprise.views.enabled }}
+{{- if or .Values.enterprise.organization .Values.enterprise.license.existingSecret .Values.enterprise.license.text .Values.enterprise.gatekeeper.enabled .Values.enterprise.views.enabled }}
 
 --------------------------------------------------------------------------------
 ENTERPRISE FEATURES
@@ -60,14 +60,19 @@ Organization: {{ .Values.enterprise.organization }}
   RGDs labeled with knodex.io/organization: {{ .Values.enterprise.organization }} (and unlabeled shared RGDs) will be visible.
 {{- end }}
 
-{{- if .Values.enterprise.license.secretName }}
-License secret: {{ .Values.enterprise.license.secretName }}
+{{- if .Values.enterprise.license.existingSecret }}
+License secret: {{ .Values.enterprise.license.existingSecret }}
   The secret MUST contain a key named "license.jwt" with the raw JWT token.
   Verify with:
-    kubectl get secret --namespace {{ .Release.Namespace }} {{ .Values.enterprise.license.secretName }} \
+    kubectl get secret --namespace {{ .Release.Namespace }} {{ .Values.enterprise.license.existingSecret }} \
       -o jsonpath='{.data.license\.jwt}' | base64 -d | head -c 20 && echo "..."
 {{- else if .Values.enterprise.license.text }}
 License: Inline JWT configured via enterprise.license.text
+{{- end }}
+
+{{- if .Values.server.auth.oidc.existingSecret }}
+SSO secret: {{ .Values.server.auth.oidc.existingSecret }}
+  The secret must contain keys: <provider-name>.client-id and <provider-name>.client-secret
 {{- end }}
 
 {{- if .Values.enterprise.gatekeeper.enabled }}
@@ -106,4 +111,4 @@ NEXT STEPS
          server: "*"
    PROJEOF
 
-For more information, visit: https://github.com/provops-org/knodex
+For more information, visit: https://github.com/knodex/knodex

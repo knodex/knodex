@@ -4,8 +4,6 @@ package repository
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -16,7 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/provops-org/knodex/server/internal/netutil"
+	"github.com/knodex/knodex/server/internal/netutil"
 )
 
 // CredentialManager handles the creation, update, and deletion of
@@ -37,11 +35,6 @@ func NewCredentialManager(k8sClient kubernetes.Interface, namespace string) (*Cr
 		k8sClient: k8sClient,
 		namespace: namespace,
 	}, nil
-}
-
-// Namespace returns the namespace where credential secrets are stored
-func (cm *CredentialManager) Namespace() string {
-	return cm.namespace
 }
 
 // CreateRepositorySecretRequest contains all information for creating an ArgoCD-style repository secret
@@ -254,229 +247,6 @@ func (cm *CredentialManager) ListRepositorySecrets(ctx context.Context, projectI
 	}
 
 	return secrets, nil
-}
-
-// CreateCredentialSecret creates a new Kubernetes Secret for repository credentials
-// Deprecated: Use CreateRepositorySecret instead for ArgoCD-style secrets
-func (cm *CredentialManager) CreateCredentialSecret(ctx context.Context, req CreateCredentialRequest) (*SecretReference, error) {
-	// Validate auth type
-	if !ValidateAuthType(req.AuthType) {
-		return nil, fmt.Errorf("invalid auth type: %s", req.AuthType)
-	}
-
-	// Generate unique secret name
-	secretName := cm.generateSecretName(req.RepoConfigID)
-
-	// Build secret data based on auth type
-	data, err := cm.buildSecretData(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build secret data: %w", err)
-	}
-
-	// Create the secret with a single label for identification
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      secretName,
-			Namespace: cm.namespace,
-			Labels: map[string]string{
-				LabelSecretType: LabelSecretTypeVal,
-			},
-			// Store metadata as annotations instead of labels for querying
-			Annotations: map[string]string{
-				"knodex.io/repository-config-id": req.RepoConfigID,
-				"knodex.io/auth-type":            req.AuthType,
-			},
-		},
-		Type: corev1.SecretTypeOpaque,
-		Data: data,
-	}
-
-	_, err = cm.k8sClient.CoreV1().Secrets(cm.namespace).Create(ctx, secret, metav1.CreateOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to create credential secret: %w", err)
-	}
-
-	return &SecretReference{
-		Name:      secretName,
-		Namespace: cm.namespace,
-	}, nil
-}
-
-// UpdateCredentialSecret updates an existing credential secret
-func (cm *CredentialManager) UpdateCredentialSecret(ctx context.Context, secretRef SecretReference, req CreateCredentialRequest) error {
-	// Validate auth type
-	if !ValidateAuthType(req.AuthType) {
-		return fmt.Errorf("invalid auth type: %s", req.AuthType)
-	}
-
-	// Get existing secret
-	secret, err := cm.k8sClient.CoreV1().Secrets(secretRef.Namespace).Get(ctx, secretRef.Name, metav1.GetOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to get credential secret: %w", err)
-	}
-
-	// Build new secret data
-	data, err := cm.buildSecretData(req)
-	if err != nil {
-		return fmt.Errorf("failed to build secret data: %w", err)
-	}
-
-	// Update secret data and annotations
-	secret.Data = data
-	if secret.Annotations == nil {
-		secret.Annotations = make(map[string]string)
-	}
-	secret.Annotations["knodex.io/auth-type"] = req.AuthType
-
-	_, err = cm.k8sClient.CoreV1().Secrets(secretRef.Namespace).Update(ctx, secret, metav1.UpdateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to update credential secret: %w", err)
-	}
-
-	return nil
-}
-
-// DeleteCredentialSecret deletes a credential secret
-func (cm *CredentialManager) DeleteCredentialSecret(ctx context.Context, secretRef SecretReference) error {
-	err := cm.k8sClient.CoreV1().Secrets(secretRef.Namespace).Delete(ctx, secretRef.Name, metav1.DeleteOptions{})
-	if err != nil && !errors.IsNotFound(err) {
-		return fmt.Errorf("failed to delete credential secret: %w", err)
-	}
-	return nil
-}
-
-// GetAuthTypeFromSecret determines the auth type from a credential secret
-func (cm *CredentialManager) GetAuthTypeFromSecret(secret *corev1.Secret) string {
-	// Check annotation first
-	if authType, ok := secret.Annotations["knodex.io/auth-type"]; ok {
-		return authType
-	}
-	// Fallback: determine from secret keys
-	if _, hasSSH := secret.Data[SecretKeySSHPrivateKey]; hasSSH {
-		return AuthTypeSSH
-	}
-	if _, hasGHApp := secret.Data[SecretKeyGitHubAppID]; hasGHApp {
-		return AuthTypeGitHubApp
-	}
-	return AuthTypeHTTPS
-}
-
-// generateSecretName creates a unique secret name for a repository config
-func (cm *CredentialManager) generateSecretName(repoConfigID string) string {
-	// Generate a short random suffix for uniqueness
-	suffix := make([]byte, 4)
-	rand.Read(suffix)
-	return fmt.Sprintf("%s%s-%s", CredentialSecretPrefix, sanitizeK8sName(repoConfigID), hex.EncodeToString(suffix))
-}
-
-// buildSecretData constructs the secret data map based on auth type
-func (cm *CredentialManager) buildSecretData(req CreateCredentialRequest) (map[string][]byte, error) {
-	data := make(map[string][]byte)
-
-	switch req.AuthType {
-	case AuthTypeSSH:
-		if req.SSHAuth == nil {
-			return nil, fmt.Errorf("SSH auth config is required for auth type 'ssh'")
-		}
-		if err := ValidatePEMFormat(req.SSHAuth.PrivateKey, "SSH private key"); err != nil {
-			return nil, err
-		}
-		data[SecretKeySSHPrivateKey] = []byte(req.SSHAuth.PrivateKey)
-
-	case AuthTypeHTTPS:
-		if req.HTTPSAuth == nil {
-			return nil, fmt.Errorf("HTTPS auth config is required for auth type 'https'")
-		}
-		// At least one auth method must be provided
-		hasAuth := req.HTTPSAuth.Username != "" ||
-			req.HTTPSAuth.BearerToken != "" ||
-			req.HTTPSAuth.TLSClientCert != ""
-		if !hasAuth {
-			return nil, fmt.Errorf("at least one HTTPS authentication method must be provided (username, bearerToken, or tlsClientCert)")
-		}
-		if req.HTTPSAuth.Username != "" {
-			data[SecretKeyUsername] = []byte(req.HTTPSAuth.Username)
-		}
-		if req.HTTPSAuth.Password != "" {
-			data[SecretKeyPassword] = []byte(req.HTTPSAuth.Password)
-		}
-		if req.HTTPSAuth.BearerToken != "" {
-			data[SecretKeyBearerToken] = []byte(req.HTTPSAuth.BearerToken)
-		}
-		if req.HTTPSAuth.TLSClientCert != "" {
-			if err := ValidatePEMFormat(req.HTTPSAuth.TLSClientCert, "TLS client certificate"); err != nil {
-				return nil, err
-			}
-			data[SecretKeyTLSClientCert] = []byte(req.HTTPSAuth.TLSClientCert)
-		}
-		if req.HTTPSAuth.TLSClientKey != "" {
-			if err := ValidatePEMFormat(req.HTTPSAuth.TLSClientKey, "TLS client key"); err != nil {
-				return nil, err
-			}
-			data[SecretKeyTLSClientKey] = []byte(req.HTTPSAuth.TLSClientKey)
-		}
-
-	case AuthTypeGitHubApp:
-		if req.GitHubAppAuth == nil {
-			return nil, fmt.Errorf("GitHub App auth config is required for auth type 'github-app'")
-		}
-		if req.GitHubAppAuth.AppID == "" {
-			return nil, fmt.Errorf("GitHub App ID is required")
-		}
-		if req.GitHubAppAuth.InstallationID == "" {
-			return nil, fmt.Errorf("GitHub App Installation ID is required")
-		}
-		if req.GitHubAppAuth.PrivateKey == "" {
-			return nil, fmt.Errorf("GitHub App private key is required")
-		}
-		if err := ValidatePEMFormat(req.GitHubAppAuth.PrivateKey, "GitHub App private key"); err != nil {
-			return nil, err
-		}
-		data[SecretKeyGitHubAppID] = []byte(req.GitHubAppAuth.AppID)
-		data[SecretKeyGitHubInstallID] = []byte(req.GitHubAppAuth.InstallationID)
-		data[SecretKeyGitHubAppKey] = []byte(req.GitHubAppAuth.PrivateKey)
-
-		appType := req.GitHubAppAuth.AppType
-		if appType == "" {
-			appType = GitHubAppTypeGitHub
-		}
-		data[SecretKeyGitHubAppType] = []byte(appType)
-
-		if appType == GitHubAppTypeGitHubEnterprise {
-			if req.GitHubAppAuth.EnterpriseURL == "" {
-				return nil, fmt.Errorf("Enterprise URL is required for GitHub Enterprise App")
-			}
-			if err := ValidateEnterpriseURL(req.GitHubAppAuth.EnterpriseURL); err != nil {
-				return nil, err
-			}
-			data[SecretKeyGitHubEnterpriseURL] = []byte(req.GitHubAppAuth.EnterpriseURL)
-		}
-
-	default:
-		return nil, fmt.Errorf("unsupported auth type: %s", req.AuthType)
-	}
-
-	return data, nil
-}
-
-// sanitizeK8sName converts a string to a valid Kubernetes resource name
-func sanitizeK8sName(name string) string {
-	// Convert to lowercase
-	name = strings.ToLower(name)
-	// Replace any non-alphanumeric characters with dashes
-	re := regexp.MustCompile(`[^a-z0-9-]`)
-	name = re.ReplaceAllString(name, "-")
-	// Remove consecutive dashes
-	re = regexp.MustCompile(`-+`)
-	name = re.ReplaceAllString(name, "-")
-	// Trim dashes from start and end
-	name = strings.Trim(name, "-")
-	// Truncate to max length (63 chars for K8s names, but leave room for prefix)
-	maxLen := 40
-	if len(name) > maxLen {
-		name = name[:maxLen]
-	}
-	return name
 }
 
 // ValidatePEMFormat validates that a string is in PEM format

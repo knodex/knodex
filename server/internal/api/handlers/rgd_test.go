@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/provops-org/knodex/server/internal/api/response"
-	"github.com/provops-org/knodex/server/internal/models"
-	"github.com/provops-org/knodex/server/internal/services"
-	"github.com/provops-org/knodex/server/internal/watcher"
+	"github.com/knodex/knodex/server/internal/api/response"
+	"github.com/knodex/knodex/server/internal/kro/watcher"
+	"github.com/knodex/knodex/server/internal/models"
+	"github.com/knodex/knodex/server/internal/services"
 )
 
 // mockRGDWatcher creates a test watcher with sample data

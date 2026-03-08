@@ -1,6 +1,6 @@
 package integration
 
-import "github.com/provops-org/knodex/server/internal/rbac"
+import "github.com/knodex/knodex/server/internal/rbac"
 
 // Test user constants
 const (

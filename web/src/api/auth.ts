@@ -6,30 +6,38 @@ export interface LocalAdminLoginRequest {
   password: string;
 }
 
-export interface LocalAdminLoginResponse {
-  token: string;
+// LoginResponse matches the server's LoginResponse struct.
+// The JWT is delivered via HttpOnly cookie (Set-Cookie header), not in the response body.
+export interface LoginResponse {
+  expiresAt: string;
+  user: LoginUserInfo;
 }
 
-export interface UserResponse {
+export interface LoginUserInfo {
   id: string;
   email: string;
-  display_name?: string;
-  casbin_roles: string[]; // Casbin roles (e.g., ["role:serveradmin"]) replaces is_global_admin
-  projects: string[];
-  default_project: string;
+  displayName?: string;
+  projects?: string[];
+  defaultProject?: string;
+  groups?: string[];
+  roles?: Record<string, string>;
+  casbinRoles?: string[];
+  permissions?: Record<string, boolean>;
 }
 
 /**
- * Log in with local admin credentials
+ * Log in with local admin credentials.
+ * The JWT is set via HttpOnly cookie by the server.
+ * Returns user info and expiration for Zustand store.
  */
 export async function localAdminLogin(
   credentials: LocalAdminLoginRequest
-): Promise<string> {
-  const response = await apiClient.post<LocalAdminLoginResponse>(
+): Promise<LoginResponse> {
+  const response = await apiClient.post<LoginResponse>(
     '/v1/auth/local/login',
     credentials
   );
-  return response.data.token;
+  return response.data;
 }
 
 /**
@@ -42,12 +50,14 @@ export function initiateOIDCLogin(provider: string): void {
 }
 
 /**
- * Exchange an opaque auth code for a JWT token.
+ * Exchange an opaque auth code for a session cookie.
  * Used after OIDC callback redirect (code is single-use, 30s TTL).
+ * The JWT is set via HttpOnly cookie by the server.
+ * Returns user info and expiration for Zustand store.
  */
-export async function exchangeAuthCode(code: string): Promise<string> {
-  const response = await apiClient.post<{ token: string }>('/v1/auth/token-exchange', { code });
-  return response.data.token;
+export async function exchangeAuthCode(code: string): Promise<LoginResponse> {
+  const response = await apiClient.post<LoginResponse>('/v1/auth/token-exchange', { code });
+  return response.data;
 }
 
 /**
@@ -57,22 +67,6 @@ export async function exchangeAuthCode(code: string): Promise<string> {
 export async function getWebSocketTicket(): Promise<string> {
   const response = await apiClient.post<{ ticket: string; expiresAt: string }>('/v1/ws/ticket');
   return response.data.ticket;
-}
-
-/**
- * Get current user information
- */
-export async function getCurrentUser(): Promise<UserResponse> {
-  const response = await apiClient.get<UserResponse>('/v1/auth/me');
-  return response.data;
-}
-
-/**
- * Refresh JWT token
- */
-export async function refreshToken(): Promise<string> {
-  const response = await apiClient.post<LocalAdminLoginResponse>('/v1/auth/refresh');
-  return response.data.token;
 }
 
 /**

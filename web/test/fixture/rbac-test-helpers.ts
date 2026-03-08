@@ -177,12 +177,11 @@ export async function loginAs(page: Page, user: TestUser, targetPath: string = "
     sessionStorage.clear();
   });
 
-  // Set auth state
-  // NOTE: isGlobalAdmin was removed - authorization uses Casbin via useCanI() hook
-  // The JWT contains casbin_roles and permissions for proper authorization
+  // Set auth state with all fields needed by userStore (especially tokenExp for ProtectedRoute)
   await page.evaluate(
     ({ token, user }) => {
       localStorage.setItem("jwt_token", token);
+      const tokenExpUnix = Math.floor(Date.now() / 1000) + 3600;
       const userStorage = {
         state: {
           currentProject: user.projects[0] || null,
@@ -190,7 +189,14 @@ export async function loginAs(page: Page, user: TestUser, targetPath: string = "
           isAuthenticated: true,
           roles: user.roles || {},
           projects: user.projects || [],
-
+          tokenExp: tokenExpUnix,
+          casbinRoles: user.casbin_roles || [],
+          groups: [],
+          user: {
+            id: user.user_id || "",
+            email: user.email || "",
+            name: user.display_name || "",
+          },
         },
         version: 0,
       };

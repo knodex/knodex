@@ -1,10 +1,7 @@
 package repository
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,14 +16,13 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/provops-org/knodex/server/internal/clients"
-	"github.com/provops-org/knodex/server/internal/deployment/vcs"
-	"github.com/provops-org/knodex/server/internal/netutil"
+	"github.com/knodex/knodex/server/internal/clients"
+	"github.com/knodex/knodex/server/internal/deployment/vcs"
+	"github.com/knodex/knodex/server/internal/netutil"
+	utilhash "github.com/knodex/knodex/server/internal/util/hash"
 )
 
 var (
@@ -173,23 +169,13 @@ func (s *Service) UpdateRepositoryMetadata(ctx context.Context, repoConfigID str
 	return secretToRepositoryConfig(updatedSecret), nil
 }
 
-// GenerateRepositoryConfigID creates a unique repository config ID
-// ID is based on owner/repo combination (globally unique)
-func GenerateRepositoryConfigID(owner, repo string) string {
-	// Create a stable ID from owner + repo
-	combined := fmt.Sprintf("%s/%s", owner, repo)
-	hash := sha256.Sum256([]byte(strings.ToLower(combined)))
-	return "repoconfig-" + hex.EncodeToString(hash[:])[:32]
-}
-
 // GenerateRepositoryConfigIDFromURL creates a unique repository config ID from a repo URL
 func GenerateRepositoryConfigIDFromURL(repoURL string) string {
 	// Create a stable ID from the normalized URL
 	normalizedURL := strings.ToLower(repoURL)
 	// Remove .git suffix if present for consistency
 	normalizedURL = strings.TrimSuffix(normalizedURL, ".git")
-	hash := sha256.Sum256([]byte(normalizedURL))
-	return "repoconfig-" + hex.EncodeToString(hash[:])[:32]
+	return "repoconfig-" + utilhash.Truncate(utilhash.SHA256String(normalizedURL), 32)
 }
 
 // ValidateRepositoryConfigSpec validates the repository config specification
@@ -276,138 +262,6 @@ func ValidateUserID(userID string) error {
 		return fmt.Errorf("user ID must not contain null bytes")
 	}
 	return nil
-}
-
-// ValidateSecret validates that the referenced Kubernetes secret exists and contains the specified key
-func (s *Service) ValidateSecret(ctx context.Context, secretName, secretKey string) error {
-	// Always perform both operations to normalize timing and prevent enumeration attacks
-	secret, getErr := s.k8sClient.CoreV1().Secrets(s.credentialManager.Namespace()).Get(ctx, secretName, metav1.GetOptions{})
-
-	var keyErr error
-	if secret != nil {
-		if _, ok := secret.Data[secretKey]; !ok {
-			keyErr = fmt.Errorf("key not found")
-		}
-	}
-
-	// Log detailed error AFTER both operations complete to prevent timing oracle
-	if getErr != nil {
-		slog.Error("secret validation failed",
-			"secret_name", secretName,
-			"namespace", s.credentialManager.Namespace(),
-			"error", getErr,
-		)
-	} else if keyErr != nil {
-		slog.Error("secret key not found",
-			"secret_name", secretName,
-			"secret_key", secretKey,
-			"namespace", s.credentialManager.Namespace(),
-		)
-	}
-
-	// Return only after timing is normalized
-	if getErr != nil || keyErr != nil {
-		// Generic error prevents enumeration attacks
-		return fmt.Errorf("unable to validate secret reference")
-	}
-
-	return nil
-}
-
-// CreateRepositoryConfig creates a new RepositoryConfig CRD
-// Note: Access control is handled by authorization middleware
-func (s *Service) CreateRepositoryConfig(ctx context.Context, spec RepositoryConfigSpec, createdBy string) (*RepositoryConfig, error) {
-	// Validate spec
-	if err := ValidateRepositoryConfigSpec(spec); err != nil {
-		return nil, fmt.Errorf("invalid repository config spec: %w", err)
-	}
-
-	// Validate createdBy
-	if err := ValidateUserID(createdBy); err != nil {
-		return nil, fmt.Errorf("invalid createdBy user ID: %w", err)
-	}
-
-	// Generate deterministic ID from RepoURL (enforces uniqueness atomically)
-	repoConfigID := GenerateRepositoryConfigIDFromURL(spec.RepoURL)
-
-	// Validate secret reference if provided
-	if spec.SecretRef.Name != "" {
-		// For SecretRef, we don't have a specific key - the secret structure is known
-		// Just verify the secret exists
-		_, err := s.k8sClient.CoreV1().Secrets(spec.SecretRef.Namespace).Get(ctx, spec.SecretRef.Name, metav1.GetOptions{})
-		if err != nil {
-			return nil, fmt.Errorf("secret validation failed: unable to validate secret reference")
-		}
-	}
-
-	// Build labels (project-based if projectId provided)
-	labels := map[string]string{
-		"knodex.io/managed-by": "knodex",
-	}
-	if spec.ProjectID != "" {
-		labels["knodex.io/project"] = spec.ProjectID
-	}
-
-	// Create RepositoryConfig CRD
-	now := metav1.Now()
-	repoConfig := &RepositoryConfig{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: RepositoryConfigGroup + "/" + RepositoryConfigVersion,
-			Kind:       RepositoryConfigKind,
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:   repoConfigID,
-			Labels: labels,
-		},
-		Spec: spec,
-		Status: RepositoryConfigStatus{
-			CreatedAt:        &now,
-			CreatedBy:        createdBy,
-			ValidationStatus: "valid", // We just validated it
-		},
-	}
-
-	// Convert to unstructured
-	unstructuredRepoConfig, err := runtime.DefaultUnstructuredConverter.ToUnstructured(repoConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert to unstructured: %w", err)
-	}
-
-	// Create in Kubernetes
-	created, err := s.dynamicClient.Resource(RepositoryConfigGVR).
-		Create(ctx, &unstructured.Unstructured{Object: unstructuredRepoConfig}, metav1.CreateOptions{})
-	if err != nil {
-		if errors.IsAlreadyExists(err) {
-			// Kubernetes enforced uniqueness - return user-friendly error
-			return nil, fmt.Errorf("repository config already exists for %s", spec.RepoURL)
-		}
-		return nil, fmt.Errorf("failed to create repository config: %w", err)
-	}
-
-	// Convert back to typed
-	result := &RepositoryConfig{}
-	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(created.Object, result); err != nil {
-		return nil, fmt.Errorf("failed to convert from unstructured: %w", err)
-	}
-
-	// Audit log
-	if s.auditLogger != nil {
-		s.auditLogger.LogEvent(ctx, "repository_config.created",
-			slog.String("repository_config_id", repoConfigID),
-			slog.String("repo_url", spec.RepoURL),
-			slog.String("project_id", spec.ProjectID),
-			slog.String("created_by", createdBy),
-		)
-	}
-
-	slog.Info("repository config created",
-		"repo_config_id", repoConfigID,
-		"project_id", spec.ProjectID,
-		"repo_url", spec.RepoURL,
-		"created_by", createdBy,
-	)
-
-	return result, nil
 }
 
 // CreateRepositoryConfigWithCredentials creates a repository using ArgoCD-style pattern
@@ -607,68 +461,6 @@ func (s *Service) GetRepositoryConfig(ctx context.Context, repoConfigID string) 
 	return secretToRepositoryConfig(secret), nil
 }
 
-// UpdateRepositoryConfig updates an existing repository config
-// Note: Access control is handled by authorization middleware
-func (s *Service) UpdateRepositoryConfig(ctx context.Context, repoConfig *RepositoryConfig, updatedBy string) (*RepositoryConfig, error) {
-	// Validate spec
-	if err := ValidateRepositoryConfigSpec(repoConfig.Spec); err != nil {
-		return nil, fmt.Errorf("invalid repository config spec: %w", err)
-	}
-
-	// Validate secret reference if provided
-	if repoConfig.Spec.SecretRef.Name != "" {
-		_, err := s.k8sClient.CoreV1().Secrets(repoConfig.Spec.SecretRef.Namespace).Get(ctx, repoConfig.Spec.SecretRef.Name, metav1.GetOptions{})
-		if err != nil {
-			return nil, fmt.Errorf("secret validation failed: unable to validate secret reference")
-		}
-	}
-
-	// Update status fields
-	now := metav1.Now()
-	repoConfig.Status.UpdatedAt = &now
-	repoConfig.Status.UpdatedBy = updatedBy
-	repoConfig.Status.ValidationStatus = "valid"
-
-	// Convert to unstructured
-	unstructuredRepoConfig, err := runtime.DefaultUnstructuredConverter.ToUnstructured(repoConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert to unstructured: %w", err)
-	}
-
-	// Update in Kubernetes
-	updated, err := s.dynamicClient.Resource(RepositoryConfigGVR).
-		Update(ctx, &unstructured.Unstructured{Object: unstructuredRepoConfig}, metav1.UpdateOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to update repository config: %w", err)
-	}
-
-	// Convert back
-	result := &RepositoryConfig{}
-	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(updated.Object, result); err != nil {
-		return nil, fmt.Errorf("failed to convert from unstructured: %w", err)
-	}
-
-	// Audit log
-	if s.auditLogger != nil {
-		logAttrs := []slog.Attr{
-			slog.String("repository_config_id", repoConfig.Name),
-			slog.String("updated_by", updatedBy),
-		}
-		if repoConfig.Spec.ProjectID != "" {
-			logAttrs = append(logAttrs, slog.String("project_id", repoConfig.Spec.ProjectID))
-		}
-		s.auditLogger.LogEvent(ctx, "repository_config.updated", logAttrs...)
-	}
-
-	slog.Info("repository config updated",
-		"repo_config_id", repoConfig.Name,
-		"project_id", repoConfig.Spec.ProjectID,
-		"updated_by", updatedBy,
-	)
-
-	return result, nil
-}
-
 // DeleteRepositoryConfig deletes a repository config (secret)
 // Following ArgoCD pattern: just delete the single secret containing all data
 // Note: Access control is handled by authorization middleware
@@ -704,242 +496,6 @@ func (s *Service) DeleteRepositoryConfig(ctx context.Context, repoConfigID strin
 	)
 
 	return nil
-}
-
-// TestConnection validates GitHub repository credentials without creating a repository config
-// This allows users to test their GitHub token before saving the configuration
-func (s *Service) TestConnection(ctx context.Context, req TestConnectionRequest) (*TestConnectionResponse, error) {
-	// Validate required fields
-	if req.Owner == "" {
-		return &TestConnectionResponse{
-			Valid:   false,
-			Message: "owner is required",
-		}, nil
-	}
-	if req.Repo == "" {
-		return &TestConnectionResponse{
-			Valid:   false,
-			Message: "repo is required",
-		}, nil
-	}
-	if req.SecretName == "" {
-		return &TestConnectionResponse{
-			Valid:   false,
-			Message: "secretName is required",
-		}, nil
-	}
-	if req.SecretKey == "" {
-		return &TestConnectionResponse{
-			Valid:   false,
-			Message: "secretKey is required",
-		}, nil
-	}
-
-	// Apply strict validation
-	if len(req.Owner) > 39 {
-		return &TestConnectionResponse{
-			Valid:   false,
-			Message: "owner must not exceed 39 characters (GitHub limit)",
-		}, nil
-	}
-	if !githubOwnerRegex.MatchString(req.Owner) {
-		return &TestConnectionResponse{
-			Valid:   false,
-			Message: "owner must match GitHub username format (alphanumeric, hyphens, underscores, periods)",
-		}, nil
-	}
-	if strings.HasPrefix(req.Owner, "-") || strings.HasPrefix(req.Owner, ".") {
-		return &TestConnectionResponse{
-			Valid:   false,
-			Message: "owner must not start with hyphen or period",
-		}, nil
-	}
-
-	if len(req.Repo) > 100 {
-		return &TestConnectionResponse{
-			Valid:   false,
-			Message: "repo must not exceed 100 characters (GitHub limit)",
-		}, nil
-	}
-	if !githubRepoRegex.MatchString(req.Repo) {
-		return &TestConnectionResponse{
-			Valid:   false,
-			Message: "repo must match GitHub repository name format (alphanumeric, hyphens, underscores, periods)",
-		}, nil
-	}
-	if strings.Contains(req.Repo, "..") {
-		return &TestConnectionResponse{
-			Valid:   false,
-			Message: "repo must not contain '..' (path traversal attempt)",
-		}, nil
-	}
-
-	if !secretNameRegex.MatchString(req.SecretName) {
-		return &TestConnectionResponse{
-			Valid:   false,
-			Message: "invalid secret name format (must be DNS-1123 subdomain)",
-		}, nil
-	}
-
-	// Fetch the secret
-	secret, err := s.k8sClient.CoreV1().Secrets(s.credentialManager.Namespace()).Get(ctx, req.SecretName, metav1.GetOptions{})
-	if err != nil {
-		slog.Warn("secret access failed during connection test",
-			"secret_name", req.SecretName,
-			"error_type", fmt.Sprintf("%T", err),
-			"is_not_found", errors.IsNotFound(err),
-		)
-		return &TestConnectionResponse{
-			Valid:   false,
-			Message: "unable to validate connection - check secret configuration",
-		}, nil
-	}
-
-	// Extract GitHub token from secret
-	tokenBytes, exists := secret.Data[req.SecretKey]
-	if !exists || len(bytes.TrimSpace(tokenBytes)) == 0 {
-		slog.Warn("secret key missing or empty",
-			"secret_name", req.SecretName,
-			"secret_key", req.SecretKey,
-			"key_exists", exists,
-		)
-		return &TestConnectionResponse{
-			Valid:   false,
-			Message: "unable to validate connection - check secret configuration",
-		}, nil
-	}
-
-	tokenBytes = bytes.TrimSpace(tokenBytes)
-	defer func() {
-		for i := range tokenBytes {
-			tokenBytes[i] = 0
-		}
-	}()
-
-	// Validate the token has proper format
-	validPrefixes := [][]byte{
-		[]byte("ghp_"),
-		[]byte("github_pat_"),
-		[]byte("gho_"),
-		[]byte("ghu_"),
-		[]byte("ghs_"),
-		[]byte("ghr_"),
-	}
-	hasValidPrefix := false
-	for _, prefix := range validPrefixes {
-		if bytes.HasPrefix(tokenBytes, prefix) {
-			hasValidPrefix = true
-			break
-		}
-	}
-	if !hasValidPrefix {
-		return &TestConnectionResponse{
-			Valid:   false,
-			Message: "invalid GitHub token format (missing valid prefix)",
-		}, nil
-	}
-
-	// Build API URL with proper escaping
-	escapedOwner := url.PathEscape(req.Owner)
-	escapedRepo := url.PathEscape(req.Repo)
-	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s", escapedOwner, escapedRepo)
-
-	parsedURL, err := url.Parse(apiURL)
-	if err != nil {
-		slog.Error("failed to parse GitHub API URL",
-			"owner", req.Owner,
-			"repo", req.Repo,
-			"error", err,
-		)
-		return &TestConnectionResponse{
-			Valid:   false,
-			Message: "invalid repository path format",
-		}, nil
-	}
-
-	if parsedURL.Host != "api.github.com" {
-		slog.Error("SSRF attempt detected - invalid host",
-			"host", parsedURL.Host,
-			"owner", req.Owner,
-			"repo", req.Repo,
-		)
-		return &TestConnectionResponse{
-			Valid:   false,
-			Message: "invalid repository reference",
-		}, nil
-	}
-
-	// Create HTTP client with timeout and SSRF-safe redirect checking
-	client := newSSRFSafeClient(10 * time.Second)
-
-	httpReq, err := http.NewRequestWithContext(ctx, "GET", parsedURL.String(), nil)
-	if err != nil {
-		slog.Error("failed to create GitHub API request", "error", err)
-		return nil, fmt.Errorf("failed to create API request: %w", err)
-	}
-
-	httpReq.Header.Set("Authorization", "Bearer "+string(tokenBytes))
-	httpReq.Header.Set("Accept", "application/vnd.github+json")
-	httpReq.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		slog.Warn("GitHub API request failed",
-			"owner", req.Owner,
-			"repo", req.Repo,
-			"error", err,
-		)
-		return &TestConnectionResponse{
-			Valid:   false,
-			Message: fmt.Sprintf("failed to connect to GitHub: %v", err),
-		}, nil
-	}
-
-	defer func() {
-		io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
-	}()
-
-	switch resp.StatusCode {
-	case 200:
-		slog.Info("GitHub connection test successful",
-			"owner", req.Owner,
-			"repo", req.Repo,
-		)
-		return &TestConnectionResponse{
-			Valid:   true,
-			Message: fmt.Sprintf("successfully connected to %s/%s", req.Owner, req.Repo),
-		}, nil
-
-	case 401:
-		return &TestConnectionResponse{
-			Valid:   false,
-			Message: "invalid GitHub token or token has been revoked",
-		}, nil
-
-	case 403:
-		return &TestConnectionResponse{
-			Valid:   false,
-			Message: "GitHub token does not have permission to access this repository",
-		}, nil
-
-	case 404:
-		return &TestConnectionResponse{
-			Valid:   false,
-			Message: fmt.Sprintf("repository %s/%s not found or token does not have access", req.Owner, req.Repo),
-		}, nil
-
-	default:
-		slog.Warn("GitHub API returned unexpected status",
-			"status_code", resp.StatusCode,
-			"owner", req.Owner,
-			"repo", req.Repo,
-		)
-		return &TestConnectionResponse{
-			Valid:   false,
-			Message: fmt.Sprintf("GitHub API returned status %d", resp.StatusCode),
-		}, nil
-	}
 }
 
 // TestConnectionWithCredentials tests repository connection using the new ArgoCD-style authentication

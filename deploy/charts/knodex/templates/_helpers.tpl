@@ -89,13 +89,25 @@ Returns enterprise image when enterprise.enabled is true, otherwise the standard
 
 {{/*
 License secret name
-Returns the user-provided secretName or the chart-generated secret name
+Returns the user-provided existingSecret or the chart-generated secret name
 */}}
 {{- define "knodex.licenseSecretName" -}}
-{{- if .Values.enterprise.license.secretName }}
-{{- .Values.enterprise.license.secretName }}
+{{- if .Values.enterprise.license.existingSecret }}
+{{- .Values.enterprise.license.existingSecret }}
 {{- else }}
 {{- printf "%s-license" (include "knodex.fullname" .) }}
+{{- end }}
+{{- end }}
+
+{{/*
+SSO secret name
+Returns the user-provided existingSecret or the chart-generated secret name
+*/}}
+{{- define "knodex.ssoSecretName" -}}
+{{- if .Values.server.auth.oidc.existingSecret }}
+{{- .Values.server.auth.oidc.existingSecret }}
+{{- else }}
+{{- printf "%s-sso-secrets" (include "knodex.fullname" .) }}
 {{- end }}
 {{- end }}
 

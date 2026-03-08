@@ -11,23 +11,23 @@ import (
 	"testing"
 	"time"
 
-	"github.com/provops-org/knodex/server/internal/deployment/vcs"
-	"github.com/provops-org/knodex/server/internal/metrics/gitops"
+	"github.com/knodex/knodex/server/internal/deployment/vcs"
+	"github.com/knodex/knodex/server/internal/metrics/gitops"
 )
 
 // E2E tests for GitOps commit reliability improvements
 // These tests require a real GitHub token and test against:
-// https://github.com/provops-org/test-knodex-repositories
+// https://github.com/knodex/test-knodex-repositories
 //
 // Run with: go test -v -tags=e2e ./test/e2e/vcs/... -run TestE2E
 //
 // Required environment variables:
-// - GITHUB_TOKEN: A GitHub token with repo access to provops-org/test-knodex-repositories
+// - GITHUB_TOKEN: A GitHub token with repo access to knodex/test-knodex-repositories
 //
 // The tests are designed to be idempotent and safe to run repeatedly.
 
 const (
-	testOwner  = "provops-org"
+	testOwner  = "knodex"
 	testRepo   = "test-knodex-repositories"
 	testBranch = "main"
 )

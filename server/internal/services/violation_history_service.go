@@ -57,27 +57,3 @@ type ViolationHistoryExportFilters struct {
 	Constraint  string // filter: {kind}/{name}
 	Resource    string // filter: {kind}/{namespace}/{name}
 }
-
-// NoopViolationHistoryService is a no-op implementation for OSS builds.
-type NoopViolationHistoryService struct{}
-
-// IsAvailable returns false.
-func (s *NoopViolationHistoryService) IsAvailable() bool { return false }
-
-// GetRetentionDays returns 0.
-func (s *NoopViolationHistoryService) GetRetentionDays() int { return 0 }
-
-// ListByTimeRange returns an error.
-func (s *NoopViolationHistoryService) ListByTimeRange(_ context.Context, _, _ time.Time, _ ViolationHistoryListOptions) ([]ViolationHistoryRecord, int, error) {
-	return nil, 0, ErrServiceUnavailable
-}
-
-// CountByTimeRange returns an error.
-func (s *NoopViolationHistoryService) CountByTimeRange(_ context.Context, _, _ time.Time, _ ViolationHistoryExportFilters) (int, error) {
-	return 0, ErrServiceUnavailable
-}
-
-// ExportCSV returns an error.
-func (s *NoopViolationHistoryService) ExportCSV(_ context.Context, _ time.Time, _ ViolationHistoryExportFilters, _ io.Writer) error {
-	return ErrServiceUnavailable
-}

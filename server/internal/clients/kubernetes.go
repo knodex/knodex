@@ -9,7 +9,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
-	"github.com/provops-org/knodex/server/internal/config"
+	"github.com/knodex/knodex/server/internal/config"
 )
 
 const (

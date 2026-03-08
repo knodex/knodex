@@ -18,7 +18,6 @@ export function useAuth() {
   const isAuthenticated = useIsAuthenticated();
   const login = useUserStore((state) => state.login);
   const logout = useUserStore((state) => state.logout);
-  const refreshUser = useUserStore((state) => state.refreshUser);
   const isTokenExpired = useUserStore((state) => state.isTokenExpired);
 
   return {
@@ -26,7 +25,6 @@ export function useAuth() {
     isAuthenticated,
     login,
     logout,
-    refreshUser,
     isTokenExpired,
   };
 }

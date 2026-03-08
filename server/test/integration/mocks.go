@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/provops-org/knodex/server/internal/auth"
-	"github.com/provops-org/knodex/server/internal/rbac"
+	"github.com/knodex/knodex/server/internal/auth"
+	"github.com/knodex/knodex/server/internal/rbac"
 )
 
 // MockPolicyEnforcer is a mock implementation of rbac.PolicyEnforcer for testing
@@ -430,6 +430,11 @@ func (m *MockAuthService) ValidateToken(_ context.Context, tokenString string) (
 		return claims, nil
 	}
 	return nil, fmt.Errorf("invalid token")
+}
+
+// RevokeToken implements auth.ServiceInterface
+func (m *MockAuthService) RevokeToken(_ context.Context, _ string, _ time.Duration) error {
+	return nil
 }
 
 // CreateTestClaims creates JWT claims for testing.

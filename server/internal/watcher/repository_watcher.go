@@ -13,9 +13,9 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 
-	"github.com/provops-org/knodex/server/internal/audit"
-	"github.com/provops-org/knodex/server/internal/models"
-	"github.com/provops-org/knodex/server/internal/repository"
+	"github.com/knodex/knodex/server/internal/audit"
+	"github.com/knodex/knodex/server/internal/models"
+	"github.com/knodex/knodex/server/internal/repository"
 )
 
 // RepositoryWatcher watches for repository credential Secrets created or deleted

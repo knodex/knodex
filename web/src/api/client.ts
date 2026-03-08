@@ -57,21 +57,21 @@ const apiClient = axios.create({
   headers: {
     "Content-Type": "application/json",
   },
+  withCredentials: true, // Send HttpOnly session cookie with all requests
 });
 
-// Request interceptor: Add JWT token to requests
-apiClient.interceptors.request.use(
-  (config) => {
-    const token = localStorage.getItem('jwt_token');
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
-    }
-    return config;
-  },
-  (error) => {
-    return Promise.reject(error);
+// Request interceptor: Attach JWT token as Bearer header for E2E/API-key auth.
+// The server accepts both HttpOnly cookies and Authorization headers (see middleware/auth.go).
+// In production, the HttpOnly cookie is the primary auth mechanism. The Bearer header
+// serves as a fallback for E2E tests (which inject tokens into localStorage) and
+// API-key clients that don't use cookies.
+apiClient.interceptors.request.use((config) => {
+  const token = typeof window !== 'undefined' ? localStorage.getItem('jwt_token') : null;
+  if (token && !config.headers.Authorization) {
+    config.headers.Authorization = `Bearer ${token}`;
   }
-);
+  return config;
+});
 
 // Response interceptor: Handle errors
 apiClient.interceptors.response.use(

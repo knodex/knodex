@@ -21,12 +21,15 @@ vi.mock('@/stores/userStore', () => ({
       projects: [],
       roles: {},
       currentProject: null,
-      // NOTE: isGlobalAdmin was removed - use useCanI() hook for permission checks
       isAuthenticated: false,
-      token: null,
+      groups: [],
+      issuer: null,
+      casbinRoles: [],
+      permissions: {},
+      tokenExp: null,
+      tokenIat: null,
       login: vi.fn(),
       setCurrentProject: vi.fn(),
-      refreshUser: vi.fn(),
     })
   ),
 }));

@@ -5,8 +5,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/provops-org/knodex/server/internal/api/response"
-	"github.com/provops-org/knodex/server/internal/auth"
+	"github.com/knodex/knodex/server/internal/api/cookie"
+	"github.com/knodex/knodex/server/internal/api/response"
+	"github.com/knodex/knodex/server/internal/auth"
 )
 
 // UserContextKey is the context key for user information
@@ -38,25 +39,35 @@ type AuthConfig struct {
 	AuthService auth.ServiceInterface
 }
 
-// Auth middleware extracts and validates JWT from Authorization header
+// extractToken extracts a JWT token from the request.
+// Priority: 1) knodex_session cookie, 2) Authorization: Bearer header.
+func extractToken(r *http.Request) (string, bool) {
+	// 1. Check for session cookie
+	if c, err := r.Cookie(cookie.SessionCookieName); err == nil && c.Value != "" {
+		return c.Value, true
+	}
+
+	// 2. Fall back to Authorization: Bearer header (API clients, CLI, E2E tests)
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		return "", false
+	}
+	parts := strings.Split(authHeader, " ")
+	if len(parts) != 2 || parts[0] != "Bearer" {
+		return "", false
+	}
+	return parts[1], true
+}
+
+// Auth middleware extracts and validates JWT from cookie or Authorization header
 func Auth(config AuthConfig) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Get Authorization header
-			authHeader := r.Header.Get("Authorization")
-			if authHeader == "" {
-				response.Unauthorized(w, "missing Authorization header")
+			tokenString, ok := extractToken(r)
+			if !ok {
+				response.Unauthorized(w, "missing authentication credentials")
 				return
 			}
-
-			// Check Bearer prefix
-			parts := strings.Split(authHeader, " ")
-			if len(parts) != 2 || parts[0] != "Bearer" {
-				response.Unauthorized(w, "invalid Authorization header format, expected: Bearer <token>")
-				return
-			}
-
-			tokenString := parts[1]
 
 			// Validate JWT token
 			claims, err := config.AuthService.ValidateToken(r.Context(), tokenString)
@@ -122,21 +133,13 @@ func GetUserContext(r *http.Request) (*UserContext, bool) {
 func OptionalAuth(config AuthConfig) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			authHeader := r.Header.Get("Authorization")
-			if authHeader == "" {
-				// No auth header, continue without user context
+			tokenString, ok := extractToken(r)
+			if !ok {
+				// No credentials, continue without user context
 				next.ServeHTTP(w, r)
 				return
 			}
 
-			parts := strings.Split(authHeader, " ")
-			if len(parts) != 2 || parts[0] != "Bearer" {
-				// Invalid format, continue without user context
-				next.ServeHTTP(w, r)
-				return
-			}
-
-			tokenString := parts[1]
 			claims, err := config.AuthService.ValidateToken(r.Context(), tokenString)
 			if err != nil {
 				// Invalid token, continue without user context

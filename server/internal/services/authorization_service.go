@@ -4,7 +4,7 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/provops-org/knodex/server/internal/api/middleware"
+	"github.com/knodex/knodex/server/internal/api/middleware"
 )
 
 // PolicyEnforcer defines the interface for Casbin policy enforcement.

@@ -10,14 +10,15 @@ package drift
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"sort"
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/knodex/knodex/server/internal/util/collection"
+	utilhash "github.com/knodex/knodex/server/internal/util/hash"
 )
 
 // safetyTTL is a safety-net expiry for drift entries.
@@ -63,8 +64,7 @@ func HashSpec(spec map[string]interface{}) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("marshal spec for hashing: %w", err)
 	}
-	hash := sha256.Sum256(data)
-	return fmt.Sprintf("sha256:%x", hash), nil
+	return "sha256:" + utilhash.SHA256(data), nil
 }
 
 // canonicalJSON produces a deterministic JSON encoding by sorting map keys recursively.
@@ -73,11 +73,7 @@ func HashSpec(spec map[string]interface{}) (string, error) {
 func canonicalJSON(v interface{}) ([]byte, error) {
 	switch val := v.(type) {
 	case map[string]interface{}:
-		keys := make([]string, 0, len(val))
-		for k := range val {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
+		keys := collection.SortedKeys(val)
 
 		buf := []byte("{")
 		for i, k := range keys {

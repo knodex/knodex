@@ -6,12 +6,13 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/provops-org/knodex/server/internal/api/helpers"
-	"github.com/provops-org/knodex/server/internal/api/middleware"
-	"github.com/provops-org/knodex/server/internal/api/response"
-	"github.com/provops-org/knodex/server/internal/audit"
-	"github.com/provops-org/knodex/server/internal/netutil"
-	"github.com/provops-org/knodex/server/internal/sso"
+	"github.com/knodex/knodex/server/internal/api/helpers"
+	"github.com/knodex/knodex/server/internal/api/middleware"
+	"github.com/knodex/knodex/server/internal/api/response"
+	"github.com/knodex/knodex/server/internal/audit"
+	"github.com/knodex/knodex/server/internal/netutil"
+	"github.com/knodex/knodex/server/internal/sso"
+	"github.com/knodex/knodex/server/internal/util/collection"
 )
 
 // ssoAccessChecker is the subset of rbac.PolicyEnforcer needed by SSOSettingsHandler.
@@ -389,7 +390,7 @@ func (h *SSOSettingsHandler) UpdateProvider(w http.ResponseWriter, r *http.Reque
 			settingsUpdateDetails["credentialsUpdated"] = true
 		}
 		// Track scope changes
-		if !stringSlicesEqual(oldProvider.Scopes, req.Scopes) {
+		if !collection.Equal(oldProvider.Scopes, req.Scopes) {
 			settingsUpdateDetails["scopes"] = audit.SafeChanges(oldProvider.Scopes, req.Scopes)
 		}
 	}

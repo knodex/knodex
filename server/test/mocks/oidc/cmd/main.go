@@ -18,7 +18,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/provops-org/knodex/server/test/mocks/oidc"
+	"github.com/knodex/knodex/server/test/mocks/oidc"
 )
 
 func main() {

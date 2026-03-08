@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/provops-org/knodex/server/internal/rbac"
+	"github.com/knodex/knodex/server/internal/rbac"
 )
 
 // TestRoleBindingAPI_AssignUserRole_GlobalAdmin tests assigning a user to a project role as global admin

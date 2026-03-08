@@ -12,13 +12,17 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/provops-org/knodex/server/internal/api/helpers"
-	"github.com/provops-org/knodex/server/internal/api/response"
-	"github.com/provops-org/knodex/server/internal/audit"
-	"github.com/provops-org/knodex/server/internal/auth"
+	"github.com/knodex/knodex/server/internal/api/cookie"
+	"github.com/knodex/knodex/server/internal/api/helpers"
+	"github.com/knodex/knodex/server/internal/api/middleware"
+	"github.com/knodex/knodex/server/internal/api/response"
+	"github.com/knodex/knodex/server/internal/audit"
+	"github.com/knodex/knodex/server/internal/auth"
 )
 
 // isAllowedRedirectURL validates that a redirect URL is safe (not an open redirect).
@@ -69,10 +73,10 @@ func isAllowedRedirectURL(redirectURL string, allowedOrigins []string) bool {
 
 // OIDCServiceInterface defines the interface for OIDC authentication operations
 type OIDCServiceInterface interface {
-	GenerateStateToken(ctx context.Context, providerName, redirectURL string) (string, error)
+	GenerateStateToken(ctx context.Context, providerName, redirectURL string) (state, nonce string, err error)
 	ValidateStateToken(ctx context.Context, state string) (providerName, redirectURL string, err error)
-	GetAuthCodeURL(providerName, state string) (string, error)
-	ExchangeCodeForToken(ctx context.Context, providerName, code string) (*auth.LoginResponse, error)
+	GetAuthCodeURL(providerName, state, nonce string) (string, error)
+	ExchangeCodeForToken(ctx context.Context, providerName, code, nonce string) (*auth.LoginResponse, error)
 	ListProviders() []string
 	ReloadProviders(ctx context.Context, providers []auth.OIDCProviderConfig) error
 }
@@ -84,6 +88,7 @@ type AuthHandler struct {
 	auditRecorder          audit.Recorder
 	allowedRedirectOrigins []string
 	redisClient            *redis.Client // For opaque auth code exchange
+	cookieConfig           cookie.Config // Session cookie configuration
 }
 
 // SetAuditRecorder sets the audit recorder for recording login/logout events.
@@ -101,6 +106,11 @@ func (h *AuthHandler) SetRedisClient(c *redis.Client) {
 	h.redisClient = c
 }
 
+// SetCookieConfig sets the session cookie configuration.
+func (h *AuthHandler) SetCookieConfig(cfg cookie.Config) {
+	h.cookieConfig = cfg
+}
+
 // NewAuthHandler creates a new AuthHandler
 func NewAuthHandler(authService auth.ServiceInterface, oidcService OIDCServiceInterface) *AuthHandler {
 	return &AuthHandler{
@@ -115,13 +125,13 @@ func (h *AuthHandler) LocalLogin(w http.ResponseWriter, r *http.Request) {
 	var req auth.LocalLoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		slog.Error("failed to parse login request", "error", err)
-		response.BadRequest(w, "invalid request body", nil)
+		response.AuthBadRequest(w, "invalid request body", nil)
 		return
 	}
 
 	// Validate required fields
 	if req.Username == "" || req.Password == "" {
-		response.BadRequest(w, "username and password are required", nil)
+		response.AuthBadRequest(w, "username and password are required", nil)
 		return
 	}
 
@@ -135,7 +145,7 @@ func (h *AuthHandler) LocalLogin(w http.ResponseWriter, r *http.Request) {
 		var rateLimitErr *auth.ErrRateLimited
 		if errors.As(err, &rateLimitErr) {
 			retryAfterSecs := int(math.Ceil(rateLimitErr.RetryAfter.Seconds()))
-			response.WriteError(w, http.StatusTooManyRequests, response.ErrCodeRateLimit,
+			response.WriteAuthError(w, http.StatusTooManyRequests, response.ErrCodeRateLimit,
 				"too many failed login attempts, please try again later",
 				map[string]string{"retry_after": strconv.Itoa(retryAfterSecs)},
 			)
@@ -147,7 +157,7 @@ func (h *AuthHandler) LocalLogin(w http.ResponseWriter, r *http.Request) {
 			"error", err,
 		)
 		// Return generic error to prevent username enumeration
-		response.WriteError(w, http.StatusUnauthorized, response.ErrCodeUnauthorized, "invalid credentials", nil)
+		response.WriteAuthError(w, http.StatusUnauthorized, response.ErrCodeUnauthorized, "invalid credentials", nil)
 		return
 	}
 
@@ -162,8 +172,12 @@ func (h *AuthHandler) LocalLogin(w http.ResponseWriter, r *http.Request) {
 	// can parse), but the context signal is the canonical path for both OIDC and local.
 	audit.SetLoginIdentity(r, loginResp.User.ID, loginResp.User.Email)
 
-	// Return JWT token
-	response.WriteJSON(w, http.StatusOK, loginResp)
+	// Set HttpOnly session cookie with the JWT
+	maxAge := time.Until(loginResp.ExpiresAt)
+	cookie.SetSession(w, loginResp.Token, maxAge, h.cookieConfig)
+
+	// Return user info (token is delivered via HttpOnly cookie, not in response body)
+	response.WriteAuthJSON(w, http.StatusOK, loginResp)
 }
 
 // OIDCLogin handles GET /api/v1/auth/oidc/login?provider={name}
@@ -210,8 +224,8 @@ func (h *AuthHandler) OIDCLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate CSRF state token (stores provider name and redirect URL)
-	state, err := h.oidcService.GenerateStateToken(r.Context(), provider, redirectURL)
+	// Generate CSRF state token and nonce (stores provider name, redirect URL, and nonce in Redis)
+	state, nonce, err := h.oidcService.GenerateStateToken(r.Context(), provider, redirectURL)
 	if err != nil {
 		slog.Error("failed to generate state token",
 			"provider", provider,
@@ -221,8 +235,8 @@ func (h *AuthHandler) OIDCLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get authorization URL
-	authURL, err := h.oidcService.GetAuthCodeURL(provider, state)
+	// Get authorization URL (includes nonce parameter for ID token replay prevention)
+	authURL, err := h.oidcService.GetAuthCodeURL(provider, state, nonce)
 	if err != nil {
 		slog.Error("failed to get authorization URL",
 			"provider", provider,
@@ -275,13 +289,37 @@ func (h *AuthHandler) OIDCCallback(w http.ResponseWriter, r *http.Request) {
 			errorURL := fmt.Sprintf("%s?error=%s", redirectURL, url.QueryEscape("authentication_failed"))
 			http.Redirect(w, r, errorURL, http.StatusFound)
 		} else {
-			response.WriteError(w, http.StatusUnauthorized, response.ErrCodeUnauthorized, "authentication failed", nil)
+			response.WriteAuthError(w, http.StatusUnauthorized, response.ErrCodeUnauthorized, "authentication failed", nil)
 		}
 		return
 	}
 
-	// Exchange authorization code for tokens
-	loginResp, err := h.oidcService.ExchangeCodeForToken(r.Context(), provider, code)
+	// Retrieve nonce from Redis (keyed on state, consumed atomically via GetDel)
+	nonceKey := fmt.Sprintf("%s%s", auth.NoncePrefix, state)
+	storedNonce, err := h.redisClient.GetDel(r.Context(), nonceKey).Result()
+	if err != nil {
+		if err == redis.Nil {
+			slog.Warn("OIDC nonce not found or already consumed",
+				"provider", provider,
+			)
+		} else {
+			slog.Error("failed to retrieve OIDC nonce from Redis",
+				"provider", provider,
+				"error", err,
+			)
+		}
+		audit.SetLoginResult(r, "denied")
+		if redirectURL != "" {
+			errorURL := fmt.Sprintf("%s?error=%s", redirectURL, url.QueryEscape("authentication_failed"))
+			http.Redirect(w, r, errorURL, http.StatusFound)
+		} else {
+			response.WriteAuthError(w, http.StatusUnauthorized, response.ErrCodeUnauthorized, "authentication failed", nil)
+		}
+		return
+	}
+
+	// Exchange authorization code for tokens (nonce is validated against ID token claim)
+	loginResp, err := h.oidcService.ExchangeCodeForToken(r.Context(), provider, code, storedNonce)
 	if err != nil {
 		slog.Error("failed to exchange authorization code",
 			"provider", provider,
@@ -294,7 +332,7 @@ func (h *AuthHandler) OIDCCallback(w http.ResponseWriter, r *http.Request) {
 			errorURL := fmt.Sprintf("%s?error=%s", redirectURL, url.QueryEscape("authentication_failed"))
 			http.Redirect(w, r, errorURL, http.StatusFound)
 		} else {
-			response.WriteError(w, http.StatusUnauthorized, response.ErrCodeUnauthorized, "authentication failed", nil)
+			response.WriteAuthError(w, http.StatusUnauthorized, response.ErrCodeUnauthorized, "authentication failed", nil)
 		}
 		return
 	}
@@ -339,18 +377,25 @@ func (h *AuthHandler) OIDCCallback(w http.ResponseWriter, r *http.Request) {
 		// Identity is in the response body, but set context signal too for consistency.
 		audit.SetLoginIdentity(r, loginResp.User.ID, loginResp.User.Email)
 		audit.SetLoginResult(r, "success")
-		response.WriteJSON(w, http.StatusOK, loginResp)
+
+		// Set HttpOnly session cookie (same as local login and token-exchange paths)
+		maxAge := time.Until(loginResp.ExpiresAt)
+		cookie.SetSession(w, loginResp.Token, maxAge, h.cookieConfig)
+
+		response.WriteAuthJSON(w, http.StatusOK, loginResp)
 	}
 }
 
 // Logout handles POST /api/v1/auth/logout
-// Records an audit event for the logout action. JWT is stateless so there is
-// no server-side session to invalidate — the endpoint exists for audit trail purposes.
+// Revokes the JWT by blacklisting its jti claim, then records an audit event.
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	userCtx := helpers.RequireUserContext(w, r)
 	if userCtx == nil {
 		return
 	}
+
+	// Revoke the JWT by blacklisting its jti claim
+	h.revokeCurrentToken(r, userCtx)
 
 	audit.RecordEvent(h.auditRecorder, r.Context(), audit.Event{
 		UserID:    userCtx.UserID,
@@ -367,7 +412,62 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		"email", userCtx.Email,
 	)
 
+	// Clear the session cookie
+	cookie.ClearSession(w, h.cookieConfig)
+
 	response.WriteJSON(w, http.StatusOK, map[string]string{"message": "logged out"})
+}
+
+// revokeCurrentToken extracts the JWT from the request and blacklists its jti claim.
+// Errors are logged but not returned — logout always succeeds from the client's perspective.
+func (h *AuthHandler) revokeCurrentToken(r *http.Request, userCtx *middleware.UserContext) {
+	// Extract the raw token string from cookie or Authorization header
+	tokenString := ""
+	if c, err := r.Cookie(cookie.SessionCookieName); err == nil && c.Value != "" {
+		tokenString = c.Value
+	} else if authHeader := r.Header.Get("Authorization"); authHeader != "" {
+		if parts := strings.SplitN(authHeader, " ", 2); len(parts) == 2 && parts[0] == "Bearer" {
+			tokenString = parts[1]
+		}
+	}
+	if tokenString == "" {
+		return
+	}
+
+	// Parse without verification to extract jti — token is already validated by Auth middleware
+	parser := jwt.NewParser()
+	token, _, err := parser.ParseUnverified(tokenString, jwt.MapClaims{})
+	if err != nil {
+		slog.Warn("failed to parse JWT for revocation",
+			"user_id", userCtx.UserID,
+			"error", err,
+		)
+		return
+	}
+
+	mapClaims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return
+	}
+
+	jti, _ := mapClaims["jti"].(string)
+	if jti == "" {
+		return
+	}
+
+	remainingTTL := time.Until(time.Unix(userCtx.TokenExpiresAt, 0))
+	if remainingTTL <= 0 {
+		return // token already expired, no need to blacklist
+	}
+
+	if revokeErr := h.authService.RevokeToken(r.Context(), jti, remainingTTL); revokeErr != nil {
+		slog.Warn("failed to revoke JWT on logout",
+			"user_id", userCtx.UserID,
+			"jti", jti,
+			"error", revokeErr,
+		)
+		// Fail gracefully — don't return error to client
+	}
 }
 
 // ListOIDCProviders handles GET /api/v1/auth/oidc/providers

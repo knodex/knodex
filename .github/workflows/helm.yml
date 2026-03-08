@@ -56,10 +56,7 @@ jobs:
           helm dependency build deploy/charts/knodex
           helm template knodex deploy/charts/knodex --values deploy/charts/knodex/values.yaml > /dev/null
 
-      - name: Create kind cluster
-        uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0
-        if: steps.list-changed.outputs.changed == 'true'
-
-      - name: Run chart-testing (install)
-        if: steps.list-changed.outputs.changed == 'true'
-        run: ct install --config ./.github/configs/ct-install.yaml
+      # Install testing is skipped on PRs because the Docker image for the
+      # chart version doesn't exist yet in the registry. The E2E workflow
+      # provides full deployment validation with locally-built images.
+      # Lint + helm template above catch chart configuration issues.

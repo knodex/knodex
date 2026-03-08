@@ -9,6 +9,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// MaxSpecDepth is the maximum nesting depth allowed for instance spec maps.
+// Shared across all validation call-sites to prevent drift.
+const MaxSpecDepth = 10
+
 // Generator generates Kubernetes manifests from instance specifications
 //
 // SECURITY NOTE: This is a pure manifest generation library. It does NOT perform
@@ -213,14 +217,15 @@ func GenerateMetadataPath(namespace, name string) (string, error) {
 	return fmt.Sprintf("instances/%s/.metadata/%s.yaml", namespace, name), nil
 }
 
-// validateSpecMap recursively validates the spec map to prevent YAML injection and DoS attacks
+// yamlSpecialChars contains YAML injection sequences prohibited in spec map keys.
+var yamlSpecialChars = []string{": ", "- ", "| ", "> ", "{{", "}}", "${"}
+
+// ValidateSpecMap recursively validates the spec map to prevent YAML injection and DoS attacks.
 // Checks for:
 // - Excessive nesting depth (prevents stack overflow)
-// - Excessive size (prevents memory exhaustion)
 // - Malicious map keys (prevents YAML injection)
-func validateSpecMap(spec map[string]interface{}, currentDepth, maxDepth int) error {
-	const maxSpecSize = 1048576 // 1MB max size for spec
-
+// - Excessively long string values (prevents memory exhaustion)
+func ValidateSpecMap(spec map[string]interface{}, currentDepth, maxDepth int) error {
 	// Check depth limit to prevent deeply nested structures
 	if currentDepth > maxDepth {
 		return &ValidationError{
@@ -230,16 +235,15 @@ func validateSpecMap(spec map[string]interface{}, currentDepth, maxDepth int) er
 	}
 
 	for key, value := range spec {
-		// Validate map keys to prevent YAML injection
-		if strings.ContainsAny(key, "\n\r") {
+		// Validate map keys to prevent YAML injection and null byte attacks
+		if strings.ContainsAny(key, "\n\r\x00") {
 			return &ValidationError{
 				Field:   "spec",
-				Message: fmt.Sprintf("spec contains key with newline: %q", key),
+				Message: fmt.Sprintf("spec contains key with prohibited control character: %q", key),
 			}
 		}
 
 		// Check for YAML injection sequences in keys
-		yamlSpecialChars := []string{": ", "- ", "| ", "> ", "{{", "}}", "${"}
 		for _, special := range yamlSpecialChars {
 			if strings.Contains(key, special) {
 				return &ValidationError{
@@ -251,29 +255,15 @@ func validateSpecMap(spec map[string]interface{}, currentDepth, maxDepth int) er
 
 		// Recursively validate nested maps
 		if nestedMap, ok := value.(map[string]interface{}); ok {
-			if err := validateSpecMap(nestedMap, currentDepth+1, maxDepth); err != nil {
+			if err := ValidateSpecMap(nestedMap, currentDepth+1, maxDepth); err != nil {
 				return err
 			}
 		}
 
-		// Recursively validate slices containing maps
+		// Recursively validate slices (including nested slices)
 		if slice, ok := value.([]interface{}); ok {
-			for i, item := range slice {
-				if nestedMap, ok := item.(map[string]interface{}); ok {
-					if err := validateSpecMap(nestedMap, currentDepth+1, maxDepth); err != nil {
-						return err
-					}
-				}
-				// Validate string values in slices
-				if str, ok := item.(string); ok {
-					// Check for excessively long strings that could cause DoS
-					if len(str) > 65536 { // 64KB max per string
-						return &ValidationError{
-							Field:   "spec",
-							Message: fmt.Sprintf("spec contains excessively long string at index %d", i),
-						}
-					}
-				}
+			if err := validateSliceItems(slice, currentDepth+1, maxDepth); err != nil {
+				return err
 			}
 		}
 
@@ -289,6 +279,39 @@ func validateSpecMap(spec map[string]interface{}, currentDepth, maxDepth int) er
 		}
 	}
 
+	return nil
+}
+
+// validateSliceItems recursively validates items within slices, including nested slices,
+// maps, and string values. This prevents attackers from hiding malicious content inside
+// deeply nested arrays that would otherwise bypass ValidateSpecMap.
+func validateSliceItems(slice []interface{}, currentDepth, maxDepth int) error {
+	if currentDepth > maxDepth {
+		return &ValidationError{
+			Field:   "spec",
+			Message: fmt.Sprintf("spec nesting depth exceeds maximum of %d levels", maxDepth),
+		}
+	}
+
+	for i, item := range slice {
+		switch v := item.(type) {
+		case map[string]interface{}:
+			if err := ValidateSpecMap(v, currentDepth, maxDepth); err != nil {
+				return err
+			}
+		case []interface{}:
+			if err := validateSliceItems(v, currentDepth+1, maxDepth); err != nil {
+				return err
+			}
+		case string:
+			if len(v) > 65536 { // 64KB max per string
+				return &ValidationError{
+					Field:   "spec",
+					Message: fmt.Sprintf("spec contains excessively long string at index %d", i),
+				}
+			}
+		}
+	}
 	return nil
 }
 
@@ -464,8 +487,7 @@ func (g *Generator) validateInstanceSpec(spec *InstanceSpec) error {
 
 	// Validate spec map to prevent YAML injection and DoS attacks
 	// Max depth of 10 levels should be sufficient for most Kubernetes CRDs
-	const maxSpecDepth = 10
-	if err := validateSpecMap(spec.Spec, 0, maxSpecDepth); err != nil {
+	if err := ValidateSpecMap(spec.Spec, 0, MaxSpecDepth); err != nil {
 		return err
 	}
 

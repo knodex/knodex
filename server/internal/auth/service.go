@@ -9,10 +9,11 @@ import (
 	"unicode"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/provops-org/knodex/server/internal/rbac"
+	"github.com/knodex/knodex/server/internal/rbac"
 )
 
 // ServiceInterface defines the interface for authentication operations
@@ -23,6 +24,8 @@ type ServiceInterface interface {
 	// GenerateTokenWithGroups generates JWT with OIDC groups for runtime authorization
 	GenerateTokenWithGroups(userID, email, displayName string, groups []string) (string, time.Time, error)
 	ValidateToken(ctx context.Context, tokenString string) (*JWTClaims, error)
+	// RevokeToken blacklists a JWT by its jti claim for server-side session revocation
+	RevokeToken(ctx context.Context, jti string, remainingTTL time.Duration) error
 }
 
 const (
@@ -37,6 +40,15 @@ const (
 
 	// StateTokenPrefix is the Redis key prefix for OIDC state tokens
 	StateTokenPrefix = "oidc:state:"
+
+	// NonceLength is the length of the OIDC nonce in bytes
+	NonceLength = 32
+
+	// NonceTTL is the TTL for OIDC nonce tokens (5 minutes, matching state token TTL)
+	NonceTTL = 5 * time.Minute
+
+	// NoncePrefix is the Redis key prefix for OIDC nonce tokens (keyed on state)
+	NoncePrefix = "oidc:nonce:"
 )
 
 // Service provides authentication operations
@@ -49,6 +61,7 @@ type Service struct {
 	roleManager      AuthRoleManager
 	groupMapper      *GroupMapper
 	k8sClient        kubernetes.Interface
+	blacklist        JWTBlacklistInterface
 }
 
 // validatePasswordComplexity checks if password meets complexity requirements
@@ -200,6 +213,7 @@ func NewService(config *Config, accountStore *AccountStore, projectService AuthP
 		bootstrapService: bootstrapService,
 		roleManager:      roleManager,
 		k8sClient:        k8sClient,
+		blacklist:        newRedisJWTBlacklist(redisClient),
 	}
 
 	return service, nil
@@ -373,6 +387,9 @@ func (s *Service) GenerateTokenForAccount(account *Account, userID string) (stri
 		IssuedAt:       now.Unix(),
 	}
 
+	jti := uuid.New().String()
+	claims.JTI = jti
+
 	mapClaims := jwt.MapClaims{
 		"sub":             claims.UserID,
 		"email":           claims.Email,
@@ -383,6 +400,7 @@ func (s *Service) GenerateTokenForAccount(account *Account, userID string) (stri
 		"aud":             "knodex-api",
 		"exp":             claims.ExpiresAt,
 		"iat":             claims.IssuedAt,
+		"jti":             jti,
 	}
 
 	if len(casbinRoles) > 0 {
@@ -487,6 +505,8 @@ func (s *Service) GenerateTokenWithGroups(userID, email, displayName string, gro
 	// Compute permissions for frontend UI (ArgoCD-aligned pattern)
 	permissions := s.computePermissions(userID, casbinRoles)
 
+	jti := uuid.New().String()
+
 	claims := JWTClaims{
 		UserID:         userID,
 		Email:          email,
@@ -497,6 +517,7 @@ func (s *Service) GenerateTokenWithGroups(userID, email, displayName string, gro
 		Roles:          roles,
 		CasbinRoles:    casbinRoles,
 		Permissions:    permissions,
+		JTI:            jti,
 		ExpiresAt:      expiresAt.Unix(),
 		IssuedAt:       now.Unix(),
 	}
@@ -511,6 +532,7 @@ func (s *Service) GenerateTokenWithGroups(userID, email, displayName string, gro
 		"aud":             "knodex-api",
 		"exp":             claims.ExpiresAt,
 		"iat":             claims.IssuedAt,
+		"jti":             jti,
 	}
 
 	// Only include groups if present
@@ -1139,7 +1161,33 @@ func (s *Service) ValidateToken(ctx context.Context, tokenString string) (*JWTCl
 		}
 	}
 
+	// Check jti blacklist last — all other validation (expiry, iat, password change)
+	// takes priority so the most specific rejection reason is returned.
+	if jti, ok := claims["jti"].(string); ok && jti != "" {
+		jwtClaims.JTI = jti
+		if s.blacklist != nil {
+			revoked, err := s.blacklist.IsRevoked(ctx, jti)
+			if err != nil {
+				slog.WarnContext(ctx, "failed to check JWT blacklist, allowing token",
+					"jti", jti,
+					"error", err,
+				)
+				// fail-open: continue without blocking
+			} else if revoked {
+				return nil, fmt.Errorf("session has been revoked")
+			}
+		}
+	}
+
 	return jwtClaims, nil
+}
+
+// RevokeToken blacklists a JWT by its jti claim so it cannot be reused
+func (s *Service) RevokeToken(ctx context.Context, jti string, remainingTTL time.Duration) error {
+	if s.blacklist == nil {
+		return nil
+	}
+	return s.blacklist.RevokeToken(ctx, jti, remainingTTL)
 }
 
 // GetBootstrapService returns the project bootstrap service

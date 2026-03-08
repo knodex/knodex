@@ -2,6 +2,7 @@ package response
 
 import (
 	"encoding/json"
+	"html"
 	"log/slog"
 	"net/http"
 )
@@ -46,12 +47,26 @@ func WriteJSON(w http.ResponseWriter, statusCode int, data interface{}) {
 	}
 }
 
-// WriteError writes a standardized error response
+// WriteError writes a standardized error response.
+// HTML-encodes the message and detail values to prevent stored XSS
+// when error responses are rendered in browser contexts.
 func WriteError(w http.ResponseWriter, statusCode int, code ErrorCode, message string, details map[string]string) {
+	// HTML-encode message to prevent XSS when rendered in browser
+	safeMessage := html.EscapeString(message)
+
+	// HTML-encode all detail keys and values
+	var safeDetails map[string]string
+	if details != nil {
+		safeDetails = make(map[string]string, len(details))
+		for k, v := range details {
+			safeDetails[html.EscapeString(k)] = html.EscapeString(v)
+		}
+	}
+
 	errResp := ErrorResponse{
 		Code:    code,
-		Message: message,
-		Details: details,
+		Message: safeMessage,
+		Details: safeDetails,
 	}
 	WriteJSON(w, statusCode, errResp)
 }
@@ -91,4 +106,39 @@ func InternalError(w http.ResponseWriter, message string) {
 // MethodNotAllowed writes a 405 error response
 func MethodNotAllowed(w http.ResponseWriter, message string) {
 	WriteError(w, http.StatusMethodNotAllowed, ErrCodeMethodNotAllowed, message, nil)
+}
+
+// setNoCacheHeaders sets cache-control headers to prevent caching of auth responses.
+// This prevents JWT tokens from being replayed from browser disk cache on shared workstations.
+func setNoCacheHeaders(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
+}
+
+// WriteAuthJSON writes a JSON response with no-cache headers for authentication endpoints.
+func WriteAuthJSON(w http.ResponseWriter, statusCode int, data interface{}) {
+	setNoCacheHeaders(w)
+	WriteJSON(w, statusCode, data)
+}
+
+// WriteAuthError writes a standardized error response with no-cache headers for authentication endpoints.
+func WriteAuthError(w http.ResponseWriter, statusCode int, code ErrorCode, message string, details map[string]string) {
+	setNoCacheHeaders(w)
+	WriteError(w, statusCode, code, message, details)
+}
+
+// AuthBadRequest writes a 400 error response with no-cache headers for authentication endpoints.
+func AuthBadRequest(w http.ResponseWriter, message string, details map[string]string) {
+	WriteAuthError(w, http.StatusBadRequest, ErrCodeBadRequest, message, details)
+}
+
+// AuthUnauthorized writes a 401 error response with no-cache headers for authentication endpoints.
+func AuthUnauthorized(w http.ResponseWriter, message string) {
+	WriteAuthError(w, http.StatusUnauthorized, ErrCodeUnauthorized, message, nil)
+}
+
+// AuthInternalError writes a 500 error response with no-cache headers for authentication endpoints.
+func AuthInternalError(w http.ResponseWriter, message string) {
+	WriteAuthError(w, http.StatusInternalServerError, ErrCodeInternalError, message, nil)
 }

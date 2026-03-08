@@ -7,8 +7,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/provops-org/knodex/server/internal/config"
-	"github.com/provops-org/knodex/server/internal/rbac"
+	"github.com/knodex/knodex/server/internal/config"
+	"github.com/knodex/knodex/server/internal/rbac"
+	"github.com/knodex/knodex/server/internal/util/collection"
 )
 
 // ProjectMembership represents a project membership derived from OIDC group mapping.
@@ -94,12 +95,8 @@ func (m *GroupMapper) EvaluateMappings(groups []string) *GroupMappingResult {
 
 	// Build hash set of user groups for O(1) exact lookup
 	// Filter empty strings as a defensive measure
-	groupSet := make(map[string]struct{}, len(groups))
-	for _, g := range groups {
-		if g != "" {
-			groupSet[g] = struct{}{}
-		}
-	}
+	nonEmpty := collection.Filter(groups, func(g string) bool { return g != "" })
+	groupSet := collection.ToSet(nonEmpty)
 
 	// Track highest role per project
 	projectRoles := make(map[string]string)
@@ -116,14 +113,7 @@ func (m *GroupMapper) EvaluateMappings(groups []string) *GroupMappingResult {
 		// Handle globalAdmin mapping - assign role:serveradmin as Casbin role
 		if mapping.GlobalAdmin {
 			// Only add if not already present (avoid duplicates)
-			hasAdminRole := false
-			for _, r := range globalRoles {
-				if r == rbac.CasbinRoleServerAdmin {
-					hasAdminRole = true
-					break
-				}
-			}
-			if !hasAdminRole {
+			if !collection.Contains(globalRoles, rbac.CasbinRoleServerAdmin) {
 				globalRoles = append(globalRoles, rbac.CasbinRoleServerAdmin)
 			}
 			continue // GlobalAdmin mappings don't have project/role
@@ -171,12 +161,11 @@ func (m *GroupMapper) EvaluateMappings(groups []string) *GroupMappingResult {
 //   - '?' matches any single character
 //   - '[abc]' matches any character in the set
 //   - '[a-z]' matches any character in the range
-func (m *GroupMapper) matchGroup(pattern string, groups []string, groupSet map[string]struct{}) bool {
+func (m *GroupMapper) matchGroup(pattern string, groups []string, groupSet map[string]bool) bool {
 	// Check if pattern contains wildcards
 	if !isWildcardPattern(pattern) {
 		// Exact match: O(1) hash lookup
-		_, ok := groupSet[pattern]
-		return ok
+		return groupSet[pattern]
 	}
 
 	// Wildcard match: iterate through groups

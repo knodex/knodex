@@ -117,7 +117,7 @@ export function EditInstanceSpecDialog({
         )}
 
         {/* Schema error */}
-        {(schemaError || (schemaResponse && !schemaResponse.crdFound)) && (
+        {(schemaError || (schemaResponse && !schemaResponse.schema)) && (
           <div className="flex flex-col items-center justify-center py-12 gap-3">
             <AlertCircle className="h-8 w-8 text-destructive" />
             <p className="text-sm text-muted-foreground text-center">
@@ -125,6 +125,18 @@ export function EditInstanceSpecDialog({
                 ? schemaError.message
                 : schemaResponse?.error || "No CRD schema found for this RGD."}
             </p>
+          </div>
+        )}
+
+        {/* Degraded mode indicator */}
+        {schemaResponse?.source === "rgd-only" && schemaResponse.schema && !showConfirmation && !successInfo && (
+          <div className="rounded-lg border border-status-warning/50 bg-status-warning/10 p-3">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 text-status-warning shrink-0" />
+              <p className="text-xs text-muted-foreground">
+                <span className="font-medium text-status-warning">Preview mode</span> — some validation constraints are pending CRD generation
+              </p>
+            </div>
           </div>
         )}
 

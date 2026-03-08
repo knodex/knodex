@@ -16,8 +16,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/fake"
 
-	"github.com/provops-org/knodex/server/internal/rbac"
-	"github.com/provops-org/knodex/server/internal/testutil"
+	"github.com/knodex/knodex/server/internal/rbac"
+	"github.com/knodex/knodex/server/internal/testutil"
 )
 
 // setupTestAccountStore creates a test AccountStore with fake kubernetes clients

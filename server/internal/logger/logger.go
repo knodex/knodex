@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/provops-org/knodex/server/internal/config"
+	"github.com/knodex/knodex/server/internal/config"
 )
 
 // Setup initializes the global logger with the provided configuration.

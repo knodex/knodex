@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/provops-org/knodex/server/internal/auth"
-	"github.com/provops-org/knodex/server/internal/rbac"
+	"github.com/knodex/knodex/server/internal/auth"
+	"github.com/knodex/knodex/server/internal/rbac"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -50,18 +50,28 @@ func TestE2E_AdminBootstrap_FirstLogin(t *testing.T) {
 	// AC-2: Login should succeed
 	assert.Equal(t, http.StatusOK, resp.StatusCode, "Admin login should succeed")
 
-	// Decode response
-	var loginResp auth.LoginResponse
+	// Decode response body (token delivered via HttpOnly cookie, not in body)
+	var loginResp struct {
+		ExpiresAt time.Time     `json:"expiresAt"`
+		User      auth.UserInfo `json:"user"`
+	}
 	err = json.NewDecoder(resp.Body).Decode(&loginResp)
 	require.NoError(t, err)
 
-	// AC-3: JWT token should be returned
-	assert.NotEmpty(t, loginResp.Token, "JWT token should be returned")
+	// AC-3: JWT token should be returned via cookie
+	var sessionToken string
+	for _, c := range resp.Cookies() {
+		if c.Name == "knodex_session" {
+			sessionToken = c.Value
+			break
+		}
+	}
+	assert.NotEmpty(t, sessionToken, "JWT token should be returned via knodex_session cookie")
 
 	// AC-4: Validate JWT token contains correct claims
 	// Global admins don't have explicit project membership in JWT
 	// They access all projects via role:serveradmin Casbin role (ArgoCD-aligned 2-role model)
-	claims, err := authSvc.ValidateToken(context.Background(), loginResp.Token)
+	claims, err := authSvc.ValidateToken(context.Background(), sessionToken)
 	require.NoError(t, err)
 
 	hasGlobalAdminRole := false
@@ -148,13 +158,19 @@ func TestE2E_AdminBootstrap_Idempotency(t *testing.T) {
 	// AC-7: Second login should succeed
 	assert.Equal(t, http.StatusOK, resp2.StatusCode, "Second login should succeed")
 
-	var loginResp2 auth.LoginResponse
-	err = json.NewDecoder(resp2.Body).Decode(&loginResp2)
-	require.NoError(t, err)
+	// Extract token from cookie (not from JSON body)
+	var sessionToken2 string
+	for _, c := range resp2.Cookies() {
+		if c.Name == "knodex_session" {
+			sessionToken2 = c.Value
+			break
+		}
+	}
+	require.NotEmpty(t, sessionToken2, "JWT should be in knodex_session cookie")
 
 	// AC-8: Token should still contain role:serveradmin
 	// Global admins don't have explicit project membership in JWT
-	claims2, err := authSvc.ValidateToken(context.Background(), loginResp2.Token)
+	claims2, err := authSvc.ValidateToken(context.Background(), sessionToken2)
 	require.NoError(t, err)
 	hasGlobalAdminRole := false
 	for _, role := range claims2.CasbinRoles {
@@ -467,6 +483,15 @@ func setupE2EAuthServer(t *testing.T) (*httptest.Server, *auth.Service, *rbac.Pr
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
 		}
+
+		// Set session cookie (mirrors real handler behaviour)
+		http.SetCookie(w, &http.Cookie{
+			Name:     "knodex_session",
+			Value:    resp.Token,
+			Path:     "/api",
+			HttpOnly: true,
+			SameSite: http.SameSiteStrictMode,
+		})
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)

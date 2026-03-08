@@ -6,8 +6,8 @@ package services
 import (
 	"errors"
 
-	"github.com/provops-org/knodex/server/internal/api/middleware"
-	"github.com/provops-org/knodex/server/internal/models"
+	"github.com/knodex/knodex/server/internal/api/middleware"
+	"github.com/knodex/knodex/server/internal/models"
 )
 
 // Common service errors for consistent error handling across services.

@@ -1,20 +1,25 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/provops-org/knodex/server/internal/api/middleware"
-	"github.com/provops-org/knodex/server/internal/api/response"
-	"github.com/provops-org/knodex/server/internal/audit"
-	"github.com/provops-org/knodex/server/internal/rbac"
-	"github.com/provops-org/knodex/server/internal/services"
+	"github.com/redis/go-redis/v9"
+
+	"github.com/knodex/knodex/server/internal/api/middleware"
+	"github.com/knodex/knodex/server/internal/api/response"
+	"github.com/knodex/knodex/server/internal/audit"
+	"github.com/knodex/knodex/server/internal/rbac"
+	"github.com/knodex/knodex/server/internal/services"
+	"github.com/knodex/knodex/server/internal/util/collection"
+	utilrand "github.com/knodex/knodex/server/internal/util/rand"
+	"github.com/knodex/knodex/server/internal/util/sanitize"
 )
 
 // ComplianceHandler handles compliance-related HTTP requests.
@@ -27,6 +32,7 @@ type ComplianceHandler struct {
 	policyEnforcer rbac.PolicyEnforcer
 	projectService rbac.ProjectServiceInterface
 	recorder       audit.Recorder
+	redisClient    *redis.Client
 	logger         *slog.Logger
 }
 
@@ -63,6 +69,11 @@ func (h *ComplianceHandler) SetAuditRecorder(r audit.Recorder) {
 // SetProjectService sets the project service for project-scoped violation filtering.
 func (h *ComplianceHandler) SetProjectService(ps rbac.ProjectServiceInterface) {
 	h.projectService = ps
+}
+
+// SetRedisClient sets the Redis client for enforcement confirmation tokens.
+func (h *ComplianceHandler) SetRedisClient(client *redis.Client) {
+	h.redisClient = client
 }
 
 // ListResponse is a generic paginated list response.
@@ -747,12 +758,9 @@ func (h *ComplianceHandler) filterViolationsByAccess(r *http.Request, userCtx *m
 	}
 
 	// Filter violations to accessible namespaces
-	filtered := make([]services.Violation, 0, len(violations))
-	for _, v := range violations {
-		if nsSet[v.Resource.Namespace] {
-			filtered = append(filtered, v)
-		}
-	}
+	filtered := collection.Filter(violations, func(v services.Violation) bool {
+		return nsSet[v.Resource.Namespace]
+	})
 
 	h.logger.Debug("filtered violations by project access",
 		"requestId", requestID, "userId", userCtx.UserID,
@@ -764,24 +772,16 @@ func (h *ComplianceHandler) filterViolationsByAccess(r *http.Request, userCtx *m
 
 // filterConstraintsByKind filters constraints by kind.
 func filterConstraintsByKind(constraints []services.Constraint, kind string) []services.Constraint {
-	filtered := make([]services.Constraint, 0)
-	for _, c := range constraints {
-		if c.Kind == kind {
-			filtered = append(filtered, c)
-		}
-	}
-	return filtered
+	return collection.Filter(constraints, func(c services.Constraint) bool {
+		return c.Kind == kind
+	})
 }
 
 // filterConstraintsByEnforcement filters constraints by enforcement action.
 func filterConstraintsByEnforcement(constraints []services.Constraint, enforcement string) []services.Constraint {
-	filtered := make([]services.Constraint, 0)
-	for _, c := range constraints {
-		if strings.EqualFold(c.EnforcementAction, enforcement) {
-			filtered = append(filtered, c)
-		}
-	}
-	return filtered
+	return collection.Filter(constraints, func(c services.Constraint) bool {
+		return strings.EqualFold(c.EnforcementAction, enforcement)
+	})
 }
 
 // isComplianceNotFoundErr checks if an error indicates a resource was not found.
@@ -796,6 +796,70 @@ func isComplianceNotFoundErr(err error) bool {
 // UpdateConstraintEnforcementRequest is the request body for updating enforcement action.
 type UpdateConstraintEnforcementRequest struct {
 	EnforcementAction string `json:"enforcementAction"`
+	ConfirmationToken string `json:"confirmationToken,omitempty"`
+}
+
+// EnforcementEscalationResponse is returned when enforcement escalation requires confirmation.
+type EnforcementEscalationResponse struct {
+	Message           string `json:"message"`
+	ConfirmationToken string `json:"confirmationToken"`
+	ExpiresIn         int    `json:"expiresIn"`
+}
+
+const (
+	enforcementConfirmationTTL    = 5 * time.Minute
+	enforcementConfirmationPrefix = "enforcement-confirm:"
+	confirmationTokenLength       = 32 // 32 bytes = 64 hex chars
+)
+
+// isEscalation returns true if changing enforcement from oldAction to newAction
+// is an escalation (i.e., escalating to "deny" from a non-deny action).
+// Uses case-insensitive comparison since Kubernetes may return mixed-case enforcement actions.
+func isEscalation(oldAction, newAction string) bool {
+	return strings.EqualFold(newAction, "deny") && !strings.EqualFold(oldAction, "deny")
+}
+
+// generateConfirmationToken creates a cryptographically random confirmation token.
+func generateConfirmationToken() (string, error) {
+	return utilrand.GenerateRandomHex(confirmationTokenLength), nil
+}
+
+// storeConfirmationToken stores a confirmation token in Redis with TTL.
+// The value encodes kind/name/targetAction so the token is bound to a specific operation.
+func (h *ComplianceHandler) storeConfirmationToken(ctx context.Context, token, kind, name, targetAction string) error {
+	key := enforcementConfirmationPrefix + token
+	value := kind + "/" + name + "/" + targetAction
+	return h.redisClient.Set(ctx, key, value, enforcementConfirmationTTL).Err()
+}
+
+// validateAndConsumeConfirmationToken validates a confirmation token against its bound operation
+// and consumes it only if the binding matches. Uses GET to check binding first, then DEL to consume.
+// This prevents a token from being destroyed when submitted against the wrong constraint.
+// Returns (valid, error). If the token is not found (expired or never existed), valid=false.
+func (h *ComplianceHandler) validateAndConsumeConfirmationToken(ctx context.Context, token, kind, name, targetAction string) (bool, error) {
+	key := enforcementConfirmationPrefix + token
+
+	// Step 1: Read the token value without deleting
+	value, err := h.redisClient.Get(ctx, key).Result()
+	if err == redis.Nil {
+		return false, nil // expired or not found
+	}
+	if err != nil {
+		return false, fmt.Errorf("failed to validate confirmation token: %w", err)
+	}
+
+	// Step 2: Verify the token is bound to the correct operation BEFORE consuming
+	expected := kind + "/" + name + "/" + targetAction
+	if value != expected {
+		return false, nil // token was for a different operation — do NOT consume it
+	}
+
+	// Step 3: Consume the token (delete from Redis) — single-use
+	if err := h.redisClient.Del(ctx, key).Err(); err != nil {
+		return false, fmt.Errorf("failed to consume confirmation token: %w", err)
+	}
+
+	return true, nil
 }
 
 // CreateConstraintRequest is the request body for creating a new constraint.
@@ -806,6 +870,15 @@ type CreateConstraintRequest struct {
 	Match             *ConstraintMatch  `json:"match,omitempty"`
 	Parameters        map[string]any    `json:"parameters,omitempty"`
 	Labels            map[string]string `json:"labels,omitempty"`
+}
+
+// constraintProtectedNamespaces is the blocklist of Kubernetes system namespaces
+// that cannot be targeted by compliance constraints.
+var constraintProtectedNamespaces = map[string]bool{
+	"kube-system":       true,
+	"kube-public":       true,
+	"kube-node-lease":   true,
+	"gatekeeper-system": true,
 }
 
 // ConstraintMatch defines which resources a constraint applies to.
@@ -819,6 +892,49 @@ type ConstraintMatch struct {
 type MatchKind struct {
 	APIGroups []string `json:"apiGroups"`
 	Kinds     []string `json:"kinds"`
+}
+
+// validateConstraintMatch validates match fields to prevent overly-broad constraints
+// targeting system namespaces or using dangerous wildcards.
+// IMPORTANT: Must be called in any handler that accepts ConstraintMatch input.
+func validateConstraintMatch(match *ConstraintMatch) error {
+	if match == nil {
+		return nil
+	}
+
+	for _, ns := range match.Namespaces {
+		if ns == "*" {
+			return fmt.Errorf("wildcard namespace '*' is not allowed in match.namespaces")
+		}
+		if constraintProtectedNamespaces[ns] {
+			return fmt.Errorf("namespace %q is protected and cannot be targeted by constraints", ns)
+		}
+	}
+
+	if match.Scope == "*" {
+		return fmt.Errorf("wildcard scope '*' is not allowed in match.scope")
+	}
+
+	for _, k := range match.Kinds {
+		if isWildcardOnly(k.APIGroups) && isWildcardOnly(k.Kinds) {
+			return fmt.Errorf("overly-broad kind selector with wildcard apiGroups and kinds is not allowed")
+		}
+	}
+
+	return nil
+}
+
+// isWildcardOnly returns true if the slice is non-empty and contains only "*".
+func isWildcardOnly(values []string) bool {
+	if len(values) == 0 {
+		return false
+	}
+	for _, v := range values {
+		if v != "*" {
+			return false
+		}
+	}
+	return true
 }
 
 // checkCreatePermission verifies that the user has compliance:create permission.
@@ -993,6 +1109,62 @@ func (h *ComplianceHandler) UpdateConstraintEnforcement(w http.ResponseWriter, r
 		return
 	}
 
+	// 7.5 Escalation confirmation flow (INJ-VULN-04)
+	// Escalation to "deny" requires a two-phase confirmation to prevent mass-escalation attacks
+	if isEscalation(oldAction, req.EnforcementAction) {
+		if h.redisClient == nil {
+			// Fail closed: cannot confirm without Redis
+			response.ServiceUnavailable(w, "Confirmation service unavailable. Please try again.")
+			return
+		}
+
+		if req.ConfirmationToken == "" {
+			// Phase 1: Generate and return a confirmation token
+			token, err := generateConfirmationToken()
+			if err != nil {
+				h.logger.Error("failed to generate confirmation token",
+					"requestId", requestID,
+					"error", err,
+				)
+				response.InternalError(w, "Failed to generate confirmation token")
+				return
+			}
+
+			if err := h.storeConfirmationToken(r.Context(), token, kind, name, req.EnforcementAction); err != nil {
+				h.logger.Error("failed to store confirmation token",
+					"requestId", requestID,
+					"error", err,
+				)
+				response.ServiceUnavailable(w, "Confirmation service unavailable. Please try again.")
+				return
+			}
+
+			response.WriteJSON(w, http.StatusConflict, EnforcementEscalationResponse{
+				Message:           "Changing to deny mode will block resource creation. Confirm by including the token.",
+				ConfirmationToken: token,
+				ExpiresIn:         300,
+			})
+			return
+		}
+
+		// Phase 2: Validate and consume the confirmation token
+		valid, err := h.validateAndConsumeConfirmationToken(r.Context(), req.ConfirmationToken, kind, name, req.EnforcementAction)
+		if err != nil {
+			h.logger.Error("failed to validate confirmation token",
+				"requestId", requestID,
+				"error", err,
+			)
+			response.ServiceUnavailable(w, "Confirmation service unavailable. Please try again.")
+			return
+		}
+
+		if !valid {
+			// Token expired, already used, or for a different operation → 410 Gone
+			response.WriteError(w, http.StatusGone, "GONE", "Confirmation token has expired. Please restart the confirmation flow.", nil)
+			return
+		}
+	}
+
 	h.logger.Info("updating constraint enforcement action",
 		"requestId", requestID,
 		"userId", userCtx.UserID,
@@ -1007,6 +1179,17 @@ func (h *ComplianceHandler) UpdateConstraintEnforcement(w http.ResponseWriter, r
 	if err != nil {
 		if isComplianceNotFoundErr(err) {
 			response.NotFound(w, "Constraint", kind+"/"+name)
+			return
+		}
+		if isKubernetesForbiddenErr(err) {
+			h.logger.Error("kubernetes RBAC forbidden for constraint update",
+				"requestId", requestID,
+				"userId", userCtx.UserID,
+				"constraintKind", kind,
+				"constraintName", name,
+				"error", err,
+			)
+			response.Forbidden(w, "insufficient permissions to manage constraint")
 			return
 		}
 		h.logger.Error("failed to update constraint enforcement action",
@@ -1033,6 +1216,17 @@ func (h *ComplianceHandler) UpdateConstraintEnforcement(w http.ResponseWriter, r
 		"violationCount", updatedConstraint.ViolationCount,
 	)
 
+	auditDetails := map[string]any{
+		"constraintName":            name,
+		"kind":                      kind,
+		"templateName":              currentConstraint.TemplateName,
+		"enforcementAction":         req.EnforcementAction,
+		"previousEnforcementAction": oldAction,
+	}
+	if isEscalation(oldAction, req.EnforcementAction) {
+		auditDetails["confirmed"] = true
+	}
+
 	audit.RecordEvent(h.recorder, r.Context(), audit.Event{
 		UserID:    userCtx.UserID,
 		UserEmail: userCtx.Email,
@@ -1042,13 +1236,7 @@ func (h *ComplianceHandler) UpdateConstraintEnforcement(w http.ResponseWriter, r
 		Name:      name,
 		RequestID: requestID,
 		Result:    "success",
-		Details: map[string]any{
-			"constraintName":            name,
-			"kind":                      kind,
-			"templateName":              currentConstraint.TemplateName,
-			"enforcementAction":         req.EnforcementAction,
-			"previousEnforcementAction": oldAction,
-		},
+		Details:   auditDetails,
 	})
 
 	// 10. Return updated constraint
@@ -1096,6 +1284,12 @@ func (h *ComplianceHandler) CreateConstraint(w http.ResponseWriter, r *http.Requ
 			response.BadRequest(w, "Invalid enforcement action. Must be one of: deny, warn, dryrun", nil)
 			return
 		}
+	}
+
+	// 5a. Validate match fields to prevent overly-broad constraints
+	if err := validateConstraintMatch(req.Match); err != nil {
+		response.BadRequest(w, err.Error(), nil)
+		return
 	}
 
 	h.logger.Info("creating constraint",
@@ -1154,6 +1348,17 @@ func (h *ComplianceHandler) CreateConstraint(w http.ResponseWriter, r *http.Requ
 			return
 		}
 
+		if isKubernetesForbiddenErr(err) {
+			h.logger.Error("kubernetes RBAC forbidden for constraint create",
+				"requestId", requestID,
+				"userId", userCtx.UserID,
+				"constraintName", req.Name,
+				"error", err,
+			)
+			response.Forbidden(w, "insufficient permissions to manage constraint")
+			return
+		}
+
 		h.logger.Error("failed to create constraint",
 			"requestId", requestID,
 			"userId", userCtx.UserID,
@@ -1196,6 +1401,15 @@ func (h *ComplianceHandler) CreateConstraint(w http.ResponseWriter, r *http.Requ
 	response.WriteJSON(w, http.StatusCreated, constraint)
 }
 
+// isKubernetesForbiddenErr checks if an error indicates a Kubernetes RBAC forbidden response.
+// Returns true if the error message contains "is forbidden" (K8s RBAC denial pattern).
+func isKubernetesForbiddenErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "is forbidden")
+}
+
 // isAlreadyExistsErr checks if an error indicates a resource already exists.
 func isAlreadyExistsErr(err error) bool {
 	if err == nil {
@@ -1213,14 +1427,6 @@ func (h *ComplianceHandler) checkHistoryEnabled(w http.ResponseWriter) bool {
 		return false
 	}
 	return true
-}
-
-// csvFilenameRegex matches safe characters for filenames.
-var csvFilenameRegex = regexp.MustCompile(`[^a-zA-Z0-9._-]`)
-
-// sanitizeCSVFilename removes characters that are not safe for filenames.
-func sanitizeCSVFilename(input string) string {
-	return csvFilenameRegex.ReplaceAllString(input, "_")
 }
 
 // ListViolationHistory returns paginated violation history records.
@@ -1369,13 +1575,13 @@ func buildExportFilename(since time.Time, filters services.ViolationHistoryExpor
 	parts := []string{"violations"}
 
 	if filters.Enforcement != "" {
-		parts = append(parts, sanitizeCSVFilename(filters.Enforcement))
+		parts = append(parts, sanitize.Filename(filters.Enforcement))
 	}
 	if filters.Constraint != "" {
-		parts = append(parts, sanitizeCSVFilename(filters.Constraint))
+		parts = append(parts, sanitize.Filename(filters.Constraint))
 	}
 	if filters.Resource != "" {
-		parts = append(parts, sanitizeCSVFilename(filters.Resource))
+		parts = append(parts, sanitize.Filename(filters.Resource))
 	}
 
 	parts = append(parts, since.Format("2006-01-02"))

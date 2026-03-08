@@ -7,7 +7,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/provops-org/knodex/server/internal/api/middleware"
+	"github.com/knodex/knodex/server/internal/api/middleware"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

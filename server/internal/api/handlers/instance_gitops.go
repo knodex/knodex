@@ -6,10 +6,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/provops-org/knodex/server/internal/api/middleware"
-	"github.com/provops-org/knodex/server/internal/api/response"
-	"github.com/provops-org/knodex/server/internal/services"
-	"github.com/provops-org/knodex/server/internal/watcher"
+	"github.com/knodex/knodex/server/internal/api/middleware"
+	"github.com/knodex/knodex/server/internal/api/response"
+	"github.com/knodex/knodex/server/internal/services"
+	"github.com/knodex/knodex/server/internal/watcher"
 )
 
 // GitOpsSyncMonitor provides access to GitOps sync tracking data

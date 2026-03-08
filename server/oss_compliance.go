@@ -6,9 +6,9 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/provops-org/knodex/server/internal/config"
-	"github.com/provops-org/knodex/server/internal/services"
-	"github.com/provops-org/knodex/server/internal/websocket"
+	"github.com/knodex/knodex/server/internal/config"
+	"github.com/knodex/knodex/server/internal/services"
+	"github.com/knodex/knodex/server/internal/websocket"
 )
 
 // InitComplianceService returns nil for OSS builds.

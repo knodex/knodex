@@ -343,6 +343,149 @@ func TestUserRateLimit_RateLimitErrorResponse(t *testing.T) {
 	}
 }
 
+func TestUserRateLimit_RetryAfterHeader(t *testing.T) {
+	t.Parallel()
+
+	config := UserRateLimitConfig{
+		RequestsPerMinute: 60,
+		BurstSize:         1,
+		FallbackToIP:      false,
+	}
+
+	mw := UserRateLimit(config)
+
+	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler := mw(testHandler)
+
+	userCtx := &UserContext{
+		UserID: "user-retry",
+	}
+
+	// First request to consume the token
+	req1 := httptest.NewRequest("GET", "/api/v1/test", nil)
+	ctx1 := context.WithValue(req1.Context(), UserContextKey, userCtx)
+	req1 = req1.WithContext(ctx1)
+	w1 := httptest.NewRecorder()
+	handler.ServeHTTP(w1, req1)
+
+	// Second request should be rate limited with Retry-After header
+	req2 := httptest.NewRequest("GET", "/api/v1/test", nil)
+	ctx2 := context.WithValue(req2.Context(), UserContextKey, userCtx)
+	req2 = req2.WithContext(ctx2)
+	w2 := httptest.NewRecorder()
+	handler.ServeHTTP(w2, req2)
+
+	if w2.Code != http.StatusTooManyRequests {
+		t.Errorf("expected status 429, got %d", w2.Code)
+	}
+
+	retryAfter := w2.Header().Get("Retry-After")
+	if retryAfter != "60" {
+		t.Errorf("expected Retry-After header '60', got %q", retryAfter)
+	}
+}
+
+func TestUserRateLimit_SSOBurstOf5(t *testing.T) {
+	t.Parallel()
+
+	// Simulate SSO mutation rate limit: 1 req/min sustained, burst of 5
+	config := UserRateLimitConfig{
+		RequestsPerMinute: 1,
+		BurstSize:         5,
+		FallbackToIP:      false,
+	}
+
+	mw := UserRateLimit(config)
+
+	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler := mw(testHandler)
+
+	userCtx := &UserContext{
+		UserID: "admin-sso",
+	}
+
+	// First 5 requests should succeed (within burst)
+	for i := 0; i < 5; i++ {
+		req := httptest.NewRequest("POST", "/api/v1/settings/sso/providers", nil)
+		ctx := context.WithValue(req.Context(), UserContextKey, userCtx)
+		req = req.WithContext(ctx)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("request %d: expected status 200, got %d", i+1, w.Code)
+		}
+	}
+
+	// 6th request should be rate limited
+	req6 := httptest.NewRequest("POST", "/api/v1/settings/sso/providers", nil)
+	ctx6 := context.WithValue(req6.Context(), UserContextKey, userCtx)
+	req6 = req6.WithContext(ctx6)
+	w6 := httptest.NewRecorder()
+	handler.ServeHTTP(w6, req6)
+
+	if w6.Code != http.StatusTooManyRequests {
+		t.Errorf("6th request: expected status 429, got %d", w6.Code)
+	}
+
+	retryAfter := w6.Header().Get("Retry-After")
+	if retryAfter != "60" {
+		t.Errorf("expected Retry-After header '60', got %q", retryAfter)
+	}
+}
+
+func TestUserRateLimit_SSOPerUserIndependent(t *testing.T) {
+	t.Parallel()
+
+	config := UserRateLimitConfig{
+		RequestsPerMinute: 1,
+		BurstSize:         5,
+		FallbackToIP:      false,
+	}
+
+	mw := UserRateLimit(config)
+
+	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler := mw(testHandler)
+
+	// User 1 makes 5 requests (exhausts burst)
+	for i := 0; i < 5; i++ {
+		req := httptest.NewRequest("POST", "/api/v1/settings/sso/providers", nil)
+		userCtx := &UserContext{UserID: "admin-1"}
+		ctx := context.WithValue(req.Context(), UserContextKey, userCtx)
+		req = req.WithContext(ctx)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("user1 request %d: expected status 200, got %d", i+1, w.Code)
+		}
+	}
+
+	// User 2 should still be able to make 5 requests independently
+	for i := 0; i < 5; i++ {
+		req := httptest.NewRequest("POST", "/api/v1/settings/sso/providers", nil)
+		userCtx := &UserContext{UserID: "admin-2"}
+		ctx := context.WithValue(req.Context(), UserContextKey, userCtx)
+		req = req.WithContext(ctx)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("user2 request %d: expected status 200, got %d", i+1, w.Code)
+		}
+	}
+}
+
 func TestNewUserRateLimiter_WithIPFallback(t *testing.T) {
 	t.Parallel()
 

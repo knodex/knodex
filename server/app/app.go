@@ -34,26 +34,28 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/provops-org/knodex/server/internal/api"
-	"github.com/provops-org/knodex/server/internal/api/handlers"
-	"github.com/provops-org/knodex/server/internal/audit"
-	"github.com/provops-org/knodex/server/internal/auth"
-	"github.com/provops-org/knodex/server/internal/bootstrap"
-	"github.com/provops-org/knodex/server/internal/clients"
-	"github.com/provops-org/knodex/server/internal/config"
-	"github.com/provops-org/knodex/server/internal/deployment"
-	"github.com/provops-org/knodex/server/internal/drift"
-	"github.com/provops-org/knodex/server/internal/health"
-	"github.com/provops-org/knodex/server/internal/history"
-	"github.com/provops-org/knodex/server/internal/models"
-	"github.com/provops-org/knodex/server/internal/rbac"
-	"github.com/provops-org/knodex/server/internal/repository"
-	"github.com/provops-org/knodex/server/internal/schema"
-	"github.com/provops-org/knodex/server/internal/services"
-	"github.com/provops-org/knodex/server/internal/sso"
-	"github.com/provops-org/knodex/server/internal/static"
-	"github.com/provops-org/knodex/server/internal/watcher"
-	"github.com/provops-org/knodex/server/internal/websocket"
+	"github.com/knodex/knodex/server/internal/api"
+	"github.com/knodex/knodex/server/internal/api/cookie"
+	"github.com/knodex/knodex/server/internal/api/handlers"
+	"github.com/knodex/knodex/server/internal/audit"
+	"github.com/knodex/knodex/server/internal/auth"
+	"github.com/knodex/knodex/server/internal/bootstrap"
+	"github.com/knodex/knodex/server/internal/clients"
+	"github.com/knodex/knodex/server/internal/config"
+	"github.com/knodex/knodex/server/internal/deployment"
+	"github.com/knodex/knodex/server/internal/drift"
+	"github.com/knodex/knodex/server/internal/health"
+	"github.com/knodex/knodex/server/internal/history"
+	kroschema "github.com/knodex/knodex/server/internal/kro/schema"
+	"github.com/knodex/knodex/server/internal/kro/watcher"
+	"github.com/knodex/knodex/server/internal/models"
+	"github.com/knodex/knodex/server/internal/rbac"
+	"github.com/knodex/knodex/server/internal/repository"
+	"github.com/knodex/knodex/server/internal/services"
+	"github.com/knodex/knodex/server/internal/sso"
+	"github.com/knodex/knodex/server/internal/static"
+	oldwatcher "github.com/knodex/knodex/server/internal/watcher"
+	"github.com/knodex/knodex/server/internal/websocket"
 )
 
 // Timeout and duration constants tuned for production Kubernetes environments.
@@ -134,24 +136,6 @@ func New(cfg *config.Config) *App {
 // Must be called before Run(). Defaults to NoopLicenseService if not set.
 func (a *App) SetLicenseService(svc services.LicenseService) {
 	a.licenseService = svc
-}
-
-// SetComplianceService sets the enterprise compliance service (OPA Gatekeeper).
-// Must be called before Run(). Defaults to nil if not set (routes not registered).
-func (a *App) SetComplianceService(svc services.ComplianceService) {
-	a.complianceService = svc
-}
-
-// SetViolationHistoryService sets the enterprise violation history service.
-// Must be called before Run(). Defaults to nil if not set.
-func (a *App) SetViolationHistoryService(svc services.ViolationHistoryService) {
-	a.violationHistoryService = svc
-}
-
-// SetViewsService sets the enterprise custom views service.
-// Must be called before Run(). Defaults to nil if not set (routes not registered).
-func (a *App) SetViewsService(svc services.ViewsService) {
-	a.viewsService = svc
 }
 
 // SetComplianceInitFunc registers a factory function for creating the compliance service.
@@ -504,8 +488,8 @@ func (a *App) Run(ctx context.Context) error {
 	}
 
 	// Create schema extractor for CRD schema extraction
-	var schemaExtractor *schema.Extractor
-	schemaExtractor, err = schema.NewExtractor(&cfg.Kubernetes)
+	var schemaExtractor *kroschema.Extractor
+	schemaExtractor, err = kroschema.NewExtractor(&cfg.Kubernetes)
 	if err != nil {
 		slog.Warn("failed to create schema extractor, schema endpoint will be unavailable", "error", err)
 	}
@@ -530,13 +514,13 @@ func (a *App) Run(ctx context.Context) error {
 
 	// Create repository secret watcher for declarative audit trail.
 	// Uses the same credential namespace as the repository service (cfg.Log.Namespace).
-	var repoWatcher *watcher.RepositoryWatcher
+	var repoWatcher *oldwatcher.RepositoryWatcher
 	if k8sClient != nil {
 		credNS := cfg.Log.Namespace
 		if credNS == "" {
 			credNS = "default"
 		}
-		repoWatcher = watcher.NewRepositoryWatcher(k8sClient, credNS, auditRecorder)
+		repoWatcher = oldwatcher.NewRepositoryWatcher(k8sClient, credNS, auditRecorder)
 		slog.Info("repository secret watcher created", "namespace", credNS)
 	}
 
@@ -599,6 +583,7 @@ func (a *App) Run(ctx context.Context) error {
 		ViewsService:            a.viewsService,
 		SSOStore:                ssoStore,
 		AllowedRedirectOrigins:  cfg.Auth.AllowedRedirectOrigins,
+		CookieConfig:            cookie.Config{Secure: cfg.Cookie.Secure, Domain: cfg.Cookie.Domain},
 		OrganizationFilter:      a.organizationFilter, // EE catalog filtering (empty = no filter)
 		Organization:            cfg.Organization,     // Display identity for GET /api/v1/settings
 		SwaggerEnabled:          cfg.SwaggerEnabled,   // Serve Swagger UI at /swagger/ (SWAGGER_UI_ENABLED)
@@ -965,7 +950,7 @@ func shutdownServices(
 	policyCacheManager *rbac.PolicyCacheManager,
 	auditRecorder audit.Recorder,
 	ssoWatcher *sso.SSOWatcher,
-	repoWatcher *watcher.RepositoryWatcher,
+	repoWatcher *oldwatcher.RepositoryWatcher,
 	instanceTracker *watcher.InstanceTracker,
 	rgdWatcher *watcher.RGDWatcher,
 	redisClient *redis.Client,

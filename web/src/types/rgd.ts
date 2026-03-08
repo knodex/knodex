@@ -228,7 +228,11 @@ export interface SchemaResponse {
   rgd: string;
   schema: FormSchema | null;
   error?: string;
+  /** Non-fatal warnings encountered during schema generation */
+  warnings?: string[];
   crdFound: boolean;
+  /** Schema source: "crd+rgd" (full) or "rgd-only" (degraded, missing validation constraints) */
+  source?: "crd+rgd" | "rgd-only";
 }
 
 /**

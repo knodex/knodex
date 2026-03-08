@@ -282,6 +282,81 @@ Check the "E2E Tests" workflow in GitHub Actions for test logs, Playwright HTML 
 
 ---
 
+## KRO Canary Testing
+
+The KRO canary suite tests Knodex against KRO `main` to detect silent feature gaps and behavioral changes before KRO releases.
+
+### Purpose
+
+KRO is pinned to a specific version in `server/go.mod`. When KRO's `main` branch introduces new features or changes CRD generation behavior, Knodex may not handle the new output. The canary tests catch these gaps early by:
+
+1. Deploying KRO from `main` to a Kind cluster
+2. Applying **reference RGDs** (`deploy/test/reference-rgds/`) that exercise specific KRO features
+3. Running Knodex schema extraction against each RGD
+4. Comparing API output against committed baseline snapshots (`deploy/test/reference-rgds/expected/`)
+
+### Weekly Schedule
+
+The canary runs automatically every **Monday at 06:00 UTC** via `.github/workflows/kro-canary.yml`. When a mismatch is detected, a GitHub issue is auto-created with the `kro-compatibility` label.
+
+### Running Manually
+
+```bash
+# Trigger via GitHub Actions UI (Actions → KRO Canary Tests → Run workflow)
+# Or via CLI:
+gh workflow run kro-canary.yml
+
+# Run with a specific KRO ref:
+gh workflow run kro-canary.yml -f kro_ref=v0.10.0
+```
+
+### Updating Baselines
+
+When a schema change is intentional (Knodex has been updated to handle new KRO output):
+
+```bash
+# Option 1: Trigger via GitHub Actions with baseline update
+gh workflow run kro-canary.yml -f update_baselines=true
+
+# Option 2: Run locally against a cluster with KRO + reference RGDs applied
+cd server && go test -tags=canary -run TestCanary -update ./test/canary/
+```
+
+Updated baselines should be committed and pushed.
+
+### Reference RGDs
+
+Each reference RGD in `deploy/test/reference-rgds/` tests a specific KRO feature:
+
+| File | Feature | KRO Min Version |
+|------|---------|-----------------|
+| `basic-types.yaml` | String, integer, boolean with defaults | v0.8.0 |
+| `conditional-resources.yaml` | `includeWhen` with boolean conditions | v0.8.0 |
+| `external-refs.yaml` | `externalRef` with name/namespace pairs | v0.8.0 |
+| `nested-external-refs.yaml` | Cross-RGD `externalRef` lookups | v0.9.0 |
+| `advanced-section.yaml` | `spec.advanced` nested fields | v0.8.0 |
+| `cel-expressions.yaml` | CEL ternary, equality, and string conditions | v0.9.0 |
+
+### Interpreting Issues
+
+When the canary creates a `kro-compatibility` issue:
+
+1. **Review the diff** — does KRO now produce new fields, changed types, or different structure?
+2. **Check KRO changelog** — was this an intentional change?
+3. **Update Knodex** — add handling for the new output in `internal/kro/` packages
+4. **Regenerate baselines** — run with `-update` flag after Knodex is updated
+
+### Test Locations
+
+| Component | Location |
+|-----------|----------|
+| Reference RGDs | `deploy/test/reference-rgds/` |
+| Golden baselines | `deploy/test/reference-rgds/expected/` |
+| Go canary tests | `server/test/canary/` (build tag: `canary`) |
+| CI workflow | `.github/workflows/kro-canary.yml` |
+
+---
+
 ## Related Documentation
 
 - [Tilt Development](./tilt.md) - Local development setup

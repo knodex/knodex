@@ -4,7 +4,6 @@ package auth
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -19,6 +18,8 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+
+	utilrand "github.com/knodex/knodex/server/internal/util/rand"
 )
 
 const (
@@ -420,8 +421,8 @@ func (s *AccountStore) GetServerSecretKey(ctx context.Context) (string, error) {
 		slog.Info("server secret key missing, auto-generating...")
 
 		// Generate random server secret key
-		keyBytes := make([]byte, 32)
-		if _, err := rand.Read(keyBytes); err != nil {
+		keyBytes, err := utilrand.GenerateRandomBytes(32)
+		if err != nil {
 			return "", fmt.Errorf("failed to generate server secret key: %w", err)
 		}
 		serverKey := base64.StdEncoding.EncodeToString(keyBytes)
@@ -515,8 +516,8 @@ func (s *AccountStore) createDefaultConfigMap(ctx context.Context) error {
 // createDefaultSecret creates the default Secret with auto-generated server key
 func (s *AccountStore) createDefaultSecret(ctx context.Context) error {
 	// Generate random server secret key
-	keyBytes := make([]byte, 32)
-	if _, err := rand.Read(keyBytes); err != nil {
+	keyBytes, err := utilrand.GenerateRandomBytes(32)
+	if err != nil {
 		return fmt.Errorf("failed to generate server secret key: %w", err)
 	}
 	serverKey := base64.StdEncoding.EncodeToString(keyBytes)
@@ -537,7 +538,7 @@ func (s *AccountStore) createDefaultSecret(ctx context.Context) error {
 		},
 	}
 
-	_, err := s.k8sClient.CoreV1().Secrets(s.namespace).Create(ctx, secret, metav1.CreateOptions{})
+	_, err = s.k8sClient.CoreV1().Secrets(s.namespace).Create(ctx, secret, metav1.CreateOptions{})
 	if err != nil && !errors.IsAlreadyExists(err) {
 		return err
 	}
@@ -708,11 +709,10 @@ func (s *AccountStore) recordFailedAttemptRedis(key string) bool {
 
 	// Add attempt with score = Unix millisecond timestamp, member = unique string.
 	// Random suffix prevents collisions when multiple replicas record at the same nanosecond.
-	var rndBuf [4]byte
-	_, _ = rand.Read(rndBuf[:])
+	rndSuffix := utilrand.GenerateRandomHex(4)
 	pipe.ZAdd(ctx, redisKey, redis.Z{
 		Score:  float64(now.UnixMilli()),
-		Member: fmt.Sprintf("%d:%x", now.UnixNano(), rndBuf),
+		Member: fmt.Sprintf("%d:%s", now.UnixNano(), rndSuffix),
 	})
 
 	// Set key expiry to the attempt window (auto-cleanup)

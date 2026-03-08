@@ -11,7 +11,7 @@ import (
 	"github.com/sony/gobreaker/v2"
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/provops-org/knodex/server/internal/resilience"
+	"github.com/knodex/knodex/server/internal/resilience"
 )
 
 // RGDWatcherHealth is an interface for checking RGD watcher health
@@ -78,26 +78,12 @@ func NewChecker(redisClient *redis.Client, k8sClient kubernetes.Interface, rgdWa
 	}
 }
 
-// SetCircuitBreakers attaches circuit breakers for dependency health reporting
-func (c *Checker) SetCircuitBreakers(cb *resilience.CircuitBreakers) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.circuitBreakers = cb
-}
-
 // SetRBACHealth attaches an RBAC health checker for readiness reporting.
 // When set, /readyz returns 503 until the initial policy sync completes.
 func (c *Checker) SetRBACHealth(rh RBACHealth) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.rbacHealth = rh
-}
-
-// CircuitBreakers returns the attached circuit breakers (may be nil)
-func (c *Checker) CircuitBreakers() *resilience.CircuitBreakers {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.circuitBreakers
 }
 
 // CheckLiveness performs a quick liveness check

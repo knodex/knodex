@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/provops-org/knodex/server/internal/models"
+	"github.com/knodex/knodex/server/internal/models"
 	"github.com/stretchr/testify/assert"
 )
 

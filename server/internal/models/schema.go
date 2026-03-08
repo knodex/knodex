@@ -130,6 +130,10 @@ type SchemaResponse struct {
 	Schema *FormSchema `json:"schema"`
 	// Error is set if schema extraction failed
 	Error string `json:"error,omitempty"`
+	// Warnings contains non-fatal issues encountered during schema enrichment
+	Warnings []string `json:"warnings,omitempty"`
 	// CRDFound indicates whether the CRD was found
 	CRDFound bool `json:"crdFound"`
+	// Source indicates the schema source: "crd+rgd" (full) or "rgd-only" (degraded)
+	Source string `json:"source,omitempty"`
 }

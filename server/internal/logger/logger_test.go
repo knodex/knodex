@@ -7,7 +7,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/provops-org/knodex/server/internal/config"
+	"github.com/knodex/knodex/server/internal/config"
 )
 
 func TestParseLevel(t *testing.T) {

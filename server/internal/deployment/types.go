@@ -166,33 +166,6 @@ type DeployRequest struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 
-// Validate validates the DeployRequest fields
-// SECURITY: Validates GitOps override fields to prevent injection attacks
-func (r *DeployRequest) Validate() error {
-	// Validate GitBranch override if provided
-	if r.GitBranch != "" {
-		if err := ValidateBranchName(r.GitBranch); err != nil {
-			return fmt.Errorf("invalid gitBranch: %w", err)
-		}
-	}
-
-	// Validate GitPath override if provided
-	if r.GitPath != "" {
-		if err := ValidateBasePath(r.GitPath); err != nil {
-			return fmt.Errorf("invalid gitPath: %w", err)
-		}
-	}
-
-	// Validate repository config if present
-	if r.Repository != nil {
-		if err := r.Repository.Validate(); err != nil {
-			return fmt.Errorf("invalid repository config: %w", err)
-		}
-	}
-
-	return nil
-}
-
 // GetEffectiveBranch returns the branch to use for this deployment
 // Uses GitBranch override if set, otherwise falls back to repository default
 func (r *DeployRequest) GetEffectiveBranch() string {
@@ -316,45 +289,6 @@ func (r *RepositoryConfig) GetSecretKey() string {
 		return r.SecretKey
 	}
 	return "token"
-}
-
-// GetProvider returns the provider, defaulting to "github" if not set
-func (r *RepositoryConfig) GetProvider() string {
-	if r.Provider != "" {
-		return strings.ToLower(r.Provider)
-	}
-	return "github"
-}
-
-// GetRepositoryURL builds the full repository URL based on provider and baseURL
-// Supports GitHub, GitLab, and Bitbucket (both public and self-hosted instances)
-// Examples:
-//   - GitHub public: https://github.com/owner/repo
-//   - GitHub Enterprise: https://github.example.com/owner/repo
-//   - GitLab public: https://gitlab.com/owner/repo
-//   - GitLab self-hosted: https://gitlab.mycompany.com/owner/repo
-//   - Bitbucket public: https://bitbucket.org/owner/repo
-//   - Bitbucket self-hosted: https://bitbucket.mycompany.com/owner/repo
-func (r *RepositoryConfig) GetRepositoryURL() string {
-	provider := r.GetProvider()
-	owner := r.Owner
-	repo := r.Repo
-
-	// If baseURL is provided, use it (for self-hosted instances)
-	if r.BaseURL != "" {
-		baseURL := strings.TrimRight(r.BaseURL, "/")
-		return fmt.Sprintf("%s/%s/%s", baseURL, owner, repo)
-	}
-
-	// Default to public instances based on provider
-	switch provider {
-	case "gitlab":
-		return fmt.Sprintf("https://gitlab.com/%s/%s", owner, repo)
-	case "bitbucket":
-		return fmt.Sprintf("https://bitbucket.org/%s/%s", owner, repo)
-	default: // github
-		return fmt.Sprintf("https://github.com/%s/%s", owner, repo)
-	}
 }
 
 // Validate performs security validation on all RepositoryConfig fields

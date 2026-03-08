@@ -87,7 +87,7 @@ function createTestWrapper() {
 }
 
 describe("useViolationWebSocket", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
     mockWebSocketInstance = null;
     WebSocketSpy.mockClear();
@@ -111,15 +111,9 @@ describe("useViolationWebSocket", () => {
 
     global.WebSocket = MockWebSocketClass as unknown as typeof WebSocket;
 
-    // Mock localStorage for JWT token
-    Object.defineProperty(window, "localStorage", {
-      value: {
-        getItem: vi.fn().mockReturnValue("test-jwt-token"),
-        setItem: vi.fn(),
-        removeItem: vi.fn(),
-      },
-      writable: true,
-    });
+    // Set authenticated state in Zustand store (JWT is in HttpOnly cookie, not localStorage)
+    const { useUserStore } = await import("@/stores/userStore");
+    useUserStore.setState({ isAuthenticated: true });
   });
 
   afterEach(() => {

@@ -3,11 +3,14 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
-	"github.com/provops-org/knodex/server/internal/api/middleware"
+	"github.com/knodex/knodex/server/internal/api/middleware"
+	"github.com/knodex/knodex/server/internal/rbac"
 )
 
 // mockCanIService is a mock implementation of CanIServiceInterface
@@ -33,6 +36,20 @@ func (m *mockCanIService) GetMappedGroups(groups []string) ([]string, error) {
 		return m.mappedGroups, nil
 	}
 	// Default: return all groups (backwards compatible behavior)
+	return groups, nil
+}
+
+// mockCanIServiceWithCallCount tracks call count for verification
+type mockCanIServiceWithCallCount struct {
+	callCount atomic.Int32
+}
+
+func (m *mockCanIServiceWithCallCount) CanI(userID string, groups []string, resource, action, subresource string) (bool, error) {
+	m.callCount.Add(1)
+	return true, nil
+}
+
+func (m *mockCanIServiceWithCallCount) GetMappedGroups(groups []string) ([]string, error) {
 	return groups, nil
 }
 
@@ -333,6 +350,92 @@ func TestAccountHandler_CanI_AllValidActions(t *testing.T) {
 	}
 }
 
+func TestAccountHandler_CanI_InvalidSubresource(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		subresource string
+		wantStatus  int
+	}{
+		// Invalid cases — must be rejected with 400
+		{"wildcard_star", "*", http.StatusBadRequest},
+		{"wildcard_in_name", "project*", http.StatusBadRequest},
+		{"path_traversal", "../etc", http.StatusBadRequest},
+		{"path_traversal_encoded", "..%2Fetc", http.StatusBadRequest},
+		{"path_traversal_encoded_lower", "..%2fetc", http.StatusBadRequest},
+		{"path_traversal_backslash", "..\\etc", http.StatusBadRequest},
+		{"path_traversal_backslash_encoded", "..%5Cetc", http.StatusBadRequest},
+		{"path_traversal_backslash_encoded_lower", "..%5cetc", http.StatusBadRequest},
+		{"casbin_comma", "proj,admin", http.StatusBadRequest},
+		{"casbin_pipe", "proj|admin", http.StatusBadRequest},
+		{"casbin_newline", "proj\nadmin", http.StatusBadRequest},
+		{"casbin_carriage_return", "proj\radmin", http.StatusBadRequest},
+		// Valid cases — must NOT be rejected
+		{"valid_project", "my-project", http.StatusOK},
+		{"valid_sentinel", "-", http.StatusOK},
+		{"valid_slash", "demo/my-instance", http.StatusOK},
+		{"valid_dot", "alpha.v2", http.StatusOK},
+		{"valid_underscore", "my_project", http.StatusOK},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			canIService := &mockCanIService{canIResult: true}
+			handler := NewAccountHandler(canIService)
+
+			// Use a safe URL path (subresource may contain control chars that are invalid in URLs)
+			req := createAccountTestRequest(t, http.MethodGet,
+				"/api/v1/account/can-i/instances/create/placeholder",
+				"test-user@example.com",
+				[]string{"developers"},
+			)
+			req = setupAccountRequestWithPathValues(req, "instances", "create", tt.subresource)
+
+			rr := httptest.NewRecorder()
+			handler.CanI(rr, req)
+
+			if rr.Code != tt.wantStatus {
+				t.Errorf("expected status %d, got %d", tt.wantStatus, rr.Code)
+			}
+		})
+	}
+}
+
+func TestAccountHandler_CanI_InvalidSubresource_NoServiceCall(t *testing.T) {
+	t.Parallel()
+	// Verify that canIService.CanI is NOT called for invalid subresources
+	canIService := &mockCanIServiceWithCallCount{}
+	handler := NewAccountHandler(canIService)
+
+	invalidSubresources := []string{"*", "../etc", "proj,admin", "proj|admin"}
+
+	for _, sub := range invalidSubresources {
+		sub := sub
+		t.Run(sub, func(t *testing.T) {
+			t.Parallel()
+			req := createAccountTestRequest(t, http.MethodGet,
+				"/api/v1/account/can-i/instances/create/placeholder",
+				"test-user@example.com",
+				[]string{"developers"},
+			)
+			req = setupAccountRequestWithPathValues(req, "instances", "create", sub)
+
+			rr := httptest.NewRecorder()
+			handler.CanI(rr, req)
+
+			if rr.Code != http.StatusBadRequest {
+				t.Errorf("subresource %q: expected status %d, got %d", sub, http.StatusBadRequest, rr.Code)
+			}
+		})
+	}
+
+	if canIService.callCount.Load() != 0 {
+		t.Errorf("expected canIService.CanI to not be called for invalid subresources, got %d calls", canIService.callCount.Load())
+	}
+}
+
 func TestAccountHandler_CanI_ServiceError(t *testing.T) {
 	t.Parallel()
 	canIService := &mockCanIService{
@@ -565,5 +668,253 @@ func TestAccountHandler_Info_UserWithoutIssuer(t *testing.T) {
 
 	if resp.Issuer != "Local" {
 		t.Errorf("expected issuer %q for user without explicit issuer, got %q", "Local", resp.Issuer)
+	}
+}
+
+// --- Project existence validation tests (STORY-257) ---
+
+func TestAccountHandler_CanI_NonexistentProject_Returns404(t *testing.T) {
+	t.Parallel()
+	canIService := &mockCanIService{canIResult: true}
+	handler := NewAccountHandler(canIService)
+
+	// Use the mockProjectService from project_handler_test.go (same package)
+	ps := newMockProjectService()
+	// Don't add any projects — "nonexistent" won't be found
+	handler.SetProjectService(ps)
+
+	req := createAccountTestRequest(t, http.MethodGet,
+		"/api/v1/account/can-i/instances/create/nonexistent",
+		"admin@example.com",
+		[]string{"knodex-admins"},
+	)
+	req = setupAccountRequestWithPathValues(req, "instances", "create", "nonexistent")
+
+	rr := httptest.NewRecorder()
+	handler.CanI(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("expected status %d for nonexistent project, got %d", http.StatusNotFound, rr.Code)
+	}
+}
+
+func TestAccountHandler_CanI_ExistingProject_Proceeds(t *testing.T) {
+	t.Parallel()
+	canIService := &mockCanIService{canIResult: true}
+	handler := NewAccountHandler(canIService)
+
+	ps := newMockProjectService()
+	ps.addProject("my-project", rbac.ProjectSpec{})
+	handler.SetProjectService(ps)
+
+	req := createAccountTestRequest(t, http.MethodGet,
+		"/api/v1/account/can-i/instances/create/my-project",
+		"test-user@example.com",
+		[]string{"developers"},
+	)
+	req = setupAccountRequestWithPathValues(req, "instances", "create", "my-project")
+
+	rr := httptest.NewRecorder()
+	handler.CanI(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected status %d for existing project, got %d", http.StatusOK, rr.Code)
+	}
+
+	var resp CanIResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp.Value != "yes" {
+		t.Errorf("expected value %q, got %q", "yes", resp.Value)
+	}
+}
+
+func TestAccountHandler_CanI_NonProjectScopedResource_SkipsCheck(t *testing.T) {
+	t.Parallel()
+	canIService := &mockCanIService{canIResult: true}
+	handler := NewAccountHandler(canIService)
+
+	ps := newMockProjectService()
+	// Don't add any projects — "settings" is not project-scoped, so check should be skipped
+	handler.SetProjectService(ps)
+
+	req := createAccountTestRequest(t, http.MethodGet,
+		"/api/v1/account/can-i/settings/update/-",
+		"test-user@example.com",
+		[]string{"admins"},
+	)
+	req = setupAccountRequestWithPathValues(req, "settings", "update", "-")
+
+	rr := httptest.NewRecorder()
+	handler.CanI(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected status %d for non-project-scoped resource, got %d", http.StatusOK, rr.Code)
+	}
+}
+
+func TestAccountHandler_CanI_SentinelSubresource_SkipsCheck(t *testing.T) {
+	t.Parallel()
+	canIService := &mockCanIService{canIResult: true}
+	handler := NewAccountHandler(canIService)
+
+	ps := newMockProjectService()
+	handler.SetProjectService(ps)
+
+	// "projects" is project-scoped, but subresource "-" should skip existence check
+	req := createAccountTestRequest(t, http.MethodGet,
+		"/api/v1/account/can-i/projects/delete/-",
+		"admin@example.com",
+		[]string{"admins"},
+	)
+	req = setupAccountRequestWithPathValues(req, "projects", "delete", "-")
+
+	rr := httptest.NewRecorder()
+	handler.CanI(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected status %d for sentinel subresource, got %d", http.StatusOK, rr.Code)
+	}
+}
+
+func TestAccountHandler_CanI_NilProjectService_SkipsCheck(t *testing.T) {
+	t.Parallel()
+	canIService := &mockCanIService{canIResult: true}
+	handler := NewAccountHandler(canIService)
+	// Don't set project service — should skip existence check
+
+	req := createAccountTestRequest(t, http.MethodGet,
+		"/api/v1/account/can-i/instances/create/nonexistent",
+		"test-user@example.com",
+		[]string{"developers"},
+	)
+	req = setupAccountRequestWithPathValues(req, "instances", "create", "nonexistent")
+
+	rr := httptest.NewRecorder()
+	handler.CanI(rr, req)
+
+	// Without project service, existence check is skipped — proceeds to permission check
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected status %d with nil projectService, got %d", http.StatusOK, rr.Code)
+	}
+}
+
+// errorProjectService always returns an error from Exists
+type errorProjectService struct {
+	mockProjectService
+	existsErr error
+}
+
+func (e *errorProjectService) Exists(ctx context.Context, name string) (bool, error) {
+	return false, e.existsErr
+}
+
+func TestAccountHandler_CanI_ProjectServiceError_Returns500(t *testing.T) {
+	t.Parallel()
+	canIService := &mockCanIService{canIResult: true}
+	handler := NewAccountHandler(canIService)
+
+	ps := &errorProjectService{existsErr: errors.New("connection refused")}
+	handler.SetProjectService(ps)
+
+	req := createAccountTestRequest(t, http.MethodGet,
+		"/api/v1/account/can-i/instances/create/my-project",
+		"test-user@example.com",
+		[]string{"developers"},
+	)
+	req = setupAccountRequestWithPathValues(req, "instances", "create", "my-project")
+
+	rr := httptest.NewRecorder()
+	handler.CanI(rr, req)
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Errorf("expected status %d for project service error, got %d", http.StatusInternalServerError, rr.Code)
+	}
+}
+
+func TestAccountHandler_CanI_AdminGets404ForNonexistentProject(t *testing.T) {
+	t.Parallel()
+	// Even admins should get 404 for nonexistent projects (prevents enumeration)
+	canIService := &mockCanIService{canIResult: true} // Would return "yes" if it got there
+	handler := NewAccountHandler(canIService)
+
+	ps := newMockProjectService()
+	handler.SetProjectService(ps)
+
+	req := createAccountTestRequest(t, http.MethodGet,
+		"/api/v1/account/can-i/instances/create/nonexistent",
+		"admin@example.com",
+		[]string{"knodex-admins"},
+	)
+	req = setupAccountRequestWithPathValues(req, "instances", "create", "nonexistent")
+
+	rr := httptest.NewRecorder()
+	handler.CanI(rr, req)
+
+	// Project check runs BEFORE permission check — even admins get 404
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("expected admin to get %d for nonexistent project, got %d", http.StatusNotFound, rr.Code)
+	}
+}
+
+func TestAccountHandler_CanI_SubresourceWithSlash_ExtractsProject(t *testing.T) {
+	t.Parallel()
+	canIService := &mockCanIService{canIResult: true}
+	handler := NewAccountHandler(canIService)
+
+	ps := newMockProjectService()
+	ps.addProject("my-project", rbac.ProjectSpec{})
+	handler.SetProjectService(ps)
+
+	// Subresource "my-project/my-namespace" should extract "my-project"
+	req := createAccountTestRequest(t, http.MethodGet,
+		"/api/v1/account/can-i/instances/create/my-project/my-namespace",
+		"test-user@example.com",
+		[]string{"developers"},
+	)
+	req = setupAccountRequestWithPathValues(req, "instances", "create", "my-project/my-namespace")
+
+	rr := httptest.NewRecorder()
+	handler.CanI(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected status %d for subresource with slash, got %d", http.StatusOK, rr.Code)
+	}
+}
+
+func TestExtractProjectName(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		subresource string
+		expected    string
+	}{
+		{"my-project", "my-project"},
+		{"my-project/my-namespace", "my-project"},
+		{"alpha/default", "alpha"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		result := extractProjectName(tt.subresource)
+		if result != tt.expected {
+			t.Errorf("extractProjectName(%q) = %q, want %q", tt.subresource, result, tt.expected)
+		}
+	}
+}
+
+func TestIsProjectScopedResource(t *testing.T) {
+	t.Parallel()
+	scoped := []string{"instances", "projects", "repositories", "rgds", "compliance", "applications"}
+	notScoped := []string{"settings", "users", "invalid"}
+
+	for _, r := range scoped {
+		if !isProjectScopedResource(r) {
+			t.Errorf("expected %q to be project-scoped", r)
+		}
+	}
+	for _, r := range notScoped {
+		if isProjectScopedResource(r) {
+			t.Errorf("expected %q to NOT be project-scoped", r)
+		}
 	}
 }

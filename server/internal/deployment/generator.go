@@ -3,17 +3,14 @@ package deployment
 import (
 	"fmt"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"github.com/provops-org/knodex/server/internal/k8s/parser"
+	"github.com/knodex/knodex/server/internal/k8s/parser"
+	"github.com/knodex/knodex/server/internal/util/sanitize"
 )
-
-// dns1123NameRegex matches valid Kubernetes DNS-1123 names (lowercase alphanumeric and hyphens)
-var dns1123NameRegex = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 
 // Generator creates Kubernetes manifests and metadata files
 type Generator struct {
@@ -159,27 +156,7 @@ func (g *Generator) GenerateCommitMessage(req *DeployRequest) string {
 // sanitizePathComponent removes path traversal sequences and validates DNS-1123 format
 // SECURITY: Prevents path traversal attacks (CWE-22)
 func sanitizePathComponent(component string) (string, error) {
-	if component == "" {
-		return "", fmt.Errorf("path component cannot be empty")
-	}
-
-	// Remove any path separators and traversal sequences
-	component = strings.ReplaceAll(component, "..", "")
-	component = strings.ReplaceAll(component, "/", "-")
-	component = strings.ReplaceAll(component, "\\", "-")
-	component = strings.TrimSpace(component)
-
-	// Validate against DNS-1123 format (Kubernetes naming convention)
-	if !dns1123NameRegex.MatchString(component) {
-		return "", fmt.Errorf("invalid path component: must be lowercase alphanumeric with hyphens, got %q", component)
-	}
-
-	// Length check (Kubernetes names are limited to 253 characters)
-	if len(component) > 253 {
-		return "", fmt.Errorf("path component exceeds maximum length of 253 characters")
-	}
-
-	return component, nil
+	return sanitize.PathComponent(component)
 }
 
 // GenerateManifestPath creates the file path for a manifest in the repository

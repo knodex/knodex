@@ -12,6 +12,7 @@ import type {
 } from "@/types/websocket";
 import { logger, createLogger } from "@/lib/logger";
 import { getWebSocketTicket } from "@/api/auth";
+import { useUserStore } from "@/stores/userStore";
 
 // Exponential backoff configuration
 const INITIAL_RECONNECT_DELAY = 1000; // 1 second
@@ -280,10 +281,12 @@ export function useViolationWebSocket(
       return;
     }
 
-    // Require JWT in localStorage to prove user is authenticated before requesting ticket
-    const token = localStorage.getItem("jwt_token");
-    if (!token) {
-      log("No authentication token available - skipping WebSocket connection");
+    // Check Zustand store for authentication state before requesting ticket.
+    // The JWT is in an HttpOnly cookie (not accessible to JS), so we check the
+    // store's isAuthenticated flag which is set on login.
+    const isAuthenticated = useUserStore.getState().isAuthenticated;
+    if (!isAuthenticated) {
+      log("User not authenticated - skipping WebSocket connection");
       setStatus("disconnected");
       setError("Authentication required");
       return;

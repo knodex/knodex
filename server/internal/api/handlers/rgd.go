@@ -7,9 +7,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/provops-org/knodex/server/internal/api/middleware"
-	"github.com/provops-org/knodex/server/internal/api/response"
-	"github.com/provops-org/knodex/server/internal/services"
+	"github.com/knodex/knodex/server/internal/api/middleware"
+	"github.com/knodex/knodex/server/internal/api/response"
+	"github.com/knodex/knodex/server/internal/services"
+	"github.com/knodex/knodex/server/internal/util/collection"
 )
 
 // RGDHandler handles RGD-related HTTP requests.
@@ -255,15 +256,10 @@ func (h *RGDHandler) parseAndValidateFilters(r *http.Request) (services.RGDFilte
 
 	// Tags filter (comma-separated)
 	if tags := q.Get("tags"); tags != "" {
-		parsedTags := strings.Split(tags, ",")
-		filtered := make([]string, 0, len(parsedTags))
-		for _, tag := range parsedTags {
-			tag = strings.TrimSpace(tag)
-			if tag != "" {
-				filtered = append(filtered, tag)
-			}
-		}
-		filters.Tags = filtered
+		filters.Tags = collection.Filter(
+			collection.Map(strings.Split(tags, ","), strings.TrimSpace),
+			func(s string) bool { return s != "" },
+		)
 	}
 
 	// Search filter

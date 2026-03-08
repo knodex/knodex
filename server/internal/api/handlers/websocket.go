@@ -13,9 +13,9 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/provops-org/knodex/server/internal/api/response"
-	"github.com/provops-org/knodex/server/internal/auth"
-	ws "github.com/provops-org/knodex/server/internal/websocket"
+	"github.com/knodex/knodex/server/internal/api/response"
+	"github.com/knodex/knodex/server/internal/auth"
+	ws "github.com/knodex/knodex/server/internal/websocket"
 )
 
 const (

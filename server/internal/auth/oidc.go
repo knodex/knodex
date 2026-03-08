@@ -2,10 +2,9 @@ package auth
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -16,7 +15,9 @@ import (
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/oauth2"
 
-	"github.com/provops-org/knodex/server/internal/rbac"
+	"github.com/knodex/knodex/server/internal/netutil"
+	"github.com/knodex/knodex/server/internal/rbac"
+	utilrand "github.com/knodex/knodex/server/internal/util/rand"
 )
 
 const (
@@ -46,6 +47,10 @@ type OIDCService struct {
 
 	mu        sync.RWMutex // protects providers map — readers (auth flows) take RLock, reload takes Lock
 	providers map[string]*oidcProvider
+
+	// httpClient overrides the default SSRF-safe HTTP client for OIDC discovery.
+	// Used in tests to allow connections to loopback addresses.
+	httpClient *http.Client
 }
 
 // oidcProvider holds the OIDC provider configuration and clients
@@ -143,20 +148,18 @@ func (s *OIDCService) initializeProvider(ctx context.Context, config OIDCProvide
 }
 
 // GenerateStateToken generates a cryptographically secure random state token
-// and stores it in Redis with a 5-minute TTL, along with the provider name and optional redirect URL
-func (s *OIDCService) GenerateStateToken(ctx context.Context, providerName, redirectURL string) (string, error) {
+// and a nonce for OIDC ID token replay prevention.
+// Both are stored in Redis with a 5-minute TTL. The nonce is keyed on the state
+// token so they share the same lifecycle.
+// Returns (state, nonce, error).
+func (s *OIDCService) GenerateStateToken(ctx context.Context, providerName, redirectURL string) (string, string, error) {
 	if providerName == "" {
-		return "", fmt.Errorf("provider name cannot be empty")
+		return "", "", fmt.Errorf("provider name cannot be empty")
 	}
 
-	// Generate random bytes
-	b := make([]byte, StateTokenLength)
-	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("failed to generate random state token: %w", err)
-	}
-
-	// Encode as base64 URL-safe string
-	state := base64.URLEncoding.EncodeToString(b)
+	// Generate random state and nonce tokens
+	state := utilrand.GenerateRandomString(StateTokenLength)
+	nonce := utilrand.GenerateRandomString(NonceLength)
 
 	// Store provider name and redirect URL (format: "provider|redirectURL")
 	value := providerName
@@ -164,19 +167,25 @@ func (s *OIDCService) GenerateStateToken(ctx context.Context, providerName, redi
 		value = fmt.Sprintf("%s|%s", providerName, redirectURL)
 	}
 
-	key := fmt.Sprintf("oidc:state:%s", state)
-	if err := s.redisClient.Set(ctx, key, value, StateTokenTTL).Err(); err != nil {
-		return "", fmt.Errorf("failed to store state token in Redis: %w", err)
+	stateKey := fmt.Sprintf("oidc:state:%s", state)
+	if err := s.redisClient.Set(ctx, stateKey, value, StateTokenTTL).Err(); err != nil {
+		return "", "", fmt.Errorf("failed to store state token in Redis: %w", err)
 	}
 
-	slog.Debug("generated OIDC state token",
+	// Store nonce keyed on state token (shares lifecycle with state)
+	nonceKey := fmt.Sprintf("%s%s", NoncePrefix, state)
+	if err := s.redisClient.Set(ctx, nonceKey, nonce, NonceTTL).Err(); err != nil {
+		return "", "", fmt.Errorf("failed to store nonce in Redis: %w", err)
+	}
+
+	slog.Debug("generated OIDC state token and nonce",
 		"provider", providerName,
 		"redirect_url", redirectURL,
 		"state_prefix", state[:min(8, len(state))],
 		"ttl_seconds", int(StateTokenTTL.Seconds()),
 	)
 
-	return state, nil
+	return state, nonce, nil
 }
 
 // ValidateStateToken validates a state token by checking if it exists in Redis
@@ -213,8 +222,10 @@ func (s *OIDCService) ValidateStateToken(ctx context.Context, state string) (pro
 	return providerName, redirectURL, nil
 }
 
-// GetAuthCodeURL returns the authorization URL for the specified provider
-func (s *OIDCService) GetAuthCodeURL(providerName, state string) (string, error) {
+// GetAuthCodeURL returns the authorization URL for the specified provider.
+// The nonce parameter is included in the authorization URL to bind the ID token
+// to this specific authentication request, preventing token replay attacks.
+func (s *OIDCService) GetAuthCodeURL(providerName, state, nonce string) (string, error) {
 	s.mu.RLock()
 	provider, ok := s.providers[providerName]
 	s.mu.RUnlock()
@@ -223,7 +234,10 @@ func (s *OIDCService) GetAuthCodeURL(providerName, state string) (string, error)
 		return "", fmt.Errorf("unknown OIDC provider: %s", providerName)
 	}
 
-	url := provider.oauth2Config.AuthCodeURL(state, oauth2.AccessTypeOnline)
+	url := provider.oauth2Config.AuthCodeURL(state,
+		oauth2.AccessTypeOnline,
+		oauth2.SetAuthURLParam("nonce", nonce),
+	)
 
 	slog.Info("generated OIDC authorization URL",
 		"provider", providerName,
@@ -233,8 +247,10 @@ func (s *OIDCService) GetAuthCodeURL(providerName, state string) (string, error)
 	return url, nil
 }
 
-// ExchangeCodeForToken exchanges an authorization code for tokens and user info
-func (s *OIDCService) ExchangeCodeForToken(ctx context.Context, providerName, code string) (*LoginResponse, error) {
+// ExchangeCodeForToken exchanges an authorization code for tokens and user info.
+// The nonce parameter is the stored nonce that was sent in the authorization request;
+// it is validated against the nonce claim in the returned ID token to prevent replay attacks.
+func (s *OIDCService) ExchangeCodeForToken(ctx context.Context, providerName, code, nonce string) (*LoginResponse, error) {
 	s.mu.RLock()
 	provider, ok := s.providers[providerName]
 	s.mu.RUnlock()
@@ -262,7 +278,7 @@ func (s *OIDCService) ExchangeCodeForToken(ctx context.Context, providerName, co
 	}
 
 	// Extract user info from ID token
-	// Include Azure AD-specific claims for overage detection
+	// Include Azure AD-specific claims for overage detection and nonce for replay prevention
 	var claims struct {
 		Email         string   `json:"email"`
 		Name          string   `json:"name"`
@@ -271,12 +287,23 @@ func (s *OIDCService) ExchangeCodeForToken(ctx context.Context, providerName, co
 		Subject       string   `json:"sub"`
 		EmailVerified *bool    `json:"email_verified"`
 		Groups        []string `json:"groups"` // OIDC groups claim for project mapping
+		Nonce         string   `json:"nonce"`  // OIDC nonce for replay prevention
 		// Azure AD overage pattern: when user has too many groups, Azure returns these instead of groups
 		HasGroups   bool `json:"hasgroups,omitempty"`
 		XMSHasGroup bool `json:"_claim_names,omitempty"` // Alternative overage indicator
 	}
 	if err := idToken.Claims(&claims); err != nil {
 		return nil, fmt.Errorf("failed to extract claims from ID token: %w", err)
+	}
+
+	// Validate nonce: the ID token's nonce claim must match the stored nonce
+	// to prevent token replay attacks (AUTH-VULN-04 mitigation)
+	if nonce == "" || claims.Nonce == "" || claims.Nonce != nonce {
+		slog.Error("OIDC nonce validation failed",
+			"provider", providerName,
+			"nonce_present", claims.Nonce != "",
+		)
+		return nil, fmt.Errorf("ID token nonce validation failed")
 	}
 
 	// Log Azure AD overage condition - this requires using Microsoft Graph API to fetch groups
@@ -541,7 +568,20 @@ func (s *OIDCService) initializeProviderInto(ctx context.Context, config OIDCPro
 		scopes = []string{oidc.ScopeOpenID, "profile", "email"}
 	}
 
-	provider, err := oidc.NewProvider(ctx, config.IssuerURL)
+	// Use SSRF-safe transport for OIDC discovery to prevent redirect-based
+	// SSRF attacks (TOCTOU bypass of the pre-flight IsPrivateHost check).
+	// The dialer blocks connections to private/reserved IPs at TCP connect time.
+	// Tests may inject s.httpClient to allow loopback connections.
+	client := s.httpClient
+	if client == nil {
+		client = &http.Client{
+			Transport: &http.Transport{
+				DialContext: netutil.NewSSRFSafeDialer(),
+			},
+		}
+	}
+	safeCtx := oidc.ClientContext(ctx, client)
+	provider, err := oidc.NewProvider(safeCtx, config.IssuerURL)
 	if err != nil {
 		return fmt.Errorf("failed to create OIDC provider: %w", err)
 	}

@@ -4,7 +4,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/provops-org/knodex/server/internal/rbac"
+	"github.com/knodex/knodex/server/internal/rbac"
 )
 
 // IsNotFoundError checks if an error indicates a resource was not found.

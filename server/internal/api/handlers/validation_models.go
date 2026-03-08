@@ -1,6 +1,6 @@
 package handlers
 
-import "github.com/provops-org/knodex/server/internal/rbac"
+import "github.com/knodex/knodex/server/internal/rbac"
 
 // ValidateProjectRequest represents the request body for validating a new project
 type ValidateProjectRequest struct {

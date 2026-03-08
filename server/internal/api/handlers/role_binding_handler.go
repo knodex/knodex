@@ -7,12 +7,11 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
-	"time"
 
-	"github.com/provops-org/knodex/server/internal/api/helpers"
-	"github.com/provops-org/knodex/server/internal/api/response"
-	"github.com/provops-org/knodex/server/internal/audit"
-	"github.com/provops-org/knodex/server/internal/rbac"
+	"github.com/knodex/knodex/server/internal/api/helpers"
+	"github.com/knodex/knodex/server/internal/api/response"
+	"github.com/knodex/knodex/server/internal/audit"
+	"github.com/knodex/knodex/server/internal/rbac"
 )
 
 // RoleBindingEnforcer defines the focused interface for role binding operations.
@@ -680,39 +679,4 @@ func extractRoleBindingsFromProject(project *rbac.Project) []RoleBinding {
 	}
 
 	return bindings
-}
-
-// reloadProjectPolicies reloads Casbin policies for a project and invalidates the cache.
-// This ensures permission changes take effect immediately without waiting for the periodic sync.
-// AC-5: Logs policy reload with project name and duration for observability.
-// AC-6: Errors are logged but do not propagate - the role binding was already successful.
-func (h *RoleBindingHandler) reloadProjectPolicies(ctx context.Context, project *rbac.Project, requestID string) {
-	if h.enforcer == nil || project == nil {
-		return
-	}
-
-	start := time.Now()
-
-	// Reload project policies to ensure all role definitions and group mappings are current
-	if err := h.enforcer.LoadProjectPolicies(ctx, project); err != nil {
-		// AC-6: Log error but don't fail - the role binding operation already succeeded
-		slog.Error("immediate policy reload failed after role binding change, watcher will sync eventually",
-			"requestId", requestID,
-			"project", project.Name,
-			"error", err,
-			"duration_ms", time.Since(start).Milliseconds(),
-		)
-		return
-	}
-
-	// Explicitly invalidate cache for the project to ensure stale decisions are cleared
-	// Note: LoadProjectPolicies also clears the cache, but we call this explicitly for clarity
-	h.enforcer.InvalidateCacheForProject(project.Name)
-
-	// AC-5: Log successful policy reload with duration
-	slog.Info("immediate policy reload completed after role binding change",
-		"requestId", requestID,
-		"project", project.Name,
-		"duration_ms", time.Since(start).Milliseconds(),
-	)
 }

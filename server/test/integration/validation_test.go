@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/provops-org/knodex/server/internal/rbac"
+	"github.com/knodex/knodex/server/internal/rbac"
 )
 
 // TestValidationAPI_ValidateCreation_Valid tests validation of a valid project

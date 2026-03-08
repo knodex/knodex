@@ -3,7 +3,7 @@ package models
 import (
 	"time"
 
-	"github.com/provops-org/knodex/server/internal/deployment"
+	"github.com/knodex/knodex/server/internal/deployment"
 )
 
 // Instance labels and annotations used for tracking

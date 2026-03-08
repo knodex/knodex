@@ -2,18 +2,17 @@ package rbac
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
-	"regexp"
-	"strings"
+
+	utilrand "github.com/knodex/knodex/server/internal/util/rand"
+	"github.com/knodex/knodex/server/internal/util/sanitize"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/provops-org/knodex/server/internal/repository"
+	"github.com/knodex/knodex/server/internal/repository"
 )
 
 const (
@@ -161,10 +160,7 @@ func (cm *CredentialManager) GetAuthTypeFromSecret(secret *corev1.Secret) string
 
 // generateSecretName creates a unique secret name for a repository config
 func (cm *CredentialManager) generateSecretName(repoConfigID string) string {
-	// Generate a short random suffix for uniqueness
-	suffix := make([]byte, 4)
-	rand.Read(suffix)
-	return fmt.Sprintf("%s%s-%s", CredentialSecretPrefix, sanitizeK8sName(repoConfigID), hex.EncodeToString(suffix))
+	return fmt.Sprintf("%s%s-%s", CredentialSecretPrefix, sanitize.K8sName(repoConfigID), utilrand.GenerateRandomHex(4))
 }
 
 // buildSecretData constructs the secret data map based on auth type
@@ -261,21 +257,6 @@ func (cm *CredentialManager) buildSecretData(req repository.CreateCredentialRequ
 // Delegates to repository.ValidatePEMFormat to avoid duplication.
 func ValidatePEMFormat(data, fieldName string) error {
 	return repository.ValidatePEMFormat(data, fieldName)
-}
-
-// sanitizeK8sName converts a string to a valid Kubernetes resource name
-func sanitizeK8sName(name string) string {
-	name = strings.ToLower(name)
-	re := regexp.MustCompile(`[^a-z0-9-]`)
-	name = re.ReplaceAllString(name, "-")
-	re = regexp.MustCompile(`-+`)
-	name = re.ReplaceAllString(name, "-")
-	name = strings.Trim(name, "-")
-	maxLen := 40
-	if len(name) > maxLen {
-		name = name[:maxLen]
-	}
-	return name
 }
 
 // ValidateSSHRepoURL validates that a repository URL is in SSH format and does

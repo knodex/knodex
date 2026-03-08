@@ -25,7 +25,7 @@
 ### Install the chart
 
 ```bash
-helm repo add knodex https://provops-org.github.io/knodex-helm
+helm repo add knodex https://knodex.github.io/knodex-helm
 helm repo update
 helm install knodex knodex/knodex -n knodex --create-namespace
 ```
@@ -50,7 +50,7 @@ enterprise:
   organization: "acme-corp"
 ```
 
-RGDs without a `knodex.io/organization` label are visible to all organizations (shared catalog). See the [Organizations documentation](https://github.com/provops-org/knodex-ee/blob/main/docs/enterprise/organizations.md) for details.
+RGDs without a `knodex.io/organization` label are visible to all organizations (shared catalog). See the [Organizations documentation](https://github.com/knodex/knodex-ee/blob/main/docs/enterprise/organizations.md) for details.
 
 ## OIDC Configuration
 

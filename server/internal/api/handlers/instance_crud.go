@@ -15,18 +15,22 @@ import (
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 
-	"github.com/provops-org/knodex/server/internal/api/helpers"
-	"github.com/provops-org/knodex/server/internal/api/middleware"
-	"github.com/provops-org/knodex/server/internal/api/response"
-	"github.com/provops-org/knodex/server/internal/audit"
-	"github.com/provops-org/knodex/server/internal/deployment"
-	"github.com/provops-org/knodex/server/internal/deployment/vcs"
-	"github.com/provops-org/knodex/server/internal/drift"
-	"github.com/provops-org/knodex/server/internal/models"
-	"github.com/provops-org/knodex/server/internal/rbac"
-	"github.com/provops-org/knodex/server/internal/repository"
-	"github.com/provops-org/knodex/server/internal/services"
-	"github.com/provops-org/knodex/server/internal/watcher"
+	"github.com/knodex/knodex/server/internal/kro"
+
+	"github.com/knodex/knodex/server/internal/api/helpers"
+	"github.com/knodex/knodex/server/internal/api/middleware"
+	"github.com/knodex/knodex/server/internal/api/response"
+	"github.com/knodex/knodex/server/internal/audit"
+	"github.com/knodex/knodex/server/internal/deployment"
+	"github.com/knodex/knodex/server/internal/deployment/vcs"
+	"github.com/knodex/knodex/server/internal/drift"
+	"github.com/knodex/knodex/server/internal/kro/watcher"
+	"github.com/knodex/knodex/server/internal/manifest"
+	"github.com/knodex/knodex/server/internal/models"
+	"github.com/knodex/knodex/server/internal/rbac"
+	"github.com/knodex/knodex/server/internal/repository"
+	"github.com/knodex/knodex/server/internal/services"
+	"github.com/knodex/knodex/server/internal/util/collection"
 )
 
 const (
@@ -225,15 +229,10 @@ func (h *InstanceCRUDHandler) ListInstances(w http.ResponseWriter, r *http.Reque
 	// Global admins (userNamespaces == nil) see all instances
 	// Uses wildcard pattern matching (e.g., "staging*" matches "staging-team-a")
 	if userNamespaces != nil {
-		filtered := make([]models.Instance, 0)
-		for _, instance := range result.Items {
-			// Check if instance namespace matches any allowed pattern
-			if rbac.MatchNamespaceInList(instance.Namespace, userNamespaces) {
-				filtered = append(filtered, instance)
-			}
-		}
-		result.Items = filtered
-		result.TotalCount = len(filtered)
+		result.Items = collection.Filter(result.Items, func(instance models.Instance) bool {
+			return rbac.MatchNamespaceInList(instance.Namespace, userNamespaces)
+		})
+		result.TotalCount = len(result.Items)
 	}
 
 	// Enrich instances with drift info
@@ -451,6 +450,13 @@ func (h *InstanceCRUDHandler) UpdateInstance(w http.ResponseWriter, r *http.Requ
 
 	if req.Spec == nil || len(req.Spec) == 0 {
 		response.BadRequest(w, "spec is required and must not be empty", nil)
+		return
+	}
+
+	// Security: validate spec against injection/DoS attack patterns
+	// before applying to Kubernetes (INJ-VULN-02)
+	if err := manifest.ValidateSpecMap(req.Spec, 0, manifest.MaxSpecDepth); err != nil {
+		response.BadRequest(w, "invalid spec: "+err.Error(), nil)
 		return
 	}
 
@@ -907,7 +913,7 @@ func gvrFromAPIVersionAndKind(apiVersion, kind string) schema.GroupVersionResour
 	} else {
 		version = apiVersion
 		if strings.Contains(version, "alpha") || strings.Contains(version, "beta") {
-			group = "kro.run"
+			group = kro.RGDGroup
 		}
 	}
 

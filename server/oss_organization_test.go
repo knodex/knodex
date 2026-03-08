@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/provops-org/knodex/server/internal/config"
+	"github.com/knodex/knodex/server/internal/config"
 )
 
 func TestInitOrganizationFilter_OSS_ReturnsEmpty(t *testing.T) {

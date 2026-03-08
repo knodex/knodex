@@ -11,8 +11,9 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/provops-org/knodex/server/internal/models"
-	"github.com/provops-org/knodex/server/internal/rbac"
+	"github.com/knodex/knodex/server/internal/models"
+	"github.com/knodex/knodex/server/internal/rbac"
+	"github.com/knodex/knodex/server/internal/util/collection"
 )
 
 // Redis cache TTL constants for catalog data.
@@ -255,9 +256,9 @@ func (s *CatalogService) GetFilters(ctx context.Context, authCtx *UserAuthContex
 
 	// Convert to sorted slices
 	filterOpts := &RGDFilterOptions{
-		Projects:   mapKeysToSortedSlice(projectSet),
-		Tags:       mapKeysToSortedSlice(tagSet),
-		Categories: mapKeysToSortedSlice(categorySet),
+		Projects:   collection.SortedKeys(projectSet),
+		Tags:       collection.SortedKeys(tagSet),
+		Categories: collection.SortedKeys(categorySet),
 	}
 
 	// Cache filter options - they change infrequently (only when RGDs are added/removed)
@@ -429,14 +430,4 @@ func (s *CatalogService) filtersCacheKey(projects []string, includePublic bool) 
 	copy(sortedProjects, projects)
 	sort.Strings(sortedProjects)
 	return fmt.Sprintf("rgd:filters:org=%s:projects=%s:public=%t", s.organizationFilter, strings.Join(sortedProjects, ","), includePublic)
-}
-
-// mapKeysToSortedSlice extracts keys from a map and returns them as a sorted slice.
-func mapKeysToSortedSlice(m map[string]bool) []string {
-	result := make([]string, 0, len(m))
-	for k := range m {
-		result = append(result, k)
-	}
-	sort.Strings(result)
-	return result
 }

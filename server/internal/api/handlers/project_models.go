@@ -3,7 +3,7 @@ package handlers
 import (
 	"time"
 
-	"github.com/provops-org/knodex/server/internal/rbac"
+	"github.com/knodex/knodex/server/internal/rbac"
 )
 
 // CreateProjectRequest represents the request body for creating a project

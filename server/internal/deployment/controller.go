@@ -14,7 +14,7 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/provops-org/knodex/server/internal/deployment/vcs"
+	"github.com/knodex/knodex/server/internal/deployment/vcs"
 )
 
 // Controller orchestrates instance deployments across different modes

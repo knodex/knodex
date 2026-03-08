@@ -13,7 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/provops-org/knodex/server/internal/metrics/gitops"
+	"github.com/knodex/knodex/server/internal/metrics/gitops"
+	utilretry "github.com/knodex/knodex/server/internal/util/retry"
 )
 
 // RetryConfig holds configuration for retry behavior
@@ -173,58 +174,14 @@ func (c *GitHubClient) waitForRateLimit(ctx context.Context, retryAfter time.Dur
 	}
 }
 
-// parseRetryAfter parses the Retry-After header value
-// AC-RETRY-03: Retry-After header handling
+// parseRetryAfter delegates to util/retry for Retry-After header parsing.
 func parseRetryAfter(header string) time.Duration {
-	if header == "" {
-		return 0
-	}
-
-	// Try parsing as seconds
-	if seconds, err := strconv.Atoi(header); err == nil {
-		return time.Duration(seconds) * time.Second
-	}
-
-	// Try parsing as HTTP-date
-	if t, err := http.ParseTime(header); err == nil {
-		return time.Until(t)
-	}
-
-	return 0
+	return utilretry.ParseRetryAfter(header)
 }
 
-// isRetryableError determines if an error is retryable
-// AC-RETRY-04: Non-retryable errors fail immediately
+// isRetryableError delegates to util/retry for error classification.
 func isRetryableError(err error) bool {
-	if err == nil {
-		return false
-	}
-
-	// Network errors are retryable
-	var netErr net.Error
-	if errors.As(err, &netErr) {
-		// Timeout errors are retryable
-		return netErr.Timeout() || netErr.Temporary()
-	}
-
-	// Connection reset, refused, etc. are retryable
-	errStr := err.Error()
-	retryableMessages := []string{
-		"connection reset",
-		"connection refused",
-		"no such host",
-		"temporary failure",
-		"i/o timeout",
-		"EOF",
-	}
-
-	for _, msg := range retryableMessages {
-		if strings.Contains(strings.ToLower(errStr), strings.ToLower(msg)) {
-			return true
-		}
-	}
-
-	return false
+	return utilretry.IsRetryable(err)
 }
 
 // classifyError returns an error type label for metrics

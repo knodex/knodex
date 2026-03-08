@@ -9,7 +9,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"github.com/provops-org/knodex/server/internal/deployment/vcs"
+	"github.com/knodex/knodex/server/internal/deployment/vcs"
 )
 
 // RepositoryConfig CRD constants

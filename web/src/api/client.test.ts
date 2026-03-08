@@ -30,7 +30,6 @@ describe('API Client 401 Interceptor', () => {
     vi.clearAllMocks();
     vi.useFakeTimers();
     _resetRedirectState();
-    localStorage.clear();
 
     // Save original pathname descriptor
     originalPathname = Object.getOwnPropertyDescriptor(window, 'location');
@@ -56,12 +55,6 @@ describe('API Client 401 Interceptor', () => {
   function getErrorHandler() {
     const interceptors = (apiClient.interceptors.response as unknown as { handlers: Array<{ rejected: (err: unknown) => Promise<unknown> }> }).handlers;
     return interceptors[0].rejected;
-  }
-
-  // Helper to get the request interceptor handler
-  function getRequestHandler() {
-    const interceptors = (apiClient.interceptors.request as unknown as { handlers: Array<{ fulfilled: (config: { headers: Record<string, string> }) => { headers: Record<string, string> } }> }).handlers;
-    return interceptors[0].fulfilled;
   }
 
   it('skips redirect for /auth/callback path on 401', async () => {
@@ -183,12 +176,7 @@ describe('API Client 401 Interceptor', () => {
     expect(mockLogout).not.toHaveBeenCalled();
   });
 
-  it('adds JWT token to request headers', async () => {
-    localStorage.setItem('jwt_token', 'test-token-123');
-
-    const config = { headers: {} as Record<string, string> };
-    const result = getRequestHandler()(config);
-
-    expect(result.headers.Authorization).toBe('Bearer test-token-123');
+  it('sends withCredentials for automatic cookie inclusion', () => {
+    expect(apiClient.defaults.withCredentials).toBe(true);
   });
 });

@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/provops-org/knodex/server/internal/api/middleware"
-	"github.com/provops-org/knodex/server/internal/services"
+	"github.com/knodex/knodex/server/internal/api/middleware"
+	"github.com/knodex/knodex/server/internal/services"
 )
 
 // mockComplianceService is a mock implementation of services.ComplianceService
@@ -1151,8 +1151,9 @@ func TestPaginateSlice_EmptySlice(t *testing.T) {
 func TestComplianceHandler_UpdateEnforcement_Success(t *testing.T) {
 	t.Parallel()
 
+	// De-escalation (deny → warn) does not require confirmation
 	svc := newMockComplianceService(true)
-	svc.addConstraint("require-team-label", "K8sRequiredLabels", "k8srequiredlabels", "dryrun", 5)
+	svc.addConstraint("require-team-label", "K8sRequiredLabels", "k8srequiredlabels", "deny", 5)
 
 	enforcer := &mockPolicyEnforcer{canAccessResult: true}
 	handler := NewComplianceHandler(svc, enforcer, nil)
@@ -1162,7 +1163,7 @@ func TestComplianceHandler_UpdateEnforcement_Success(t *testing.T) {
 		Groups: []string{"security-team"},
 	}
 
-	body := `{"enforcementAction": "deny"}`
+	body := `{"enforcementAction": "warn"}`
 	req := newRequestWithUserContext(http.MethodPatch, "/api/v1/compliance/constraints/K8sRequiredLabels/require-team-label/enforcement", []byte(body), userCtx)
 	req.SetPathValue("kind", "K8sRequiredLabels")
 	req.SetPathValue("name", "require-team-label")
@@ -1182,8 +1183,8 @@ func TestComplianceHandler_UpdateEnforcement_Success(t *testing.T) {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 
-	if constraint.EnforcementAction != "deny" {
-		t.Errorf("expected enforcement 'deny', got '%s'", constraint.EnforcementAction)
+	if constraint.EnforcementAction != "warn" {
+		t.Errorf("expected enforcement 'warn', got '%s'", constraint.EnforcementAction)
 	}
 }
 
@@ -1191,15 +1192,16 @@ func TestComplianceHandler_UpdateEnforcement_AllActions(t *testing.T) {
 	t.Parallel()
 
 	testCases := []struct {
-		name        string
-		action      string
-		expectValid bool
+		name          string
+		initialAction string
+		action        string
+		expectValid   bool
 	}{
-		{"deny action", "deny", true},
-		{"warn action", "warn", true},
-		{"dryrun action", "dryrun", true},
-		{"invalid action", "block", false},
-		{"empty action", "", false},
+		{"deny to warn (de-escalation)", "deny", "warn", true},
+		{"deny to dryrun (de-escalation)", "deny", "dryrun", true},
+		{"warn to dryrun", "warn", "dryrun", true},
+		{"invalid action", "warn", "block", false},
+		{"empty action", "warn", "", false},
 	}
 
 	for _, tc := range testCases {
@@ -1208,7 +1210,7 @@ func TestComplianceHandler_UpdateEnforcement_AllActions(t *testing.T) {
 			t.Parallel()
 
 			svc := newMockComplianceService(true)
-			svc.addConstraint("test-constraint", "K8sTest", "k8stest", "dryrun", 0)
+			svc.addConstraint("test-constraint", "K8sTest", "k8stest", tc.initialAction, 0)
 
 			enforcer := &mockPolicyEnforcer{canAccessResult: true}
 			handler := NewComplianceHandler(svc, enforcer, nil)
@@ -1361,7 +1363,8 @@ func TestComplianceHandler_UpdateEnforcement_ServiceError(t *testing.T) {
 	t.Parallel()
 
 	svc := newMockComplianceService(true)
-	svc.addConstraint("require-team-label", "K8sRequiredLabels", "k8srequiredlabels", "dryrun", 0)
+	// Use deny → warn (de-escalation) to avoid confirmation flow
+	svc.addConstraint("require-team-label", "K8sRequiredLabels", "k8srequiredlabels", "deny", 0)
 	svc.updateEnforcementErr = errors.New("Kubernetes API error")
 
 	enforcer := &mockPolicyEnforcer{canAccessResult: true}
@@ -1371,7 +1374,7 @@ func TestComplianceHandler_UpdateEnforcement_ServiceError(t *testing.T) {
 		UserID: "admin",
 	}
 
-	body := `{"enforcementAction": "deny"}`
+	body := `{"enforcementAction": "warn"}`
 	req := newRequestWithUserContext(http.MethodPatch, "/api/v1/compliance/constraints/K8sRequiredLabels/require-team-label/enforcement", []byte(body), userCtx)
 	req.SetPathValue("kind", "K8sRequiredLabels")
 	req.SetPathValue("name", "require-team-label")
@@ -2393,5 +2396,358 @@ func TestParseTimeRange_InvalidSince(t *testing.T) {
 	}
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected status 400, got %d", w.Code)
+	}
+}
+
+// --- Match field validation tests (STORY-249) ---
+
+func createConstraintTestSetup() (*ComplianceHandler, *middleware.UserContext) {
+	svc := newMockComplianceService(true)
+	svc.addTemplate("k8srequiredlabels", "K8sRequiredLabels", "Require labels on resources")
+	enforcer := &mockPolicyEnforcer{canAccessResult: true}
+	handler := NewComplianceHandler(svc, enforcer, nil)
+	userCtx := &middleware.UserContext{UserID: "security-officer"}
+	return handler, userCtx
+}
+
+func assertBadRequest(t *testing.T, rec *httptest.ResponseRecorder, wantSubstring string) {
+	t.Helper()
+	resp := rec.Result()
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, resp.StatusCode)
+	}
+	var errResp map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
+		t.Fatalf("failed to decode error response: %v", err)
+	}
+	if code, ok := errResp["code"].(string); !ok || code != "BAD_REQUEST" {
+		t.Errorf("expected error code BAD_REQUEST, got %v", errResp["code"])
+	}
+	msg, _ := errResp["message"].(string)
+	if wantSubstring != "" && !strings.Contains(msg, wantSubstring) {
+		t.Errorf("expected message to contain %q, got %q", wantSubstring, msg)
+	}
+}
+
+func TestCreateConstraint_BlockedNamespace_KubeSystem(t *testing.T) {
+	t.Parallel()
+	handler, userCtx := createConstraintTestSetup()
+
+	body := `{
+		"name": "test-constraint",
+		"templateName": "k8srequiredlabels",
+		"match": {"namespaces": ["kube-system"]}
+	}`
+	req := newRequestWithUserContext(http.MethodPost, "/api/v1/compliance/constraints", []byte(body), userCtx)
+	rec := httptest.NewRecorder()
+	handler.CreateConstraint(rec, req)
+
+	assertBadRequest(t, rec, "kube-system")
+}
+
+func TestCreateConstraint_BlockedNamespace_KubePublic(t *testing.T) {
+	t.Parallel()
+	handler, userCtx := createConstraintTestSetup()
+
+	body := `{
+		"name": "test-constraint",
+		"templateName": "k8srequiredlabels",
+		"match": {"namespaces": ["kube-public"]}
+	}`
+	req := newRequestWithUserContext(http.MethodPost, "/api/v1/compliance/constraints", []byte(body), userCtx)
+	rec := httptest.NewRecorder()
+	handler.CreateConstraint(rec, req)
+
+	assertBadRequest(t, rec, "kube-public")
+}
+
+func TestCreateConstraint_BlockedNamespace_GatekeeperSystem(t *testing.T) {
+	t.Parallel()
+	handler, userCtx := createConstraintTestSetup()
+
+	body := `{
+		"name": "test-constraint",
+		"templateName": "k8srequiredlabels",
+		"match": {"namespaces": ["gatekeeper-system"]}
+	}`
+	req := newRequestWithUserContext(http.MethodPost, "/api/v1/compliance/constraints", []byte(body), userCtx)
+	rec := httptest.NewRecorder()
+	handler.CreateConstraint(rec, req)
+
+	assertBadRequest(t, rec, "gatekeeper-system")
+}
+
+func TestCreateConstraint_BlockedNamespace_KubeNodeLease(t *testing.T) {
+	t.Parallel()
+	handler, userCtx := createConstraintTestSetup()
+
+	body := `{
+		"name": "test-constraint",
+		"templateName": "k8srequiredlabels",
+		"match": {"namespaces": ["kube-node-lease"]}
+	}`
+	req := newRequestWithUserContext(http.MethodPost, "/api/v1/compliance/constraints", []byte(body), userCtx)
+	rec := httptest.NewRecorder()
+	handler.CreateConstraint(rec, req)
+
+	assertBadRequest(t, rec, "kube-node-lease")
+}
+
+func TestCreateConstraint_WildcardNamespace(t *testing.T) {
+	t.Parallel()
+	handler, userCtx := createConstraintTestSetup()
+
+	body := `{
+		"name": "test-constraint",
+		"templateName": "k8srequiredlabels",
+		"match": {"namespaces": ["*"]}
+	}`
+	req := newRequestWithUserContext(http.MethodPost, "/api/v1/compliance/constraints", []byte(body), userCtx)
+	rec := httptest.NewRecorder()
+	handler.CreateConstraint(rec, req)
+
+	assertBadRequest(t, rec, "wildcard namespace")
+}
+
+func TestCreateConstraint_WildcardScope(t *testing.T) {
+	t.Parallel()
+	handler, userCtx := createConstraintTestSetup()
+
+	body := `{
+		"name": "test-constraint",
+		"templateName": "k8srequiredlabels",
+		"match": {"scope": "*"}
+	}`
+	req := newRequestWithUserContext(http.MethodPost, "/api/v1/compliance/constraints", []byte(body), userCtx)
+	rec := httptest.NewRecorder()
+	handler.CreateConstraint(rec, req)
+
+	assertBadRequest(t, rec, "wildcard scope")
+}
+
+func TestCreateConstraint_OverlyBroadKinds_BothWildcard(t *testing.T) {
+	t.Parallel()
+	handler, userCtx := createConstraintTestSetup()
+
+	body := `{
+		"name": "test-constraint",
+		"templateName": "k8srequiredlabels",
+		"match": {"kinds": [{"apiGroups": ["*"], "kinds": ["*"]}]}
+	}`
+	req := newRequestWithUserContext(http.MethodPost, "/api/v1/compliance/constraints", []byte(body), userCtx)
+	rec := httptest.NewRecorder()
+	handler.CreateConstraint(rec, req)
+
+	assertBadRequest(t, rec, "overly-broad kind selector")
+}
+
+func TestCreateConstraint_ValidScopedMatch(t *testing.T) {
+	t.Parallel()
+	handler, userCtx := createConstraintTestSetup()
+
+	body := `{
+		"name": "test-valid-constraint",
+		"templateName": "k8srequiredlabels",
+		"match": {
+			"namespaces": ["demo"],
+			"kinds": [{"apiGroups": ["apps"], "kinds": ["Deployment"]}],
+			"scope": "Namespaced"
+		}
+	}`
+	req := newRequestWithUserContext(http.MethodPost, "/api/v1/compliance/constraints", []byte(body), userCtx)
+	rec := httptest.NewRecorder()
+	handler.CreateConstraint(rec, req)
+
+	resp := rec.Result()
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Errorf("expected status %d for valid match, got %d", http.StatusCreated, resp.StatusCode)
+	}
+}
+
+func TestCreateConstraint_NilMatch(t *testing.T) {
+	t.Parallel()
+	handler, userCtx := createConstraintTestSetup()
+
+	body := `{
+		"name": "test-nil-match",
+		"templateName": "k8srequiredlabels"
+	}`
+	req := newRequestWithUserContext(http.MethodPost, "/api/v1/compliance/constraints", []byte(body), userCtx)
+	rec := httptest.NewRecorder()
+	handler.CreateConstraint(rec, req)
+
+	resp := rec.Result()
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Errorf("expected status %d for nil match, got %d", http.StatusCreated, resp.StatusCode)
+	}
+}
+
+func TestCreateConstraint_MixedKinds_OneWildcard(t *testing.T) {
+	t.Parallel()
+	handler, userCtx := createConstraintTestSetup()
+
+	// Only apiGroups is wildcard, kinds is specific — should be allowed
+	body := `{
+		"name": "test-mixed-kinds",
+		"templateName": "k8srequiredlabels",
+		"match": {
+			"kinds": [
+				{"apiGroups": ["*"], "kinds": ["Deployment"]},
+				{"apiGroups": ["apps"], "kinds": ["StatefulSet"]}
+			]
+		}
+	}`
+	req := newRequestWithUserContext(http.MethodPost, "/api/v1/compliance/constraints", []byte(body), userCtx)
+	rec := httptest.NewRecorder()
+	handler.CreateConstraint(rec, req)
+
+	resp := rec.Result()
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Errorf("expected status %d for partially-wildcard kinds, got %d", http.StatusCreated, resp.StatusCode)
+	}
+}
+
+func TestIsKubernetesForbiddenErr(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil error", nil, false},
+		{"k8s forbidden", errors.New("pods \"test\" is forbidden: service account cannot create"), true},
+		{"k8s forbidden uppercase", errors.New("pods \"test\" Is Forbidden: no access"), true},
+		{"connection refused", errors.New("connection refused"), false},
+		{"generic error", errors.New("something went wrong"), false},
+		{"not found", errors.New("not found"), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isKubernetesForbiddenErr(tt.err)
+			if got != tt.want {
+				t.Errorf("isKubernetesForbiddenErr(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestComplianceHandler_CreateConstraint_ForbiddenReturns403(t *testing.T) {
+	t.Parallel()
+
+	svc := newMockComplianceService(true)
+	svc.addTemplate("K8sTest", "k8stest", "test template")
+	svc.createConstraintErr = errors.New("constraints.constraints.gatekeeper.sh \"test\" is forbidden: system:serviceaccount:knodex:knodex cannot create")
+
+	enforcer := &mockPolicyEnforcer{canAccessResult: true}
+	handler := NewComplianceHandler(svc, enforcer, nil)
+
+	userCtx := &middleware.UserContext{
+		UserID: "admin",
+		Groups: []string{"admins"},
+	}
+
+	body := `{"name": "test", "templateName": "K8sTest"}`
+	req := newRequestWithUserContext(http.MethodPost, "/api/v1/compliance/constraints", []byte(body), userCtx)
+	rec := httptest.NewRecorder()
+
+	handler.CreateConstraint(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestComplianceHandler_UpdateEnforcement_ForbiddenReturns403(t *testing.T) {
+	t.Parallel()
+
+	svc := newMockComplianceService(true)
+	// Use deny → warn (de-escalation) to avoid confirmation flow
+	svc.addConstraint("my-constraint", "K8sTest", "k8stest", "deny", 0)
+	svc.updateEnforcementErr = errors.New("constraints.constraints.gatekeeper.sh \"my-constraint\" is forbidden: no access")
+
+	enforcer := &mockPolicyEnforcer{canAccessResult: true}
+	handler := NewComplianceHandler(svc, enforcer, nil)
+
+	userCtx := &middleware.UserContext{
+		UserID: "admin",
+		Groups: []string{"admins"},
+	}
+
+	body := `{"enforcementAction": "warn"}`
+	req := newRequestWithUserContext(http.MethodPatch, "/api/v1/compliance/constraints/K8sTest/my-constraint/enforcement", []byte(body), userCtx)
+	req.SetPathValue("kind", "K8sTest")
+	req.SetPathValue("name", "my-constraint")
+	rec := httptest.NewRecorder()
+
+	handler.UpdateConstraintEnforcement(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestComplianceHandler_CreateConstraint_GenericError_NotClassifiedAsForbidden(t *testing.T) {
+	t.Parallel()
+
+	svc := newMockComplianceService(true)
+	svc.addTemplate("K8sTest", "k8stest", "test template")
+	svc.createConstraintErr = errors.New("connection refused")
+
+	enforcer := &mockPolicyEnforcer{canAccessResult: true}
+	handler := NewComplianceHandler(svc, enforcer, nil)
+
+	userCtx := &middleware.UserContext{
+		UserID: "admin",
+		Groups: []string{"admins"},
+	}
+
+	body := `{"name": "test", "templateName": "K8sTest"}`
+	req := newRequestWithUserContext(http.MethodPost, "/api/v1/compliance/constraints", []byte(body), userCtx)
+	rec := httptest.NewRecorder()
+
+	handler.CreateConstraint(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500, got %d", rec.Code)
+	}
+}
+
+func TestComplianceHandler_UpdateEnforcement_GenericError_NotClassifiedAsForbidden(t *testing.T) {
+	t.Parallel()
+
+	svc := newMockComplianceService(true)
+	// Use deny → warn (de-escalation) to avoid confirmation flow
+	svc.addConstraint("my-constraint", "K8sTest", "k8stest", "deny", 0)
+	svc.updateEnforcementErr = errors.New("connection refused")
+
+	enforcer := &mockPolicyEnforcer{canAccessResult: true}
+	handler := NewComplianceHandler(svc, enforcer, nil)
+
+	userCtx := &middleware.UserContext{
+		UserID: "admin",
+		Groups: []string{"admins"},
+	}
+
+	body := `{"enforcementAction": "warn"}`
+	req := newRequestWithUserContext(http.MethodPatch, "/api/v1/compliance/constraints/K8sTest/my-constraint/enforcement", []byte(body), userCtx)
+	req.SetPathValue("kind", "K8sTest")
+	req.SetPathValue("name", "my-constraint")
+	rec := httptest.NewRecorder()
+
+	handler.UpdateConstraintEnforcement(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("generic error should be 500, got %d", rec.Code)
+	}
+
+	// Verify it's NOT classified as 403
+	if rec.Code == http.StatusForbidden {
+		t.Error("generic error 'connection refused' must NOT be classified as 403 Forbidden")
 	}
 }

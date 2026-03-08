@@ -1,43 +1,18 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { jwtDecode } from 'jwt-decode';
 import { logger } from '@/lib/logger';
 
-// JWT Claims from Backend
-// ArgoCD-Aligned Authorization Model:
-// - casbin_roles: Contains Casbin roles (e.g., ["role:serveradmin"])
-// - roles: Project-scoped roles for permission inference
-// - permissions: Pre-computed permissions for frontend UI rendering (ArgoCD pattern)
-// NOTE: UI visibility checks are separate from backend authorization:
-//   - Frontend: Uses permissions map for optimistic UI rendering
-//   - Backend: Enforces actual permissions via Casbin CanAccess()
-export interface JWTClaims {
-  sub: string;
-  email: string;
-  name?: string;
-  projects: string[];
-  default_project: string;
-  groups?: string[]; // OIDC groups from IdP
-  casbin_roles?: string[]; // Casbin roles (e.g., ["role:serveradmin"])
-  roles?: Record<string, string>; // projectId -> role name (e.g., { "proj-alpha-team": "developer" })
-  permissions?: Record<string, boolean>; // Pre-computed permissions (e.g., {"*:*": true, "settings:get": true})
-  exp: number;
-  iat: number;
-  iss?: string;
-  aud?: string;
-}
-
-// Helper to check specific permission from JWT claims
+// Helper to check specific permission from stored user data
 // NOTE: For UI visibility only - actual authorization is enforced by backend via Casbin
-export const hasPermission = (claims: JWTClaims | null, permission: string): boolean => {
-  if (!claims) return false;
+export const hasPermission = (permissions: Record<string, boolean> | undefined, permission: string): boolean => {
+  if (!permissions) return false;
 
   // Admin has all permissions
-  if (claims.permissions?.['*:*']) {
+  if (permissions['*:*']) {
     return true;
   }
 
-  return claims.permissions?.[permission] ?? false;
+  return permissions[permission] ?? false;
 };
 
 export interface User {
@@ -53,38 +28,41 @@ export interface Project {
   displayName: string;
 }
 
+// LoginUserInfo matches the server's UserInfo struct from LoginResponse.
+// After the HttpOnly cookie migration, the frontend receives user info directly
+// from the server response (not by decoding the JWT).
+export interface LoginUserInfo {
+  id: string;
+  email: string;
+  displayName?: string;
+  projects?: string[];
+  defaultProject?: string;
+  groups?: string[];
+  roles?: Record<string, string>;
+  casbinRoles?: string[];
+  permissions?: Record<string, boolean>;
+}
+
 export interface UserState {
   // State
   user: User | null;
   projects: string[];
-  roles: Record<string, string>; // projectId -> role name (e.g., { "proj-alpha-team": "developer" })
+  roles: Record<string, string>; // projectId -> role name
   currentProject: string | null;
-  // NOTE: isGlobalAdmin was removed - use useCanI() hook for permission checks
-  // Authorization should always go through Casbin, not boolean flags (ArgoCD-aligned)
   isAuthenticated: boolean;
-  token: string | null;
-  groups: string[]; // OIDC groups from JWT
-  issuer: string | null; // JWT issuer (OIDC provider URL or null for local)
-  casbinRoles: string[]; // Casbin roles (e.g., ["role:serveradmin"])
+  groups: string[]; // OIDC groups
+  issuer: string | null; // JWT issuer
+  casbinRoles: string[]; // Casbin roles
+  permissions: Record<string, boolean>; // Pre-computed permissions
   tokenExp: number | null; // Token expiry as Unix timestamp
   tokenIat: number | null; // Token issued-at as Unix timestamp
 
   // Actions
-  login: (token: string) => void;
+  login: (userInfo: LoginUserInfo, expiresAt?: string) => void;
   logout: () => void;
   setCurrentProject: (projectId: string) => void;
-  refreshUser: () => void;
   isTokenExpired: () => boolean;
 }
-
-const decodeToken = (token: string): JWTClaims | null => {
-  try {
-    return jwtDecode<JWTClaims>(token);
-  } catch (error) {
-    logger.error('[UserStore] Failed to decode JWT:', error);
-    return null;
-  }
-};
 
 export const useUserStore = create<UserState>()(
   persist(
@@ -94,46 +72,35 @@ export const useUserStore = create<UserState>()(
       roles: {},
       currentProject: null,
       isAuthenticated: false,
-      token: null,
       groups: [],
       issuer: null,
       casbinRoles: [],
+      permissions: {},
       tokenExp: null,
       tokenIat: null,
 
-      login: (token: string) => {
-        const claims = decodeToken(token);
-        if (!claims) {
-          logger.error('[UserStore] Invalid token');
-          return;
-        }
-
-        // NOTE: isGlobalAdmin was removed - use useCanI() hook for permission checks
-        // The JWT permissions map is available via hasPermission() for client-side checks
-
+      login: (userInfo: LoginUserInfo, expiresAt?: string) => {
         const user: User = {
-          id: claims.sub,
-          email: claims.email,
-          name: claims.name,
+          id: userInfo.id,
+          email: userInfo.email,
+          name: userInfo.displayName,
         };
+
+        const expTimestamp = expiresAt ? Math.floor(new Date(expiresAt).getTime() / 1000) : null;
 
         set({
           user,
-          projects: claims.projects || [],
-          roles: claims.roles || {},
-          // Fallback to first project if default_project not specified (handles E2E test tokens)
-          currentProject: claims.default_project || claims.projects?.[0] || null,
+          projects: userInfo.projects || [],
+          roles: userInfo.roles || {},
+          currentProject: userInfo.defaultProject || userInfo.projects?.[0] || null,
           isAuthenticated: true,
-          token,
-          groups: claims.groups || [],
-          issuer: claims.iss || null,
-          casbinRoles: claims.casbin_roles || [],
-          tokenExp: claims.exp || null,
-          tokenIat: claims.iat || null,
+          groups: userInfo.groups || [],
+          issuer: null,
+          casbinRoles: userInfo.casbinRoles || [],
+          permissions: userInfo.permissions || {},
+          tokenExp: expTimestamp,
+          tokenIat: Math.floor(Date.now() / 1000),
         });
-
-        // Store token in localStorage for axios interceptor
-        localStorage.setItem('jwt_token', token);
       },
 
       logout: () => {
@@ -143,16 +110,13 @@ export const useUserStore = create<UserState>()(
           roles: {},
           currentProject: null,
           isAuthenticated: false,
-          token: null,
           groups: [],
           issuer: null,
           casbinRoles: [],
+          permissions: {},
           tokenExp: null,
           tokenIat: null,
         });
-
-        // Clear token from localStorage
-        localStorage.removeItem('jwt_token');
       },
 
       setCurrentProject: (projectId: string) => {
@@ -165,72 +129,28 @@ export const useUserStore = create<UserState>()(
         set({ currentProject: projectId });
       },
 
-      refreshUser: () => {
-        const { token } = get();
-        if (!token) return;
-
-        const claims = decodeToken(token);
-        if (!claims) {
-          get().logout();
-          return;
-        }
-
-        // Check if token is expired
-        if (claims.exp * 1000 < Date.now()) {
-          get().logout();
-          return;
-        }
-
-        // NOTE: isGlobalAdmin was removed - use useCanI() hook for permission checks
-
-        // Update user info from token
-        const user: User = {
-          id: claims.sub,
-          email: claims.email,
-          name: claims.name,
-        };
-
-        set({
-          user,
-          projects: claims.projects || [],
-          roles: claims.roles || {},
-          // Fallback to first project if default_project not specified (handles E2E test tokens)
-          currentProject: claims.default_project || claims.projects?.[0] || null,
-          isAuthenticated: true,
-          groups: claims.groups || [],
-          issuer: claims.iss || null,
-          casbinRoles: claims.casbin_roles || [],
-          tokenExp: claims.exp || null,
-          tokenIat: claims.iat || null,
-        });
-      },
-
       isTokenExpired: () => {
-        const { token } = get();
-        if (!token) return true;
-
-        const claims = decodeToken(token);
-        if (!claims) return true;
-
-        return claims.exp * 1000 < Date.now();
+        const { tokenExp } = get();
+        if (!tokenExp) return true;
+        return tokenExp * 1000 < Date.now();
       },
     }),
     {
+      // NOTE: This persists non-sensitive user metadata (display name, project list,
+      // roles, permissions) to localStorage for session rehydration across page reloads.
+      // The JWT itself is stored exclusively in an HttpOnly cookie and is NOT persisted here.
+      // Accepted risk: user metadata in localStorage is not security-sensitive.
       name: 'user-storage',
       partialize: (state) => ({
         currentProject: state.currentProject,
-        token: state.token,
-        isAuthenticated: state.isAuthenticated,
         roles: state.roles,
         projects: state.projects,
-        // NOTE: isGlobalAdmin was removed - permission checks use useCanI() hook
+        user: state.user,
+        casbinRoles: state.casbinRoles,
+        permissions: state.permissions,
+        tokenExp: state.tokenExp,
+        groups: state.groups,
       }),
-      onRehydrateStorage: () => (state) => {
-        // After rehydrating from localStorage, refresh user data from token
-        if (state?.token) {
-          state.refreshUser();
-        }
-      },
     }
   )
 );

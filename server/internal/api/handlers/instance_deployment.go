@@ -14,15 +14,18 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/provops-org/knodex/server/internal/api/helpers"
-	"github.com/provops-org/knodex/server/internal/api/middleware"
-	"github.com/provops-org/knodex/server/internal/api/response"
-	"github.com/provops-org/knodex/server/internal/audit"
-	"github.com/provops-org/knodex/server/internal/deployment"
-	"github.com/provops-org/knodex/server/internal/deployment/vcs"
-	"github.com/provops-org/knodex/server/internal/models"
-	"github.com/provops-org/knodex/server/internal/repository"
-	"github.com/provops-org/knodex/server/internal/watcher"
+	"github.com/knodex/knodex/server/internal/kro"
+
+	"github.com/knodex/knodex/server/internal/api/helpers"
+	"github.com/knodex/knodex/server/internal/api/middleware"
+	"github.com/knodex/knodex/server/internal/api/response"
+	"github.com/knodex/knodex/server/internal/audit"
+	"github.com/knodex/knodex/server/internal/deployment"
+	"github.com/knodex/knodex/server/internal/deployment/vcs"
+	"github.com/knodex/knodex/server/internal/kro/watcher"
+	"github.com/knodex/knodex/server/internal/manifest"
+	"github.com/knodex/knodex/server/internal/models"
+	"github.com/knodex/knodex/server/internal/repository"
 )
 
 const (
@@ -181,6 +184,15 @@ func (h *InstanceDeploymentHandler) CreateInstance(w http.ResponseWriter, r *htt
 		return
 	}
 
+	// Security: validate spec against injection/DoS attack patterns
+	// before applying to Kubernetes (INJ-VULN-02)
+	if req.Spec != nil {
+		if err := manifest.ValidateSpecMap(req.Spec, 0, manifest.MaxSpecDepth); err != nil {
+			response.BadRequest(w, "invalid spec: "+err.Error(), nil)
+			return
+		}
+	}
+
 	// Look up the RGD
 	var rgd *models.CatalogRGD
 	var found bool
@@ -197,7 +209,7 @@ func (h *InstanceDeploymentHandler) CreateInstance(w http.ResponseWriter, r *htt
 	}
 
 	// Extract API group and kind from the RGD
-	apiGroup := "kro.run"
+	apiGroup := kro.RGDGroup
 	kind := rgd.Kind
 	version := "v1alpha1"
 

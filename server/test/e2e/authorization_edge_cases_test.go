@@ -20,7 +20,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	mockoidc "github.com/provops-org/knodex/server/test/mocks/oidc"
+	mockoidc "github.com/knodex/knodex/server/test/mocks/oidc"
 )
 
 // edgeCaseTestNamespace is the namespace used for edge case tests

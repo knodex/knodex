@@ -10,11 +10,13 @@ import (
 	"testing"
 	"time"
 
+	"fmt"
+
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/provops-org/knodex/server/internal/audit"
-	"github.com/provops-org/knodex/server/internal/auth"
+	"github.com/knodex/knodex/server/internal/audit"
+	"github.com/knodex/knodex/server/internal/auth"
 )
 
 func TestIsAllowedRedirectURL(t *testing.T) {
@@ -125,11 +127,11 @@ func TestOIDCLogin_AllowsRelativeRedirect(t *testing.T) {
 		listProvidersFunc: func() []string {
 			return []string{"azuread"}
 		},
-		generateStateTokenFunc: func(ctx context.Context, providerName, redirectURL string) (string, error) {
-			return "mock-state", nil
+		generateStateTokenFunc: func(ctx context.Context, providerName, redirectURL string) (string, string, error) {
+			return "mock-state", "mock-nonce", nil
 		},
-		getAuthCodeURLFunc: func(providerName, state string) (string, error) {
-			return "https://provider.example.com/authorize?state=" + state, nil
+		getAuthCodeURLFunc: func(providerName, state, nonce string) (string, error) {
+			return "https://provider.example.com/authorize?state=" + state + "&nonce=" + nonce, nil
 		},
 	}
 
@@ -155,11 +157,11 @@ func TestOIDCLogin_AllowsConfiguredOriginRedirect(t *testing.T) {
 		listProvidersFunc: func() []string {
 			return []string{"azuread"}
 		},
-		generateStateTokenFunc: func(ctx context.Context, providerName, redirectURL string) (string, error) {
-			return "mock-state", nil
+		generateStateTokenFunc: func(ctx context.Context, providerName, redirectURL string) (string, string, error) {
+			return "mock-state", "mock-nonce", nil
 		},
-		getAuthCodeURLFunc: func(providerName, state string) (string, error) {
-			return "https://provider.example.com/authorize?state=" + state, nil
+		getAuthCodeURLFunc: func(providerName, state, nonce string) (string, error) {
+			return "https://provider.example.com/authorize?state=" + state + "&nonce=" + nonce, nil
 		},
 	}
 
@@ -196,7 +198,7 @@ func TestOIDCCallback_OpaqueCodeRedirect(t *testing.T) {
 		validateStateTokenFunc: func(ctx context.Context, state string) (providerName, redirectURL string, err error) {
 			return "azuread", "http://localhost:3000/auth/callback", nil
 		},
-		exchangeCodeForTokenFunc: func(ctx context.Context, providerName, code string) (*auth.LoginResponse, error) {
+		exchangeCodeForTokenFunc: func(ctx context.Context, providerName, code, nonce string) (*auth.LoginResponse, error) {
 			return &auth.LoginResponse{
 				Token:     jwtToken,
 				ExpiresAt: time.Now().Add(1 * time.Hour),
@@ -212,6 +214,9 @@ func TestOIDCCallback_OpaqueCodeRedirect(t *testing.T) {
 
 	handler := NewAuthHandler(nil, oidcService)
 	handler.SetRedisClient(redisClient)
+
+	// Pre-populate nonce in Redis (simulating GenerateStateToken)
+	redisClient.Set(context.Background(), fmt.Sprintf("%s%s", auth.NoncePrefix, "valid-state"), "test-nonce", auth.NonceTTL)
 
 	req := httptest.NewRequest("GET", "/api/v1/auth/oidc/callback?code=oidc-auth-code&state=valid-state", nil)
 	w := httptest.NewRecorder()
@@ -275,7 +280,7 @@ func TestOIDCCallback_SetsAuditIdentity(t *testing.T) {
 		validateStateTokenFunc: func(ctx context.Context, state string) (providerName, redirectURL string, err error) {
 			return "azuread", "http://localhost:3000/auth/callback", nil
 		},
-		exchangeCodeForTokenFunc: func(ctx context.Context, providerName, code string) (*auth.LoginResponse, error) {
+		exchangeCodeForTokenFunc: func(ctx context.Context, providerName, code, nonce string) (*auth.LoginResponse, error) {
 			return &auth.LoginResponse{
 				Token:     "jwt-token-for-audit-test",
 				ExpiresAt: time.Now().Add(1 * time.Hour),
@@ -289,6 +294,9 @@ func TestOIDCCallback_SetsAuditIdentity(t *testing.T) {
 
 	handler := NewAuthHandler(nil, oidcService)
 	handler.SetRedisClient(redisClient)
+
+	// Pre-populate nonce in Redis (simulating GenerateStateToken)
+	redisClient.Set(context.Background(), fmt.Sprintf("%s%s", auth.NoncePrefix, "valid-state"), "test-nonce", auth.NonceTTL)
 
 	req := httptest.NewRequest("GET", "/api/v1/auth/oidc/callback?code=test-code&state=valid-state", nil)
 
@@ -357,32 +365,46 @@ func TestLocalLogin_SetsAuditIdentity(t *testing.T) {
 	}
 }
 
-// TestOIDCCallback_NoRedis_FailsClosed verifies M-2: callback returns error when Redis is nil
+// TestOIDCCallback_NoRedis_FailsClosed verifies M-2: callback fails safely when Redis is nil.
+// Without Redis, the handler cannot retrieve the OIDC nonce needed for ID token validation,
+// so it must fail-closed rather than skip nonce validation or expose the JWT in the URL.
 func TestOIDCCallback_NoRedis_FailsClosed(t *testing.T) {
 	t.Parallel()
 	oidcService := &MockOIDCService{
 		validateStateTokenFunc: func(ctx context.Context, state string) (providerName, redirectURL string, err error) {
 			return "azuread", "http://localhost:3000/auth/callback", nil
 		},
-		exchangeCodeForTokenFunc: func(ctx context.Context, providerName, code string) (*auth.LoginResponse, error) {
-			return &auth.LoginResponse{
-				Token:     "jwt-token",
-				ExpiresAt: time.Now().Add(1 * time.Hour),
-				User:      auth.UserInfo{ID: "user-1", Email: "test@test.com"},
-			}, nil
-		},
 	}
 
+	// Use miniredis that's already stopped to simulate Redis unavailability.
+	// MaxRetries: 0 and short DialTimeout prevent slow TCP retry loops.
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("failed to start miniredis: %v", err)
+	}
+	addr := mr.Addr()
+	mr.Close() // Close Redis before creating client to simulate unavailability
+	redisClient := redis.NewClient(&redis.Options{
+		Addr:        addr,
+		MaxRetries:  0,
+		DialTimeout: 50 * time.Millisecond,
+	})
+	defer redisClient.Close()
+
 	handler := NewAuthHandler(nil, oidcService)
-	// Deliberately NOT setting Redis client
+	handler.SetRedisClient(redisClient)
 
 	req := httptest.NewRequest("GET", "/api/v1/auth/oidc/callback?code=test-code&state=valid-state", nil)
 	w := httptest.NewRecorder()
 
 	handler.OIDCCallback(w, req)
 
-	// Should return 500 (fail-closed), NOT redirect with JWT in URL
-	if w.Code != http.StatusInternalServerError {
-		t.Fatalf("expected 500 when Redis unavailable, got %d: %s", w.Code, w.Body.String())
+	// Should redirect with error (fail-closed) since nonce cannot be retrieved
+	if w.Code != http.StatusFound {
+		t.Fatalf("expected 302 redirect with error when Redis unavailable, got %d: %s", w.Code, w.Body.String())
+	}
+	location := w.Header().Get("Location")
+	if !strings.Contains(location, "error=authentication_failed") {
+		t.Fatalf("expected redirect with error=authentication_failed, got: %s", location)
 	}
 }

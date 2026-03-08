@@ -2,11 +2,10 @@ package vcs
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 
-	"github.com/provops-org/knodex/server/internal/metrics/gitops"
+	"github.com/knodex/knodex/server/internal/metrics/gitops"
+	utilhash "github.com/knodex/knodex/server/internal/util/hash"
 )
 
 // IdempotencyKeyLength is the length of the idempotency key included in commit messages
@@ -16,13 +15,12 @@ const IdempotencyKeyLength = 16
 // ComputeContentHash computes a SHA256 hash of the content
 // AC-IDEM-01: Each commit includes idempotency key (SHA256 of manifest content)
 func ComputeContentHash(content []byte) string {
-	hash := sha256.Sum256(content)
-	return hex.EncodeToString(hash[:])
+	return utilhash.SHA256(content)
 }
 
 // ComputeContentHashString computes a SHA256 hash of string content
 func ComputeContentHashString(content string) string {
-	return ComputeContentHash([]byte(content))
+	return utilhash.SHA256String(content)
 }
 
 // FormatMessageWithIdempotencyKey formats a commit message with an idempotency key

@@ -8,8 +8,9 @@ import (
 	"context"
 	"net"
 	"net/http"
-	"os"
 	"strings"
+
+	utilenv "github.com/knodex/knodex/server/internal/util/env"
 )
 
 // secretFieldNames stores the lowercase versions of all field names that must
@@ -20,7 +21,7 @@ var secretFieldNames map[string]bool
 
 func init() {
 	secretFieldNames = make(map[string]bool, 16)
-	if fields := os.Getenv("AUDIT_REDACT_FIELDS"); fields != "" {
+	if fields := utilenv.GetString("AUDIT_REDACT_FIELDS", ""); fields != "" {
 		for _, f := range strings.Split(fields, ",") {
 			if f = strings.TrimSpace(f); f != "" {
 				secretFieldNames[strings.ToLower(f)] = true

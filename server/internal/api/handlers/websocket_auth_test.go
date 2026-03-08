@@ -11,9 +11,9 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/provops-org/knodex/server/internal/auth"
-	"github.com/provops-org/knodex/server/internal/testutil"
-	"github.com/provops-org/knodex/server/internal/websocket"
+	"github.com/knodex/knodex/server/internal/auth"
+	"github.com/knodex/knodex/server/internal/testutil"
+	"github.com/knodex/knodex/server/internal/websocket"
 )
 
 // mockWSPolicyEnforcer implements WebSocketPolicyEnforcer for testing
@@ -55,6 +55,10 @@ func (m *mockAuthService) ValidateToken(_ context.Context, token string) (*auth.
 		return m.validateTokenFunc(token)
 	}
 	return nil, errors.New("not implemented")
+}
+
+func (m *mockAuthService) RevokeToken(_ context.Context, _ string, _ time.Duration) error {
+	return nil
 }
 
 // storeWSTicket creates a test WebSocket ticket in Redis and returns the ticket string.

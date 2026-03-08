@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -8,7 +9,7 @@ import (
 
 	"golang.org/x/time/rate"
 
-	"github.com/provops-org/knodex/server/internal/api/response"
+	"github.com/knodex/knodex/server/internal/api/response"
 )
 
 // UserRateLimitConfig holds configuration for per-user rate limiting
@@ -21,6 +22,9 @@ type UserRateLimitConfig struct {
 	FallbackToIP bool
 	// TrustedProxies is a list of trusted proxy IP addresses or CIDR ranges
 	TrustedProxies []string
+	// RetryAfterSeconds is the value for the Retry-After header on 429 responses.
+	// If 0, defaults to 60 seconds. Set to match the expected wait time for the rate limit.
+	RetryAfterSeconds int
 }
 
 // UserRateLimiter manages rate limiters for different users
@@ -176,6 +180,11 @@ func UserRateLimit(config UserRateLimitConfig) func(http.Handler) http.Handler {
 					"path", r.URL.Path,
 					"method", r.Method,
 				)
+				retryAfter := limiter.config.RetryAfterSeconds
+				if retryAfter <= 0 {
+					retryAfter = 60
+				}
+				w.Header().Set("Retry-After", fmt.Sprintf("%d", retryAfter))
 				response.WriteError(w, http.StatusTooManyRequests, response.ErrCodeRateLimit, "too many requests, please try again later", nil)
 				return
 			}

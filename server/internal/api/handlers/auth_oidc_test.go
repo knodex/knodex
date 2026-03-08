@@ -4,29 +4,31 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/provops-org/knodex/server/internal/auth"
+	"github.com/knodex/knodex/server/internal/auth"
+	"github.com/knodex/knodex/server/internal/testutil"
 )
 
 // MockOIDCService is a mock OIDC service for testing handlers
 type MockOIDCService struct {
-	generateStateTokenFunc   func(ctx context.Context, providerName, redirectURL string) (string, error)
+	generateStateTokenFunc   func(ctx context.Context, providerName, redirectURL string) (string, string, error)
 	validateStateTokenFunc   func(ctx context.Context, state string) (providerName, redirectURL string, err error)
-	getAuthCodeURLFunc       func(providerName, state string) (string, error)
-	exchangeCodeForTokenFunc func(ctx context.Context, providerName, code string) (*auth.LoginResponse, error)
+	getAuthCodeURLFunc       func(providerName, state, nonce string) (string, error)
+	exchangeCodeForTokenFunc func(ctx context.Context, providerName, code, nonce string) (*auth.LoginResponse, error)
 	listProvidersFunc        func() []string
 }
 
-func (m *MockOIDCService) GenerateStateToken(ctx context.Context, providerName, redirectURL string) (string, error) {
+func (m *MockOIDCService) GenerateStateToken(ctx context.Context, providerName, redirectURL string) (string, string, error) {
 	if m.generateStateTokenFunc != nil {
 		return m.generateStateTokenFunc(ctx, providerName, redirectURL)
 	}
-	return "mock-state-token", nil
+	return "mock-state-token", "mock-nonce", nil
 }
 
 func (m *MockOIDCService) ValidateStateToken(ctx context.Context, state string) (providerName, redirectURL string, err error) {
@@ -36,16 +38,16 @@ func (m *MockOIDCService) ValidateStateToken(ctx context.Context, state string) 
 	return "azuread", "", nil
 }
 
-func (m *MockOIDCService) GetAuthCodeURL(providerName, state string) (string, error) {
+func (m *MockOIDCService) GetAuthCodeURL(providerName, state, nonce string) (string, error) {
 	if m.getAuthCodeURLFunc != nil {
-		return m.getAuthCodeURLFunc(providerName, state)
+		return m.getAuthCodeURLFunc(providerName, state, nonce)
 	}
-	return "https://provider.example.com/authorize?state=" + state, nil
+	return "https://provider.example.com/authorize?state=" + state + "&nonce=" + nonce, nil
 }
 
-func (m *MockOIDCService) ExchangeCodeForToken(ctx context.Context, providerName, code string) (*auth.LoginResponse, error) {
+func (m *MockOIDCService) ExchangeCodeForToken(ctx context.Context, providerName, code, nonce string) (*auth.LoginResponse, error) {
 	if m.exchangeCodeForTokenFunc != nil {
-		return m.exchangeCodeForTokenFunc(ctx, providerName, code)
+		return m.exchangeCodeForTokenFunc(ctx, providerName, code, nonce)
 	}
 	return &auth.LoginResponse{
 		Token:     "mock-jwt-token",
@@ -110,8 +112,8 @@ func TestOIDCLogin(t *testing.T) {
 				listProvidersFunc: func() []string {
 					return []string{"google", "azure"}
 				},
-				generateStateTokenFunc: func(ctx context.Context, providerName, redirectURL string) (string, error) {
-					return "", context.DeadlineExceeded
+				generateStateTokenFunc: func(ctx context.Context, providerName, redirectURL string) (string, string, error) {
+					return "", "", context.DeadlineExceeded
 				},
 			},
 			wantStatusCode: http.StatusInternalServerError,
@@ -124,10 +126,10 @@ func TestOIDCLogin(t *testing.T) {
 				listProvidersFunc: func() []string {
 					return []string{"google", "azure"}
 				},
-				generateStateTokenFunc: func(ctx context.Context, providerName, redirectURL string) (string, error) {
-					return "state-token", nil
+				generateStateTokenFunc: func(ctx context.Context, providerName, redirectURL string) (string, string, error) {
+					return "state-token", "test-nonce", nil
 				},
-				getAuthCodeURLFunc: func(providerName, state string) (string, error) {
+				getAuthCodeURLFunc: func(providerName, state, nonce string) (string, error) {
 					return "", context.DeadlineExceeded
 				},
 			},
@@ -141,11 +143,11 @@ func TestOIDCLogin(t *testing.T) {
 				listProvidersFunc: func() []string {
 					return []string{"google", "azure"}
 				},
-				generateStateTokenFunc: func(ctx context.Context, providerName, redirectURL string) (string, error) {
-					return "state-token", nil
+				generateStateTokenFunc: func(ctx context.Context, providerName, redirectURL string) (string, string, error) {
+					return "state-token", "test-nonce", nil
 				},
-				getAuthCodeURLFunc: func(providerName, state string) (string, error) {
-					return "https://accounts.google.com/authorize?state=" + state, nil
+				getAuthCodeURLFunc: func(providerName, state, nonce string) (string, error) {
+					return "https://accounts.google.com/authorize?state=" + state + "&nonce=" + nonce, nil
 				},
 			},
 			wantStatusCode: http.StatusFound,
@@ -198,8 +200,9 @@ func TestOIDCCallback(t *testing.T) {
 		name           string
 		queryParams    string
 		mockOIDC       *MockOIDCService
+		setupRedis     func(t *testing.T, handler *AuthHandler) // pre-populate nonce in Redis
 		wantStatusCode int
-		wantToken      bool
+		wantUserInfo   bool
 		wantErrMsg     string
 	}{
 		{
@@ -228,15 +231,30 @@ func TestOIDCCallback(t *testing.T) {
 			wantErrMsg:     "authentication failed",
 		},
 		{
+			name:        "nonce not found in Redis",
+			queryParams: "?code=test-code&state=valid-state",
+			mockOIDC: &MockOIDCService{
+				validateStateTokenFunc: func(ctx context.Context, state string) (providerName, redirectURL string, err error) {
+					return "google", "", nil
+				},
+			},
+			// No setupRedis — nonce key doesn't exist
+			wantStatusCode: http.StatusUnauthorized,
+			wantErrMsg:     "authentication failed",
+		},
+		{
 			name:        "token exchange fails",
 			queryParams: "?code=test-code&state=valid-state",
 			mockOIDC: &MockOIDCService{
 				validateStateTokenFunc: func(ctx context.Context, state string) (providerName, redirectURL string, err error) {
 					return "google", "", nil
 				},
-				exchangeCodeForTokenFunc: func(ctx context.Context, providerName, code string) (*auth.LoginResponse, error) {
+				exchangeCodeForTokenFunc: func(ctx context.Context, providerName, code, nonce string) (*auth.LoginResponse, error) {
 					return nil, context.DeadlineExceeded
 				},
+			},
+			setupRedis: func(t *testing.T, handler *AuthHandler) {
+				handler.redisClient.Set(context.Background(), fmt.Sprintf("%s%s", auth.NoncePrefix, "valid-state"), "test-nonce", auth.NonceTTL)
 			},
 			wantStatusCode: http.StatusUnauthorized,
 			wantErrMsg:     "authentication failed",
@@ -248,7 +266,7 @@ func TestOIDCCallback(t *testing.T) {
 				validateStateTokenFunc: func(ctx context.Context, state string) (providerName, redirectURL string, err error) {
 					return "google", "", nil
 				},
-				exchangeCodeForTokenFunc: func(ctx context.Context, providerName, code string) (*auth.LoginResponse, error) {
+				exchangeCodeForTokenFunc: func(ctx context.Context, providerName, code, nonce string) (*auth.LoginResponse, error) {
 					return &auth.LoginResponse{
 						Token:     "jwt-token-123",
 						ExpiresAt: time.Now().Add(1 * time.Hour),
@@ -261,8 +279,11 @@ func TestOIDCCallback(t *testing.T) {
 					}, nil
 				},
 			},
+			setupRedis: func(t *testing.T, handler *AuthHandler) {
+				handler.redisClient.Set(context.Background(), fmt.Sprintf("%s%s", auth.NoncePrefix, "valid-state"), "test-nonce", auth.NonceTTL)
+			},
 			wantStatusCode: http.StatusOK,
-			wantToken:      true,
+			wantUserInfo:   true,
 		},
 	}
 
@@ -270,7 +291,13 @@ func TestOIDCCallback(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
+			_, redisClient := testutil.NewRedis(t)
 			handler := NewAuthHandler(nil, tt.mockOIDC)
+			handler.SetRedisClient(redisClient)
+
+			if tt.setupRedis != nil {
+				tt.setupRedis(t, handler)
+			}
 
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/oidc/callback"+tt.queryParams, nil)
 			w := httptest.NewRecorder()
@@ -278,19 +305,24 @@ func TestOIDCCallback(t *testing.T) {
 			handler.OIDCCallback(w, req)
 
 			if w.Code != tt.wantStatusCode {
-				t.Errorf("Status code = %d, want %d", w.Code, tt.wantStatusCode)
+				t.Errorf("Status code = %d, want %d, body = %s", w.Code, tt.wantStatusCode, w.Body.String())
 			}
 
-			if tt.wantToken {
-				var resp auth.LoginResponse
+			if tt.wantUserInfo {
+				var resp map[string]interface{}
 				if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 					t.Fatalf("Failed to decode response: %v", err)
 				}
-				if resp.Token == "" {
-					t.Error("Expected token in response")
+				// Token should NOT be in response body (delivered via cookie)
+				if _, hasToken := resp["token"]; hasToken {
+					t.Error("Response body should NOT contain 'token' field")
 				}
-				if resp.User.Email != "test@example.com" {
-					t.Errorf("User email = %s, want test@example.com", resp.User.Email)
+				user, ok := resp["user"].(map[string]interface{})
+				if !ok {
+					t.Fatal("Expected 'user' field in response")
+				}
+				if user["email"] != "test@example.com" {
+					t.Errorf("User email = %v, want test@example.com", user["email"])
 				}
 			}
 
@@ -328,6 +360,7 @@ func TestOIDCCallback_RedirectError_NoRawErrorLeakage(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+			_, redisClient := testutil.NewRedis(t)
 			mockOIDC := &MockOIDCService{}
 			redirectURL := "https://app.example.com/auth/callback"
 
@@ -339,12 +372,15 @@ func TestOIDCCallback_RedirectError_NoRawErrorLeakage(t *testing.T) {
 				mockOIDC.validateStateTokenFunc = func(ctx context.Context, state string) (string, string, error) {
 					return "azuread", redirectURL, nil
 				}
-				mockOIDC.exchangeCodeForTokenFunc = func(ctx context.Context, providerName, code string) (*auth.LoginResponse, error) {
+				mockOIDC.exchangeCodeForTokenFunc = func(ctx context.Context, providerName, code, nonce string) (*auth.LoginResponse, error) {
 					return nil, errors.New(tc.internalError)
 				}
+				// Pre-populate nonce in Redis for exchange test cases
+				redisClient.Set(context.Background(), fmt.Sprintf("%s%s", auth.NoncePrefix, "test-state"), "test-nonce", auth.NonceTTL)
 			}
 
 			handler := NewAuthHandler(nil, mockOIDC)
+			handler.SetRedisClient(redisClient)
 
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/oidc/callback?code=test-code&state=test-state", nil)
 			w := httptest.NewRecorder()

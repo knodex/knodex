@@ -1,0 +1,489 @@
+package parser
+
+import (
+	"fmt"
+	"log/slog"
+	"sort"
+	"strings"
+
+	k8sparser "github.com/knodex/knodex/server/internal/k8s/parser"
+
+	kroparser "github.com/kubernetes-sigs/kro/pkg/graph/parser"
+)
+
+// maxRecursionDepth prevents stack overflow from deeply nested objects
+const maxRecursionDepth = 100
+
+// schemaSpecExprPrefix is the prefix for schema spec references inside CEL expressions.
+const schemaSpecExprPrefix = "schema.spec."
+
+// ResourceParser parses RGD spec.resources arrays to extract resource definitions.
+type ResourceParser struct{}
+
+// NewResourceParser creates a new ResourceParser.
+func NewResourceParser() *ResourceParser {
+	return &ResourceParser{}
+}
+
+// ParseRGDResources parses an RGD spec to extract resource definitions and their dependencies.
+func (p *ResourceParser) ParseRGDResources(rgdName, rgdNamespace string, rgdSpec map[string]interface{}) (*ResourceGraph, error) {
+	graph := &ResourceGraph{
+		RGDName:      rgdName,
+		RGDNamespace: rgdNamespace,
+		Resources:    make([]ResourceDefinition, 0),
+		Edges:        make([]ResourceEdge, 0),
+	}
+
+	// Extract spec.resources array using parser helper
+	resources, err := k8sparser.GetSlice(rgdSpec, "resources")
+	if err != nil {
+		// No resources array, return empty graph
+		return graph, nil
+	}
+
+	// Map to track resource IDs by their internal ID (used for dependency resolution)
+	idByInternalID := make(map[string]string)
+
+	// Track original resource indices for the second pass (dependency resolution)
+	// since skipped resources cause graph.Resources indices to diverge from resources indices.
+	type resourceEntry struct {
+		graphIdx    int
+		originalMap map[string]interface{}
+	}
+	var entries []resourceEntry
+
+	// First pass: extract all resource definitions
+	for i, res := range resources {
+		resMap, ok := res.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		resDef := p.parseResource(i, resMap)
+		if resDef != nil {
+			graph.Resources = append(graph.Resources, *resDef)
+			entries = append(entries, resourceEntry{
+				graphIdx:    len(graph.Resources) - 1,
+				originalMap: resMap,
+			})
+
+			// Map internal ID to our generated ID
+			if internalID := extractInternalID(resMap); internalID != "" {
+				idByInternalID[internalID] = resDef.ID
+			}
+		}
+	}
+
+	// Second pass: resolve internal dependencies and build edges
+	for _, entry := range entries {
+		res := &graph.Resources[entry.graphIdx]
+		p.resolveDependencies(res, entry.originalMap, idByInternalID, graph)
+	}
+
+	return graph, nil
+}
+
+// parseResource parses a single resource from the spec.resources array.
+func (p *ResourceParser) parseResource(index int, resMap map[string]interface{}) *ResourceDefinition {
+	res := &ResourceDefinition{
+		DependsOn: make([]string, 0),
+	}
+
+	// Check if this is a template or externalRef using type-safe accessors
+	template, err := k8sparser.GetMap(resMap, "template")
+	if err == nil {
+		// Template resource
+		res.IsTemplate = true
+		res.APIVersion, res.Kind = extractAPIVersionKind(template)
+	} else if extRef, err := k8sparser.GetMap(resMap, "externalRef"); err == nil {
+		// ExternalRef resource
+		res.IsTemplate = false
+		res.ExternalRef = p.parseExternalRef(extRef)
+		if res.ExternalRef != nil {
+			res.APIVersion = res.ExternalRef.APIVersion
+			res.Kind = res.ExternalRef.Kind
+		}
+	} else {
+		// Unknown resource type
+		return nil
+	}
+
+	// Generate ID
+	res.ID = fmt.Sprintf("%d-%s", index, res.Kind)
+
+	// Collect all schema.spec.* field references from the resource
+	if res.IsTemplate {
+		res.SchemaFields = extractSchemaFieldRefs(template)
+	} else if extRef, err := k8sparser.GetMap(resMap, "externalRef"); err == nil {
+		res.SchemaFields = extractSchemaFieldRefs(extRef)
+	}
+
+	// Parse includeWhen condition - can be a string or array of strings
+	if includeWhen, err := k8sparser.GetString(resMap, "includeWhen"); err == nil && includeWhen != "" {
+		res.IncludeWhen = parseCondition(includeWhen)
+	} else if includeWhenArr, err := k8sparser.GetSlice(resMap, "includeWhen"); err == nil && len(includeWhenArr) > 0 {
+		// KRO spec defines includeWhen as an array of CEL expressions
+		// For now, we join them with && for combined condition
+		var conditions []string
+		for _, cond := range includeWhenArr {
+			if condStr, ok := cond.(string); ok && condStr != "" {
+				conditions = append(conditions, condStr)
+			}
+		}
+		if len(conditions) > 0 {
+			res.IncludeWhen = parseCondition(strings.Join(conditions, " && "))
+		}
+	}
+
+	return res
+}
+
+// parseExternalRef parses an externalRef section.
+func (p *ResourceParser) parseExternalRef(extRef map[string]interface{}) *ExternalRefInfo {
+	info := &ExternalRefInfo{}
+
+	info.APIVersion, info.Kind = extractAPIVersionKind(extRef)
+
+	// Extract name/namespace from metadata (KRO spec nests these under metadata)
+	metadata, err := k8sparser.GetMap(extRef, "metadata")
+	if err == nil {
+		// Extract name expression from metadata
+		if nameExpr, err := k8sparser.GetString(metadata, "name"); err == nil {
+			info.NameExpr = nameExpr
+			extractSchemaSpecFromExpr(nameExpr, &info.UsesSchemaSpec, &info.SchemaField)
+		}
+
+		// Extract namespace expression from metadata
+		if nsExpr, err := k8sparser.GetString(metadata, "namespace"); err == nil {
+			info.NamespaceExpr = nsExpr
+			extractSchemaSpecFromExpr(nsExpr, nil, &info.NamespaceSchemaField)
+		}
+	} else {
+		// Fallback: try direct name/namespace fields (legacy format)
+		if nameExpr, err := k8sparser.GetString(extRef, "name"); err == nil {
+			info.NameExpr = nameExpr
+			extractSchemaSpecFromExpr(nameExpr, &info.UsesSchemaSpec, &info.SchemaField)
+		}
+
+		if nsExpr, err := k8sparser.GetString(extRef, "namespace"); err == nil {
+			info.NamespaceExpr = nsExpr
+			extractSchemaSpecFromExpr(nsExpr, nil, &info.NamespaceSchemaField)
+		}
+	}
+
+	return info
+}
+
+// extractSchemaSpecFromExpr extracts a schema.spec.* field reference from a CEL expression string.
+// Uses KRO's ParseSchemalessResource to properly extract expressions from ${...} wrappers,
+// handling nested braces and string literals correctly.
+// If usesSchema is non-nil, it is set to true when a schema.spec.* reference is found.
+// The extracted field (with "spec." prefix) is stored in fieldOut.
+func extractSchemaSpecFromExpr(expr string, usesSchema *bool, fieldOut *string) {
+	exprs := extractExpressionsFromValue(expr)
+	for _, e := range exprs {
+		if strings.HasPrefix(e, schemaSpecExprPrefix) {
+			fieldPath := strings.TrimPrefix(e, "schema.")
+			if usesSchema != nil {
+				*usesSchema = true
+			}
+			*fieldOut = fieldPath
+			return
+		}
+	}
+}
+
+// extractExpressionsFromValue extracts CEL expression contents from a string value
+// using KRO's parser. Returns the inner expression strings (without ${} wrapper).
+// For example, "${schema.spec.name}" returns ["schema.spec.name"].
+func extractExpressionsFromValue(value string) []string {
+	if !strings.Contains(value, "${") {
+		return nil
+	}
+
+	descriptors, _, err := kroparser.ParseSchemalessResource(map[string]interface{}{"v": value})
+	if err != nil {
+		slog.Debug("KRO ParseSchemalessResource failed for value", "error", err, "value", value)
+		return nil
+	}
+
+	var exprs []string
+	for _, fd := range descriptors {
+		for _, expr := range fd.Expressions {
+			exprs = append(exprs, expr.Original)
+		}
+	}
+	return exprs
+}
+
+// parseCondition parses an includeWhen CEL expression.
+func parseCondition(expr string) *ConditionExpr {
+	condition := &ConditionExpr{
+		Expression:   expr,
+		SchemaFields: make([]string, 0),
+	}
+
+	// Extract all schema.spec.* field references from the expression.
+	// Conditions may contain bare references (schema.spec.X == true) or
+	// wrapped expressions (${schema.spec.X == true}).
+	// Try KRO extraction first for wrapped expressions, fall back to bare parsing.
+	fields := extractSchemaFieldNames(expr)
+
+	seen := make(map[string]bool)
+	for _, field := range fields {
+		if !seen[field] {
+			seen[field] = true
+			condition.SchemaFields = append(condition.SchemaFields, field)
+		}
+	}
+
+	return condition
+}
+
+// extractSchemaFieldNames extracts all schema.spec.* field names from a string.
+// Handles both bare references (schema.spec.X) and ${}-wrapped expressions.
+// Returns field paths with "spec." prefix (e.g., "spec.ingress.enabled").
+func extractSchemaFieldNames(s string) []string {
+	var fields []string
+
+	// First, try extracting from ${}-wrapped expressions using KRO's parser
+	if strings.Contains(s, "${") {
+		exprs := extractExpressionsFromValue(s)
+		for _, expr := range exprs {
+			fields = append(fields, extractBareSchemaFields(expr)...)
+		}
+		if len(fields) > 0 {
+			return fields
+		}
+	}
+
+	// Fall back to bare schema.spec.* references (for conditions without ${} wrapper)
+	return extractBareSchemaFields(s)
+}
+
+// extractBareSchemaFields finds all schema.spec.* references in a plain string
+// (no ${} wrappers). Returns field paths with "spec." prefix.
+func extractBareSchemaFields(s string) []string {
+	var fields []string
+	searchFrom := 0
+
+	for searchFrom < len(s) {
+		idx := strings.Index(s[searchFrom:], schemaSpecExprPrefix)
+		if idx == -1 {
+			break
+		}
+		idx += searchFrom
+
+		// Extract the field name: valid chars are alphanumeric, dot, underscore, hyphen
+		fieldStart := idx + len(schemaSpecExprPrefix)
+		fieldEnd := fieldStart
+		for fieldEnd < len(s) {
+			c := s[fieldEnd]
+			if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+				c == '.' || c == '_' || c == '-' {
+				fieldEnd++
+			} else {
+				break
+			}
+		}
+
+		if fieldEnd > fieldStart {
+			field := "spec." + s[fieldStart:fieldEnd]
+			// Trim trailing dots that might be syntax artifacts
+			field = strings.TrimRight(field, ".")
+			fields = append(fields, field)
+		}
+
+		searchFrom = fieldEnd
+	}
+
+	return fields
+}
+
+// resolveDependencies finds internal dependencies between resources within the RGD.
+func (p *ResourceParser) resolveDependencies(res *ResourceDefinition, resMap map[string]interface{}, idByInternalID map[string]string, graph *ResourceGraph) {
+	// Use type-safe accessors to get template or externalRef
+	content, err := k8sparser.GetMap(resMap, "template")
+	if err != nil {
+		content, err = k8sparser.GetMap(resMap, "externalRef")
+		if err != nil {
+			return
+		}
+	}
+
+	// Find all CEL expressions that reference other resources in the RGD
+	depIDs := p.findInternalReferences(content, idByInternalID)
+
+	for depID := range depIDs {
+		if depID != res.ID {
+			res.DependsOn = append(res.DependsOn, depID)
+			graph.Edges = append(graph.Edges, ResourceEdge{
+				From: res.ID,
+				To:   depID,
+				Type: "reference",
+			})
+		}
+	}
+}
+
+// findInternalReferences finds references to other resources within the RGD
+// using KRO's ParseSchemalessResource for expression extraction.
+func (p *ResourceParser) findInternalReferences(data interface{}, idByInternalID map[string]string) map[string]bool {
+	refs := make(map[string]bool)
+
+	dataMap, ok := data.(map[string]interface{})
+	if !ok {
+		return refs
+	}
+
+	// Use KRO's parser to extract all expressions from the resource
+	descriptors, _, err := kroparser.ParseSchemalessResource(dataMap)
+	if err != nil {
+		slog.Debug("KRO ParseSchemalessResource failed, falling back to manual traversal", "error", err)
+		p.traverseForReferences(data, idByInternalID, refs, 0)
+		return refs
+	}
+
+	for _, fd := range descriptors {
+		for _, expr := range fd.Expressions {
+			inner := expr.Original
+			// Check if this references another resource (not schema.*, spec.*, etc.)
+			for internalID, resID := range idByInternalID {
+				if strings.HasPrefix(inner, internalID+".") {
+					refs[resID] = true
+				}
+			}
+		}
+	}
+
+	return refs
+}
+
+// traverseForReferences is the fallback recursive traversal for finding CEL expressions.
+// Used only when KRO's ParseSchemalessResource encounters an error.
+// Depth parameter prevents stack overflow from deeply nested structures.
+func (p *ResourceParser) traverseForReferences(data interface{}, idByInternalID map[string]string, refs map[string]bool, depth int) {
+	if depth > maxRecursionDepth {
+		return // Prevent stack overflow
+	}
+
+	switch v := data.(type) {
+	case map[string]interface{}:
+		for _, value := range v {
+			p.traverseForReferences(value, idByInternalID, refs, depth+1)
+		}
+	case []interface{}:
+		for _, item := range v {
+			p.traverseForReferences(item, idByInternalID, refs, depth+1)
+		}
+	case string:
+		// Use KRO's parser via extractExpressionsFromValue for individual strings
+		exprs := extractExpressionsFromValue(v)
+		for _, inner := range exprs {
+			for internalID, resID := range idByInternalID {
+				if strings.HasPrefix(inner, internalID+".") {
+					refs[resID] = true
+				}
+			}
+		}
+	}
+}
+
+// extractAPIVersionKind extracts apiVersion and kind from a resource map.
+func extractAPIVersionKind(resMap map[string]interface{}) (string, string) {
+	apiVersion := k8sparser.GetStringOrDefault(resMap, "", "apiVersion")
+	kind := k8sparser.GetStringOrDefault(resMap, "", "kind")
+	return apiVersion, kind
+}
+
+// extractInternalID extracts the internal ID used for referencing this resource.
+// KRO uses the resource index or an explicit id field.
+func extractInternalID(resMap map[string]interface{}) string {
+	// Check for explicit id field using type-safe accessor
+	if id, err := k8sparser.GetString(resMap, "id"); err == nil && id != "" {
+		return id
+	}
+
+	// Try to extract from template or externalRef using type-safe accessors
+	content, err := k8sparser.GetMap(resMap, "template")
+	if err != nil {
+		content, err = k8sparser.GetMap(resMap, "externalRef")
+		if err != nil {
+			return ""
+		}
+	}
+
+	// Use kind as the internal ID (common pattern in KRO)
+	kind := k8sparser.GetStringOrDefault(content, "", "kind")
+	return strings.ToLower(kind)
+}
+
+// extractSchemaFieldRefs traverses a resource map and collects all schema.spec.* field references
+// using KRO's ParseSchemalessResource for proper expression extraction.
+func extractSchemaFieldRefs(data interface{}) []string {
+	dataMap, ok := data.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+
+	// Use KRO's parser to extract all expressions
+	descriptors, _, err := kroparser.ParseSchemalessResource(dataMap)
+	if err != nil {
+		slog.Debug("KRO ParseSchemalessResource failed for schema field extraction, falling back to manual traversal", "error", err)
+		seen := make(map[string]bool)
+		collectSchemaRefs(data, seen, 0)
+		return mapToSlice(seen)
+	}
+
+	seen := make(map[string]bool)
+	for _, fd := range descriptors {
+		for _, expr := range fd.Expressions {
+			inner := expr.Original
+			// Extract schema.spec.* references from the expression
+			for _, field := range extractBareSchemaFields(inner) {
+				seen[field] = true
+			}
+		}
+	}
+
+	if len(seen) == 0 {
+		return nil
+	}
+	return mapToSlice(seen)
+}
+
+// collectSchemaRefs is the fallback recursive traversal for schema.spec.* extraction.
+// Used only when KRO's ParseSchemalessResource encounters an error.
+func collectSchemaRefs(data interface{}, seen map[string]bool, depth int) {
+	if depth > maxRecursionDepth {
+		return
+	}
+
+	switch v := data.(type) {
+	case map[string]interface{}:
+		for _, value := range v {
+			collectSchemaRefs(value, seen, depth+1)
+		}
+	case []interface{}:
+		for _, item := range v {
+			collectSchemaRefs(item, seen, depth+1)
+		}
+	case string:
+		exprs := extractExpressionsFromValue(v)
+		for _, inner := range exprs {
+			for _, field := range extractBareSchemaFields(inner) {
+				seen[field] = true
+			}
+		}
+	}
+}
+
+// mapToSlice converts a map[string]bool to a sorted string slice.
+func mapToSlice(m map[string]bool) []string {
+	result := make([]string, 0, len(m))
+	for k := range m {
+		result = append(result, k)
+	}
+	sort.Strings(result)
+	return result
+}

@@ -8,13 +8,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/provops-org/knodex/server/internal/api"
-	"github.com/provops-org/knodex/server/internal/api/handlers"
-	"github.com/provops-org/knodex/server/internal/api/response"
-	"github.com/provops-org/knodex/server/internal/health"
-	"github.com/provops-org/knodex/server/internal/models"
-	"github.com/provops-org/knodex/server/internal/services"
-	"github.com/provops-org/knodex/server/internal/watcher"
+	"github.com/knodex/knodex/server/internal/api"
+	"github.com/knodex/knodex/server/internal/api/handlers"
+	"github.com/knodex/knodex/server/internal/api/response"
+	"github.com/knodex/knodex/server/internal/health"
+	"github.com/knodex/knodex/server/internal/kro/watcher"
+	"github.com/knodex/knodex/server/internal/models"
+	"github.com/knodex/knodex/server/internal/services"
 )
 
 // setupTestServer creates a test server with mock data

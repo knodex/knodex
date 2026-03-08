@@ -5,9 +5,9 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/provops-org/knodex/server/app"
-	"github.com/provops-org/knodex/server/internal/config"
-	"github.com/provops-org/knodex/server/internal/logger"
+	"github.com/knodex/knodex/server/app"
+	"github.com/knodex/knodex/server/internal/config"
+	"github.com/knodex/knodex/server/internal/logger"
 )
 
 func main() {

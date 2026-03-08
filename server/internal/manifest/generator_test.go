@@ -1068,7 +1068,7 @@ func TestValidateSpecMap(t *testing.T) {
 			},
 			maxDepth:    10,
 			wantErr:     true,
-			errContains: "newline",
+			errContains: "prohibited control character",
 		},
 		{
 			name: "spec with YAML injection in key",
@@ -1109,11 +1109,57 @@ func TestValidateSpecMap(t *testing.T) {
 			wantErr:     true,
 			errContains: "excessively long string",
 		},
+		{
+			name: "spec with malicious key inside nested array",
+			spec: map[string]interface{}{
+				"items": []interface{}{
+					[]interface{}{
+						map[string]interface{}{
+							"malicious\nkey": "value",
+						},
+					},
+				},
+			},
+			maxDepth:    10,
+			wantErr:     true,
+			errContains: "prohibited control character",
+		},
+		{
+			name: "spec with deeply nested arrays exceeding depth",
+			spec: map[string]interface{}{
+				"a": []interface{}{
+					[]interface{}{
+						[]interface{}{
+							[]interface{}{
+								[]interface{}{
+									[]interface{}{
+										[]interface{}{
+											[]interface{}{
+												[]interface{}{
+													[]interface{}{
+														[]interface{}{
+															"deep",
+														},
+													},
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			maxDepth:    10,
+			wantErr:     true,
+			errContains: "nesting depth",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateSpecMap(tt.spec, 0, tt.maxDepth)
+			err := ValidateSpecMap(tt.spec, 0, tt.maxDepth)
 
 			if tt.wantErr {
 				if err == nil {

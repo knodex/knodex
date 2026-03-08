@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/provops-org/knodex/server/internal/models"
-	"github.com/provops-org/knodex/server/internal/testutil"
+	"github.com/knodex/knodex/server/internal/models"
+	"github.com/knodex/knodex/server/internal/testutil"
 )
 
 // mockRGDProvider implements RGDProvider for testing
@@ -737,23 +737,6 @@ func TestCatalogService_filtersCacheKey(t *testing.T) {
 	// Keys should differ with different includePublic
 	key3 := svc.filtersCacheKey([]string{"a", "b"}, false)
 	assert.NotEqual(t, key2, key3)
-}
-
-func TestMapKeysToSortedSlice(t *testing.T) {
-	t.Run("empty map", func(t *testing.T) {
-		result := mapKeysToSortedSlice(map[string]bool{})
-		assert.Empty(t, result)
-	})
-
-	t.Run("returns sorted keys", func(t *testing.T) {
-		m := map[string]bool{
-			"zebra": true,
-			"alpha": true,
-			"beta":  true,
-		}
-		result := mapKeysToSortedSlice(m)
-		assert.Equal(t, []string{"alpha", "beta", "zebra"}, result)
-	})
 }
 
 func TestCatalogService_GetFilters_EmptyRGDs(t *testing.T) {

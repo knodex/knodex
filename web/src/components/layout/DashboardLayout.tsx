@@ -9,24 +9,15 @@ import { useAuth } from "@/hooks/useAuth";
 
 function DashboardLayoutInner() {
   const navigate = useNavigate();
-  const { logout, refreshUser, isTokenExpired } = useAuth();
+  const { logout, isTokenExpired } = useAuth();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
 
   // Accessibility: announcements
   const { announcements, announce, handleAnnouncementRead } = useAnnouncements();
   const { status: wsStatus, error: wsError } = useWebSocketContext();
 
-  // Initialize user on app startup and check token expiry periodically
+  // Check token expiry periodically (JWT is in HttpOnly cookie, check stored expiry)
   useEffect(() => {
-    // Guard: only call refreshUser if a token exists in localStorage.
-    // Without a token, refreshUser is a no-op (userStore already guards for this),
-    // but this avoids an unnecessary function call during initial unauthenticated renders.
-    const token = localStorage.getItem('jwt_token');
-    if (token) {
-      refreshUser();
-    }
-
-    // Check token expiry every minute
     const interval = setInterval(() => {
       if (isTokenExpired()) {
         logout();

@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/provops-org/knodex/server/internal/testutil"
+	"github.com/knodex/knodex/server/internal/testutil"
 )
 
 func newTestRedisCache(t *testing.T) (*RedisAuthorizationCache, *miniredis.Miniredis) {

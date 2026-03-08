@@ -8,20 +8,26 @@ import {
   projectAllowsNamespace,
 } from './useAuth';
 import { useUserStore } from '@/stores/userStore';
-import { jwtDecode } from 'jwt-decode';
+import type { LoginUserInfo } from '@/stores/userStore';
 import type { Project } from '@/types/project';
-
-// Mock jwt-decode
-vi.mock('jwt-decode');
 
 describe('useAuth hooks', () => {
   beforeEach(() => {
-    // Clear store before each test
     act(() => {
       useUserStore.getState().logout();
     });
     localStorage.clear();
     vi.clearAllMocks();
+  });
+
+  const makeUserInfo = (overrides: Partial<LoginUserInfo> = {}): LoginUserInfo => ({
+    id: 'user-123',
+    email: 'test@example.com',
+    displayName: 'Test User',
+    projects: ['proj-1'],
+    defaultProject: 'proj-1',
+    casbinRoles: [],
+    ...overrides,
   });
 
   describe('useUser', () => {
@@ -31,24 +37,8 @@ describe('useAuth hooks', () => {
     });
 
     it('should return user when authenticated', () => {
-      const mockToken = 'mock.jwt.token';
-      const mockClaims = {
-        sub: 'user-123',
-        email: 'test@example.com',
-        name: 'Test User',
-        projects: ['proj-1'],
-        default_project: 'proj-1',
-        casbin_roles: [],
-        exp: Math.floor(Date.now() / 1000) + 3600,
-        iat: Math.floor(Date.now() / 1000),
-        iss: 'knodex',
-        aud: 'knodex',
-      };
-
-      vi.mocked(jwtDecode).mockReturnValue(mockClaims);
-
       act(() => {
-        useUserStore.getState().login(mockToken);
+        useUserStore.getState().login(makeUserInfo());
       });
 
       const { result } = renderHook(() => useUser());
@@ -57,7 +47,6 @@ describe('useAuth hooks', () => {
         id: 'user-123',
         email: 'test@example.com',
         name: 'Test User',
-        // NOTE: isGlobalAdmin was removed - use useCanI() hook for permission checks
       });
     });
   });
@@ -69,23 +58,11 @@ describe('useAuth hooks', () => {
     });
 
     it('should return default project on login', () => {
-      const mockToken = 'mock.jwt.token';
-      const mockClaims = {
-        sub: 'user-123',
-        email: 'test@example.com',
-        projects: ['proj-1', 'proj-2'],
-        default_project: 'proj-1',
-        casbin_roles: [],
-        exp: Math.floor(Date.now() / 1000) + 3600,
-        iat: Math.floor(Date.now() / 1000),
-        iss: 'knodex',
-        aud: 'knodex',
-      };
-
-      vi.mocked(jwtDecode).mockReturnValue(mockClaims);
-
       act(() => {
-        useUserStore.getState().login(mockToken);
+        useUserStore.getState().login(makeUserInfo({
+          projects: ['proj-1', 'proj-2'],
+          defaultProject: 'proj-1',
+        }));
       });
 
       const { result } = renderHook(() => useCurrentProject());
@@ -93,23 +70,11 @@ describe('useAuth hooks', () => {
     });
 
     it('should update when current project changes', () => {
-      const mockToken = 'mock.jwt.token';
-      const mockClaims = {
-        sub: 'user-123',
-        email: 'test@example.com',
-        projects: ['proj-1', 'proj-2'],
-        default_project: 'proj-1',
-        casbin_roles: [],
-        exp: Math.floor(Date.now() / 1000) + 3600,
-        iat: Math.floor(Date.now() / 1000),
-        iss: 'knodex',
-        aud: 'knodex',
-      };
-
-      vi.mocked(jwtDecode).mockReturnValue(mockClaims);
-
       act(() => {
-        useUserStore.getState().login(mockToken);
+        useUserStore.getState().login(makeUserInfo({
+          projects: ['proj-1', 'proj-2'],
+          defaultProject: 'proj-1',
+        }));
       });
 
       const { result } = renderHook(() => useCurrentProject());
@@ -130,23 +95,8 @@ describe('useAuth hooks', () => {
     });
 
     it('should return true when authenticated', () => {
-      const mockToken = 'mock.jwt.token';
-      const mockClaims = {
-        sub: 'user-123',
-        email: 'test@example.com',
-        projects: ['proj-1'],
-        default_project: 'proj-1',
-        casbin_roles: [],
-        exp: Math.floor(Date.now() / 1000) + 3600,
-        iat: Math.floor(Date.now() / 1000),
-        iss: 'knodex',
-        aud: 'knodex',
-      };
-
-      vi.mocked(jwtDecode).mockReturnValue(mockClaims);
-
       act(() => {
-        useUserStore.getState().login(mockToken);
+        useUserStore.getState().login(makeUserInfo());
       });
 
       const { result } = renderHook(() => useIsAuthenticated());
@@ -162,31 +112,14 @@ describe('useAuth hooks', () => {
       expect(result.current.isAuthenticated).toBe(false);
       expect(typeof result.current.login).toBe('function');
       expect(typeof result.current.logout).toBe('function');
-      expect(typeof result.current.refreshUser).toBe('function');
       expect(typeof result.current.isTokenExpired).toBe('function');
     });
 
     it('should update state on login', () => {
-      const mockToken = 'mock.jwt.token';
-      const mockClaims = {
-        sub: 'user-123',
-        email: 'test@example.com',
-        name: 'Test User',
-        projects: ['proj-1'],
-        default_project: 'proj-1',
-        casbin_roles: [],
-        exp: Math.floor(Date.now() / 1000) + 3600,
-        iat: Math.floor(Date.now() / 1000),
-        iss: 'knodex',
-        aud: 'knodex',
-      };
-
-      vi.mocked(jwtDecode).mockReturnValue(mockClaims);
-
       const { result } = renderHook(() => useAuth());
 
       act(() => {
-        result.current.login(mockToken);
+        result.current.login(makeUserInfo());
       });
 
       expect(result.current.isAuthenticated).toBe(true);
@@ -195,27 +128,11 @@ describe('useAuth hooks', () => {
     });
 
     it('should clear state on logout', () => {
-      const mockToken = 'mock.jwt.token';
-      const mockClaims = {
-        sub: 'user-123',
-        email: 'test@example.com',
-        projects: ['proj-1'],
-        default_project: 'proj-1',
-        casbin_roles: [],
-        exp: Math.floor(Date.now() / 1000) + 3600,
-        iat: Math.floor(Date.now() / 1000),
-        iss: 'knodex',
-        aud: 'knodex',
-      };
-
-      vi.mocked(jwtDecode).mockReturnValue(mockClaims);
-
       const { result } = renderHook(() => useAuth());
 
       act(() => {
-        result.current.login(mockToken);
+        result.current.login(makeUserInfo());
       });
-
       expect(result.current.isAuthenticated).toBe(true);
 
       act(() => {
@@ -224,42 +141,6 @@ describe('useAuth hooks', () => {
 
       expect(result.current.isAuthenticated).toBe(false);
       expect(result.current.user).toBeNull();
-    });
-
-    it('should refresh user data', () => {
-      const mockToken = 'mock.jwt.token';
-      const mockClaims = {
-        sub: 'user-123',
-        email: 'test@example.com',
-        name: 'Test User',
-        projects: ['proj-1'],
-        default_project: 'proj-1',
-        casbin_roles: [],
-        exp: Math.floor(Date.now() / 1000) + 3600,
-        iat: Math.floor(Date.now() / 1000),
-        iss: 'knodex',
-        aud: 'knodex',
-      };
-
-      vi.mocked(jwtDecode).mockReturnValue(mockClaims);
-
-      const { result } = renderHook(() => useAuth());
-
-      act(() => {
-        result.current.login(mockToken);
-      });
-
-      expect(result.current.user?.name).toBe('Test User');
-
-      // Update mock to return different claims
-      const updatedClaims = { ...mockClaims, name: 'Updated Name' };
-      vi.mocked(jwtDecode).mockReturnValue(updatedClaims);
-
-      act(() => {
-        result.current.refreshUser();
-      });
-
-      expect(result.current.user?.name).toBe('Updated Name');
     });
   });
 

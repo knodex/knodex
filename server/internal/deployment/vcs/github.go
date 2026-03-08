@@ -14,7 +14,7 @@ import (
 
 	"golang.org/x/oauth2"
 
-	"github.com/provops-org/knodex/server/internal/netutil"
+	"github.com/knodex/knodex/server/internal/netutil"
 )
 
 const (
@@ -48,27 +48,6 @@ func (c *GitHubClient) Close() {
 	// This removes our reference to the token-bearing transport
 	c.httpClient = nil
 	c.closed = true
-}
-
-// GetOwner returns the repository owner
-func (c *GitHubClient) GetOwner() string {
-	return c.owner
-}
-
-// GetRepo returns the repository name
-func (c *GitHubClient) GetRepo() string {
-	return c.repo
-}
-
-// GetRetryConfig returns the retry configuration
-func (c *GitHubClient) GetRetryConfig() RetryConfig {
-	return c.retryConfig
-}
-
-// CheckRateLimit checks if we're below the rate limit threshold
-// This is the exported version for use in tests and external callers
-func (c *GitHubClient) CheckRateLimit() error {
-	return c.checkRateLimit()
 }
 
 // Connection pooling constants

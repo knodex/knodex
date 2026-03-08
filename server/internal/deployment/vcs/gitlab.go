@@ -15,7 +15,7 @@ import (
 
 	"golang.org/x/oauth2"
 
-	"github.com/provops-org/knodex/server/internal/netutil"
+	"github.com/knodex/knodex/server/internal/netutil"
 )
 
 const (

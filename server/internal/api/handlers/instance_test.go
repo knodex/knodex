@@ -16,11 +16,11 @@ import (
 	fakedynamic "k8s.io/client-go/dynamic/fake"
 	k8stesting "k8s.io/client-go/testing"
 
-	"github.com/provops-org/knodex/server/internal/api/middleware"
-	"github.com/provops-org/knodex/server/internal/api/response"
-	"github.com/provops-org/knodex/server/internal/deployment"
-	"github.com/provops-org/knodex/server/internal/models"
-	"github.com/provops-org/knodex/server/internal/watcher"
+	"github.com/knodex/knodex/server/internal/api/middleware"
+	"github.com/knodex/knodex/server/internal/api/response"
+	"github.com/knodex/knodex/server/internal/deployment"
+	"github.com/knodex/knodex/server/internal/kro/watcher"
+	"github.com/knodex/knodex/server/internal/models"
 )
 
 // TestInstanceCRUDHandler_ListInstances_NilTracker tests that ListInstances returns 503
@@ -936,6 +936,99 @@ func TestUpdateInstance_InvalidSpec(t *testing.T) {
 	}
 }
 
+// TestUpdateInstance_SpecInjection tests that malicious spec payloads are rejected (INJ-VULN-02)
+func TestUpdateInstance_SpecInjection(t *testing.T) {
+	t.Parallel()
+	handler, _, _ := newUpdateTestSetup(t)
+
+	tests := []struct {
+		name       string
+		body       string
+		wantStatus int
+		errContain string
+	}{
+		{
+			name:       "valid spec passes validation",
+			body:       `{"spec": {"replicas": 3, "image": "nginx:2.0"}}`,
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "newline in key rejected",
+			body:       `{"spec": {"malicious\nkey": "value"}}`,
+			wantStatus: http.StatusBadRequest,
+			errContain: "prohibited control character",
+		},
+		{
+			name:       "carriage return in key rejected",
+			body:       `{"spec": {"malicious\rkey": "value"}}`,
+			wantStatus: http.StatusBadRequest,
+			errContain: "prohibited control character",
+		},
+		{
+			name:       "null byte in key rejected",
+			body:       `{"spec": {"malicious\u0000key": "value"}}`,
+			wantStatus: http.StatusBadRequest,
+			errContain: "prohibited control character",
+		},
+		{
+			name:       "YAML colon-space injection in key rejected",
+			body:       `{"spec": {"key: injected": "value"}}`,
+			wantStatus: http.StatusBadRequest,
+			errContain: "prohibited sequence",
+		},
+		{
+			name:       "template injection in key rejected",
+			body:       `{"spec": {"{{malicious}}": "value"}}`,
+			wantStatus: http.StatusBadRequest,
+			errContain: "prohibited sequence",
+		},
+		{
+			name:       "dollar-brace injection in key rejected",
+			body:       `{"spec": {"${ENV_VAR}": "value"}}`,
+			wantStatus: http.StatusBadRequest,
+			errContain: "prohibited sequence",
+		},
+		{
+			name:       "depth exceeding 10 levels rejected",
+			body:       `{"spec": {"a": {"b": {"c": {"d": {"e": {"f": {"g": {"h": {"i": {"j": {"k": {"l": "deep"}}}}}}}}}}}}}`,
+			wantStatus: http.StatusBadRequest,
+			errContain: "nesting depth",
+		},
+		{
+			name:       "excessively long string value rejected",
+			body:       `{"spec": {"data": "` + strings.Repeat("x", 70000) + `"}}`,
+			wantStatus: http.StatusBadRequest,
+			errContain: "excessively long string",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			userCtx := &middleware.UserContext{UserID: "dev-user", Email: "dev@test.local"}
+			req := newRequestWithUserContext(http.MethodPatch, "/api/v1/instances/production/WebApp/test-instance",
+				[]byte(tt.body), userCtx)
+			req.SetPathValue("namespace", "production")
+			req.SetPathValue("kind", "WebApp")
+			req.SetPathValue("name", "test-instance")
+			rec := httptest.NewRecorder()
+
+			handler.UpdateInstance(rec, req)
+
+			if rec.Code != tt.wantStatus {
+				t.Errorf("expected %d, got %d; body: %s", tt.wantStatus, rec.Code, rec.Body.String())
+			}
+			if tt.errContain != "" {
+				body := rec.Body.String()
+				if !strings.Contains(body, tt.errContain) {
+					t.Errorf("expected body to contain %q, got: %s", tt.errContain, body)
+				}
+			}
+		})
+	}
+}
+
 // TestUpdateInstance_NilTracker tests that UpdateInstance returns 503 when tracker is nil
 func TestUpdateInstance_NilTracker(t *testing.T) {
 	t.Parallel()
@@ -1621,5 +1714,103 @@ func TestUpdateInstance_HybridPatchFailure_AuditRecorded(t *testing.T) {
 	}
 	if dm, ok := e.Details["deploymentMode"].(string); !ok || dm != "hybrid" {
 		t.Errorf("expected deploymentMode 'hybrid' in audit details, got %v", e.Details["deploymentMode"])
+	}
+}
+
+// TestCreateInstance_SpecInjection tests that malicious spec payloads are rejected in POST path (INJ-VULN-02)
+func TestCreateInstance_SpecInjection(t *testing.T) {
+	t.Parallel()
+	// Create a handler with valid RGD watcher and dynamic client - validation happens before RGD lookup
+	rgdCache := watcher.NewRGDCache()
+	rgdWatcher := watcher.NewRGDWatcherWithCache(rgdCache)
+	scheme := runtime.NewScheme()
+	fakeDynClient := fakedynamic.NewSimpleDynamicClient(scheme)
+	handler := NewInstanceDeploymentHandler(InstanceDeploymentHandlerConfig{
+		RGDWatcher:    rgdWatcher,
+		DynamicClient: fakeDynClient,
+	})
+
+	tests := []struct {
+		name       string
+		body       string
+		wantStatus int
+		errContain string
+	}{
+		{
+			name:       "newline in spec key rejected",
+			body:       `{"name": "test-inst", "namespace": "default", "rgdName": "test-rgd", "spec": {"malicious\nkey": "value"}}`,
+			wantStatus: http.StatusBadRequest,
+			errContain: "prohibited control character",
+		},
+		{
+			name:       "carriage return in spec key rejected",
+			body:       `{"name": "test-inst", "namespace": "default", "rgdName": "test-rgd", "spec": {"malicious\rkey": "value"}}`,
+			wantStatus: http.StatusBadRequest,
+			errContain: "prohibited control character",
+		},
+		{
+			name:       "null byte in spec key rejected",
+			body:       `{"name": "test-inst", "namespace": "default", "rgdName": "test-rgd", "spec": {"malicious\u0000key": "value"}}`,
+			wantStatus: http.StatusBadRequest,
+			errContain: "prohibited control character",
+		},
+		{
+			name:       "YAML colon-space injection in spec key rejected",
+			body:       `{"name": "test-inst", "namespace": "default", "rgdName": "test-rgd", "spec": {"key: injected": "value"}}`,
+			wantStatus: http.StatusBadRequest,
+			errContain: "prohibited sequence",
+		},
+		{
+			name:       "template injection in spec key rejected",
+			body:       `{"name": "test-inst", "namespace": "default", "rgdName": "test-rgd", "spec": {"{{malicious}}": "value"}}`,
+			wantStatus: http.StatusBadRequest,
+			errContain: "prohibited sequence",
+		},
+		{
+			name:       "dollar-brace injection in spec key rejected",
+			body:       `{"name": "test-inst", "namespace": "default", "rgdName": "test-rgd", "spec": {"${ENV_VAR}": "value"}}`,
+			wantStatus: http.StatusBadRequest,
+			errContain: "prohibited sequence",
+		},
+		{
+			name:       "depth exceeding 10 levels rejected",
+			body:       `{"name": "test-inst", "namespace": "default", "rgdName": "test-rgd", "spec": {"a": {"b": {"c": {"d": {"e": {"f": {"g": {"h": {"i": {"j": {"k": {"l": "deep"}}}}}}}}}}}}}`,
+			wantStatus: http.StatusBadRequest,
+			errContain: "nesting depth",
+		},
+		{
+			name:       "excessively long string value rejected",
+			body:       `{"name": "test-inst", "namespace": "default", "rgdName": "test-rgd", "spec": {"data": "` + strings.Repeat("x", 70000) + `"}}`,
+			wantStatus: http.StatusBadRequest,
+			errContain: "excessively long string",
+		},
+		{
+			name:       "nil spec passes validation (reaches RGD lookup)",
+			body:       `{"name": "test-inst", "namespace": "default", "rgdName": "test-rgd"}`,
+			wantStatus: http.StatusNotFound, // passes validation, fails on RGD lookup
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			userCtx := &middleware.UserContext{UserID: "dev-user", Email: "dev@test.local"}
+			req := newRequestWithUserContext(http.MethodPost, "/api/v1/instances",
+				[]byte(tt.body), userCtx)
+			rec := httptest.NewRecorder()
+
+			handler.CreateInstance(rec, req)
+
+			if rec.Code != tt.wantStatus {
+				t.Errorf("expected %d, got %d; body: %s", tt.wantStatus, rec.Code, rec.Body.String())
+			}
+			if tt.errContain != "" {
+				body := rec.Body.String()
+				if !strings.Contains(body, tt.errContain) {
+					t.Errorf("expected body to contain %q, got: %s", tt.errContain, body)
+				}
+			}
+		})
 	}
 }

@@ -17,7 +17,7 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/restmapper"
 
-	"github.com/provops-org/knodex/server/internal/api/response"
+	"github.com/knodex/knodex/server/internal/api/response"
 )
 
 const (

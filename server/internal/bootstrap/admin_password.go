@@ -2,10 +2,11 @@ package bootstrap
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/base64"
 	"fmt"
 	"log/slog"
+
+	utilrand "github.com/knodex/knodex/server/internal/util/rand"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -163,8 +164,8 @@ func generateSecurePassword() (string, error) {
 	const maxAttempts = 10
 	for i := 0; i < maxAttempts; i++ {
 		// Generate 18 random bytes (18 bytes * 4/3 = 24 base64 characters)
-		randomBytes := make([]byte, 18)
-		if _, err := rand.Read(randomBytes); err != nil {
+		randomBytes, err := utilrand.GenerateRandomBytes(18)
+		if err != nil {
 			return "", fmt.Errorf("failed to generate random password: %w", err)
 		}
 

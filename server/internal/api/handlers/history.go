@@ -2,32 +2,15 @@ package handlers
 
 import (
 	"net/http"
-	"regexp"
-	"strings"
 
-	"github.com/provops-org/knodex/server/internal/api/response"
-	"github.com/provops-org/knodex/server/internal/history"
-	"github.com/provops-org/knodex/server/internal/models"
+	"github.com/knodex/knodex/server/internal/api/response"
+	"github.com/knodex/knodex/server/internal/history"
+	"github.com/knodex/knodex/server/internal/models"
+	"github.com/knodex/knodex/server/internal/util/sanitize"
 )
 
-// sanitizeFilename removes potentially dangerous characters from filenames
-// to prevent HTTP header injection attacks via Content-Disposition header
-var filenameRegex = regexp.MustCompile(`[^a-zA-Z0-9._-]`)
-
 func sanitizeFilename(name string) string {
-	// Replace invalid characters with underscore
-	sanitized := filenameRegex.ReplaceAllString(name, "_")
-	// Prevent path traversal
-	sanitized = strings.ReplaceAll(sanitized, "..", "_")
-	// Limit length to prevent buffer issues
-	if len(sanitized) > 200 {
-		sanitized = sanitized[:200]
-	}
-	// Ensure not empty
-	if sanitized == "" {
-		sanitized = "export"
-	}
-	return sanitized
+	return sanitize.Filename(name)
 }
 
 // HistoryHandler handles deployment history HTTP requests

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/provops-org/knodex/server/internal/config"
-	"github.com/provops-org/knodex/server/internal/rbac"
+	"github.com/knodex/knodex/server/internal/config"
+	"github.com/knodex/knodex/server/internal/rbac"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

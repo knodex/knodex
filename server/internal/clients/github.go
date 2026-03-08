@@ -14,6 +14,8 @@ import (
 	"golang.org/x/oauth2"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+
+	"github.com/knodex/knodex/server/internal/util/sanitize"
 )
 
 const (
@@ -384,32 +386,12 @@ func validateInput(owner, repo, branch string) error {
 
 // sanitizeCommitMessage sanitizes commit messages to prevent injection attacks
 func sanitizeCommitMessage(message string) (string, error) {
-	if message == "" {
-		return "", fmt.Errorf("commit message cannot be empty")
-	}
-
-	// Enforce maximum length
+	// Enforce maximum length before delegating sanitization
 	if len(message) > maxCommitMessage {
 		return "", fmt.Errorf("commit message too long (max %d characters)", maxCommitMessage)
 	}
 
-	// Remove null bytes
-	message = strings.ReplaceAll(message, "\x00", "")
-
-	// Remove control characters except newline, tab, and carriage return
-	var sanitized strings.Builder
-	for _, r := range message {
-		if r >= 32 || r == '\n' || r == '\t' || r == '\r' {
-			sanitized.WriteRune(r)
-		}
-	}
-
-	result := sanitized.String()
-	if result == "" {
-		return "", fmt.Errorf("commit message contains only invalid characters")
-	}
-
-	return result, nil
+	return sanitize.CommitMessage(message)
 }
 
 // getSecretKeys returns a list of keys available in a secret's data map

@@ -13,7 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/provops-org/knodex/server/internal/rbac"
+	"github.com/knodex/knodex/server/internal/rbac"
 	"github.com/redis/go-redis/v9"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -82,6 +82,10 @@ func (m *mockAuthServiceForOIDC) GenerateTokenWithGroups(userID, email, displayN
 
 func (m *mockAuthServiceForOIDC) ValidateToken(_ context.Context, tokenString string) (*JWTClaims, error) {
 	return nil, nil
+}
+
+func (m *mockAuthServiceForOIDC) RevokeToken(_ context.Context, _ string, _ time.Duration) error {
+	return nil
 }
 
 // createTestOIDCProvisioningService creates a test provisioning service
@@ -294,7 +298,7 @@ func TestGenerateStateToken(t *testing.T) {
 	// Test state token generation
 	providerName := "azuread"
 	redirectURL := ""
-	state, err := svc.GenerateStateToken(ctx, providerName, redirectURL)
+	state, nonce, err := svc.GenerateStateToken(ctx, providerName, redirectURL)
 	if err != nil {
 		t.Fatalf("GenerateStateToken() error = %v", err)
 	}
@@ -302,6 +306,11 @@ func TestGenerateStateToken(t *testing.T) {
 	// Verify state token is not empty
 	if state == "" {
 		t.Error("GenerateStateToken() returned empty state token")
+	}
+
+	// Verify nonce is not empty
+	if nonce == "" {
+		t.Error("GenerateStateToken() returned empty nonce")
 	}
 
 	// Verify state token is base64 encoded
@@ -315,6 +324,17 @@ func TestGenerateStateToken(t *testing.T) {
 		t.Errorf("GenerateStateToken() token length = %d, want %d", len(decoded), StateTokenLength)
 	}
 
+	// Verify nonce is base64 encoded
+	decodedNonce, err := base64.URLEncoding.DecodeString(nonce)
+	if err != nil {
+		t.Errorf("GenerateStateToken() returned invalid base64 nonce: %v", err)
+	}
+
+	// Verify nonce length (should be 32 bytes)
+	if len(decodedNonce) != NonceLength {
+		t.Errorf("GenerateStateToken() nonce length = %d, want %d", len(decodedNonce), NonceLength)
+	}
+
 	// Verify state token is stored in Redis
 	key := "oidc:state:" + state
 	if _, ok := redisClient.storage[key]; !ok {
@@ -324,6 +344,17 @@ func TestGenerateStateToken(t *testing.T) {
 	// Verify stored value is the provider name
 	if redisClient.storage[key] != providerName {
 		t.Errorf("GenerateStateToken() stored value = %v, want %v", redisClient.storage[key], providerName)
+	}
+
+	// Verify nonce is stored in Redis
+	nonceKey := NoncePrefix + state
+	if _, ok := redisClient.storage[nonceKey]; !ok {
+		t.Error("GenerateStateToken() did not store nonce in Redis")
+	}
+
+	// Verify stored nonce value matches returned nonce
+	if redisClient.storage[nonceKey] != nonce {
+		t.Errorf("GenerateStateToken() stored nonce = %v, want %v", redisClient.storage[nonceKey], nonce)
 	}
 }
 
@@ -355,7 +386,7 @@ func TestValidateStateToken(t *testing.T) {
 		{
 			name: "valid state token",
 			setupFunc: func() string {
-				state, _ := svc.GenerateStateToken(ctx, "azuread", "")
+				state, _, _ := svc.GenerateStateToken(ctx, "azuread", "")
 				return state
 			},
 			wantErr:         false,
@@ -381,7 +412,7 @@ func TestValidateStateToken(t *testing.T) {
 		{
 			name: "already used state token (double validation)",
 			setupFunc: func() string {
-				state, _ := svc.GenerateStateToken(ctx, "google", "")
+				state, _, _ := svc.GenerateStateToken(ctx, "google", "")
 				// Validate once (should succeed)
 				svc.ValidateStateToken(ctx, state)
 				// Return same token for second validation (should fail)
@@ -480,7 +511,7 @@ func TestGetAuthCodeURL(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			url, err := svc.GetAuthCodeURL(tt.providerName, tt.state)
+			url, err := svc.GetAuthCodeURL(tt.providerName, tt.state, "test-nonce")
 			if tt.wantErr {
 				if err == nil {
 					t.Errorf("GetAuthCodeURL() expected error, got nil")
@@ -524,7 +555,7 @@ func TestStateTokenRandomness(t *testing.T) {
 	numTokens := 100
 
 	for i := 0; i < numTokens; i++ {
-		state, err := svc.GenerateStateToken(ctx, "azuread", "")
+		state, _, err := svc.GenerateStateToken(ctx, "azuread", "")
 		if err != nil {
 			t.Fatalf("GenerateStateToken() error = %v", err)
 		}
@@ -1069,7 +1100,7 @@ func TestReloadProviders_ConcurrentSafety(t *testing.T) {
 			defer wg.Done()
 			for j := 0; j < 20; j++ {
 				// Will return error (no provider named "test"), but tests lock safety
-				_, _ = svc.GetAuthCodeURL("test-provider", "fake-state")
+				_, _ = svc.GetAuthCodeURL("test-provider", "fake-state", "fake-nonce")
 			}
 		}()
 	}
@@ -1085,6 +1116,47 @@ func TestReloadProviders_ConcurrentSafety(t *testing.T) {
 		// success — no panic, no deadlock
 	case <-time.After(10 * time.Second):
 		t.Fatal("concurrent test timed out — possible deadlock")
+	}
+}
+
+// TestInitializeProviderInto_UsesSSRFSafeDialer verifies that OIDC provider
+// initialization uses the SSRF-safe dialer by attempting to connect to a
+// loopback address, which the SSRF dialer should block.
+func TestInitializeProviderInto_UsesSSRFSafeDialer(t *testing.T) {
+	svc := &OIDCService{}
+
+	target := make(map[string]*oidcProvider)
+	config := OIDCProviderConfig{
+		Name:         "test-ssrf",
+		IssuerURL:    "http://127.0.0.1:1/.well-known/openid-configuration",
+		ClientID:     "test-client",
+		ClientSecret: "test-secret",
+		RedirectURL:  "http://localhost/callback",
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err := svc.initializeProviderInto(ctx, config, target)
+	if err == nil {
+		t.Fatal("expected error when connecting to loopback with SSRF-safe dialer")
+	}
+
+	// The error should mention SSRF protection (private/reserved IP blocked).
+	// Note: This assertion depends on netutil.NewSSRFSafeDialer() producing error messages
+	// containing "private", "reserved", or "ssrf". If the dialer message wording changes,
+	// update these expected substrings accordingly.
+	errMsg := strings.ToLower(err.Error())
+	ssrfIndicators := []string{"private", "reserved", "ssrf", "blocked", "loopback"}
+	found := false
+	for _, indicator := range ssrfIndicators {
+		if strings.Contains(errMsg, indicator) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected error to mention SSRF protection (one of %v), got: %s", ssrfIndicators, err.Error())
 	}
 }
 

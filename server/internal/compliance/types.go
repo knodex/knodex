@@ -8,21 +8,6 @@ const (
 	SeverityLow      = "low"
 )
 
-// ValidSeverities returns all valid severity levels
-func ValidSeverities() []string {
-	return []string{SeverityCritical, SeverityHigh, SeverityMedium, SeverityLow}
-}
-
-// ValidateSeverity checks if a severity string is valid
-func ValidateSeverity(severity string) bool {
-	switch severity {
-	case SeverityCritical, SeverityHigh, SeverityMedium, SeverityLow:
-		return true
-	default:
-		return false
-	}
-}
-
 // Deployment represents a deployment to be audited for compliance.
 // This is a simplified representation for compliance checking purposes.
 type Deployment struct {

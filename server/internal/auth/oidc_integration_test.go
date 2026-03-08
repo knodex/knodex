@@ -9,13 +9,14 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/provops-org/knodex/server/internal/config"
+	"github.com/knodex/knodex/server/internal/config"
 )
 
 // mockAuthServiceForIntegration implements ServiceInterface for integration testing
@@ -43,6 +44,10 @@ func (m *mockAuthServiceForIntegration) ValidateToken(_ context.Context, tokenSt
 	return nil, nil
 }
 
+func (m *mockAuthServiceForIntegration) RevokeToken(_ context.Context, _ string, _ time.Duration) error {
+	return nil
+}
+
 // MockOIDCProvider is a mock OIDC provider for integration testing
 type MockOIDCProvider struct {
 	server      *httptest.Server
@@ -59,7 +64,8 @@ type mockAuthCode struct {
 	name         string
 	verified     bool
 	groups       []string
-	omitVerified bool // when true, email_verified claim is omitted from ID token
+	nonce        string // OIDC nonce echoed back in ID token
+	omitVerified bool   // when true, email_verified claim is omitted from ID token
 }
 
 // NewMockOIDCProvider creates a new mock OIDC provider
@@ -173,13 +179,14 @@ func (m *MockOIDCProvider) Close() {
 	m.server.Close()
 }
 
-// AddAuthCode adds an authorization code to the mock provider
-func (m *MockOIDCProvider) AddAuthCode(code, email, sub, name string, verified bool, groups ...string) {
+// AddAuthCodeWithNonce adds an authorization code with a nonce to echo in the ID token
+func (m *MockOIDCProvider) AddAuthCodeWithNonce(code, email, sub, name string, verified bool, nonce string, groups ...string) {
 	m.codes[code] = &mockAuthCode{
 		email:    email,
 		sub:      sub,
 		name:     name,
 		verified: verified,
+		nonce:    nonce,
 		groups:   groups,
 	}
 }
@@ -204,6 +211,11 @@ func (m *MockOIDCProvider) generateIDToken(authCode *mockAuthCode) (string, erro
 	// Add groups claim if provided
 	if len(authCode.groups) > 0 {
 		claims["groups"] = authCode.groups
+	}
+
+	// Add nonce claim if provided (echoed back from authorization request)
+	if authCode.nonce != "" {
+		claims["nonce"] = authCode.nonce
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
@@ -232,6 +244,28 @@ func bigIntToBytes(n int64) []byte {
 	bytes[2] = byte(n >> 8)
 	bytes[3] = byte(n)
 	return bytes
+}
+
+// newTestOIDCService creates an OIDCService that uses the default HTTP client
+// (bypassing the SSRF-safe dialer) so tests can connect to loopback mock servers.
+func newTestOIDCService(
+	cfg *Config,
+	redisClient RedisClient,
+	authService ServiceInterface,
+	provisioningService *OIDCProvisioningService,
+	roleManager AuthRoleManager,
+	rolePersister RolePersister,
+) (*OIDCService, error) {
+	svc, err := NewOIDCService(cfg, redisClient, authService, provisioningService, roleManager, rolePersister)
+	if err != nil {
+		return nil, err
+	}
+	svc.httpClient = http.DefaultClient
+	// Re-initialize providers now that the loopback-safe client is set.
+	for _, pc := range cfg.OIDCProviders {
+		_ = svc.initializeProvider(context.Background(), pc)
+	}
+	return svc, nil
 }
 
 // TestOIDCIntegration_FullFlow tests the complete OIDC flow with a mock provider
@@ -278,21 +312,21 @@ func TestOIDCIntegration_FullFlow(t *testing.T) {
 	}
 
 	// NewOIDCService no longer takes userService parameter
-	svc, err := NewOIDCService(cfg, redisClient, authService, provisioningService, nil, nil)
+	svc, err := newTestOIDCService(cfg, redisClient, authService, provisioningService, nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to create OIDC service: %v", err)
 	}
 
 	ctx := context.Background()
 
-	// Step 1: Generate state token
-	state, err := svc.GenerateStateToken(ctx, "mock", "http://localhost:3000/auth/callback")
+	// Step 1: Generate state token and nonce
+	state, nonce, err := svc.GenerateStateToken(ctx, "mock", "http://localhost:3000/auth/callback")
 	if err != nil {
 		t.Fatalf("GenerateStateToken() failed: %v", err)
 	}
 
-	// Step 2: Get authorization URL
-	authURL, err := svc.GetAuthCodeURL("mock", state)
+	// Step 2: Get authorization URL (includes nonce parameter)
+	authURL, err := svc.GetAuthCodeURL("mock", state, nonce)
 	if err != nil {
 		t.Fatalf("GetAuthCodeURL() failed: %v", err)
 	}
@@ -301,9 +335,9 @@ func TestOIDCIntegration_FullFlow(t *testing.T) {
 		t.Errorf("Authorization URL does not contain issuer URL: %s", authURL)
 	}
 
-	// Step 3: Simulate authorization code from provider
+	// Step 3: Simulate authorization code from provider (nonce echoed in ID token)
 	authCode := "test-auth-code-12345"
-	mockProvider.AddAuthCode(authCode, "test@example.com", "test-subject", "Test User", true)
+	mockProvider.AddAuthCodeWithNonce(authCode, "test@example.com", "test-subject", "Test User", true, nonce)
 
 	// Step 4: Validate state token (as callback would do)
 	provider, redirectURL, err := svc.ValidateStateToken(ctx, state)
@@ -317,8 +351,14 @@ func TestOIDCIntegration_FullFlow(t *testing.T) {
 		t.Fatalf("ValidateStateToken() returned provider %s, want mock", provider)
 	}
 
-	// Step 5: Exchange code for token
-	loginResp, err := svc.ExchangeCodeForToken(ctx, "mock", authCode)
+	// Step 5: Retrieve nonce from Redis (as callback handler would do)
+	storedNonce, err := redisClient.GetDel(ctx, NoncePrefix+state).Result()
+	if err != nil {
+		t.Fatalf("Failed to retrieve nonce from Redis: %v", err)
+	}
+
+	// Step 6: Exchange code for token (with nonce validation)
+	loginResp, err := svc.ExchangeCodeForToken(ctx, "mock", authCode, storedNonce)
 	if err != nil {
 		t.Fatalf("ExchangeCodeForToken() failed: %v", err)
 	}
@@ -352,6 +392,75 @@ func TestOIDCIntegration_FullFlow(t *testing.T) {
 	}
 }
 
+// TestOIDCIntegration_AuthURLContainsNonce verifies AC-1: the authorization URL includes the nonce parameter.
+func TestOIDCIntegration_AuthURLContainsNonce(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	mockProvider, err := NewMockOIDCProvider()
+	if err != nil {
+		t.Fatalf("Failed to create mock OIDC provider: %v", err)
+	}
+	defer mockProvider.Close()
+
+	redisClient := NewMockRedisClient()
+	authService := &mockAuthServiceForIntegration{}
+	provisioningService, _ := createTestOIDCProvisioningService()
+
+	cfg := &Config{
+		OIDCEnabled: true,
+		OIDCProviders: []OIDCProviderConfig{
+			{
+				Name:         "mock",
+				IssuerURL:    mockProvider.issuerURL,
+				ClientID:     mockProvider.clientID,
+				ClientSecret: "test-secret",
+				RedirectURL:  mockProvider.redirectURI,
+			},
+		},
+	}
+
+	svc, err := newTestOIDCService(cfg, redisClient, authService, provisioningService, nil, nil)
+	if err != nil {
+		t.Fatalf("Failed to create OIDC service: %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Generate state and nonce
+	state, nonce, err := svc.GenerateStateToken(ctx, "mock", "")
+	if err != nil {
+		t.Fatalf("GenerateStateToken() failed: %v", err)
+	}
+
+	// Get authorization URL
+	authURL, err := svc.GetAuthCodeURL("mock", state, nonce)
+	if err != nil {
+		t.Fatalf("GetAuthCodeURL() failed: %v", err)
+	}
+
+	// Verify nonce parameter is in the URL
+	if !strings.Contains(authURL, "nonce=") {
+		t.Errorf("authorization URL does not contain nonce parameter: %s", authURL)
+	}
+
+	// Verify the nonce value in the URL matches what we passed
+	// Parse URL to handle URL-encoding (e.g., base64 '=' encoded as '%3D')
+	parsedURL, parseErr := url.Parse(authURL)
+	if parseErr != nil {
+		t.Fatalf("failed to parse authorization URL: %v", parseErr)
+	}
+	if got := parsedURL.Query().Get("nonce"); got != nonce {
+		t.Errorf("authorization URL nonce value doesn't match: got=%s, expected=%s", got, nonce)
+	}
+
+	// Verify state parameter is also present
+	if !strings.Contains(authURL, "state=") {
+		t.Errorf("authorization URL does not contain state parameter: %s", authURL)
+	}
+}
+
 // TestOIDCIntegration_InvalidCode tests token exchange with invalid code
 // Updated to use OIDCProvisioningService (no User CRD)
 func TestOIDCIntegration_InvalidCode(t *testing.T) {
@@ -382,7 +491,7 @@ func TestOIDCIntegration_InvalidCode(t *testing.T) {
 		},
 	}
 
-	svc, err := NewOIDCService(cfg, redisClient, authService, provisioningService, nil, nil)
+	svc, err := newTestOIDCService(cfg, redisClient, authService, provisioningService, nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to create OIDC service: %v", err)
 	}
@@ -390,7 +499,7 @@ func TestOIDCIntegration_InvalidCode(t *testing.T) {
 	ctx := context.Background()
 
 	// Try to exchange invalid code
-	_, err = svc.ExchangeCodeForToken(ctx, "mock", "invalid-code")
+	_, err = svc.ExchangeCodeForToken(ctx, "mock", "invalid-code", "some-nonce")
 	if err == nil {
 		t.Error("ExchangeCodeForToken() with invalid code should fail")
 	}
@@ -425,19 +534,20 @@ func TestOIDCIntegration_EmailNotVerified(t *testing.T) {
 		},
 	}
 
-	svc, err := NewOIDCService(cfg, redisClient, authService, provisioningService, nil, nil)
+	svc, err := newTestOIDCService(cfg, redisClient, authService, provisioningService, nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to create OIDC service: %v", err)
 	}
 
 	ctx := context.Background()
 
-	// Add auth code with email_verified=false
+	// Add auth code with email_verified=false and a nonce
 	authCode := "unverified-email-code"
-	mockProvider.AddAuthCode(authCode, "unverified@example.com", "unverified-sub", "Unverified User", false)
+	testNonce := "test-nonce-unverified"
+	mockProvider.AddAuthCodeWithNonce(authCode, "unverified@example.com", "unverified-sub", "Unverified User", false, testNonce)
 
 	// Exchange should fail because email is not verified
-	_, err = svc.ExchangeCodeForToken(ctx, "mock", authCode)
+	_, err = svc.ExchangeCodeForToken(ctx, "mock", authCode, testNonce)
 	if err == nil {
 		t.Error("ExchangeCodeForToken() with unverified email should fail")
 	} else if !strings.Contains(err.Error(), "email address has not been verified by the identity provider") {
@@ -480,7 +590,7 @@ func TestOIDCIntegration_EmailVerifiedOmitted(t *testing.T) {
 		},
 	}
 
-	svc, err := NewOIDCService(cfg, redisClient, authService, provisioningService, nil, nil)
+	svc, err := newTestOIDCService(cfg, redisClient, authService, provisioningService, nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to create OIDC service: %v", err)
 	}
@@ -489,16 +599,18 @@ func TestOIDCIntegration_EmailVerifiedOmitted(t *testing.T) {
 
 	// Add auth code WITHOUT email_verified claim (omitVerified=true)
 	authCode := "no-verified-claim-code"
+	testNonce := "test-nonce-omitted"
 	mockProvider.codes[authCode] = &mockAuthCode{
 		email:        "user@corporate-idp.com",
 		sub:          "corporate-sub",
 		name:         "Corporate User",
 		verified:     false, // irrelevant since omitVerified=true
 		omitVerified: true,
+		nonce:        testNonce,
 	}
 
 	// Exchange should succeed — absent email_verified is NOT the same as false
-	resp, err := svc.ExchangeCodeForToken(ctx, "mock", authCode)
+	resp, err := svc.ExchangeCodeForToken(ctx, "mock", authCode, testNonce)
 	if err != nil {
 		t.Fatalf("ExchangeCodeForToken() with omitted email_verified should succeed, got error: %v", err)
 	}
@@ -539,19 +651,20 @@ func TestOIDCIntegration_UserProvisioning(t *testing.T) {
 		},
 	}
 
-	svc, err := NewOIDCService(cfg, redisClient, authService, provisioningService, nil, nil)
+	svc, err := newTestOIDCService(cfg, redisClient, authService, provisioningService, nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to create OIDC service: %v", err)
 	}
 
 	ctx := context.Background()
 
-	// Add auth code for a new user
+	// Add auth code for a new user with nonce
 	authCode := "test-code"
-	mockProvider.AddAuthCode(authCode, "newuser@example.com", "new-subject", "New User", true)
+	testNonce := "test-nonce-provisioning"
+	mockProvider.AddAuthCodeWithNonce(authCode, "newuser@example.com", "new-subject", "New User", true, testNonce)
 
 	// Exchange code - should succeed and provision new user WITHOUT personal project
-	loginResp, err := svc.ExchangeCodeForToken(ctx, "mock", authCode)
+	loginResp, err := svc.ExchangeCodeForToken(ctx, "mock", authCode, testNonce)
 	if err != nil {
 		t.Fatalf("ExchangeCodeForToken() failed: %v (user provisioning should have created the user)", err)
 	}
@@ -613,7 +726,7 @@ func TestOIDCIntegration_ListProviders(t *testing.T) {
 		},
 	}
 
-	svc, err := NewOIDCService(cfg, redisClient, authService, provisioningService, nil, nil)
+	svc, err := newTestOIDCService(cfg, redisClient, authService, provisioningService, nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to create OIDC service: %v", err)
 	}
@@ -695,7 +808,7 @@ func TestOIDCIntegration_GlobalAdmin(t *testing.T) {
 	}
 
 	// Pass the same casbinEnforcer so OIDCService can retrieve roles assigned by provisioning service
-	svc, err := NewOIDCService(oidcConfig, redisClient, authService, provisioningService, casbinEnforcer, nil)
+	svc, err := newTestOIDCService(oidcConfig, redisClient, authService, provisioningService, casbinEnforcer, nil)
 	if err != nil {
 		t.Fatalf("Failed to create OIDC service: %v", err)
 	}
@@ -704,18 +817,20 @@ func TestOIDCIntegration_GlobalAdmin(t *testing.T) {
 
 	// Simulate OIDC login with user in platform-admins group
 	authCode := "test-global-admin-code"
-	mockProvider.AddAuthCode(
+	testNonce := "test-nonce-global-admin"
+	mockProvider.AddAuthCodeWithNonce(
 		authCode,
 		"admin@example.com",
 		"global-admin-subject",
 		"Global Admin User",
 		true,
+		testNonce,
 		"platform-admins", // User is in globalAdmin group
 		"engineering",     // User is also in engineering group
 	)
 
 	// Exchange code for token - should provision user as Global Admin
-	loginResp, err := svc.ExchangeCodeForToken(ctx, "mock", authCode)
+	loginResp, err := svc.ExchangeCodeForToken(ctx, "mock", authCode, testNonce)
 	if err != nil {
 		t.Fatalf("ExchangeCodeForToken() failed: %v", err)
 	}
@@ -808,6 +923,109 @@ func (m *mockRolePersister) getCalls() []rolePersisterCall {
 	return result
 }
 
+// TestOIDCIntegration_NonceValidation tests nonce validation scenarios in ExchangeCodeForToken.
+// Covers AC-3: mismatched, missing, and empty nonce in ID token must cause authentication failure.
+func TestOIDCIntegration_NonceValidation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	tests := []struct {
+		name        string
+		storedNonce string // nonce passed to ExchangeCodeForToken (from Redis)
+		tokenNonce  string // nonce echoed in ID token by mock provider
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:        "valid matching nonce",
+			storedNonce: "valid-nonce-abc123",
+			tokenNonce:  "valid-nonce-abc123",
+			wantErr:     false,
+		},
+		{
+			name:        "mismatched nonce",
+			storedNonce: "server-nonce",
+			tokenNonce:  "different-nonce",
+			wantErr:     true,
+			errContains: "nonce validation failed",
+		},
+		{
+			name:        "missing nonce in token (empty string)",
+			storedNonce: "server-nonce",
+			tokenNonce:  "", // mock provider will omit nonce claim
+			wantErr:     true,
+			errContains: "nonce validation failed",
+		},
+		{
+			name:        "empty stored nonce (expired/consumed from Redis)",
+			storedNonce: "", // simulates nonce expired in Redis — handler passes empty string
+			tokenNonce:  "any-nonce-from-idp",
+			wantErr:     true,
+			errContains: "nonce validation failed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockProvider, err := NewMockOIDCProvider()
+			if err != nil {
+				t.Fatalf("Failed to create mock OIDC provider: %v", err)
+			}
+			defer mockProvider.Close()
+
+			redisClient := NewMockRedisClient()
+			authService := &mockAuthServiceForIntegration{
+				generateTokenWithGroupsFunc: func(userID, email, displayName string, groups []string) (string, time.Time, error) {
+					return "test-jwt-token", time.Now().Add(1 * time.Hour), nil
+				},
+			}
+			provisioningService, _ := createTestOIDCProvisioningService()
+
+			cfg := &Config{
+				OIDCEnabled: true,
+				OIDCProviders: []OIDCProviderConfig{
+					{
+						Name:         "mock",
+						IssuerURL:    mockProvider.issuerURL,
+						ClientID:     mockProvider.clientID,
+						ClientSecret: "test-secret",
+						RedirectURL:  mockProvider.redirectURI,
+					},
+				},
+			}
+
+			svc, err := newTestOIDCService(cfg, redisClient, authService, provisioningService, nil, nil)
+			if err != nil {
+				t.Fatalf("Failed to create OIDC service: %v", err)
+			}
+
+			ctx := context.Background()
+
+			// Add auth code with the token nonce (what the mock provider echoes in ID token)
+			authCode := "nonce-test-code-" + tt.name
+			mockProvider.AddAuthCodeWithNonce(authCode, "nonce-test@example.com", "nonce-sub", "Nonce Test User", true, tt.tokenNonce)
+
+			// Call ExchangeCodeForToken with the stored nonce (what the server had in Redis)
+			_, err = svc.ExchangeCodeForToken(ctx, "mock", authCode, tt.storedNonce)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Error("ExchangeCodeForToken() expected error, got nil")
+					return
+				}
+				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
+					t.Errorf("ExchangeCodeForToken() error = %v, want error containing %q", err, tt.errContains)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("ExchangeCodeForToken() unexpected error = %v", err)
+				}
+			}
+		})
+	}
+}
+
 // TestOIDCIntegration_RolePersistence verifies that ExchangeCodeForToken persists
 // OIDC roles to Redis via the RolePersister interface (cold-start fix).
 func TestOIDCIntegration_RolePersistence(t *testing.T) {
@@ -853,7 +1071,7 @@ func TestOIDCIntegration_RolePersistence(t *testing.T) {
 	}
 
 	// Pass the mock persister as the RolePersister
-	svc, err := NewOIDCService(oidcConfig, redisClient, authService, provisioningService, casbinEnforcer, persister)
+	svc, err := newTestOIDCService(oidcConfig, redisClient, authService, provisioningService, casbinEnforcer, persister)
 	if err != nil {
 		t.Fatalf("Failed to create OIDC service: %v", err)
 	}
@@ -862,16 +1080,18 @@ func TestOIDCIntegration_RolePersistence(t *testing.T) {
 
 	// Simulate OIDC login with a global admin user
 	authCode := "test-persist-code"
-	mockProvider.AddAuthCode(
+	testNonce := "test-nonce-persist"
+	mockProvider.AddAuthCodeWithNonce(
 		authCode,
 		"persist@example.com",
 		"persist-subject",
 		"Persist User",
 		true,
+		testNonce,
 		"platform-admins",
 	)
 
-	loginResp, err := svc.ExchangeCodeForToken(ctx, "mock", authCode)
+	loginResp, err := svc.ExchangeCodeForToken(ctx, "mock", authCode, testNonce)
 	if err != nil {
 		t.Fatalf("ExchangeCodeForToken() failed: %v", err)
 	}
@@ -952,7 +1172,7 @@ func TestOIDCIntegration_RolePersistenceFailure(t *testing.T) {
 		},
 	}
 
-	svc, err := NewOIDCService(oidcConfig, redisClient, authService, provisioningService, casbinEnforcer, persister)
+	svc, err := newTestOIDCService(oidcConfig, redisClient, authService, provisioningService, casbinEnforcer, persister)
 	if err != nil {
 		t.Fatalf("Failed to create OIDC service: %v", err)
 	}
@@ -960,17 +1180,19 @@ func TestOIDCIntegration_RolePersistenceFailure(t *testing.T) {
 	ctx := context.Background()
 
 	authCode := "test-fail-persist-code"
-	mockProvider.AddAuthCode(
+	testNonce := "test-nonce-fail-persist"
+	mockProvider.AddAuthCodeWithNonce(
 		authCode,
 		"failpersist@example.com",
 		"failpersist-subject",
 		"FailPersist User",
 		true,
+		testNonce,
 		"platform-admins",
 	)
 
 	// Login should SUCCEED even though persistence failed (non-fatal)
-	loginResp, err := svc.ExchangeCodeForToken(ctx, "mock", authCode)
+	loginResp, err := svc.ExchangeCodeForToken(ctx, "mock", authCode, testNonce)
 	if err != nil {
 		t.Fatalf("ExchangeCodeForToken() should succeed even when role persistence fails, got error: %v", err)
 	}
@@ -1034,7 +1256,7 @@ func TestOIDCIntegration_ProjectRolePersistence(t *testing.T) {
 		},
 	}
 
-	svc, err := NewOIDCService(oidcConfig, redisClient, authService, provisioningService, casbinEnforcer, persister)
+	svc, err := newTestOIDCService(oidcConfig, redisClient, authService, provisioningService, casbinEnforcer, persister)
 	if err != nil {
 		t.Fatalf("Failed to create OIDC service: %v", err)
 	}
@@ -1043,16 +1265,18 @@ func TestOIDCIntegration_ProjectRolePersistence(t *testing.T) {
 
 	// User belongs to alpha-developers (project role) but NOT platform-admins
 	authCode := "test-project-persist-code"
-	mockProvider.AddAuthCode(
+	testNonce := "test-nonce-project-persist"
+	mockProvider.AddAuthCodeWithNonce(
 		authCode,
 		"dev@example.com",
 		"dev-subject",
 		"Developer User",
 		true,
+		testNonce,
 		"alpha-developers", // Only project group, no global admin
 	)
 
-	loginResp, err := svc.ExchangeCodeForToken(ctx, "mock", authCode)
+	loginResp, err := svc.ExchangeCodeForToken(ctx, "mock", authCode, testNonce)
 	if err != nil {
 		t.Fatalf("ExchangeCodeForToken() failed: %v", err)
 	}

@@ -9,23 +9,24 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/provops-org/knodex/server/internal/api/handlers"
-	"github.com/provops-org/knodex/server/internal/api/middleware"
-	"github.com/provops-org/knodex/server/internal/api/response"
-	swaggerui "github.com/provops-org/knodex/server/internal/api/swagger"
-	"github.com/provops-org/knodex/server/internal/audit"
-	"github.com/provops-org/knodex/server/internal/auth"
-	"github.com/provops-org/knodex/server/internal/deployment"
-	"github.com/provops-org/knodex/server/internal/drift"
-	"github.com/provops-org/knodex/server/internal/health"
-	"github.com/provops-org/knodex/server/internal/history"
-	"github.com/provops-org/knodex/server/internal/rbac"
-	"github.com/provops-org/knodex/server/internal/repository"
-	"github.com/provops-org/knodex/server/internal/schema"
-	"github.com/provops-org/knodex/server/internal/services"
-	"github.com/provops-org/knodex/server/internal/sso"
-	"github.com/provops-org/knodex/server/internal/watcher"
-	"github.com/provops-org/knodex/server/internal/websocket"
+	"github.com/knodex/knodex/server/internal/api/cookie"
+	"github.com/knodex/knodex/server/internal/api/handlers"
+	"github.com/knodex/knodex/server/internal/api/middleware"
+	"github.com/knodex/knodex/server/internal/api/response"
+	swaggerui "github.com/knodex/knodex/server/internal/api/swagger"
+	"github.com/knodex/knodex/server/internal/audit"
+	"github.com/knodex/knodex/server/internal/auth"
+	"github.com/knodex/knodex/server/internal/deployment"
+	"github.com/knodex/knodex/server/internal/drift"
+	"github.com/knodex/knodex/server/internal/health"
+	"github.com/knodex/knodex/server/internal/history"
+	kroschema "github.com/knodex/knodex/server/internal/kro/schema"
+	"github.com/knodex/knodex/server/internal/kro/watcher"
+	"github.com/knodex/knodex/server/internal/rbac"
+	"github.com/knodex/knodex/server/internal/repository"
+	"github.com/knodex/knodex/server/internal/services"
+	"github.com/knodex/knodex/server/internal/sso"
+	"github.com/knodex/knodex/server/internal/websocket"
 )
 
 // RouterConfig holds configuration for the router
@@ -57,16 +58,17 @@ type RouterConfig struct {
 	DriftService            *drift.Service                   // GitOps drift detection service (nil = created internally from RedisClient)
 	K8sClient               kubernetes.Interface
 	RedisClient             *redis.Client
-	AllowedRedirectOrigins  []string // Allowed redirect origins for OIDC callbacks
-	OrganizationFilter      string   // Enterprise org filter for catalog (empty = no filtering)
-	Organization            string   // Organization identity for settings endpoint (from KNODEX_ORGANIZATION, default "default")
-	SwaggerEnabled          bool     // Enable Swagger UI at /swagger/ (default: false, env: SWAGGER_UI_ENABLED)
+	AllowedRedirectOrigins  []string      // Allowed redirect origins for OIDC callbacks
+	CookieConfig            cookie.Config // Session cookie configuration (Secure, Domain)
+	OrganizationFilter      string        // Enterprise org filter for catalog (empty = no filtering)
+	Organization            string        // Organization identity for settings endpoint (from KNODEX_ORGANIZATION, default "default")
+	SwaggerEnabled          bool          // Enable Swagger UI at /swagger/ (default: false, env: SWAGGER_UI_ENABLED)
 }
 
 // Note: permissionServiceAdapter removed - all authorization uses CasbinAuthz exclusively.
 
 // NewRouterWithConfig creates the HTTP router with custom configuration
-func NewRouterWithConfig(healthChecker *health.Checker, rgdWatcher *watcher.RGDWatcher, instanceTracker *watcher.InstanceTracker, schemaExtractor *schema.Extractor, cfg RouterConfig) http.Handler {
+func NewRouterWithConfig(healthChecker *health.Checker, rgdWatcher *watcher.RGDWatcher, instanceTracker *watcher.InstanceTracker, schemaExtractor *kroschema.Extractor, cfg RouterConfig) http.Handler {
 	// Create main mux for catch-all routes
 	mainMux := http.NewServeMux()
 
@@ -287,6 +289,9 @@ func NewRouterWithConfig(healthChecker *health.Checker, rgdWatcher *watcher.RGDW
 	// Protected API v1 routes - Account/permission checking (ArgoCD-style can-i endpoint)
 	if cfg.AuthService != nil {
 		accountHandler := handlers.NewAccountHandler(cfg.AuthService)
+		if cfg.ProjectService != nil {
+			accountHandler.SetProjectService(cfg.ProjectService)
+		}
 		protectedMux.HandleFunc("GET /api/v1/account/can-i/{resource}/{action}/{subresource}", accountHandler.CanI)
 		protectedMux.HandleFunc("GET /api/v1/account/info", accountHandler.Info)
 	}
@@ -338,6 +343,9 @@ func NewRouterWithConfig(healthChecker *health.Checker, rgdWatcher *watcher.RGDW
 		if cfg.ProjectService != nil {
 			complianceHandler.SetProjectService(cfg.ProjectService)
 		}
+		if cfg.RedisClient != nil {
+			complianceHandler.SetRedisClient(cfg.RedisClient)
+		}
 		protectedMux.HandleFunc("GET /api/v1/compliance/status", complianceHandler.GetStatus)
 		protectedMux.HandleFunc("GET /api/v1/compliance/summary", complianceHandler.GetSummary)
 		protectedMux.HandleFunc("GET /api/v1/compliance/templates", complianceHandler.ListTemplates)
@@ -366,11 +374,26 @@ func NewRouterWithConfig(healthChecker *health.Checker, rgdWatcher *watcher.RGDW
 	// Protected API v1 routes - SSO provider management (require authentication + settings access)
 	if cfg.SSOStore != nil {
 		ssoHandler := handlers.NewSSOSettingsHandler(cfg.SSOStore, cfg.AuditRecorder, cfg.PolicyEnforcer)
+
+		// SSO mutation rate limiter: burst of 5, then 1 per minute sustained (SSRF probe / DoS prevention)
+		ssoMutationLimiter := middleware.UserRateLimit(middleware.UserRateLimitConfig{
+			RequestsPerMinute: 1, // 1/min sustained rate, burst of 5 initial requests
+			BurstSize:         5,
+			FallbackToIP:      false,
+			RetryAfterSeconds: 60,
+		})
+
+		// GET endpoints: no extra rate limiting (read-only, safe)
 		protectedMux.HandleFunc("GET /api/v1/settings/sso/providers", ssoHandler.ListProviders)
 		protectedMux.HandleFunc("GET /api/v1/settings/sso/providers/{name}", ssoHandler.GetProvider)
-		protectedMux.HandleFunc("POST /api/v1/settings/sso/providers", ssoHandler.CreateProvider)
-		protectedMux.HandleFunc("PUT /api/v1/settings/sso/providers/{name}", ssoHandler.UpdateProvider)
-		protectedMux.HandleFunc("DELETE /api/v1/settings/sso/providers/{name}", ssoHandler.DeleteProvider)
+
+		// Mutation endpoints: apply SSO-specific rate limit
+		protectedMux.Handle("POST /api/v1/settings/sso/providers",
+			ssoMutationLimiter(http.HandlerFunc(ssoHandler.CreateProvider)))
+		protectedMux.Handle("PUT /api/v1/settings/sso/providers/{name}",
+			ssoMutationLimiter(http.HandlerFunc(ssoHandler.UpdateProvider)))
+		protectedMux.Handle("DELETE /api/v1/settings/sso/providers/{name}",
+			ssoMutationLimiter(http.HandlerFunc(ssoHandler.DeleteProvider)))
 	}
 
 	// Protected API v1 routes - Audit trail management (enterprise feature, require authentication + settings access)
@@ -401,6 +424,7 @@ func NewRouterWithConfig(healthChecker *health.Checker, rgdWatcher *watcher.RGDW
 			BurstSize:         rateLimitBurst,
 			FallbackToIP:      false, // Only rate limit authenticated users
 			TrustedProxies:    cfg.RateLimitTrustedProxies,
+			RetryAfterSeconds: 1, // General API: 100 req/min ≈ 0.6s between tokens
 		})(protectedHandler)
 	}
 
@@ -440,6 +464,7 @@ func NewRouterWithConfig(healthChecker *health.Checker, rgdWatcher *watcher.RGDW
 	if cfg.AuthService != nil {
 		authHandler := handlers.NewAuthHandler(cfg.AuthService, cfg.OIDCService)
 		authHandler.SetAuditRecorder(cfg.AuditRecorder)
+		authHandler.SetCookieConfig(cfg.CookieConfig)
 		if cfg.RedisClient != nil {
 			authHandler.SetRedisClient(cfg.RedisClient)
 		}
@@ -470,7 +495,7 @@ func NewRouterWithConfig(healthChecker *health.Checker, rgdWatcher *watcher.RGDW
 
 		// Auth code exchange endpoint (unauthenticated - used by frontend after OIDC callback)
 		if cfg.RedisClient != nil {
-			authCodeHandler := handlers.NewAuthCodeHandler(cfg.RedisClient)
+			authCodeHandler := handlers.NewAuthCodeHandler(cfg.RedisClient, cfg.AuthService, cfg.CookieConfig)
 			tokenExchangeHandler := loginRateLimiter(http.HandlerFunc(authCodeHandler.TokenExchange))
 			combinedMux.Handle("POST /api/v1/auth/token-exchange", tokenExchangeHandler)
 		}

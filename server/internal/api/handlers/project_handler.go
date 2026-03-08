@@ -9,10 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/provops-org/knodex/server/internal/api/helpers"
-	"github.com/provops-org/knodex/server/internal/api/response"
-	"github.com/provops-org/knodex/server/internal/audit"
-	"github.com/provops-org/knodex/server/internal/rbac"
+	"github.com/knodex/knodex/server/internal/api/helpers"
+	"github.com/knodex/knodex/server/internal/api/response"
+	"github.com/knodex/knodex/server/internal/audit"
+	"github.com/knodex/knodex/server/internal/rbac"
+	"github.com/knodex/knodex/server/internal/util/collection"
 )
 
 // ProjectHandlerEnforcer defines the focused interface for project operations.
@@ -517,7 +518,7 @@ func (h *ProjectHandler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 	for i, d := range updatedProject.Spec.Destinations {
 		newDestinations[i] = d.Namespace
 	}
-	addedDests, removedDests := diffStringSlices(oldDestinations, newDestinations)
+	addedDests, removedDests := collection.Diff(oldDestinations, newDestinations)
 	if len(addedDests) > 0 {
 		changes["addedDestinations"] = addedDests
 	}
@@ -532,7 +533,7 @@ func (h *ProjectHandler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 		newRoles[i] = r.Name
 		newRolePolicies[r.Name] = r.Policies
 	}
-	addedRoles, removedRoles := diffStringSlices(oldRoles, newRoles)
+	addedRoles, removedRoles := collection.Diff(oldRoles, newRoles)
 	if len(addedRoles) > 0 {
 		changes["addedRoles"] = addedRoles
 	}
@@ -800,29 +801,6 @@ func (h *ProjectHandler) reloadProjectPolicies(ctx context.Context, project *rba
 	)
 }
 
-// diffStringSlices returns the elements added to and removed from oldSlice to produce newSlice.
-func diffStringSlices(oldSlice, newSlice []string) (added, removed []string) {
-	oldSet := make(map[string]bool, len(oldSlice))
-	for _, s := range oldSlice {
-		oldSet[s] = true
-	}
-	newSet := make(map[string]bool, len(newSlice))
-	for _, s := range newSlice {
-		newSet[s] = true
-	}
-	for _, s := range newSlice {
-		if !oldSet[s] {
-			added = append(added, s)
-		}
-	}
-	for _, s := range oldSlice {
-		if !newSet[s] {
-			removed = append(removed, s)
-		}
-	}
-	return added, removed
-}
-
 // detectModifiedRoles returns names of roles that exist in both old and new
 // but have different policy sets.
 func detectModifiedRoles(oldPolicies, newPolicies map[string][]string) []string {
@@ -830,29 +808,11 @@ func detectModifiedRoles(oldPolicies, newPolicies map[string][]string) []string 
 	for name, oldP := range oldPolicies {
 		newP, exists := newPolicies[name]
 		if !exists {
-			continue // removed role, handled by diffStringSlices
+			continue // removed role, handled by collection.Diff
 		}
-		if !stringSlicesEqual(oldP, newP) {
+		if !collection.Equal(oldP, newP) {
 			modified = append(modified, name)
 		}
 	}
 	return modified
-}
-
-// stringSlicesEqual returns true if both slices contain the same elements regardless of order.
-func stringSlicesEqual(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	counts := make(map[string]int, len(a))
-	for _, v := range a {
-		counts[v]++
-	}
-	for _, v := range b {
-		counts[v]--
-		if counts[v] < 0 {
-			return false
-		}
-	}
-	return true
 }

@@ -2,8 +2,6 @@ package handlers
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -13,8 +11,11 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/provops-org/knodex/server/internal/api/helpers"
-	"github.com/provops-org/knodex/server/internal/api/response"
+	"github.com/knodex/knodex/server/internal/api/cookie"
+	"github.com/knodex/knodex/server/internal/api/helpers"
+	"github.com/knodex/knodex/server/internal/api/response"
+	"github.com/knodex/knodex/server/internal/auth"
+	utilrand "github.com/knodex/knodex/server/internal/util/rand"
 )
 
 const (
@@ -116,11 +117,7 @@ func ExchangeTicket(ctx context.Context, redisClient *redis.Client, ticket strin
 
 // generateTicket creates a cryptographically random opaque ticket string.
 func generateTicket() (string, error) {
-	b := make([]byte, wsTicketLength)
-	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("failed to generate random ticket: %w", err)
-	}
-	return hex.EncodeToString(b), nil
+	return utilrand.GenerateRandomHex(wsTicketLength), nil
 }
 
 // encodeTicketValue encodes user context into a Redis-storable string.
@@ -165,25 +162,31 @@ func decodeTicketValue(value string) (userID, email string, groups, casbinRoles,
 	return userID, email, groups, casbinRoles, projects, nil
 }
 
-// authCodeResponse is the JSON response for POST /api/v1/auth/token-exchange.
-type authCodeResponse struct {
-	Token string `json:"token"`
-}
-
 // authCodeRequest is the JSON request for POST /api/v1/auth/token-exchange.
 type authCodeRequest struct {
 	Code string `json:"code"`
 }
 
+// authCodeResponse is the JSON response for POST /api/v1/auth/token-exchange.
+// Token is delivered via HttpOnly cookie, response contains user info only.
+type authCodeResponse struct {
+	ExpiresAt time.Time     `json:"expiresAt"`
+	User      auth.UserInfo `json:"user"`
+}
+
 // AuthCodeHandler handles opaque auth code exchange (OIDC callback replacement).
 type AuthCodeHandler struct {
-	redisClient *redis.Client
+	redisClient  *redis.Client
+	authService  auth.ServiceInterface
+	cookieConfig cookie.Config
 }
 
 // NewAuthCodeHandler creates a new AuthCodeHandler.
-func NewAuthCodeHandler(redisClient *redis.Client) *AuthCodeHandler {
+func NewAuthCodeHandler(redisClient *redis.Client, authService auth.ServiceInterface, cookieCfg cookie.Config) *AuthCodeHandler {
 	return &AuthCodeHandler{
-		redisClient: redisClient,
+		redisClient:  redisClient,
+		authService:  authService,
+		cookieConfig: cookieCfg,
 	}
 }
 
@@ -198,7 +201,7 @@ const (
 // StoreAuthCode stores a JWT in Redis with an opaque code key.
 // Returns the opaque code that can be exchanged for the JWT.
 func StoreAuthCode(ctx context.Context, redisClient *redis.Client, jwtToken string) (string, error) {
-	code, err := generateTicket() // reuse same crypto/rand generator
+	code, err := generateTicket()
 	if err != nil {
 		return "", fmt.Errorf("failed to generate auth code: %w", err)
 	}
@@ -220,12 +223,12 @@ func (h *AuthCodeHandler) TokenExchange(w http.ResponseWriter, r *http.Request) 
 
 	var req authCodeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		response.BadRequest(w, "invalid request body", nil)
+		response.AuthBadRequest(w, "invalid request body", nil)
 		return
 	}
 
 	if req.Code == "" {
-		response.BadRequest(w, "code is required", nil)
+		response.AuthBadRequest(w, "code is required", nil)
 		return
 	}
 
@@ -237,22 +240,47 @@ func (h *AuthCodeHandler) TokenExchange(w http.ResponseWriter, r *http.Request) 
 		slog.Warn("auth code exchange failed: invalid, expired, or already-used code",
 			"codePrefix", req.Code[:min(8, len(req.Code))],
 		)
-		response.Unauthorized(w, "invalid, expired, or already-used code")
+		response.AuthUnauthorized(w, "invalid, expired, or already-used code")
 		return
 	}
 	if err != nil {
 		slog.Error("failed to exchange auth code", "error", err)
-		response.InternalError(w, "failed to exchange code")
+		response.AuthInternalError(w, "failed to exchange code")
 		return
 	}
 
 	jwtToken := value
 
+	// Validate the JWT to extract claims for user info response
+	claims, err := h.authService.ValidateToken(r.Context(), jwtToken)
+	if err != nil {
+		slog.Error("failed to validate exchanged JWT", "error", err)
+		response.AuthInternalError(w, "failed to process authentication token")
+		return
+	}
+
 	slog.Info("auth code exchanged for token",
 		"codePrefix", req.Code[:min(8, len(req.Code))],
 	)
 
-	response.WriteJSON(w, http.StatusOK, authCodeResponse{
-		Token: jwtToken,
+	// Set HttpOnly session cookie
+	expiresAt := time.Unix(claims.ExpiresAt, 0)
+	maxAge := time.Until(expiresAt)
+	cookie.SetSession(w, jwtToken, maxAge, h.cookieConfig)
+
+	// Return user info (token is in the cookie, not the response body)
+	response.WriteAuthJSON(w, http.StatusOK, authCodeResponse{
+		ExpiresAt: expiresAt,
+		User: auth.UserInfo{
+			ID:             claims.UserID,
+			Email:          claims.Email,
+			DisplayName:    claims.DisplayName,
+			Projects:       claims.Projects,
+			DefaultProject: claims.DefaultProject,
+			Groups:         claims.Groups,
+			Roles:          claims.Roles,
+			CasbinRoles:    claims.CasbinRoles,
+			Permissions:    claims.Permissions,
+		},
 	})
 }

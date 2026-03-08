@@ -10,7 +10,8 @@ import (
 
 	"k8s.io/client-go/discovery"
 
-	"github.com/provops-org/knodex/server/internal/api/response"
+	"github.com/knodex/knodex/server/internal/api/response"
+	"github.com/knodex/knodex/server/internal/util/collection"
 )
 
 // APIResource represents a Kubernetes API resource
@@ -194,26 +195,18 @@ func (h *APIResourcesHandler) filterResources(resources []APIResource, searchQue
 		return resources
 	}
 
-	filtered := make([]APIResource, 0)
-	for _, r := range resources {
+	return collection.Filter(resources, func(r APIResource) bool {
 		// Filter by API group if specified
 		// Note: hasApiGroupFilter is needed because apiGroupFilter="" is valid (core API group)
 		if hasApiGroupFilter && r.APIGroup != apiGroupFilter {
-			continue
+			return false
 		}
-
 		// Filter by search query (case-insensitive match on kind)
-		if searchQuery != "" {
-			kindLower := strings.ToLower(r.Kind)
-			if !strings.Contains(kindLower, searchQuery) {
-				continue
-			}
+		if searchQuery != "" && !strings.Contains(strings.ToLower(r.Kind), searchQuery) {
+			return false
 		}
-
-		filtered = append(filtered, r)
-	}
-
-	return filtered
+		return true
+	})
 }
 
 // ServiceUnavailableError indicates the service is temporarily unavailable

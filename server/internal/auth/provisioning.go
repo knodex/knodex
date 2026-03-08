@@ -5,14 +5,13 @@ package auth
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"regexp"
 	"strings"
 
-	"github.com/provops-org/knodex/server/internal/rbac"
+	"github.com/knodex/knodex/server/internal/rbac"
+	utilhash "github.com/knodex/knodex/server/internal/util/hash"
 )
 
 var (
@@ -97,13 +96,7 @@ func ValidateOIDCGroups(groups []string) error {
 // GenerateOIDCUserID generates a stable user ID from OIDC subject
 // Format: "user-oidc-{hash}" where hash is first 12 chars of sha256(subject)
 func GenerateOIDCUserID(oidcSubject string) string {
-	return "user-oidc-" + hashString(oidcSubject)[:12]
-}
-
-// hashString creates a sha256 hash of the input string and returns hex-encoded result
-func hashString(s string) string {
-	hash := sha256.Sum256([]byte(s))
-	return hex.EncodeToString(hash[:])
+	return "user-oidc-" + utilhash.SHA256String(oidcSubject)[:12]
 }
 
 // EvaluateOIDCUser processes an OIDC user and returns user info with group mappings

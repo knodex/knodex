@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/provops-org/knodex/server/internal/metrics/gitops"
+	"github.com/knodex/knodex/server/internal/metrics/gitops"
 )
 
 func TestDefaultRetryConfig(t *testing.T) {

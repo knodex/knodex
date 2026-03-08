@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/provops-org/knodex/server/internal/config"
+	"github.com/knodex/knodex/server/internal/config"
 )
 
 // TestEvaluateOIDCUser_FullFlow tests the complete OIDC user evaluation flow

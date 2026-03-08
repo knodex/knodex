@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/provops-org/knodex/server/internal/metrics/gitops"
+	"github.com/knodex/knodex/server/internal/metrics/gitops"
 )
 
 // RateLimitState tracks the current rate limit state for a GitHub API client

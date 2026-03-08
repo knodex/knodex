@@ -180,6 +180,8 @@ export async function authenticateAs(page: Page, role: TestUserRole): Promise<vo
       // This matches how userStore persists authentication state
       // NOTE: isGlobalAdmin was removed - authorization uses Casbin via useCanI() hook
       // The JWT contains casbin_roles and permissions for proper authorization
+      // tokenExp must be set so ProtectedRoute's isTokenExpired() doesn't redirect to /login
+      const tokenExpUnix = Math.floor(Date.now() / 1000) + 3600 // 1 hour from now
       const userStorage = {
         state: {
           currentProject: user.projects[0] || null,
@@ -187,7 +189,15 @@ export async function authenticateAs(page: Page, role: TestUserRole): Promise<vo
           isAuthenticated: true,
           roles: user.roles || {},
           projects: user.projects || [],
-
+          tokenExp: tokenExpUnix,
+          casbinRoles: user.casbinRoles || [],
+          permissions: user.permissions || {},
+          groups: user.groups || [],
+          user: {
+            id: user.sub,
+            email: user.email,
+            name: user.displayName,
+          },
         },
         version: 0
       }
@@ -288,13 +298,11 @@ export interface PreloadedTestUser {
  * @param user - Pre-loaded user with token
  */
 export async function authenticateWithToken(page: Page, user: PreloadedTestUser): Promise<void> {
-  // NOTE: isGlobalAdmin was removed - authorization uses Casbin via useCanI() hook
-  // The JWT contains casbin_roles and permissions for proper authorization
-
   await page.evaluate(
     ({ token, user }) => {
       localStorage.setItem('jwt_token', token)
 
+      const tokenExpUnix = Math.floor(Date.now() / 1000) + 3600
       const userStorage = {
         state: {
           currentProject: user.projects[0] || null,
@@ -302,7 +310,14 @@ export async function authenticateWithToken(page: Page, user: PreloadedTestUser)
           isAuthenticated: true,
           roles: user.roles || {},
           projects: user.projects || [],
-
+          tokenExp: tokenExpUnix,
+          casbinRoles: user.casbin_roles || user.casbinRoles || [],
+          groups: user.groups || [],
+          user: {
+            id: user.user_id || user.sub || '',
+            email: user.email,
+            name: user.display_name || user.displayName || '',
+          },
         },
         version: 0
       }
@@ -347,10 +362,9 @@ export async function setupAuthWithToken(
 
   await page.evaluate(
     ({ token, user }) => {
-      // Set the JWT token
       localStorage.setItem('jwt_token', token)
 
-      // Set Zustand persist storage (must match userStore format)
+      const tokenExpUnix = Math.floor(Date.now() / 1000) + 3600
       const userStorage = {
         state: {
           currentProject: user.projects[0] || null,
@@ -358,7 +372,14 @@ export async function setupAuthWithToken(
           isAuthenticated: true,
           roles: user.roles || {},
           projects: user.projects || [],
-
+          tokenExp: tokenExpUnix,
+          casbinRoles: user.casbin_roles || user.casbinRoles || [],
+          groups: user.groups || [],
+          user: {
+            id: user.user_id || user.sub || '',
+            email: user.email,
+            name: user.display_name || user.displayName || '',
+          },
         },
         version: 0
       }

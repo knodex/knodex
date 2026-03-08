@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/provops-org/knodex/server/internal/health"
+	"github.com/knodex/knodex/server/internal/health"
 )
 
 // HealthHandler handles health check requests

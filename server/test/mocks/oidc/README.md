@@ -19,7 +19,7 @@ package mytest
 
 import (
     "testing"
-    "github.com/provops-org/knodex/server/test/mocks/oidc"
+    "github.com/knodex/knodex/server/test/mocks/oidc"
 )
 
 func TestWithMockOIDC(t *testing.T) {
@@ -72,7 +72,7 @@ The server comes with pre-configured test users for common RBAC scenarios:
 ### Using Email Constants
 
 ```go
-import "github.com/provops-org/knodex/server/test/mocks/oidc"
+import "github.com/knodex/knodex/server/test/mocks/oidc"
 
 // Use constants for type safety
 email := oidc.AdminEmail        // "admin@test.local"

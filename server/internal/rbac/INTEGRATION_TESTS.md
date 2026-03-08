@@ -255,7 +255,7 @@ All 13 integration tests pass successfully:
 === RUN   TestIntegration_CompleteRBACFlow
 --- PASS: TestIntegration_CompleteRBACFlow (0.00s)
 PASS
-ok  	github.com/provops-org/knodex/server/internal/rbac	2.591s
+ok  	github.com/knodex/knodex/server/internal/rbac	2.591s
 ```
 
 ## Maintenance

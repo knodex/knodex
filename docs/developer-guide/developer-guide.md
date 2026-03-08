@@ -267,7 +267,7 @@ func SetupRoutes(mux *http.ServeMux) {
 ### Adding RBAC Protection
 
 ```go
-import "github.com/provops-org/knodex/server/internal/api/response"
+import "github.com/knodex/knodex/server/internal/api/response"
 
 func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
     user := auth.GetUserFromContext(r.Context())
@@ -294,7 +294,7 @@ import (
     "net/http/httptest"
     "testing"
 
-    "github.com/provops-org/knodex/server/internal/api/handlers"
+    "github.com/knodex/knodex/server/internal/api/handlers"
 )
 
 func TestExampleHandler_List(t *testing.T) {

@@ -10,13 +10,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/provops-org/knodex/server/internal/auth"
+	"github.com/golang-jwt/jwt/v5"
+
+	"github.com/knodex/knodex/server/internal/api/middleware"
+	"github.com/knodex/knodex/server/internal/auth"
 )
 
 // MockAuthService is a mock implementation of auth.ServiceInterface for testing
-// Updated to match new interface (removed rbac.User dependency)
 type MockAuthService struct {
 	authenticateLocalFunc func(ctx context.Context, username, password, sourceIP string) (*auth.LoginResponse, error)
+	validateTokenFunc     func(token string) (*auth.JWTClaims, error)
+	revokeTokenFunc       func(ctx context.Context, jti string, remainingTTL time.Duration) error
 }
 
 func (m *MockAuthService) AuthenticateLocal(ctx context.Context, username, password, sourceIP string) (*auth.LoginResponse, error) {
@@ -26,19 +30,40 @@ func (m *MockAuthService) AuthenticateLocal(ctx context.Context, username, passw
 	return nil, errors.New("not implemented")
 }
 
-// Implement other ServiceInterface methods (not used by handler but required for interface)
-// GenerateTokenForAccount implements auth.ServiceInterface
 func (m *MockAuthService) GenerateTokenForAccount(account *auth.Account, userID string) (string, time.Time, error) {
 	return "", time.Time{}, errors.New("not implemented")
 }
 
-// GenerateTokenWithGroups implements auth.ServiceInterface
 func (m *MockAuthService) GenerateTokenWithGroups(userID, email, displayName string, groups []string) (string, time.Time, error) {
 	return "", time.Time{}, errors.New("not implemented")
 }
 
 func (m *MockAuthService) ValidateToken(_ context.Context, tokenString string) (*auth.JWTClaims, error) {
+	if m.validateTokenFunc != nil {
+		return m.validateTokenFunc(tokenString)
+	}
 	return nil, errors.New("not implemented")
+}
+
+func (m *MockAuthService) RevokeToken(ctx context.Context, jti string, remainingTTL time.Duration) error {
+	if m.revokeTokenFunc != nil {
+		return m.revokeTokenFunc(ctx, jti, remainingTTL)
+	}
+	return nil
+}
+
+// assertNoCacheHeaders verifies all three no-cache headers are set on auth responses.
+func assertNoCacheHeaders(t *testing.T, rec *httptest.ResponseRecorder) {
+	t.Helper()
+	if got := rec.Header().Get("Cache-Control"); got != "no-store, no-cache, must-revalidate" {
+		t.Errorf("Cache-Control = %q, want %q", got, "no-store, no-cache, must-revalidate")
+	}
+	if got := rec.Header().Get("Pragma"); got != "no-cache" {
+		t.Errorf("Pragma = %q, want %q", got, "no-cache")
+	}
+	if got := rec.Header().Get("Expires"); got != "0" {
+		t.Errorf("Expires = %q, want %q", got, "0")
+	}
 }
 
 func TestLocalLogin(t *testing.T) {
@@ -69,27 +94,40 @@ func TestLocalLogin(t *testing.T) {
 			},
 			expectedStatusCode: http.StatusOK,
 			checkResponse: func(t *testing.T, rec *httptest.ResponseRecorder) {
-				var resp auth.LoginResponse
-				if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-					t.Fatalf("failed to decode response: %v", err)
-				}
-
-				if resp.Token == "" {
-					t.Error("expected token in response, got empty")
-				}
-				if resp.User.ID != "user-local-admin" {
-					t.Errorf("user ID = %v, want user-local-admin", resp.User.ID)
-				}
-
-				hasGlobalAdminRole := false
-				for _, role := range resp.User.CasbinRoles {
-					if role == "role:serveradmin" {
-						hasGlobalAdminRole = true
+				assertNoCacheHeaders(t, rec)
+				// Verify Set-Cookie header with knodex_session
+				cookies := rec.Result().Cookies()
+				var sessionCookie *http.Cookie
+				for _, c := range cookies {
+					if c.Name == "knodex_session" {
+						sessionCookie = c
 						break
 					}
 				}
-				if !hasGlobalAdminRole {
-					t.Error("user should have role:serveradmin in CasbinRoles")
+				if sessionCookie == nil {
+					t.Fatal("expected knodex_session cookie to be set")
+				}
+				if !sessionCookie.HttpOnly {
+					t.Error("expected HttpOnly flag on session cookie")
+				}
+				if sessionCookie.SameSite != http.SameSiteStrictMode {
+					t.Errorf("expected SameSite=Strict, got %v", sessionCookie.SameSite)
+				}
+
+				// Verify response body contains user info but NOT raw token
+				var resp map[string]interface{}
+				if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+					t.Fatalf("failed to decode response: %v", err)
+				}
+				if _, hasToken := resp["token"]; hasToken {
+					t.Error("response body should NOT contain 'token' field")
+				}
+				user, ok := resp["user"].(map[string]interface{})
+				if !ok {
+					t.Fatal("expected 'user' field in response")
+				}
+				if user["id"] != "user-local-admin" {
+					t.Errorf("user ID = %v, want user-local-admin", user["id"])
 				}
 			},
 		},
@@ -104,6 +142,7 @@ func TestLocalLogin(t *testing.T) {
 			},
 			expectedStatusCode: http.StatusUnauthorized,
 			checkResponse: func(t *testing.T, rec *httptest.ResponseRecorder) {
+				assertNoCacheHeaders(t, rec)
 				if !bytes.Contains(rec.Body.Bytes(), []byte("invalid credentials")) {
 					t.Error("expected 'invalid credentials' error message in response")
 				}
@@ -118,6 +157,7 @@ func TestLocalLogin(t *testing.T) {
 			},
 			expectedStatusCode: http.StatusBadRequest,
 			checkResponse: func(t *testing.T, rec *httptest.ResponseRecorder) {
+				assertNoCacheHeaders(t, rec)
 				if !bytes.Contains(rec.Body.Bytes(), []byte("invalid request body")) {
 					t.Error("expected 'invalid request body' error message")
 				}
@@ -135,6 +175,7 @@ func TestLocalLogin(t *testing.T) {
 			},
 			expectedStatusCode: http.StatusBadRequest,
 			checkResponse: func(t *testing.T, rec *httptest.ResponseRecorder) {
+				assertNoCacheHeaders(t, rec)
 				if !bytes.Contains(rec.Body.Bytes(), []byte("username and password are required")) {
 					t.Error("expected 'username and password are required' error message")
 				}
@@ -152,6 +193,7 @@ func TestLocalLogin(t *testing.T) {
 			},
 			expectedStatusCode: http.StatusBadRequest,
 			checkResponse: func(t *testing.T, rec *httptest.ResponseRecorder) {
+				assertNoCacheHeaders(t, rec)
 				if !bytes.Contains(rec.Body.Bytes(), []byte("username and password are required")) {
 					t.Error("expected 'username and password are required' error message")
 				}
@@ -169,6 +211,7 @@ func TestLocalLogin(t *testing.T) {
 			},
 			expectedStatusCode: http.StatusBadRequest,
 			checkResponse: func(t *testing.T, rec *httptest.ResponseRecorder) {
+				assertNoCacheHeaders(t, rec)
 				if !bytes.Contains(rec.Body.Bytes(), []byte("username and password are required")) {
 					t.Error("expected 'username and password are required' error message")
 				}
@@ -185,6 +228,7 @@ func TestLocalLogin(t *testing.T) {
 			},
 			expectedStatusCode: http.StatusTooManyRequests,
 			checkResponse: func(t *testing.T, rec *httptest.ResponseRecorder) {
+				assertNoCacheHeaders(t, rec)
 				if !bytes.Contains(rec.Body.Bytes(), []byte("RATE_LIMIT_EXCEEDED")) {
 					t.Error("expected 'RATE_LIMIT_EXCEEDED' code in response")
 				}
@@ -274,6 +318,9 @@ func TestLocalLogin_ContentType(t *testing.T) {
 	if contentType != "application/json" {
 		t.Errorf("Content-Type = %v, want application/json", contentType)
 	}
+
+	// Verify no-cache headers on auth response
+	assertNoCacheHeaders(t, rec)
 }
 
 func TestLocalLogin_SourceIPPassedThrough(t *testing.T) {
@@ -314,4 +361,193 @@ func TestLocalLogin_SourceIPPassedThrough(t *testing.T) {
 	if capturedIP != "10.0.0.42" {
 		t.Errorf("sourceIP = %q, want %q", capturedIP, "10.0.0.42")
 	}
+
+	// Verify no-cache headers on auth response
+	assertNoCacheHeaders(t, rec)
+}
+
+// createTestJWT creates a minimal JWT string with the given jti and exp for logout testing
+func createTestJWT(jti string, exp time.Time) string {
+	claims := jwt.MapClaims{
+		"sub":      "user-test",
+		"email":    "test@example.com",
+		"name":     "Test User",
+		"projects": []string{},
+		"iss":      "knodex",
+		"aud":      "knodex-api",
+		"exp":      exp.Unix(),
+		"iat":      time.Now().Unix(),
+	}
+	if jti != "" {
+		claims["jti"] = jti
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, _ := token.SignedString([]byte("test-secret"))
+	return tokenString
+}
+
+func TestLogout_RevokesToken(t *testing.T) {
+	t.Parallel()
+
+	t.Run("calls RevokeToken with correct jti and TTL", func(t *testing.T) {
+		t.Parallel()
+		var revokedJTI string
+		var revokedTTL time.Duration
+
+		mockSvc := &MockAuthService{
+			revokeTokenFunc: func(ctx context.Context, jti string, remainingTTL time.Duration) error {
+				revokedJTI = jti
+				revokedTTL = remainingTTL
+				return nil
+			},
+		}
+
+		handler := NewAuthHandler(mockSvc, nil)
+
+		// Create a JWT with a jti claim
+		tokenExp := time.Now().Add(30 * time.Minute)
+		tokenString := createTestJWT("test-jti-for-logout", tokenExp)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
+		req.Header.Set("Authorization", "Bearer "+tokenString)
+
+		// Set user context (normally done by middleware)
+		userCtx := &middleware.UserContext{
+			UserID:         "user-test",
+			Email:          "test@example.com",
+			TokenExpiresAt: tokenExp.Unix(),
+		}
+		ctx := context.WithValue(req.Context(), middleware.UserContextKey, userCtx)
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		handler.Logout(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+
+		if revokedJTI != "test-jti-for-logout" {
+			t.Errorf("RevokeToken jti = %q, want %q", revokedJTI, "test-jti-for-logout")
+		}
+
+		// TTL should be approximately 30 minutes
+		if revokedTTL < 29*time.Minute || revokedTTL > 31*time.Minute {
+			t.Errorf("RevokeToken TTL = %v, want ~30m", revokedTTL)
+		}
+	})
+
+	t.Run("gracefully handles RevokeToken error", func(t *testing.T) {
+		t.Parallel()
+		mockSvc := &MockAuthService{
+			revokeTokenFunc: func(ctx context.Context, jti string, remainingTTL time.Duration) error {
+				return errors.New("redis connection refused")
+			},
+		}
+
+		handler := NewAuthHandler(mockSvc, nil)
+
+		tokenExp := time.Now().Add(30 * time.Minute)
+		tokenString := createTestJWT("jti-for-error-test", tokenExp)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
+		req.Header.Set("Authorization", "Bearer "+tokenString)
+
+		userCtx := &middleware.UserContext{
+			UserID:         "user-test",
+			Email:          "test@example.com",
+			TokenExpiresAt: tokenExp.Unix(),
+		}
+		ctx := context.WithValue(req.Context(), middleware.UserContextKey, userCtx)
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		handler.Logout(rec, req)
+
+		// Should still return 200 even if revocation fails
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 even when revocation fails, got %d", rec.Code)
+		}
+	})
+
+	t.Run("revokes token from cookie when no Authorization header", func(t *testing.T) {
+		t.Parallel()
+		var revokedJTI string
+
+		mockSvc := &MockAuthService{
+			revokeTokenFunc: func(ctx context.Context, jti string, remainingTTL time.Duration) error {
+				revokedJTI = jti
+				return nil
+			},
+		}
+
+		handler := NewAuthHandler(mockSvc, nil)
+
+		tokenExp := time.Now().Add(30 * time.Minute)
+		tokenString := createTestJWT("cookie-jti-test", tokenExp)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
+		// Set token via cookie instead of Authorization header
+		req.AddCookie(&http.Cookie{
+			Name:  "knodex_session",
+			Value: tokenString,
+		})
+
+		userCtx := &middleware.UserContext{
+			UserID:         "user-test",
+			Email:          "test@example.com",
+			TokenExpiresAt: tokenExp.Unix(),
+		}
+		ctx := context.WithValue(req.Context(), middleware.UserContextKey, userCtx)
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		handler.Logout(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+
+		if revokedJTI != "cookie-jti-test" {
+			t.Errorf("RevokeToken jti = %q, want %q", revokedJTI, "cookie-jti-test")
+		}
+	})
+
+	t.Run("skips revocation for token without jti", func(t *testing.T) {
+		t.Parallel()
+		revokeCalled := false
+		mockSvc := &MockAuthService{
+			revokeTokenFunc: func(ctx context.Context, jti string, remainingTTL time.Duration) error {
+				revokeCalled = true
+				return nil
+			},
+		}
+
+		handler := NewAuthHandler(mockSvc, nil)
+
+		// Create a JWT without jti
+		tokenString := createTestJWT("", time.Now().Add(30*time.Minute))
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
+		req.Header.Set("Authorization", "Bearer "+tokenString)
+
+		userCtx := &middleware.UserContext{
+			UserID:         "user-test",
+			Email:          "test@example.com",
+			TokenExpiresAt: time.Now().Add(30 * time.Minute).Unix(),
+		}
+		ctx := context.WithValue(req.Context(), middleware.UserContextKey, userCtx)
+		req = req.WithContext(ctx)
+
+		rec := httptest.NewRecorder()
+		handler.Logout(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+
+		if revokeCalled {
+			t.Error("RevokeToken should not be called for token without jti")
+		}
+	})
 }

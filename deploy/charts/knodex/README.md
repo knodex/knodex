@@ -28,7 +28,7 @@ A Helm chart for deploying Knodex - a Kubernetes-native UI for browsing and depl
 ### Install the chart
 
 ```bash
-helm repo add knodex https://provops-org.github.io/knodex-helm
+helm repo add knodex https://knodex.github.io/knodex-helm
 helm repo update
 helm install knodex knodex/knodex -n knodex --create-namespace
 ```
@@ -46,14 +46,14 @@ kubectl get secret knodex-initial-admin-password -n knodex -o jsonpath='{.data.p
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | crds.install | bool | `true` | Install the Project CRD (projects.knodex.io) |
-| enterprise | object | `{"compliance":{"historyRetentionDays":""},"enabled":false,"gatekeeper":{"enabled":false},"image":{"repository":"ghcr.io/provops-org/knodex-ee"},"license":{"secretName":"","text":""},"networkPolicy":{"enabled":false,"server":{"additionalEgress":[],"additionalIngress":[],"ingressFrom":[]}},"organization":"","views":{"enabled":false,"items":[]}}` | Enterprise features |
+| enterprise | object | `{"compliance":{"historyRetentionDays":""},"enabled":false,"gatekeeper":{"enabled":false},"image":{"repository":"ghcr.io/knodex/knodex-ee"},"license":{"existingSecret":"","text":""},"networkPolicy":{"enabled":false,"server":{"additionalEgress":[],"additionalIngress":[],"ingressFrom":[]}},"organization":"","views":{"enabled":false,"items":[]}}` | Enterprise features |
 | enterprise.compliance | object | `{"historyRetentionDays":""}` | Compliance configuration (Enterprise feature) |
 | enterprise.compliance.historyRetentionDays | string | `""` (server default) | Violation history retention in days |
 | enterprise.enabled | bool | `false` | Enable enterprise edition (uses knodex-ee image) |
 | enterprise.gatekeeper | object | `{"enabled":false}` | OPA Gatekeeper integration (Enterprise feature) |
-| enterprise.image | object | `{"repository":"ghcr.io/provops-org/knodex-ee"}` | Enterprise image configuration (overrides server.image.repository when enterprise.enabled=true) |
-| enterprise.license.secretName | string | `""` (chart creates its own secret) | Name of an existing Kubernetes Secret containing the license JWT. The secret **must** contain a key named `license.jwt` with the raw JWT token as its value. If the key is missing, the license mount will silently be empty and enterprise features will not activate. The secret must exist in the same namespace as the Knodex release. If not set, the chart creates its own license secret (empty unless `enterprise.license.text` is also set). |
-| enterprise.license.text | string | `""` (no inline license) | Inline license JWT text. When set, the chart creates a secret with key `license.jwt` containing this value **and** sets the `KNODEX_LICENSE_TEXT` environment variable. If both `secretName` and `text` are set, `secretName` takes precedence for the volume mount. |
+| enterprise.image | object | `{"repository":"ghcr.io/knodex/knodex-ee"}` | Enterprise image configuration (overrides server.image.repository when enterprise.enabled=true) |
+| enterprise.license.existingSecret | string | `""` (chart creates its own secret) | Name of an existing Kubernetes Secret containing the license JWT. The secret must contain a key named `license.jwt`. When set, the chart skips creating its own license secret. |
+| enterprise.license.text | string | `""` (no inline license) | Inline license JWT text. When set, the chart creates a secret with key `license.jwt`. |
 | enterprise.networkPolicy | object | `{"enabled":false,"server":{"additionalEgress":[],"additionalIngress":[],"ingressFrom":[]}}` | Network policy configuration (Enterprise feature) |
 | enterprise.organization | string | `""` (server defaults to `"default"`) | Organization identity for multi-tenant RGD catalog filtering (Enterprise feature). When set, only RGDs labeled with `knodex.io/organization: <value>` (or unlabeled shared RGDs) are visible in the catalog. Must be ≤63 characters (Kubernetes label value limit). |
 | enterprise.views | object | `{"enabled":false,"items":[]}` | Custom views configuration (Enterprise feature) |
@@ -94,6 +94,7 @@ kubectl get secret knodex-initial-admin-password -n knodex -o jsonpath='{.data.p
 | server.auth.casbin.roleTTL | string | `""` (server defaults to 24h) | Role persistence TTL in Redis (e.g., "24h", "12h") |
 | server.auth.oidc.allowedRedirectOrigins | list | `[]` | Allowed redirect origins for OIDC callbacks (CWE-601 open redirect protection) |
 | server.auth.oidc.enabled | bool | `false` | Enable OIDC authentication |
+| server.auth.oidc.existingSecret | string | `""` | Name of an existing Secret containing SSO credentials. Must contain keys: `<provider>.client-id` and `<provider>.client-secret`. |
 | server.auth.oidc.groupMappingsFile | string | `""` | Path to a file-based OIDC group mappings YAML (alternative to inline groupMappings). When set, the server reads group mappings from this file path instead of the OIDC_GROUP_MAPPINGS env var. Mount the file via extraVolumes or an external ConfigMap. |
 | server.auth.oidc.groupsClaim | string | `"groups"` | OIDC token claim name that contains user groups |
 | server.auth.oidc.providers | list | `[]` | OIDC providers (creates knodex-sso-providers ConfigMap and knodex-sso-secrets Secret) |
@@ -112,7 +113,7 @@ kubectl get secret knodex-initial-admin-password -n knodex -o jsonpath='{.data.p
 | server.config.serverAddress | string | `":8080"` |  |
 | server.config.swaggerUI | bool | `false` | Enable Swagger UI endpoint for API documentation |
 | server.image.pullPolicy | string | `"IfNotPresent"` |  |
-| server.image.repository | string | `"ghcr.io/provops-org/knodex"` |  |
+| server.image.repository | string | `"ghcr.io/knodex/knodex"` |  |
 | server.image.tag | string | `"0.0.1"` |  |
 | server.livenessProbe.failureThreshold | int | `3` |  |
 | server.livenessProbe.httpGet.path | string | `"/healthz"` |  |
@@ -138,6 +139,43 @@ kubectl get secret knodex-initial-admin-password -n knodex -o jsonpath='{.data.p
 | serviceAccount.create | bool | `true` |  |
 | serviceAccount.name | string | `""` |  |
 
+## Secret Management
+
+Knodex supports two modes for license and SSO credentials:
+
+### Inline (default)
+
+The chart creates and manages Kubernetes Secrets directly. Simplest setup, suitable for development and testing.
+
+```yaml
+enterprise:
+  license:
+    text: "eyJhbGciOiJSUzI1NiIs..."
+
+server:
+  auth:
+    oidc:
+      providers:
+        - name: azure-ad
+          clientID: "my-client-id"
+          clientSecret: "my-client-secret"
+```
+
+### Existing Secret
+
+Reference a pre-created Kubernetes Secret. The chart does not create its own Secret. This is the recommended approach for production and integrates cleanly with any external secret manager (Vault, AWS SM, Azure KV, ESO, etc.) — just point `existingSecret` at the secret name your operator creates.
+
+```yaml
+enterprise:
+  license:
+    existingSecret: "my-license-secret"   # Must contain key: license.jwt
+
+server:
+  auth:
+    oidc:
+      existingSecret: "my-sso-secret"     # Must contain keys: <provider>.client-id, <provider>.client-secret
+```
+
 ## Organization (Enterprise)
 
 Knodex Enterprise supports multi-tenant organization isolation. Each deployment can belong to one organization, and RGDs are filtered by the `knodex.io/organization` label:
@@ -148,7 +186,7 @@ enterprise:
   organization: "acme-corp"
 ```
 
-RGDs without a `knodex.io/organization` label are visible to all organizations (shared catalog). See the [Organizations documentation](https://github.com/provops-org/knodex-ee/blob/main/docs/enterprise/organizations.md) for details.
+RGDs without a `knodex.io/organization` label are visible to all organizations (shared catalog). See the [Organizations documentation](https://github.com/knodex/knodex-ee/blob/main/docs/enterprise/organizations.md) for details.
 
 ## OIDC Configuration
 

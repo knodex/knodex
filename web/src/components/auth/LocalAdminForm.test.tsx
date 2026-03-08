@@ -20,15 +20,28 @@ vi.mock('@/stores/userStore', () => ({
       projects: [],
       roles: {},
       currentProject: null,
-      // NOTE: isGlobalAdmin was removed - use useCanI() hook for permission checks
       isAuthenticated: false,
-      token: null,
+      groups: [],
+      issuer: null,
+      casbinRoles: [],
+      permissions: {},
+      tokenExp: null,
+      tokenIat: null,
       setCurrentProject: vi.fn(),
-      refreshUser: vi.fn(),
       isTokenExpired: vi.fn(() => false),
     })
   ),
 }));
+
+const mockLoginResponse: authApi.LoginResponse = {
+  expiresAt: '2099-01-01T00:00:00Z',
+  user: {
+    id: 'user-local-admin',
+    email: 'admin@local',
+    displayName: 'Local Administrator',
+    casbinRoles: ['role:serveradmin'],
+  },
+};
 
 describe('LocalAdminForm', () => {
   const mockOnSuccess = vi.fn();
@@ -60,8 +73,7 @@ describe('LocalAdminForm', () => {
 
   it('submits form with valid credentials', async () => {
     const user = userEvent.setup();
-    const mockToken = 'mock-jwt-token';
-    vi.mocked(authApi.localAdminLogin).mockResolvedValue(mockToken);
+    vi.mocked(authApi.localAdminLogin).mockResolvedValue(mockLoginResponse);
 
     render(<LocalAdminForm onSuccess={mockOnSuccess} />);
 
@@ -107,7 +119,7 @@ describe('LocalAdminForm', () => {
   it('disables form during submission', async () => {
     const user = userEvent.setup();
     vi.mocked(authApi.localAdminLogin).mockImplementation(
-      () => new Promise((resolve) => setTimeout(() => resolve('token'), 100))
+      () => new Promise((resolve) => setTimeout(() => resolve(mockLoginResponse), 100))
     );
 
     render(<LocalAdminForm onSuccess={mockOnSuccess} />);
@@ -135,7 +147,7 @@ describe('LocalAdminForm', () => {
     const user = userEvent.setup();
     vi.mocked(authApi.localAdminLogin)
       .mockRejectedValueOnce(new Error('Invalid credentials'))
-      .mockResolvedValueOnce('valid-token');
+      .mockResolvedValueOnce(mockLoginResponse);
 
     render(<LocalAdminForm onSuccess={mockOnSuccess} />);
 

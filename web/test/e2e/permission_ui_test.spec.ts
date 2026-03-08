@@ -169,6 +169,7 @@ async function authenticateWithCustomUser(
     ({ token, user }) => {
       localStorage.setItem('jwt_token', token);
 
+      const tokenExpUnix = Math.floor(Date.now() / 1000) + 3600;
       const userStorage = {
         state: {
           currentProject: user.defaultProject || user.projects[0] || null,
@@ -177,12 +178,19 @@ async function authenticateWithCustomUser(
           roles: user.roles || {},
           projects: user.projects || [],
           groups: user.groups || [],
+          tokenExp: tokenExpUnix,
+          casbinRoles: user.casbinRoles || [],
+          permissions: user.permissions || {},
+          user: {
+            id: user.sub,
+            email: user.email,
+            name: user.displayName || '',
+          },
         },
         version: 0,
       };
       localStorage.setItem('user-storage', JSON.stringify(userStorage));
 
-      // Debug log
       console.log('[AUTH] Set auth state with permissions:', Object.keys(user.permissions));
     },
     { token, user }

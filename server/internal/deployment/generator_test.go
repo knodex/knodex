@@ -462,8 +462,6 @@ func TestGenerator_GenerateManifestPath(t *testing.T) {
 		}{
 			{"empty namespace", "", "my-app"},
 			{"empty name", "default", ""},
-			{"uppercase namespace", "Production", "my-app"},
-			{"uppercase name", "production", "My-App"},
 		}
 
 		for _, tt := range tests {

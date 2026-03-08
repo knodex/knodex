@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/provops-org/knodex/server/internal/health"
+	"github.com/knodex/knodex/server/internal/health"
 )
 
 func TestHealthHandler_Healthz(t *testing.T) {

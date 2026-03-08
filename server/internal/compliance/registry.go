@@ -14,7 +14,7 @@ package compliance
 //
 //	package compliance
 //
-//	import compliance "github.com/provops-org/knodex/server/internal/compliance"
+//	import compliance "github.com/knodex/knodex/server/internal/compliance"
 //
 //	func init() {
 //	    compliance.RegisterChecker(&enterpriseChecker{})

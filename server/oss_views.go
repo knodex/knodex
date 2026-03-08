@@ -2,8 +2,8 @@
 package main
 
 import (
-	"github.com/provops-org/knodex/server/internal/services"
-	"github.com/provops-org/knodex/server/internal/watcher"
+	"github.com/knodex/knodex/server/internal/kro/watcher"
+	"github.com/knodex/knodex/server/internal/services"
 )
 
 // InitViewsService returns nil for OSS builds.

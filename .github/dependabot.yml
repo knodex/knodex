@@ -20,9 +20,19 @@ updates:
     reviewers:
       - "provops/server"
     groups:
+      # KRO gets its own PR — upstream changes need careful compat review
+      kro:
+        patterns:
+          - "github.com/kubernetes-sigs/kro"
+        update-types:
+          - "major"
+          - "minor"
+          - "patch"
       go-minor-and-patch:
         patterns:
           - "*"
+        exclude-patterns:
+          - "github.com/kubernetes-sigs/kro"
         update-types:
           - "minor"
           - "patch"

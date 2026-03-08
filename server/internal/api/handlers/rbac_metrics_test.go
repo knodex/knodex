@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/provops-org/knodex/server/internal/api/middleware"
-	"github.com/provops-org/knodex/server/internal/rbac"
+	"github.com/knodex/knodex/server/internal/api/middleware"
+	"github.com/knodex/knodex/server/internal/rbac"
 )
 
 // mockPolicyEnforcerForMetrics implements rbac.PolicyEnforcer for testing

@@ -96,11 +96,6 @@ type LicenseService interface {
 // All methods indicate the feature is not licensed.
 type NoopLicenseService struct{}
 
-// NewNoopLicenseService creates a new no-op license service for OSS builds.
-func NewNoopLicenseService() *NoopLicenseService {
-	return &NoopLicenseService{}
-}
-
 // IsLicensed returns false as this is an OSS build.
 func (s *NoopLicenseService) IsLicensed() bool {
 	return false

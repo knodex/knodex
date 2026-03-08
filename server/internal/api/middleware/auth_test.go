@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/provops-org/knodex/server/internal/auth"
+	"github.com/knodex/knodex/server/internal/auth"
 )
 
 // mockAuthService implements auth.ServiceInterface for testing
@@ -33,6 +33,10 @@ func (m *mockAuthService) GenerateTokenWithGroups(userID, email, displayName str
 
 func (m *mockAuthService) AuthenticateLocal(ctx context.Context, username, password, sourceIP string) (*auth.LoginResponse, error) {
 	return nil, nil
+}
+
+func (m *mockAuthService) RevokeToken(_ context.Context, _ string, _ time.Duration) error {
+	return nil
 }
 
 // mockPermissionChecker removed - Permission and PermissionChecker types no longer exist.

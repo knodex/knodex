@@ -151,7 +151,7 @@ export function DeployPage({ rgd, onBack, onDeploySuccess }: DeployPageProps) {
     );
   }
 
-  if (error || !schemaResponse?.crdFound || !schemaResponse.schema) {
+  if (error || !schemaResponse?.schema) {
     return (
       <div className="space-y-6 animate-fade-in">
         <BackButton onBack={onBack} />
@@ -209,6 +209,18 @@ export function DeployPage({ rgd, onBack, onDeploySuccess }: DeployPageProps) {
           </div>
         </div>
       </div>
+
+      {/* Degraded mode indicator */}
+      {schemaResponse.source === "rgd-only" && (
+        <div className="rounded-lg border border-status-warning/50 bg-status-warning/10 p-4">
+          <div className="flex items-center gap-3">
+            <AlertTriangle className="h-5 w-5 text-status-warning shrink-0" />
+            <p className="text-sm text-muted-foreground">
+              <span className="font-medium text-status-warning">Preview mode</span> — some validation constraints are pending CRD generation
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Success Message */}
       {submitSuccess && (

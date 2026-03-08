@@ -5,7 +5,7 @@ package auth
 import (
 	"context"
 
-	"github.com/provops-org/knodex/server/internal/rbac"
+	"github.com/knodex/knodex/server/internal/rbac"
 )
 
 // AuthRoleManager defines the role management operations needed by auth package.

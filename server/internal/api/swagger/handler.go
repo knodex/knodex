@@ -4,7 +4,7 @@ import (
 	"embed"
 	"net/http"
 
-	"github.com/provops-org/knodex/server/internal/api/response"
+	"github.com/knodex/knodex/server/internal/api/response"
 )
 
 //go:embed openapi.yaml

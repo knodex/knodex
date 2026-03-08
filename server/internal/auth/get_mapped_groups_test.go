@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/provops-org/knodex/server/internal/config"
+	"github.com/knodex/knodex/server/internal/config"
 )
 
 // mockRoleManager implements AuthRoleManager for testing GetMappedGroups
