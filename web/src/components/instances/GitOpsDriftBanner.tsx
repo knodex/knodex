@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { useState } from "react";
 import { AlertTriangle, ChevronDown, ChevronUp, RefreshCw } from "lucide-react";
 import type { Instance } from "@/types/rgd";

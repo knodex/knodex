@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Package metadata re-exports KRO upstream label constants and provides
 // Knodex-specific metadata helpers for working with KRO resources.
 package metadata

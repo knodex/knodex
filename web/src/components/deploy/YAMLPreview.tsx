@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { useMemo, useState } from "react";
 import { Copy, Check, Code, ChevronDown, ChevronRight } from "lucide-react";
 import yaml from "js-yaml";

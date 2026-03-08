@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * OIDCGroupsManager - Manage OIDC group bindings for project roles
  * Implements ArgoCD-style group management UI

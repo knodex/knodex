@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Package kro provides centralized KRO (Kubernetes Resource Orchestrator)
 // integration types, constants, and utilities. All KRO-specific code should
 // live under this package tree.

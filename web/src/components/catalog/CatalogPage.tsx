@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { useState, useCallback, useEffect, useMemo } from "react";
 import { RefreshCw } from "lucide-react";
 import { useRGDList } from "@/hooks/useRGDs";

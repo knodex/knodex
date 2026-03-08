@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { useState } from "react";
 import { KeyRound, ArrowLeft, Plus, ShieldAlert, Pencil, Trash2, Loader2, AlertTriangle } from "lucide-react";
 import { Link } from "react-router-dom";

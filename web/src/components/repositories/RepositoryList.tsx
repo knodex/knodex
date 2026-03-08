@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * Repository list component for displaying configured repositories
  * Supports both legacy (owner/repo) and new (repoURL/authType) formats

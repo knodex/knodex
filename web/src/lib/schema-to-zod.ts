@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { z } from "zod";
 import type { ZodTypeAny } from "zod";
 import type { FormProperty } from "@/types/rgd";

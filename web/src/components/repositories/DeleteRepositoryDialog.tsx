@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * Delete repository configuration confirmation dialog
  * Uses shadcn AlertDialog for accessible destructive action confirmation

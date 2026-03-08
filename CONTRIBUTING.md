@@ -40,6 +40,26 @@ We use [Conventional Commits](https://www.conventionalcommits.org/):
 
 Example: `feat(auth): add OIDC provider support`
 
+## Licensing
+
+Knodex uses a **dual-license model**:
+
+- **`server/internal/`, `server/app/`, `web/`, root files** — AGPLv3 (`AGPL-3.0-only`)
+- **`server/ee/`** — Proprietary (Knodex Enterprise License)
+
+All new source files (`.go`, `.ts`, `.tsx`) **must** include the correct SPDX header:
+
+```go
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+```
+
+For enterprise files in `server/ee/`, use `LicenseRef-Knodex-Enterprise` instead.
+
+Run `scripts/add-spdx-headers.sh` to add headers to new files automatically. CI will reject PRs with missing or incorrect headers.
+
+See the [NOTICE](NOTICE) file for full licensing details. Contributors to `server/ee/` must be authorized by Provops LLC.
+
 ## Reporting Issues
 
 - Search existing issues before creating new ones

@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { useLicenseStatus } from "@/hooks/useLicense";
 import { isEnterprise } from "@/hooks/useCompliance";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";

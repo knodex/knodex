@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { useEffect, useState, useCallback } from "react";
 import { Outlet, useNavigate } from "react-router-dom";
 import { Sidebar, TopBar, Breadcrumbs } from "@/components/layout";

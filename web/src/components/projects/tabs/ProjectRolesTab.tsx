@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * Project Roles Tab - Manage project roles and permissions
  * Refactored to use ArgoCD-style PolicyRulesTable and OIDCGroupsManager

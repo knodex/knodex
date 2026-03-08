@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { useFormContext, Controller } from "react-hook-form";
 import { ExternalRefSelector } from "../ExternalRefSelector";
 import { TextField } from "./TextField";

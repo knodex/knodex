@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { useQuery, useMutation, keepPreviousData, useQueryClient } from "@tanstack/react-query";
 import { listRGDs, getRGD, getRGDSchema, listRGDInstances, createInstance, getRGDResourceGraph, getRGDCount } from "@/api/rgd";
 import { listK8sResources } from "@/api/k8s";

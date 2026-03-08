@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { FolderGit2, Users, KeyRound, ScrollText } from "lucide-react";
 import { SettingsCard } from "@/components/settings/SettingsCard";
 import { isEnterprise } from "@/hooks/useCompliance";

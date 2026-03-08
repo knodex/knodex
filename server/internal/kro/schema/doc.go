@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Package schema provides a dual-source schema pipeline for building deploy forms.
 //
 // It extracts types and validation from CRDs (crd.go), parses RGD intent using

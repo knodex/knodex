@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * View represents a custom view configuration.
  * Views are defined in a ConfigMap and provide filtered views of the RGD catalog.

@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * PolicyRulesTable - ArgoCD-aligned policy rules editor
  * Implements a structured UI for editing Casbin policy rules

@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Package repository provides repository configuration and credential management
 // for GitOps deployments in knodex.
 package repository

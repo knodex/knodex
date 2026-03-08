@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Package env provides typed environment variable accessors with defaults.
 //
 // It consolidates the private getEnv* functions from config/config.go into

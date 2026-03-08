@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /** Convert ISO UTC string back to a local datetime-local input value (YYYY-MM-DDTHH:mm) */
 export function isoToLocalDatetime(iso: string): string {
   const d = new Date(iso);

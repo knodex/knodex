@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { getEnforcementColors } from "@/types/compliance";

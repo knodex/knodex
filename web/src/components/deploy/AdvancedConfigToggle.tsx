@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /* eslint-disable react-refresh/only-export-components */
 import { useState, useCallback } from "react";
 import { ChevronDown, ChevronRight, Settings } from "lucide-react";

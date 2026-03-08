@@ -1,0 +1,12 @@
+Knodex
+Copyright 2026 Provops LLC
+
+This product includes software developed at Provops (https://provops.com/).
+
+Licensed under the GNU Affero General Public License v3.0 (AGPLv3).
+See the LICENSE file in the repository root for the full license text.
+
+Third-Party Software
+--------------------
+This product includes third-party software governed by their respective
+licenses. See go.sum and web/package-lock.json for dependency details.

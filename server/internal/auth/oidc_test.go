@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 package auth
 
 // NOTE: Tests in this file are NOT safe for t.Parallel() due to shared MockRedisClient storage map

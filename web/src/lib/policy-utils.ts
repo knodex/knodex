@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * Policy utilities for Casbin policy manipulation
  * ArgoCD-aligned policy utilities

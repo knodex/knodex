@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { useWebSocketContext, type ConnectionStatus as Status } from "@/context/WebSocketContext";
 import { cn } from "@/lib/utils";
 import { Wifi, WifiOff, Loader2, AlertCircle } from "lucide-react";

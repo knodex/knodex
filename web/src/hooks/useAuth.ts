@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { useUserStore } from '@/stores/userStore';
 import type { Project } from '@/types/project';
 

@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { Link } from "react-router-dom";
 import { ExternalLink, AlertTriangle } from "lucide-react";
 import {

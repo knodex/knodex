@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * Delete role confirmation dialog
  * Simpler than DeleteRepositoryDialog - just confirm/cancel, no type-to-confirm

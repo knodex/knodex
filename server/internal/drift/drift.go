@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Package drift provides Redis-based GitOps drift detection for instances.
 //
 // When a gitops/hybrid instance spec is edited and pushed to Git, the desired

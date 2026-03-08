@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 package schema
 
 // compat_test.go — Upstream KRO contract tests for the simpleschema package.

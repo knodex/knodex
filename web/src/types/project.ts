@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * Project types for the dashboard
  * Projects are ArgoCD-compatible constructs that define deployment boundaries

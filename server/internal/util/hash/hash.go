@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Package hash provides cryptographic hashing utilities for content
 // fingerprinting, ID generation, and deterministic hashing.
 //

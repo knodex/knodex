@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { renderHook } from "@testing-library/react";
 import { useFieldVisibility } from "../useFieldVisibility";
 import type { ConditionalSection } from "@/types/rgd";

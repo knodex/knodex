@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { useFormContext } from "react-hook-form";
 import { cn } from "@/lib/utils";
 import type { SelectFieldProps } from "./types";

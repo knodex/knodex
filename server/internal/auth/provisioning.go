@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Package auth provides authentication and authorization services for knodex.
 // Simplified OIDC provisioning - no User CRD persistence.
 // OIDC users are not persisted; JWT claims contain all necessary user info.

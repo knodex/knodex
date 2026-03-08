@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Package auth provides authentication and authorization services for knodex.
 // This file implements the ArgoCD-style local user storage pattern using ConfigMap/Secret.
 package auth

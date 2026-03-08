@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * Custom Playwright fixtures for E2E testing
  * Extends base Playwright test with authentication helpers

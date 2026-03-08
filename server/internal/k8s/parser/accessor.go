@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 package parser
 
 // GetString retrieves a string value at the specified path in a nested map.

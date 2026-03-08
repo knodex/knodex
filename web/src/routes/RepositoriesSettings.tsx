@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { FolderGit2, ArrowLeft } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useCanI } from "@/hooks/useCanI";

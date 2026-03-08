@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //go:build e2e
 
 // Package e2e_test provides security edge case tests for authorization.

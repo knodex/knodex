@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * SSO Provider types for the Settings UI.
  * ClientSecret is write-only — the backend never returns it.

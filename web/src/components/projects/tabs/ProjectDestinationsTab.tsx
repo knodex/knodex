@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * Project Destinations Tab - Manage project destination namespaces
  * Allows adding/removing destination namespaces with validation and impact warnings

@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { useMemo } from "react";
 import { ChevronRight, Home } from "lucide-react";
 import { Link, useLocation, useParams } from "react-router-dom";

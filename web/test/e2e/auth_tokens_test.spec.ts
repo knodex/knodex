@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * Authentication E2E Tests using JWT Token Injection
  * Based on approach - bypasses login forms by injecting tokens

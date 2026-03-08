@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { InstancesPage, InstanceDetailView } from "@/components/instances";

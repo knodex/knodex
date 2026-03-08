@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Package oidc provides a mock OIDC server for deterministic E2E testing.
 // It implements the OpenID Connect Discovery, Token, JWKS, and UserInfo endpoints.
 package oidc

@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Package app provides a composable application container for the Knodex server.
 // It extracts initialization, service wiring, and lifecycle management from main()
 // into a reusable package that can be imported by both the OSS and EE entry points.

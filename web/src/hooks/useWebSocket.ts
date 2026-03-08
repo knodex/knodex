@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { useEffect, useRef, useCallback, useState, useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { logger, createLogger } from "@/lib/logger";

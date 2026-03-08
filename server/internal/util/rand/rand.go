@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Package rand provides cryptographically secure random generation utilities.
 //
 // All functions use crypto/rand exclusively (never math/rand) to ensure

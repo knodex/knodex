@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 package handlers
 
 // RoleBinding represents a user or group assignment to a project role

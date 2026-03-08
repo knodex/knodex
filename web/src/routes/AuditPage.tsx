@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { useState, useCallback, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Download, ScrollText, ShieldAlert } from "lucide-react";

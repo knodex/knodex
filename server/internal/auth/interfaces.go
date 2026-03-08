@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Package auth provides authentication and authorization services for knodex.
 // This file defines consumer interfaces to decouple auth from concrete rbac types.
 package auth

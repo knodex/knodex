@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { logger } from '@/lib/logger';

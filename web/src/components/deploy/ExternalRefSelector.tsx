@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { ExternalLink, Loader2, AlertCircle, RefreshCw } from "lucide-react";
 import { useFormContext } from "react-hook-form";
 import { useK8sResources } from "@/hooks/useRGDs";

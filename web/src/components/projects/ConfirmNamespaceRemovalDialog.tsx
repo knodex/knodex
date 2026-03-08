@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * Confirmation dialog for removing a destination namespace from a project.
  * Shows impact warning when instances exist in the namespace being removed.

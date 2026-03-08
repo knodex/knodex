@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { useMemo } from "react";
 import { useFormContext, Controller } from "react-hook-form";
 import { Loader2, Link, AlertCircle, Database } from "lucide-react";

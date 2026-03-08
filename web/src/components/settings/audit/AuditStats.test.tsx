@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { AuditStats } from "./AuditStats";
@@ -91,7 +94,7 @@ describe("AuditStats", () => {
   });
 
   it("applies danger variant to denied attempts when > 0", () => {
-    const { container } = render(<AuditStats stats={mockStats} />);
+    render(<AuditStats stats={mockStats} />);
 
     // The denied attempts card should have red text
     const deniedValue = screen.getByText("3");
