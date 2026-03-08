@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Package collection provides generic collection utilities for slices and maps.
 //
 // These complement Go's stdlib slices/maps packages (Go 1.21+) with utilities

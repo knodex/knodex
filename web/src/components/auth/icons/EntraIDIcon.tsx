@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Official Microsoft Entra ID icon
 export function EntraIDIcon({ className }: { className?: string }) {
   return (

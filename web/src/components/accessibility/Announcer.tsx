@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * Accessibility Announcer Component
  * Provides screen reader announcements for dynamic content updates

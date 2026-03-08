@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { useForm, FormProvider, useFieldArray, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -184,6 +187,7 @@ export function CreateConstraintDialog({
     name: "matchKinds",
   });
 
+  // eslint-disable-next-line react-hooks/incompatible-library -- React Hook Form's watch() is inherently non-memoizable
   const formValues = watch();
 
   // Generate YAML preview - use structured params when in form mode

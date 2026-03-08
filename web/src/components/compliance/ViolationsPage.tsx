@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { useState, useCallback, useMemo } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { AlertTriangle, Filter, X, CheckCircle, Search, Radio, Wifi, WifiOff, FileDown } from "lucide-react";

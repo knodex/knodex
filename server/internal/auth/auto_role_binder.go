@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Package auth provides authentication and authorization services.
 // This file implements the AutoRoleBinder service for automatic role binding based on OIDC groups.
 package auth

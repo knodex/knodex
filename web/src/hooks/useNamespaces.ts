@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { useQuery } from "@tanstack/react-query";
 import { listNamespaces, getProjectNamespaces } from "@/api/namespaces";
 

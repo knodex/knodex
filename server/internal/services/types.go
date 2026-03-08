@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Package services provides business logic services following clean architecture principles.
 // Services encapsulate business logic that was previously scattered across HTTP handlers,
 // improving testability, maintainability, and adherence to the Single Responsibility Principle.

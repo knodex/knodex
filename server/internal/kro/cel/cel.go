@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Package cel provides CEL expression utilities for KRO ResourceGraphDefinitions.
 //
 // This package wraps KRO's pkg/cel for expression compilation and provides

@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { Navigate, useLocation } from 'react-router-dom';
 import { useIsAuthenticated } from '@/hooks/useAuth';
 import { useUserStore } from '@/stores/userStore';

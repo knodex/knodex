@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import * as LucideIcons from "lucide-react";
 import type { LucideProps } from "lucide-react";
 

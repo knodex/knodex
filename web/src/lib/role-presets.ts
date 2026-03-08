@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * Role preset templates for quick role creation
  * Used in ProjectRolesTab (add role) and ProjectForm (create project)

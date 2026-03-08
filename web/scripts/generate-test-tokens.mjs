@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { SignJWT } from 'jose';
 
 const jwtSecret = 'test-secret-key-minimum-32-characters-required';

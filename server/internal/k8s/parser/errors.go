@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Package parser provides type-safe utilities for parsing Kubernetes objects,
 // including nested field accessors, metadata helpers, object builders, and
 // YAML/JSON serialization. This package consolidates common parsing patterns

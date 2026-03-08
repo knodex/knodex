@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Package netutil provides network-related utility functions for SSRF protection.
 package netutil
 

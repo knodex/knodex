@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { FileText, ExternalLink, Layers, AlertCircle, Plus } from "lucide-react";

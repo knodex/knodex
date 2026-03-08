@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * Tests for ProjectDestinationsTab
  * Tests destination list display, add/remove flows, permission gating, and validation

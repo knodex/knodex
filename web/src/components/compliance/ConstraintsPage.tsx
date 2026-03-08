@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Shield, ChevronRight, Filter, X } from "lucide-react";

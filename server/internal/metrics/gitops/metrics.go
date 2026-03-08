@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Package gitops provides Prometheus metrics for GitOps commit operations.
 package gitops
 

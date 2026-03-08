@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { ExternalLink, Box, LayoutGrid, LogOut } from "lucide-react";

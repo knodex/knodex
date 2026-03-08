@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /* eslint-disable react-hooks/set-state-in-effect, react-hooks/incompatible-library */
 import { useState, useMemo, useEffect } from "react";
 import { useForm, FormProvider } from "react-hook-form";

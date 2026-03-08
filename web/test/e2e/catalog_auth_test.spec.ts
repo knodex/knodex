@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * Catalog E2E Tests with Authentication
  * Tests catalog view with real authentication instead of mocked APIs

@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Official Google icon
 export function GoogleIcon({ className }: { className?: string }) {
   return (

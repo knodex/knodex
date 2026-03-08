@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Package retry provides generic retry with exponential backoff.
 //
 // It consolidates retry patterns previously embedded in VCS and deployment

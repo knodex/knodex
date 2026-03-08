@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { User, Shield, Users, KeyRound } from "lucide-react";

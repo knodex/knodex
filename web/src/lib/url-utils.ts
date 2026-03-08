@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * URL handling utilities
  * Sanitizes and validates URL parameters to prevent injection attacks

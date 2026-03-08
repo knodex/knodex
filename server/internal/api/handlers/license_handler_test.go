@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 package handlers
 
 // NOTE: Tests in this file are NOT safe for t.Parallel() due to package-level

@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 //go:build e2e
 
 // E2E test: Immediate Casbin Policy Reload on Permission Changes

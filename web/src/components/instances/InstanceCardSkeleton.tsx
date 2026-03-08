@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 export function InstanceCardSkeleton() {
   return (
     <div className="rounded-lg border border-border bg-card p-4 animate-shimmer">

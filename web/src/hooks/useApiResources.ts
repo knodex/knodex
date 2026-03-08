@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useCallback } from "react";
 import {
@@ -27,12 +30,14 @@ export function useApiResources() {
     retry: 2,
   });
 
+  const resources = query.data?.resources;
+
   // Extract unique API groups, sorted with "core" first
   const apiGroups = useMemo(() => {
-    if (!query.data?.resources) return [];
+    if (!resources) return [];
 
     const uniqueGroups = new Set<string>();
-    for (const resource of query.data.resources) {
+    for (const resource of resources) {
       uniqueGroups.add(getApiGroupDisplayName(resource.apiGroup));
     }
 
@@ -45,16 +50,16 @@ export function useApiResources() {
     });
 
     return groups;
-  }, [query.data?.resources]);
+  }, [resources]);
 
   // Function to get kinds filtered by selected API groups
   const getKindsForApiGroups = useCallback(
     (selectedGroups: string[]): APIResource[] => {
-      if (!query.data?.resources) return [];
+      if (!resources) return [];
 
       // If no groups selected, return all resources
       if (selectedGroups.length === 0) {
-        return query.data.resources;
+        return resources;
       }
 
       // Convert display names back to API values for comparison
@@ -62,9 +67,9 @@ export function useApiResources() {
         selectedGroups.map((g) => (g === "core" ? "" : g))
       );
 
-      return query.data.resources.filter((r) => groupValues.has(r.apiGroup));
+      return resources.filter((r) => groupValues.has(r.apiGroup));
     },
-    [query.data?.resources]
+    [resources]
   );
 
   // Get unique kinds from filtered resources
@@ -82,7 +87,7 @@ export function useApiResources() {
 
   return {
     apiGroups,
-    resources: query.data?.resources ?? [],
+    resources: resources ?? [],
     getKindsForApiGroups,
     getUniqueKinds,
     isLoading: query.isLoading,

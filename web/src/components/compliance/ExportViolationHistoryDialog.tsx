@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import { useState, useMemo, useEffect } from "react";
 import { FileDown, Loader2, Info } from "lucide-react";
 import { toast } from "sonner";
@@ -51,6 +54,7 @@ export function ExportViolationHistoryDialog({
   // Reset enforcement filter when dialog opens
   useEffect(() => {
     if (open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional reset on dialog open
       setEnforcement("all");
     }
   }, [open]);

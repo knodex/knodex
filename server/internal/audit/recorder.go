@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Package audit provides a shared audit recording interface for handler instrumentation.
 // This package is NOT gated behind enterprise build tags, so both OSS and EE builds
 // can reference the Recorder interface and Event type. In OSS builds, the recorder

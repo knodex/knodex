@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 // Package sanitize provides input sanitization utilities for security-critical
 // operations including Redis keys, Kubernetes names, filenames, and path components.
 //

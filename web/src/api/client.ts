@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 import axios from "axios";
 import { logger } from "@/lib/logger";
 import { useUserStore } from "@/stores/userStore";

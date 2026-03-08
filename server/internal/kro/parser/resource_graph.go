@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 package parser
 
 // ResourceDefinition represents a Kubernetes resource defined in an RGD's spec.resources array.

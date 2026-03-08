@@ -1,3 +1,6 @@
+// Copyright 2026 Knodex Authors
+// SPDX-License-Identifier: AGPL-3.0-only
+
 package models
 
 // FormSchema represents a form-friendly JSON schema for generating dynamic forms
