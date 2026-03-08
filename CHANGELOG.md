@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.0.20](https://github.com/knodex/knodex/compare/v0.0.19...v0.0.20) (2026-03-08)
+
+
+### Features
+
+* add KRO centralization, security hardening, and util packages ([59d7494](https://github.com/knodex/knodex/commit/59d7494abeb833df000dfd529a44c83ecd97c5aa))
+
+
+### Bug Fixes
+
+* **rbac:** add authorization to views endpoints and fix ClusterRole rules ([8e97af7](https://github.com/knodex/knodex/commit/8e97af77e269bb0c0ca53b586682782325c20239))
+
 ## [0.0.19](https://github.com/knodex/knodex/compare/v0.0.18...v0.0.19) (2026-03-05)
 
 
