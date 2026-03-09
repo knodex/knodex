@@ -1,0 +1,43 @@
+# Reference RGD: Basic Types
+# kro-feature: basic-types
+# kro-min-version: v0.8.0
+# knodex-support: true
+#
+# Tests: string, integer, boolean fields with default values.
+# Validates that Knodex correctly extracts type information and defaults
+# from the KRO simpleschema format.
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: ref-basic-types
+  annotations:
+    knodex.io/canary: "true"
+    knodex.io/kro-feature: "basic-types"
+    knodex.io/kro-min-version: "v0.8.0"
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: BasicTypesTest
+    spec:
+      stringField: string
+      stringWithDefault: string | default="hello"
+      integerField: integer
+      integerWithDefault: integer | default=42
+      booleanField: boolean
+      booleanWithDefault: boolean | default=true
+      description: string | default="" description="A test description field"
+
+  resources:
+    - id: configmap
+      template:
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: ${schema.spec.stringField}-config
+          labels:
+            test: basic-types
+        data:
+          stringVal: ${schema.spec.stringWithDefault}
+          intVal: "${schema.spec.integerWithDefault}"
+          boolVal: "${schema.spec.booleanWithDefault}"
+          desc: ${schema.spec.description}

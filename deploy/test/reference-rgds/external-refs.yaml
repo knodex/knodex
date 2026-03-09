@@ -1,0 +1,51 @@
+# Reference RGD: External References
+# kro-feature: external-refs
+# kro-min-version: v0.8.0
+# knodex-support: true
+#
+# Tests: externalRef with name/namespace pairs.
+# Validates that Knodex correctly identifies external resource references
+# and extracts their API version, kind, name, and namespace fields.
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: ref-external-refs
+  annotations:
+    knodex.io/canary: "true"
+    knodex.io/kro-feature: "external-refs"
+    knodex.io/kro-min-version: "v0.8.0"
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: ExternalRefTest
+    spec:
+      appName: string
+      useExternalDB: boolean | default=false
+      externalRef:
+        database:
+          name: string | default=""
+          namespace: string | default=""
+
+  resources:
+    # Always-present application
+    - id: app
+      template:
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: ${schema.spec.appName}-app
+          labels:
+            app: ${schema.spec.appName}
+        data:
+          name: ${schema.spec.appName}
+
+    # External reference — conditionally included
+    - id: database
+      includeWhen:
+        - ${schema.spec.useExternalDB == true}
+      externalRef:
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: ${schema.spec.externalRef.database.name}
+          namespace: ${schema.spec.externalRef.database.namespace}

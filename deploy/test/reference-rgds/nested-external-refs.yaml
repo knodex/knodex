@@ -1,0 +1,66 @@
+# Reference RGD: Nested External References
+# kro-feature: nested-external-refs
+# kro-min-version: v0.9.0
+# knodex-support: true
+#
+# Tests: Cross-RGD externalRef lookups with multiple external references.
+# Validates that Knodex handles multiple externalRef entries and correctly
+# tracks dependencies between RGDs.
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: ref-nested-external-refs
+  annotations:
+    knodex.io/canary: "true"
+    knodex.io/kro-feature: "nested-external-refs"
+    knodex.io/kro-min-version: "v0.9.0"
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: NestedExtRefTest
+    spec:
+      platformName: string
+      useExternalCache: boolean | default=false
+      useExternalQueue: boolean | default=false
+      externalRef:
+        cache:
+          name: string | default=""
+          namespace: string | default=""
+        queue:
+          name: string | default=""
+          namespace: string | default=""
+
+  resources:
+    # Always-present base resource
+    - id: base
+      template:
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: ${schema.spec.platformName}-config
+          labels:
+            app: ${schema.spec.platformName}
+        data:
+          platform: ${schema.spec.platformName}
+
+    # External cache reference
+    - id: cache
+      includeWhen:
+        - ${schema.spec.useExternalCache == true}
+      externalRef:
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: ${schema.spec.externalRef.cache.name}
+          namespace: ${schema.spec.externalRef.cache.namespace}
+
+    # External queue reference
+    - id: queue
+      includeWhen:
+        - ${schema.spec.useExternalQueue == true}
+      externalRef:
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: ${schema.spec.externalRef.queue.name}
+          namespace: ${schema.spec.externalRef.queue.namespace}
