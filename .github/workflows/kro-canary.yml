@@ -60,11 +60,9 @@ jobs:
           kubectl cluster-info --context kind-${{ env.KIND_CLUSTER }}
           kubectl config use-context kind-${{ env.KIND_CLUSTER }}
 
-      - name: Install KRO from ref
+      - name: Clone KRO
         run: |
-          echo "Installing KRO from ref: ${{ env.KRO_REF }}"
-
-          # Clone KRO at the specified ref
+          echo "Cloning KRO from ref: ${{ env.KRO_REF }}"
           git clone --depth 1 --branch ${{ env.KRO_REF }} https://github.com/kubernetes-sigs/kro.git /tmp/kro || \
             (git clone https://github.com/kubernetes-sigs/kro.git /tmp/kro && cd /tmp/kro && git checkout ${{ env.KRO_REF }})
 
@@ -72,20 +70,37 @@ jobs:
           echo "KRO_COMMIT=$KRO_COMMIT" >> $GITHUB_ENV
           echo "KRO commit: $KRO_COMMIT"
 
-          # Install KRO using Helm chart from source
+      - name: Build KRO image
+        run: |
           cd /tmp/kro
+          echo "Building KRO controller image from source..."
+          docker build -t kro-controller:local -f Dockerfile . 2>/dev/null || \
+            docker build -t kro-controller:local . 2>/dev/null || \
+            { echo "ERROR: Could not build KRO image"; exit 1; }
+          echo "KRO image built successfully"
+
+      - name: Load KRO image into Kind
+        run: |
+          kind load docker-image kro-controller:local --name ${{ env.KIND_CLUSTER }}
+
+      - name: Install KRO from ref
+        run: |
+          cd /tmp/kro
+
+          # Find and install KRO Helm chart with local image override
+          HELM_SET="--set image.repository=kro-controller --set image.tag=local --set image.pullPolicy=Never"
           if [ -d "helm/kro" ]; then
             echo "Found Helm chart at helm/kro/"
-            helm install kro ./helm/kro --namespace kro --create-namespace --wait --timeout 300s
+            helm install kro ./helm/kro --namespace kro --create-namespace --wait --timeout 300s $HELM_SET
           elif [ -f "helm/Chart.yaml" ]; then
             echo "Found Helm chart at helm/"
-            helm install kro ./helm --namespace kro --create-namespace --wait --timeout 300s
+            helm install kro ./helm --namespace kro --create-namespace --wait --timeout 300s $HELM_SET
           elif [ -d "charts/kro" ]; then
             echo "Found Helm chart at charts/kro/"
-            helm install kro ./charts/kro --namespace kro --create-namespace --wait --timeout 300s
+            helm install kro ./charts/kro --namespace kro --create-namespace --wait --timeout 300s $HELM_SET
           elif [ -f "charts/Chart.yaml" ]; then
             echo "Found Helm chart at charts/"
-            helm install kro ./charts --namespace kro --create-namespace --wait --timeout 300s
+            helm install kro ./charts --namespace kro --create-namespace --wait --timeout 300s $HELM_SET
           else
             echo "No Helm chart found, trying kubectl apply"
             kubectl apply -f config/ 2>/dev/null || kubectl apply -k config/default/ 2>/dev/null || \
