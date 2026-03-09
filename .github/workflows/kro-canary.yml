@@ -73,10 +73,18 @@ jobs:
       - name: Build KRO image
         run: |
           cd /tmp/kro
-          echo "Building KRO controller image from source..."
-          docker build -t kro-controller:local -f Dockerfile . 2>/dev/null || \
-            docker build -t kro-controller:local . 2>/dev/null || \
-            { echo "ERROR: Could not build KRO image"; exit 1; }
+          echo "Building KRO controller binary..."
+          CGO_ENABLED=0 GOOS=linux go build -o kro-controller ./cmd/controller/ || \
+            CGO_ENABLED=0 GOOS=linux go build -o kro-controller .
+
+          cat > /tmp/kro/Dockerfile.ci <<'DOCKERFILE'
+          FROM gcr.io/distroless/static:nonroot
+          COPY kro-controller /kro-controller
+          USER 65532:65532
+          ENTRYPOINT ["/kro-controller"]
+          DOCKERFILE
+
+          docker build -t kro-controller:local -f /tmp/kro/Dockerfile.ci /tmp/kro
           echo "KRO image built successfully"
 
       - name: Load KRO image into Kind
