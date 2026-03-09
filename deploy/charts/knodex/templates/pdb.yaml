@@ -6,7 +6,14 @@ metadata:
   labels:
     {{- include "knodex.server.labels" . | nindent 4 }}
 spec:
-  minAvailable: 1
+  {{- if and (not (kindIs "invalid" .Values.server.pdb.maxUnavailable)) .Values.server.pdb.minAvailable }}
+  {{- fail "server.pdb.maxUnavailable and server.pdb.minAvailable are mutually exclusive. To use maxUnavailable, set server.pdb.minAvailable to null" }}
+  {{- end }}
+  {{- if not (kindIs "invalid" .Values.server.pdb.maxUnavailable) }}
+  maxUnavailable: {{ .Values.server.pdb.maxUnavailable }}
+  {{- else }}
+  minAvailable: {{ .Values.server.pdb.minAvailable | default 1 }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "knodex.server.selectorLabels" . | nindent 6 }}

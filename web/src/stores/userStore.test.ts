@@ -254,6 +254,27 @@ describe('useUserStore', () => {
 
       expect(firstRender.current.isAuthenticated).toBe(true);
 
+      // Capture localStorage before simulating refresh
+      const savedStorage = localStorage.getItem('user-storage');
+      expect(savedStorage).toBeTruthy();
+
+      // Simulate page refresh: reset in-memory store to defaults, keep localStorage intact
+      act(() => {
+        useUserStore.setState({
+          isAuthenticated: false,
+          user: null,
+          projects: [],
+          tokenExp: null,
+        });
+      });
+      // Restore localStorage (setState may have triggered persist)
+      localStorage.setItem('user-storage', savedStorage!);
+
+      // Trigger rehydration from localStorage
+      act(() => {
+        useUserStore.persist.rehydrate();
+      });
+
       const { result: secondRender } = renderHook(() => useUserStore());
 
       expect(secondRender.current.isAuthenticated).toBe(true);
@@ -263,6 +284,28 @@ describe('useUserStore', () => {
         name: 'Test User',
       });
       expect(secondRender.current.projects).toEqual(['org-1', 'org-2']);
+    });
+
+    it('should not rehydrate isAuthenticated when token is expired', () => {
+      const userInfo = makeUserInfo();
+      const pastDate = new Date(Date.now() - 100_000).toISOString();
+
+      const { result } = renderHook(() => useUserStore());
+      act(() => {
+        result.current.login(userInfo, pastDate);
+      });
+
+      // Capture localStorage, reset store, restore localStorage, then rehydrate
+      const savedStorage = localStorage.getItem('user-storage');
+      act(() => {
+        useUserStore.setState({ isAuthenticated: false });
+      });
+      localStorage.setItem('user-storage', savedStorage!);
+      act(() => {
+        useUserStore.persist.rehydrate();
+      });
+
+      expect(result.current.isAuthenticated).toBe(false);
     });
   });
 });

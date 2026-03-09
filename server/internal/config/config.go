@@ -155,6 +155,10 @@ type RateLimit struct {
 
 // Auth holds authentication configuration
 type Auth struct {
+	// JWTExpiry is the JWT token expiration duration.
+	// Default: 1h. Env: JWT_EXPIRY. Format: Go duration string (e.g., "1h", "30m").
+	JWTExpiry time.Duration
+
 	// LocalAdmin configuration
 	AdminUsername          string
 	AdminPassword          string
@@ -238,6 +242,7 @@ func Load() (*Config, error) {
 			Namespace: utilenv.GetString("POD_NAMESPACE", ""),
 		},
 		Auth: Auth{
+			JWTExpiry:              utilenv.GetDuration("JWT_EXPIRY", 1*time.Hour),
 			AdminUsername:          utilenv.GetString("ADMIN_USERNAME", "admin"),
 			AdminPassword:          "", // Will be set by main.go from Kubernetes secret
 			AdminPasswordGenerated: false,

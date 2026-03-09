@@ -154,6 +154,17 @@ export const useUserStore = create<UserState>()(
         tokenExp: state.tokenExp,
         groups: state.groups,
       }),
+      onRehydrateStorage: () => (state) => {
+        if (!state) return;
+        // Restore isAuthenticated from persisted tokenExp on page reload.
+        // The JWT lives in an HttpOnly cookie (survives refresh), but
+        // isAuthenticated is intentionally excluded from partialize so it
+        // defaults to false. Re-derive it here from the stored expiry.
+        const { tokenExp, user } = state;
+        if (user && tokenExp && tokenExp * 1000 > Date.now()) {
+          useUserStore.setState({ isAuthenticated: true });
+        }
+      },
     }
   )
 );

@@ -228,6 +228,33 @@ Via the **Settings UI**, create a provider with:
 
 Or via Helm/ArgoCD manifests — add an entry to the `knodex-sso-providers` ConfigMap `providers.json` and set credentials in the `knodex-sso-secrets` Secret (see [Helm / ArgoCD](#helm--argocd-gitops) above).
 
+## Session Cookie Configuration
+
+After OIDC login, knodex stores the session token in an HTTP-only cookie. The cookie attributes are configurable via Helm values for production deployments behind load balancers or across subdomains.
+
+### Helm Values
+
+```yaml
+server:
+  config:
+    cookie:
+      # Requires HTTPS. Set to false for local HTTP development.
+      secure: true        # default: true
+      # Set for cross-subdomain auth (e.g., ".example.com").
+      domain: ""          # default: "" (same-origin)
+```
+
+### Configuration Reference
+
+| Value | Env Var | Default | Description |
+|-------|---------|---------|-------------|
+| `server.config.cookie.secure` | `COOKIE_SECURE` | `true` | Sets the `Secure` flag on the session cookie. Requires HTTPS. Set to `false` only for local HTTP development. |
+| `server.config.cookie.domain` | `COOKIE_DOMAIN` | `""` | Sets the `Domain` attribute on the session cookie. Use for cross-subdomain authentication (e.g., `.example.com` allows `app.example.com` and `api.example.com` to share the session). |
+
+{{< alert title="Warning" >}}
+Setting `cookie.secure: false` in production disables HTTPS-only cookies, allowing session tokens to be transmitted over unencrypted connections. Only use this for local HTTP development.
+{{< /alert >}}
+
 ### Test Login Flow
 
 1. Add a provider via the Settings UI or deploy via Helm/ArgoCD (changes take effect within seconds)

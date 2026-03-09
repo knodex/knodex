@@ -74,7 +74,6 @@ const (
 	httpServerReadHeaderTimeout   = 5 * time.Second
 	httpServerWriteTimeout        = 15 * time.Second
 	httpServerIdleTimeout         = 60 * time.Second
-	jwtTokenExpiry                = 1 * time.Hour
 )
 
 // ComplianceInitFunc is the signature for enterprise compliance service initialization.
@@ -396,7 +395,7 @@ func (a *App) Run(ctx context.Context) error {
 		oidcProviders := ssoProviders
 
 		authConfig := &auth.Config{
-			JWTExpiry:          jwtTokenExpiry,
+			JWTExpiry:          cfg.Auth.JWTExpiry,
 			LocalAdminUsername: cfg.Auth.AdminUsername,
 			LocalAdminPassword: adminPassword,
 			OIDCEnabled:        cfg.Auth.OIDCEnabled,
@@ -422,7 +421,7 @@ func (a *App) Run(ctx context.Context) error {
 	var oidcService *auth.OIDCService
 	if cfg.Auth.OIDCEnabled && authService != nil && redisClient != nil && projectService != nil {
 		authConfig := &auth.Config{
-			JWTExpiry:     jwtTokenExpiry,
+			JWTExpiry:     cfg.Auth.JWTExpiry,
 			OIDCEnabled:   cfg.Auth.OIDCEnabled,
 			OIDCProviders: ssoProviders,
 		}

@@ -20,6 +20,33 @@ global:
 server:
   replicaCount: 1
 
+  # -- Annotations to add to server pods
+  podAnnotations: {}
+  # -- Labels to add to server pods
+  podLabels: {}
+  # -- Priority class name for server pods
+  priorityClassName: ""
+  # -- Termination grace period in seconds (default: 30)
+  # terminationGracePeriodSeconds: 30
+  # -- Deployment strategy
+  strategy: {}
+  #   type: RollingUpdate
+  #   rollingUpdate:
+  #     maxUnavailable: 0
+  #     maxSurge: 1
+  # -- DNS policy for server pods
+  dnsPolicy: ""
+  # -- DNS configuration for server pods
+  dnsConfig: {}
+  # -- Topology spread constraints for server pods
+  topologySpreadConstraints: []
+  # -- Per-server node selector (overrides global.nodeSelector when set; use {} to clear global)
+  # nodeSelector: {}
+  # -- Per-server tolerations (overrides global.tolerations when set; use [] to clear global)
+  # tolerations: []
+  # -- Per-server affinity rules (overrides global.affinity when set; use {} to clear global)
+  # affinity: {}
+
   image:
     repository: ghcr.io/knodex/knodex
     pullPolicy: IfNotPresent
@@ -36,6 +63,9 @@ server:
     requests:
       cpu: 100m
       memory: 128Mi
+    # limits:
+    #   cpu: 500m
+    #   memory: 256Mi
 
   # Environment configuration
   config:
@@ -49,6 +79,15 @@ server:
     # @default -- `false`
     swaggerUI: false
     # redisDB: 0  # Optional: Redis database number
+
+    # Session cookie configuration
+    cookie:
+      # -- Secure flag on session cookies (requires HTTPS). Set to false for local HTTP development.
+      # @default -- `true`
+      secure: true
+      # -- Domain attribute on session cookies. Set for cross-subdomain auth (e.g., ".example.com").
+      # @default -- `""` (same-origin)
+      domain: ""
 
     # Rate limiting configuration
     rateLimit:
@@ -88,6 +127,38 @@ server:
     periodSeconds: 10
     timeoutSeconds: 5
     failureThreshold: 3
+
+  # -- Startup probe for slow-starting containers
+  startupProbe: {}
+  #   httpGet:
+  #     path: /healthz
+  #     port: http
+  #   failureThreshold: 30
+  #   periodSeconds: 5
+  # -- Lifecycle hooks for the server container
+  lifecycle: {}
+  #   preStop:
+  #     exec:
+  #       command: ["/bin/sh", "-c", "sleep 10"]
+  # -- Extra environment variables for the server container
+  # NOTE: Variables here are appended after chart-managed env vars.
+  # Duplicate names will override chart defaults (Kubernetes uses last value).
+  extraEnv: []
+  # -- Extra environment variable sources (ConfigMaps, Secrets)
+  # WARNING: Allows mounting arbitrary Secrets/ConfigMaps into the server process.
+  # Ensure Helm release access is restricted in multi-tenant environments.
+  extraEnvFrom: []
+  # -- Extra volume mounts for the server container
+  extraVolumeMounts: []
+  # -- Extra volumes for the server pod
+  extraVolumes: []
+
+  # -- PodDisruptionBudget configuration
+  pdb:
+    # -- Minimum number of available pods (mutually exclusive with maxUnavailable)
+    minAvailable: 1
+    # -- Maximum number of unavailable pods (mutually exclusive with minAvailable)
+    # maxUnavailable: ""
 
   # -- Server pod security context (matches upstream Dockerfile UID 10001)
   podSecurityContext:

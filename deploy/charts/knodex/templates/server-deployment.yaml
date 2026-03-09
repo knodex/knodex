@@ -8,6 +8,10 @@ spec:
   {{- if not .Values.server.autoscaling.enabled }}
   replicas: {{ .Values.server.replicaCount }}
   {{- end }}
+  {{- with .Values.server.strategy }}
+  strategy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "knodex.server.selectorLabels" . | nindent 6 }}
@@ -15,6 +19,13 @@ spec:
     metadata:
       labels:
         {{- include "knodex.server.selectorLabels" . | nindent 8 }}
+        {{- with .Values.server.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.server.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       {{- with .Values.global.imagePullSecrets }}
       imagePullSecrets:
@@ -23,6 +34,22 @@ spec:
       serviceAccountName: {{ include "knodex.serviceAccountName" . }}
       securityContext:
         {{- toYaml .Values.server.podSecurityContext | nindent 8 }}
+      {{- with .Values.server.priorityClassName }}
+      priorityClassName: {{ . | quote }}
+      {{- end }}
+      {{- if not (kindIs "invalid" .Values.server.terminationGracePeriodSeconds) }}
+      terminationGracePeriodSeconds: {{ .Values.server.terminationGracePeriodSeconds }}
+      {{- end }}
+      {{- if and (eq (toString .Values.server.dnsPolicy) "None") (not .Values.server.dnsConfig) }}
+      {{- fail "server.dnsConfig is required when server.dnsPolicy is 'None'" }}
+      {{- end }}
+      {{- with .Values.server.dnsPolicy }}
+      dnsPolicy: {{ . | quote }}
+      {{- end }}
+      {{- with .Values.server.dnsConfig }}
+      dnsConfig:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       initContainers:
         - name: wait-for-redis
           image: "busybox:1.37"
@@ -68,6 +95,8 @@ spec:
             # Server configuration
             - name: SERVER_ADDRESS
               value: {{ .Values.server.config.serverAddress | quote }}
+            - name: SERVER_PORT
+              value: {{ .Values.server.service.port | quote }}
             {{- if .Values.server.config.corsAllowedOrigins }}
             - name: CORS_ALLOWED_ORIGINS
               value: {{ .Values.server.config.corsAllowedOrigins | quote }}
@@ -75,6 +104,15 @@ spec:
             {{- if .Values.server.config.swaggerUI }}
             - name: SWAGGER_UI_ENABLED
               value: "true"
+            {{- end }}
+            # Session cookie configuration
+            {{- if not .Values.server.config.cookie.secure }}
+            - name: COOKIE_SECURE
+              value: "false"
+            {{- end }}
+            {{- if .Values.server.config.cookie.domain }}
+            - name: COOKIE_DOMAIN
+              value: {{ .Values.server.config.cookie.domain | quote }}
             {{- end }}
             - name: LOG_LEVEL
               value: {{ .Values.server.config.logLevel | quote }}
@@ -215,10 +253,25 @@ spec:
             - name: COMPLIANCE_HISTORY_RETENTION_DAYS
               value: {{ .Values.enterprise.compliance.historyRetentionDays | quote }}
             {{- end }}
+            {{- with .Values.server.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.server.extraEnvFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           livenessProbe:
             {{- toYaml .Values.server.livenessProbe | nindent 12 }}
           readinessProbe:
             {{- toYaml .Values.server.readinessProbe | nindent 12 }}
+          {{- with .Values.server.startupProbe }}
+          startupProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.server.lifecycle }}
+          lifecycle:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           resources:
             {{- toYaml .Values.server.resources | nindent 12 }}
           volumeMounts:
@@ -234,6 +287,9 @@ spec:
               mountPath: /etc/knodex/license.jwt
               subPath: license.jwt
               readOnly: true
+            {{- with .Values.server.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
       volumes:
         - name: tmp
           emptyDir: {}
@@ -247,15 +303,43 @@ spec:
           secret:
             secretName: {{ include "knodex.licenseSecretName" . }}
             optional: true
+        {{- with .Values.server.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- if not (kindIs "invalid" .Values.server.nodeSelector) }}
+      {{- with .Values.server.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- else }}
       {{- with .Values.global.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- end }}
+      {{- if not (kindIs "invalid" .Values.server.affinity) }}
+      {{- with .Values.server.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- else }}
       {{- with .Values.global.affinity }}
       affinity:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- end }}
+      {{- if not (kindIs "invalid" .Values.server.tolerations) }}
+      {{- with .Values.server.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- else }}
       {{- with .Values.global.tolerations }}
       tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- end }}
+      {{- with .Values.server.topologySpreadConstraints }}
+      topologySpreadConstraints:
         {{- toYaml . | nindent 8 }}
       {{- end }}
