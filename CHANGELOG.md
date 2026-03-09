@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.21](https://github.com/knodex/knodex/compare/v0.0.20...v0.0.21) (2026-03-09)
+
+
+### Features
+
+* **chart:** add production readiness values and validation guards ([618d749](https://github.com/knodex/knodex/commit/618d74906f47cf5b99f410bd85f22304896b80cb))
+
 ## [0.0.20](https://github.com/knodex/knodex/compare/v0.0.19...v0.0.20) (2026-03-08)
 
 
