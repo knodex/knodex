@@ -36,7 +36,7 @@ env:
 jobs:
   canary:
     name: KRO Canary (ref=${{ inputs.kro_ref || 'main' }})
-    runs-on: [self-hosted, linux, azure, staging]
+    runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
@@ -50,11 +50,9 @@ jobs:
           cache-dependency-path: server/go.sum
 
       - name: Clean up stale resources
-        # WARNING: docker prune removes ALL images/volumes on this runner.
-        # Safe because canary runs on dedicated self-hosted runners with concurrency: 1.
         run: |
           kind delete cluster --name ${{ env.KIND_CLUSTER }} 2>/dev/null || true
-          docker system prune -af --volumes 2>/dev/null || true
+          rm -rf /tmp/kro
 
       - name: Create Kind cluster
         run: |
@@ -67,8 +65,8 @@ jobs:
           echo "Installing KRO from ref: ${{ env.KRO_REF }}"
 
           # Clone KRO at the specified ref
-          git clone --depth 1 --branch ${{ env.KRO_REF }} https://github.com/kubernetes-sigs/kro.git /tmp/kro 2>/dev/null || \
-          git clone https://github.com/kubernetes-sigs/kro.git /tmp/kro && cd /tmp/kro && git checkout ${{ env.KRO_REF }}
+          git clone --depth 1 --branch ${{ env.KRO_REF }} https://github.com/kubernetes-sigs/kro.git /tmp/kro || \
+            (git clone https://github.com/kubernetes-sigs/kro.git /tmp/kro && cd /tmp/kro && git checkout ${{ env.KRO_REF }})
 
           KRO_COMMIT=$(cd /tmp/kro && git rev-parse --short HEAD)
           echo "KRO_COMMIT=$KRO_COMMIT" >> $GITHUB_ENV
