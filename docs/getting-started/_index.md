@@ -15,9 +15,9 @@ This guide walks you through installing knodex and deploying your first RGD inst
 ## Requirements
 
 - Kubernetes cluster (1.32+)
-- [KRO](https://kro.run) installed ( version 0.7.1 )
+- [KRO](https://kro.run) installed (version 0.8.5) — or let the chart install it (see below)
 - kubectl configured
-- Helm 4.x
+- Helm 3.x
 
 ## 1. Install knodex
 
@@ -25,6 +25,15 @@ This guide walks you through installing knodex and deploying your first RGD inst
 helm install knodex oci://ghcr.io/knodex/charts/knodex \
   --namespace knodex \
   --create-namespace
+```
+
+To install KRO automatically as a chart dependency, set `kro.enabled=true`:
+
+```bash
+helm install knodex oci://ghcr.io/knodex/charts/knodex \
+  --namespace knodex \
+  --create-namespace \
+  --set kro.enabled=true
 ```
 
 ## 2. Access the UI
@@ -57,7 +66,7 @@ Login with:
 If your cluster doesn't have any RGDs yet, deploy a sample:
 
 ```bash
-kubectl apply -f https://raw.githubusercontent.com/awslabs/kro/main/examples/simple-webapp/rgd.yaml
+kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/kro/main/examples/simple-webapp/rgd.yaml
 ```
 
 Refresh the catalog in the UI.
