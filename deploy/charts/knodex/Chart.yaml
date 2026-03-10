@@ -4,8 +4,8 @@ description: >-
   A Helm chart for deploying Knodex - a Kubernetes-native UI for browsing and
   deploying Kro ResourceGraphDefinitions
 type: application
-version: 0.1.0
-appVersion: 0.1.0
+version: 0.2.0
+appVersion: 0.2.0
 keywords:
   - kro
   - kubernetes
