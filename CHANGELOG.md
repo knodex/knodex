@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.0](https://github.com/knodex/knodex/compare/v0.0.22...v0.1.0) (2026-03-10)
+
+
+### Bug Fixes
+
+* **ci:** allow feat commits to bump minor version pre-1.0 ([e81650f](https://github.com/knodex/knodex/commit/e81650fd4614e9bb338cfc831140be1472efb243))
+* **sso:** return empty list when SSO provider ConfigMap does not exist ([fea2643](https://github.com/knodex/knodex/commit/fea264396f66d191d2e1d52a72910b2b1f3b22f2))
+
+
+### Miscellaneous Chores
+
+* release 0.1.0 ([df0241c](https://github.com/knodex/knodex/commit/df0241c35dafb9c8e04e1a31e72c9243a911f1d2))
+
 ## [0.0.22](https://github.com/knodex/knodex/compare/v0.0.21...v0.0.22) (2026-03-10)
 
 
