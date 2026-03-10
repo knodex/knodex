@@ -141,12 +141,7 @@ func (s *ProviderStore) Create(ctx context.Context, provider SSOProvider) error 
 
 	configs, err := s.readConfigs(ctx)
 	if err != nil {
-		// If ConfigMap doesn't exist yet, start with empty list
-		if errors.IsNotFound(err) {
-			configs = []providerConfig{}
-		} else {
-			return err
-		}
+		return err
 	}
 
 	// Check for duplicate name
@@ -290,10 +285,14 @@ func (s *ProviderStore) Delete(ctx context.Context, name string) error {
 	return nil
 }
 
-// readConfigs reads the provider configurations from the ConfigMap
+// readConfigs reads the provider configurations from the ConfigMap.
+// Returns an empty list when the ConfigMap does not yet exist.
 func (s *ProviderStore) readConfigs(ctx context.Context) ([]providerConfig, error) {
 	cm, err := s.k8sClient.CoreV1().ConfigMaps(s.namespace).Get(ctx, ConfigMapName, metav1.GetOptions{})
 	if err != nil {
+		if errors.IsNotFound(err) {
+			return []providerConfig{}, nil
+		}
 		return nil, err
 	}
 
