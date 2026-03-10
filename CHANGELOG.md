@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.0.22](https://github.com/knodex/knodex/compare/v0.0.21...v0.0.22) (2026-03-10)
+
+
+### Features
+
+* add session restore and default Project CRD ([3951d65](https://github.com/knodex/knodex/commit/3951d6578bc8c175a113501a2f0254b43875d3c3))
+
+
+### Bug Fixes
+
+* **ci:** add reference RGDs for canary tests ([6d32641](https://github.com/knodex/knodex/commit/6d32641526beb057d1a3f57b7ff72e81ee7a2625))
+* **ci:** build KRO image from source for Kind cluster ([744e9c1](https://github.com/knodex/knodex/commit/744e9c15a40eb2babed8d75570383cd9e9f7e1f4))
+* **ci:** build KRO with go build + distroless (no Dockerfile in KRO repo) ([8cb5517](https://github.com/knodex/knodex/commit/8cb551712c54c8dd5179c4e46abba047c7ae8499))
+* **ci:** use GitHub-hosted runner for KRO canary and fix clone logic ([f624492](https://github.com/knodex/knodex/commit/f624492ff620fc51c9a718a1e4d433d149801890))
+
 ## [0.0.21](https://github.com/knodex/knodex/compare/v0.0.20...v0.0.21) (2026-03-09)
 
 
