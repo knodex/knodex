@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: knodex-sso-providers
+  labels:
+    app.kubernetes.io/name: knodex
+    app.kubernetes.io/component: sso
+data:
+  # JSON array of OIDC provider configurations (non-sensitive fields).
+  # Credentials are stored in the knodex-sso-secrets Secret.
+  #
+  # Example:
+  # providers.json: |
+  #   [
+  #     {
+  #       "name": "azuread",
+  #       "issuerURL": "https://login.microsoftonline.com/{tenant-id}/v2.0",
+  #       "redirectURL": "https://knodex.example.com/api/v1/auth/oidc/callback",
+  #       "scopes": ["openid", "email", "profile"]
+  #     }
+  #   ]
+  providers.json: "[]"

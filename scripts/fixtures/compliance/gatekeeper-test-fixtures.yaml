@@ -1,0 +1,322 @@
+# OPA Gatekeeper Test Fixtures for E2E Testing
+# These resources create sample ConstraintTemplates, Constraints, and test resources
+# that intentionally violate policies to generate violations for testing.
+#
+# Apply with: kubectl apply -f scripts/fixtures/compliance/gatekeeper-test-fixtures.yaml
+# Cleanup with: kubectl delete -f scripts/fixtures/compliance/gatekeeper-test-fixtures.yaml
+
+---
+# ConstraintTemplate: Require specific labels on resources
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8srequiredlabels
+  annotations:
+    knodex.io/compliance: "true"
+    # Standard Kubernetes description annotation (community convention)
+    description: "Requires resources to contain specified labels"
+  labels:
+    app.kubernetes.io/component: constraint-template
+    app.kubernetes.io/part-of: e2e-tests
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sRequiredLabels
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            labels:
+              type: array
+              description: A list of required labels
+              items:
+                type: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8srequiredlabels
+
+        violation[{"msg": msg, "details": {"missing_labels": missing}}] {
+          provided := {label | input.review.object.metadata.labels[label]}
+          required := {label | label := input.parameters.labels[_]}
+          missing := required - provided
+          count(missing) > 0
+          msg := sprintf("You must provide labels: %v", [missing])
+        }
+
+---
+# ConstraintTemplate: Block privileged containers
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8spsprivilegedcontainer
+  annotations:
+    knodex.io/compliance: "true"
+    # Standard Kubernetes description annotation (community convention)
+    description: "Blocks privileged containers"
+  labels:
+    app.kubernetes.io/component: constraint-template
+    app.kubernetes.io/part-of: e2e-tests
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sPSPPrivilegedContainer
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8spsprivilegedcontainer
+
+        violation[{"msg": msg, "details": {}}] {
+          c := input_containers[_]
+          c.securityContext.privileged
+          msg := sprintf("Privileged container is not allowed: %v, securityContext: %v", [c.name, c.securityContext])
+        }
+
+        input_containers[c] {
+          c := input.review.object.spec.containers[_]
+        }
+
+        input_containers[c] {
+          c := input.review.object.spec.initContainers[_]
+        }
+
+---
+# ConstraintTemplate: Allowed repositories
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8sallowedrepos
+  annotations:
+    knodex.io/compliance: "true"
+    # Standard Kubernetes description annotation (community convention)
+    description: "Requires container images to begin with a string from a specified list"
+  labels:
+    app.kubernetes.io/component: constraint-template
+    app.kubernetes.io/part-of: e2e-tests
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sAllowedRepos
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            repos:
+              type: array
+              description: A list of allowed image repository prefixes
+              items:
+                type: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8sallowedrepos
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          satisfied := [good | repo = input.parameters.repos[_] ; good = startswith(container.image, repo)]
+          not any(satisfied)
+          msg := sprintf("container <%v> has an invalid image repo <%v>, allowed repos are %v", [container.name, container.image, input.parameters.repos])
+        }
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.initContainers[_]
+          satisfied := [good | repo = input.parameters.repos[_] ; good = startswith(container.image, repo)]
+          not any(satisfied)
+          msg := sprintf("initContainer <%v> has an invalid image repo <%v>, allowed repos are %v", [container.name, container.image, input.parameters.repos])
+        }
+
+---
+# Constraint: Require "team" and "env" labels on pods (deny mode)
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sRequiredLabels
+metadata:
+  name: pod-must-have-labels
+  labels:
+    app.kubernetes.io/component: constraint
+    app.kubernetes.io/part-of: e2e-tests
+spec:
+  enforcementAction: deny
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+    excludedNamespaces:
+      - kube-system
+      - kube-public
+      - gatekeeper-system
+  parameters:
+    labels:
+      - team
+      - env
+
+---
+# Constraint: Require "app" label on deployments (warn mode)
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sRequiredLabels
+metadata:
+  name: deployment-must-have-app-label
+  labels:
+    app.kubernetes.io/component: constraint
+    app.kubernetes.io/part-of: e2e-tests
+spec:
+  enforcementAction: warn
+  match:
+    kinds:
+      - apiGroups: ["apps"]
+        kinds: ["Deployment"]
+    excludedNamespaces:
+      - kube-system
+  parameters:
+    labels:
+      - app
+
+---
+# Constraint: No privileged containers (dryrun mode)
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sPSPPrivilegedContainer
+metadata:
+  name: psp-privileged-container
+  labels:
+    app.kubernetes.io/component: constraint
+    app.kubernetes.io/part-of: e2e-tests
+spec:
+  enforcementAction: dryrun
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+    excludedNamespaces:
+      - kube-system
+      - kube-public
+
+---
+# Constraint: Only allow images from approved registries (deny)
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sAllowedRepos
+metadata:
+  name: allowed-repos
+  labels:
+    app.kubernetes.io/component: constraint
+    app.kubernetes.io/part-of: e2e-tests
+spec:
+  enforcementAction: deny
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+    excludedNamespaces:
+      - kube-system
+      - gatekeeper-system
+  parameters:
+    repos:
+      - "docker.io/library/"
+      - "gcr.io/"
+      - "ghcr.io/"
+      - "k8s.gcr.io/"
+      - "registry.k8s.io/"
+      - "quay.io/"
+
+---
+# Test namespace for violation-generating resources
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: compliance-test
+  labels:
+    app.kubernetes.io/part-of: e2e-tests
+
+---
+# Test Pod that WILL violate K8sRequiredLabels (missing team and env labels)
+# This will generate a violation for pod-must-have-labels constraint
+apiVersion: v1
+kind: Pod
+metadata:
+  name: violation-missing-labels
+  namespace: compliance-test
+  labels:
+    app.kubernetes.io/part-of: e2e-tests
+    # Intentionally missing "team" and "env" labels
+spec:
+  containers:
+    - name: nginx
+      image: docker.io/library/nginx:alpine
+      resources:
+        limits:
+          memory: "64Mi"
+          cpu: "100m"
+
+---
+# Test Pod that COMPLIES with required labels
+apiVersion: v1
+kind: Pod
+metadata:
+  name: compliant-pod
+  namespace: compliance-test
+  labels:
+    app.kubernetes.io/part-of: e2e-tests
+    team: platform
+    env: test
+spec:
+  containers:
+    - name: nginx
+      image: docker.io/library/nginx:alpine
+      resources:
+        limits:
+          memory: "64Mi"
+          cpu: "100m"
+
+---
+# Test Deployment missing "app" label (will generate warn violation)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: violation-no-app-label
+  namespace: compliance-test
+  labels:
+    app.kubernetes.io/part-of: e2e-tests
+    # Intentionally missing "app" label
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      deployment: violation-no-app-label
+  template:
+    metadata:
+      labels:
+        deployment: violation-no-app-label
+        team: platform
+        env: test
+    spec:
+      containers:
+        - name: nginx
+          image: docker.io/library/nginx:alpine
+          resources:
+            limits:
+              memory: "64Mi"
+              cpu: "100m"
+
+---
+# Test Pod with privileged container (dryrun violation)
+apiVersion: v1
+kind: Pod
+metadata:
+  name: violation-privileged
+  namespace: compliance-test
+  labels:
+    app.kubernetes.io/part-of: e2e-tests
+    team: security-test
+    env: test
+spec:
+  containers:
+    - name: privileged-container
+      image: docker.io/library/busybox:latest
+      command: ["sleep", "3600"]
+      securityContext:
+        privileged: true
+      resources:
+        limits:
+          memory: "32Mi"
+          cpu: "50m"

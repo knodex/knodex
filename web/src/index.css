@@ -1,0 +1,974 @@
+/* Geist Sans — self-hosted woff2 */
+@font-face {
+  font-family: 'Geist Sans';
+  src: url('/fonts/Geist-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Geist Sans';
+  src: url('/fonts/Geist-Medium.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Geist Sans';
+  src: url('/fonts/Geist-SemiBold.woff2') format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Geist Sans';
+  src: url('/fonts/Geist-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Geist Mono — self-hosted woff2 */
+@font-face {
+  font-family: 'Geist Mono';
+  src: url('/fonts/GeistMono-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Geist Mono';
+  src: url('/fonts/GeistMono-Medium.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@import "tailwindcss";
+
+:root {
+  /* Brand Signature Gradient */
+  --gradient-brand: linear-gradient(135deg, #2dd4bf 0%, #8b5cf6 100%);
+  --gradient-brand-subtle: linear-gradient(135deg, rgba(45, 212, 191, 0.1) 0%, rgba(139, 92, 246, 0.1) 100%);
+
+  /* Core Brand Colors - Vibrant palette from presentation */
+  --teal-50: #f0fdfa;
+  --teal-100: #ccfbf1;
+  --teal-400: #2dd4bf;
+  --teal-500: #14b8a6;
+  --teal-600: #0d9488;
+  --teal: #2dd4bf;
+  --teal-dark: #14b8a6;
+  --teal-light: #99f6e4;
+
+  --violet-50: #f5f3ff;
+  --violet-100: #ede9fe;
+  --violet-400: #a78bfa;
+  --violet-500: #8b5cf6;
+  --violet-600: #7c3aed;
+  --violet: #8b5cf6;
+  --violet-light: #c4b5fd;
+
+  --blue-50: #eff6ff;
+  --blue-100: #dbeafe;
+  --blue-400: #60a5fa;
+  --blue-500: #3b82f6;
+  --blue-600: #2563eb;
+  --blue: #3b82f6;
+
+  --rose-50: #fff1f2;
+  --rose-100: #ffe4e6;
+  --rose-400: #fb7185;
+  --rose-500: #f43f5e;
+  --rose-600: #e11d48;
+
+  --amber-50: #fffbeb;
+  --amber-100: #fef3c7;
+  --amber-400: #fbbf24;
+  --amber-500: #f59e0b;
+  --amber-600: #d97706;
+
+  /* Gray/Slate scale - cleaner than stone */
+  --gray-50: #f9fafb;
+  --gray-100: #f3f4f6;
+  --gray-200: #e5e7eb;
+  --gray-300: #d1d5db;
+  --gray-400: #9ca3af;
+  --gray-500: #6b7280;
+  --gray-600: #4b5563;
+  --gray-700: #374151;
+  --gray-800: #1f2937;
+  --gray-900: #111827;
+
+  /* ShadCN Light Mode - Clean Gray palette */
+  --background: 210 20% 98%;         /* Very light gray: #f9fafb */
+  --foreground: 220 13% 9%;          /* Gray-900: #111827 */
+  --card: 0 0% 100%;                 /* White: #ffffff */
+  --card-foreground: 220 13% 9%;     /* Gray-900: #111827 */
+  --popover: 0 0% 100%;              /* White: #ffffff */
+  --popover-foreground: 220 13% 9%;  /* Gray-900: #111827 */
+  --primary: 168 76% 42%;            /* Teal-500: #14b8a6 */
+  --primary-foreground: 0 0% 100%;   /* White */
+  --secondary: 220 14% 96%;          /* Gray-100: #f3f4f6 */
+  --secondary-foreground: 220 13% 9%; /* Gray-900: #111827 */
+  --muted: 220 14% 96%;              /* Gray-100: #f3f4f6 */
+  --muted-foreground: 220 9% 46%;    /* Gray-500: #6b7280 */
+  --accent: 263 70% 60%;             /* Violet-500: #8b5cf6 */
+  --accent-foreground: 0 0% 100%;    /* White */
+  --destructive: 350 89% 60%;        /* Rose-500: #f43f5e */
+  --destructive-foreground: 0 0% 100%; /* White */
+  --border: 220 13% 93%;             /* Subtle light border */
+  --input: 220 13% 93%;              /* Match border */
+  --ring: 168 80% 59%;               /* Teal-400: #2dd4bf */
+  --chart-1: 168 76% 42%;            /* Teal */
+  --chart-2: 263 70% 60%;            /* Violet */
+  --chart-3: 217 91% 60%;            /* Blue */
+  --chart-4: 142 71% 45%;            /* Green */
+  --chart-5: 38 92% 50%;             /* Amber */
+  --sidebar: 220 14% 96%;            /* Gray-100: #f3f4f6 */
+  --sidebar-foreground: 220 13% 9%;  /* Gray-900: #111827 */
+  --sidebar-primary: 168 76% 42%;    /* Teal-500 */
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 263 70% 60%;     /* Violet-500 */
+  --sidebar-accent-foreground: 0 0% 100%;
+  --sidebar-border: 220 13% 93%;     /* Match border */
+  --sidebar-ring: 168 80% 59%;       /* Teal-400 */
+
+  /* Typography */
+  --font-sans: 'Geist Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'Geist Mono', ui-monospace, monospace;
+
+  /* Border Radius - Rounded modern */
+  --radius: 0.75rem;
+
+  /* Floating Card Shadows - Presentation style */
+  --shadow-2xs: 0 1px 2px rgba(0, 0, 0, 0.03);
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.03), 0 2px 4px rgba(0, 0, 0, 0.03);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.03), 0 4px 6px rgba(0, 0, 0, 0.05);
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.05), 0 4px 6px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.05), 0 10px 15px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.05), 0 20px 25px rgba(0, 0, 0, 0.1);
+  --shadow-xl: 0 10px 25px rgba(0, 0, 0, 0.1), 0 25px 50px rgba(0, 0, 0, 0.15);
+  --shadow-2xl: 0 25px 50px rgba(0, 0, 0, 0.2);
+
+  /* Semantic Colors - Vibrant like presentation */
+  --success: 142 71% 45%;            /* Green-500: #22c55e */
+  --success-foreground: 0 0% 100%;
+  --warning: 38 92% 50%;             /* Amber-500: #f59e0b */
+  --warning-foreground: 220 13% 9%;
+  --info: 217 91% 60%;               /* Blue-500: #3b82f6 */
+  --info-foreground: 0 0% 100%;
+
+  /* Graph/Resource Type Colors */
+  --graph-template: 217 91% 60%;     /* Blue for templates */
+  --graph-external: 25 95% 53%;      /* Orange for external refs */
+  --graph-conditional: 38 92% 50%;   /* Amber for conditional */
+  --graph-edge: 168 76% 42%;         /* Teal for edges */
+  --graph-background: 0 0% 20%;      /* Grid background */
+
+  /* Syntax Highlighting Colors */
+  --syntax-string: 142 76% 36%;      /* Green-600: #16a34a */
+  --syntax-number: 25 95% 53%;       /* Orange-500: #f97316 */
+  --syntax-boolean: 217 91% 60%;     /* Blue-500: #3b82f6 */
+  --syntax-keyword: 263 70% 60%;     /* Violet: #8b5cf6 */
+}
+
+.dark {
+  /* ShadCN Dark Mode - Deep navy (#141722) */
+  --background: 227 26% 11%;         /* Deep navy: #141722 */
+  --foreground: 210 20% 98%;         /* Gray-50: #f9fafb */
+  --card: 228 24% 14%;               /* Slightly lighter than bg for contrast */
+  --card-foreground: 210 20% 98%;    /* Gray-50: #f9fafb */
+  --popover: 228 24% 13%;            /* Match sidebar */
+  --popover-foreground: 210 20% 98%; /* Gray-50: #f9fafb */
+  --primary: 168 76% 50%;            /* Teal-400 desaturated */
+  --primary-foreground: 227 26% 11%; /* Match background */
+  --secondary: 217 19% 27%;          /* Slate-700: #334155 */
+  --secondary-foreground: 210 20% 98%; /* Gray-50: #f9fafb */
+  --muted: 217 19% 27%;              /* Slate-700: #334155 */
+  --muted-foreground: 215 14% 63%;   /* Slate-400: #94a3b8 */
+  --accent: 263 70% 60%;             /* Violet-500: #8b5cf6 */
+  --accent-foreground: 0 0% 100%;    /* White */
+  --destructive: 350 89% 60%;        /* Rose-500: #f43f5e */
+  --destructive-foreground: 0 0% 100%;
+  --border: 227 20% 18%;             /* Subtle dark border */
+  --input: 227 20% 18%;              /* Match border */
+  --ring: 168 76% 50%;               /* Match primary */
+  --chart-1: 168 76% 50%;            /* Teal (match primary) */
+  --chart-2: 263 70% 60%;            /* Violet */
+  --chart-3: 213 94% 68%;            /* Blue */
+  --chart-4: 142 76% 50%;            /* Green */
+  --chart-5: 43 96% 56%;             /* Amber */
+  --sidebar: 228 24% 13%;            /* Slightly lighter than bg */
+  --sidebar-foreground: 210 20% 98%; /* Gray-50 */
+  --sidebar-primary: 168 76% 50%;    /* Match primary */
+  --sidebar-primary-foreground: 227 26% 11%;
+  --sidebar-accent: 263 70% 60%;     /* Violet-500 */
+  --sidebar-accent-foreground: 0 0% 100%;
+  --sidebar-border: 227 20% 18%;     /* Match border */
+  --sidebar-ring: 168 76% 50%;       /* Match primary */
+
+  /* Dark mode shadows - deeper */
+  --shadow-2xs: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.2), 0 2px 4px rgba(0, 0, 0, 0.2);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2), 0 4px 8px rgba(0, 0, 0, 0.25);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.2), 0 4px 8px rgba(0, 0, 0, 0.25), 0 16px 32px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 2px 4px rgba(0, 0, 0, 0.2), 0 8px 16px rgba(0, 0, 0, 0.25);
+  --shadow-lg: 0 2px 4px rgba(0, 0, 0, 0.2), 0 8px 16px rgba(0, 0, 0, 0.3), 0 24px 48px rgba(0, 0, 0, 0.35);
+  --shadow-xl: 0 4px 8px rgba(0, 0, 0, 0.2), 0 16px 32px rgba(0, 0, 0, 0.3), 0 32px 64px rgba(0, 0, 0, 0.4);
+  --shadow-2xl: 0 8px 16px rgba(0, 0, 0, 0.25), 0 24px 48px rgba(0, 0, 0, 0.45);
+
+  /* Semantic Colors - Dark mode */
+  --success: 142 76% 50%;            /* Green-500 */
+  --success-foreground: 227 26% 11%;
+  --warning: 43 96% 56%;             /* Amber-400 */
+  --warning-foreground: 227 26% 11%;
+  --info: 213 94% 68%;               /* Blue-400 */
+  --info-foreground: 227 26% 11%;
+
+  /* Graph/Resource Type Colors - Dark mode */
+  --graph-template: 213 94% 68%;     /* Blue for templates */
+  --graph-external: 25 95% 53%;      /* Orange for external refs */
+  --graph-conditional: 43 96% 56%;   /* Amber for conditional */
+  --graph-edge: 168 80% 59%;         /* Teal for edges */
+  --graph-background: 0 0% 15%;      /* Grid background */
+
+  /* Syntax Highlighting Colors - Dark mode */
+  --syntax-string: 142 71% 45%;      /* Green-500: #22c55e */
+  --syntax-number: 25 95% 53%;       /* Orange-500: #f97316 */
+  --syntax-boolean: 213 94% 68%;     /* Blue-400: #60a5fa */
+  --syntax-keyword: 265 84% 71%;     /* Violet-400: #a78bfa */
+}
+
+@theme inline {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  --color-chart-1: hsl(var(--chart-1));
+  --color-chart-2: hsl(var(--chart-2));
+  --color-chart-3: hsl(var(--chart-3));
+  --color-chart-4: hsl(var(--chart-4));
+  --color-chart-5: hsl(var(--chart-5));
+  --color-sidebar: hsl(var(--sidebar));
+  --color-sidebar-foreground: hsl(var(--sidebar-foreground));
+  --color-sidebar-primary: hsl(var(--sidebar-primary));
+  --color-sidebar-primary-foreground: hsl(var(--sidebar-primary-foreground));
+  --color-sidebar-accent: hsl(var(--sidebar-accent));
+  --color-sidebar-accent-foreground: hsl(var(--sidebar-accent-foreground));
+  --color-sidebar-border: hsl(var(--sidebar-border));
+  --color-sidebar-ring: hsl(var(--sidebar-ring));
+  --color-success: hsl(var(--success));
+  --color-success-foreground: hsl(var(--success-foreground));
+  --color-warning: hsl(var(--warning));
+  --color-warning-foreground: hsl(var(--warning-foreground));
+  --color-info: hsl(var(--info));
+  --color-info-foreground: hsl(var(--info-foreground));
+
+  /* Graph colors */
+  --color-graph-template: hsl(var(--graph-template));
+  --color-graph-external: hsl(var(--graph-external));
+  --color-graph-conditional: hsl(var(--graph-conditional));
+  --color-graph-edge: hsl(var(--graph-edge));
+  --color-graph-background: hsl(var(--graph-background));
+
+  /* Syntax highlighting colors */
+  --color-syntax-string: hsl(var(--syntax-string));
+  --color-syntax-number: hsl(var(--syntax-number));
+  --color-syntax-boolean: hsl(var(--syntax-boolean));
+  --color-syntax-keyword: hsl(var(--syntax-keyword));
+
+  /* Brand colors for direct use */
+  --color-teal: var(--teal);
+  --color-teal-dark: var(--teal-dark);
+  --color-teal-light: var(--teal-light);
+  --color-violet: var(--violet);
+  --color-violet-light: var(--violet-light);
+  --color-blue: var(--blue);
+
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --shadow-2xs: var(--shadow-2xs);
+  --shadow-xs: var(--shadow-xs);
+  --shadow-sm: var(--shadow-sm);
+  --shadow: var(--shadow);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+  --shadow-xl: var(--shadow-xl);
+  --shadow-2xl: var(--shadow-2xl);
+}
+
+@layer base {
+  * {
+    border-color: hsl(var(--border));
+  }
+
+  html {
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    letter-spacing: -0.02em;
+    line-height: 1.5;
+  }
+
+  /* Geist typography - clean headings */
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-sans);
+    font-weight: 700;
+    letter-spacing: -0.025em;
+    line-height: 1.2;
+  }
+
+  h1 {
+    font-weight: 700;
+  }
+
+  /* Geist Mono for code */
+  code, pre, .font-mono {
+    font-family: var(--font-mono);
+    font-size: 0.95em;
+  }
+
+  /* Teal selection highlight */
+  ::selection {
+    background: hsl(168 80% 59% / 0.25);
+  }
+
+  /* Smooth scrolling */
+  html {
+    scroll-behavior: smooth;
+  }
+
+  /* Focus ring with teal color */
+  *:focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  /* Floating card style */
+  .card-float {
+    background: hsl(var(--card));
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    transition: box-shadow 0.2s ease;
+  }
+
+  .card-float:hover {
+    box-shadow: var(--shadow-sm);
+  }
+
+  /* Gradient border effect */
+  .gradient-border {
+    position: relative;
+  }
+
+  .gradient-border::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    padding: 2px;
+    background: var(--gradient-brand);
+    border-radius: inherit;
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+  }
+
+  /* Card accent bars */
+  .card-accent-bar {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .card-accent-bar::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+  }
+
+  .card-accent-bar--teal::before {
+    background: linear-gradient(90deg, #14b8a6, #2dd4bf);
+  }
+
+  .card-accent-bar--violet::before {
+    background: linear-gradient(90deg, #a78bfa, #8b5cf6);
+  }
+
+  .card-accent-bar--gradient::before {
+    background: var(--gradient-brand);
+  }
+
+  /* Pill button style */
+  .btn-pill {
+    border-radius: 9999px;
+    padding: 0.625rem 1.5rem;
+    font-weight: 600;
+    transition: all 0.2s ease;
+  }
+
+  .btn-pill:hover {
+    transform: translateY(-1px);
+  }
+
+  /* Simple fade-in animation */
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .animate-fade-in {
+    animation: fade-in 0.3s ease-out;
+  }
+
+  /* Staggered fade-in for lists */
+  @keyframes fade-in-up {
+    from {
+      opacity: 0;
+      transform: translateY(16px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .animate-fade-in-up {
+    animation: fade-in-up 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  /* Subtle shimmer for loading states */
+  @keyframes shimmer {
+    0% { opacity: 0.5; }
+    50% { opacity: 0.8; }
+    100% { opacity: 0.5; }
+  }
+
+  .animate-shimmer {
+    animation: shimmer 1.5s ease-in-out infinite;
+  }
+
+  /* Update flash animation - teal accent */
+  @keyframes update-flash {
+    0% {
+      box-shadow: 0 0 0 0 hsl(168 80% 59% / 0.4);
+    }
+    50% {
+      box-shadow: 0 0 0 4px hsl(168 80% 59% / 0.2);
+    }
+    100% {
+      box-shadow: 0 0 0 0 hsl(168 80% 59% / 0);
+    }
+  }
+
+  .animate-update-flash {
+    animation: update-flash 1.5s ease-out;
+  }
+
+  /* Success flash */
+  @keyframes success-flash {
+    0% {
+      box-shadow: 0 0 0 0 hsl(142 71% 45% / 0.4);
+    }
+    50% {
+      box-shadow: 0 0 0 4px hsl(142 71% 45% / 0.2);
+    }
+    100% {
+      box-shadow: 0 0 0 0 hsl(142 71% 45% / 0);
+    }
+  }
+
+  .animate-success-flash {
+    animation: success-flash 1.5s ease-out;
+  }
+
+  /* Pulse ring for active updates */
+  @keyframes pulse-ring {
+    0% {
+      transform: scale(1);
+      opacity: 0.8;
+    }
+    100% {
+      transform: scale(1.05);
+      opacity: 0;
+    }
+  }
+
+  .animate-pulse-ring {
+    animation: pulse-ring 1s ease-out;
+  }
+
+  /* Slide in from right - for sidebars/panels */
+  @keyframes slide-in-right {
+    from {
+      opacity: 0;
+      transform: translateX(16px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+
+  .animate-slide-in-right {
+    animation: slide-in-right 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  /* Float animation for decorative elements */
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-10px); }
+  }
+
+  .animate-float {
+    animation: float 6s ease-in-out infinite;
+  }
+
+  /* Respect reduced motion preferences */
+  @media (prefers-reduced-motion: reduce) {
+    .animate-fade-in,
+    .animate-fade-in-up,
+    .animate-shimmer,
+    .animate-update-flash,
+    .animate-success-flash,
+    .animate-pulse-ring,
+    .animate-slide-in-right,
+    .animate-float,
+    .animate-pulse {
+      animation: none !important;
+      transition: none !important;
+    }
+
+    * {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer utilities {
+  /* Typography utilities standardization */
+  .heading-1 {
+    @apply text-2xl font-bold tracking-tight text-foreground;
+  }
+
+  .heading-2 {
+    @apply text-xl font-semibold text-foreground;
+  }
+
+  .heading-3 {
+    @apply text-lg font-medium text-foreground;
+  }
+
+  .heading-4 {
+    @apply text-base font-medium text-foreground;
+  }
+
+  .body-text {
+    @apply text-sm text-foreground;
+  }
+
+  .muted-text {
+    @apply text-sm text-muted-foreground;
+  }
+
+  .label-text {
+    @apply text-sm font-medium text-foreground;
+  }
+
+  /* Spacing utilities */
+  .page-padding {
+    @apply p-6;
+  }
+
+  .card-padding {
+    @apply p-6;
+  }
+
+  .card-padding-compact {
+    @apply p-4;
+  }
+
+  .section-spacing {
+    @apply space-y-6;
+  }
+
+  .form-spacing {
+    @apply space-y-4;
+  }
+
+  .grid-gap {
+    @apply gap-4;
+  }
+
+  /* Brand gradient text */
+  .gradient-text {
+    background: var(--gradient-brand);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* Brand gradient backgrounds */
+  .bg-gradient-brand {
+    background: var(--gradient-brand);
+  }
+
+  .bg-gradient-brand-subtle {
+    background: var(--gradient-brand-subtle);
+  }
+
+  .bg-gradient-primary {
+    background: var(--gradient-brand);
+  }
+
+  /* Teal color utilities */
+  .text-teal {
+    color: var(--teal);
+  }
+
+  .text-teal-dark {
+    color: var(--teal-dark);
+  }
+
+  .text-teal-light {
+    color: var(--teal-light);
+  }
+
+  .bg-teal {
+    background-color: var(--teal);
+  }
+
+  .bg-teal-dark {
+    background-color: var(--teal-dark);
+  }
+
+  .bg-teal-light {
+    background-color: var(--teal-light);
+  }
+
+  .border-teal {
+    border-color: var(--teal);
+  }
+
+  /* Violet color utilities */
+  .text-violet {
+    color: var(--violet);
+  }
+
+  .text-violet-light {
+    color: var(--violet-light);
+  }
+
+  .bg-violet {
+    background-color: var(--violet);
+  }
+
+  .bg-violet-light {
+    background-color: var(--violet-light);
+  }
+
+  .border-violet {
+    border-color: var(--violet);
+  }
+
+  /* Blue color utilities */
+  .text-blue {
+    color: var(--blue);
+  }
+
+  .bg-blue {
+    background-color: var(--blue);
+  }
+
+  .border-blue {
+    border-color: var(--blue);
+  }
+
+  /* Semantic status color utilities */
+  /* Success (green) */
+  .text-status-success {
+    color: hsl(var(--success));
+  }
+  .bg-status-success {
+    background-color: hsl(var(--success));
+  }
+  .bg-status-success\/10 {
+    background-color: hsl(var(--success) / 0.1);
+  }
+  .bg-status-success\/20 {
+    background-color: hsl(var(--success) / 0.2);
+  }
+  .border-status-success {
+    border-color: hsl(var(--success));
+  }
+  .border-status-success\/20 {
+    border-color: hsl(var(--success) / 0.2);
+  }
+  .border-status-success\/50 {
+    border-color: hsl(var(--success) / 0.5);
+  }
+
+  /* Warning (amber) */
+  .text-status-warning {
+    color: hsl(var(--warning));
+  }
+  .bg-status-warning {
+    background-color: hsl(var(--warning));
+  }
+  .bg-status-warning\/10 {
+    background-color: hsl(var(--warning) / 0.1);
+  }
+  .bg-status-warning\/20 {
+    background-color: hsl(var(--warning) / 0.2);
+  }
+  .bg-status-warning\/5 {
+    background-color: hsl(var(--warning) / 0.05);
+  }
+  .border-status-warning {
+    border-color: hsl(var(--warning));
+  }
+  .border-status-warning\/20 {
+    border-color: hsl(var(--warning) / 0.2);
+  }
+  .border-status-warning\/30 {
+    border-color: hsl(var(--warning) / 0.3);
+  }
+  .border-status-warning\/50 {
+    border-color: hsl(var(--warning) / 0.5);
+  }
+
+  /* Info (blue) */
+  .text-status-info {
+    color: hsl(var(--info));
+  }
+  .bg-status-info {
+    background-color: hsl(var(--info));
+  }
+  .bg-status-info\/10 {
+    background-color: hsl(var(--info) / 0.1);
+  }
+  .bg-status-info\/20 {
+    background-color: hsl(var(--info) / 0.2);
+  }
+  .border-status-info {
+    border-color: hsl(var(--info));
+  }
+  .border-status-info\/20 {
+    border-color: hsl(var(--info) / 0.2);
+  }
+  .border-status-info\/50 {
+    border-color: hsl(var(--info) / 0.5);
+  }
+
+  /* Error/Destructive (red) - using existing destructive */
+  .text-status-error {
+    color: hsl(var(--destructive));
+  }
+  .bg-status-error {
+    background-color: hsl(var(--destructive));
+  }
+  .bg-status-error\/10 {
+    background-color: hsl(var(--destructive) / 0.1);
+  }
+  .bg-status-error\/20 {
+    background-color: hsl(var(--destructive) / 0.2);
+  }
+  .border-status-error {
+    border-color: hsl(var(--destructive));
+  }
+  .border-status-error\/20 {
+    border-color: hsl(var(--destructive) / 0.2);
+  }
+  .border-status-error\/50 {
+    border-color: hsl(var(--destructive) / 0.5);
+  }
+
+  /* Pending/In-progress (purple/violet) */
+  .text-status-pending {
+    color: hsl(var(--accent));
+  }
+  .bg-status-pending {
+    background-color: hsl(var(--accent));
+  }
+  .bg-status-pending\/10 {
+    background-color: hsl(var(--accent) / 0.1);
+  }
+  .bg-status-pending\/20 {
+    background-color: hsl(var(--accent) / 0.2);
+  }
+  .border-status-pending {
+    border-color: hsl(var(--accent));
+  }
+  .border-status-pending\/20 {
+    border-color: hsl(var(--accent) / 0.2);
+  }
+
+  /* Neutral/Unknown status */
+  .text-status-neutral {
+    color: hsl(var(--muted-foreground));
+  }
+  .bg-status-neutral {
+    background-color: hsl(var(--muted));
+  }
+  .bg-status-neutral\/10 {
+    background-color: hsl(var(--muted) / 0.1);
+  }
+  .border-status-neutral {
+    border-color: hsl(var(--border));
+  }
+
+  /* Graph/Resource visualization utilities */
+  .text-graph-template {
+    color: hsl(var(--graph-template));
+  }
+  .bg-graph-template {
+    background-color: hsl(var(--graph-template));
+  }
+  .bg-graph-template\/10 {
+    background-color: hsl(var(--graph-template) / 0.1);
+  }
+  .bg-graph-template\/20 {
+    background-color: hsl(var(--graph-template) / 0.2);
+  }
+  .border-graph-template {
+    border-color: hsl(var(--graph-template));
+  }
+
+  .text-graph-external {
+    color: hsl(var(--graph-external));
+  }
+  .bg-graph-external {
+    background-color: hsl(var(--graph-external));
+  }
+  .bg-graph-external\/10 {
+    background-color: hsl(var(--graph-external) / 0.1);
+  }
+  .bg-graph-external\/20 {
+    background-color: hsl(var(--graph-external) / 0.2);
+  }
+  .border-graph-external {
+    border-color: hsl(var(--graph-external));
+  }
+
+  .text-graph-conditional {
+    color: hsl(var(--graph-conditional));
+  }
+  .bg-graph-conditional {
+    background-color: hsl(var(--graph-conditional));
+  }
+  .bg-graph-conditional\/10 {
+    background-color: hsl(var(--graph-conditional) / 0.1);
+  }
+  .bg-graph-conditional\/20 {
+    background-color: hsl(var(--graph-conditional) / 0.2);
+  }
+  .border-graph-conditional {
+    border-color: hsl(var(--graph-conditional));
+  }
+
+  .text-graph-edge {
+    color: hsl(var(--graph-edge));
+  }
+  .bg-graph-edge {
+    background-color: hsl(var(--graph-edge));
+  }
+
+  /* Syntax highlighting utilities */
+  .text-syntax-string {
+    color: hsl(var(--syntax-string));
+  }
+  .text-syntax-number {
+    color: hsl(var(--syntax-number));
+  }
+  .text-syntax-boolean {
+    color: hsl(var(--syntax-boolean));
+  }
+  .text-syntax-keyword {
+    color: hsl(var(--syntax-keyword));
+  }
+
+  /* Shadows */
+  .shadow-soft {
+    box-shadow: var(--shadow-sm);
+  }
+
+  .shadow-soft-lg {
+    box-shadow: var(--shadow-lg);
+  }
+
+  /* Focus ring */
+  .focus-ring-primary:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px hsl(168 80% 59% / 0.3);
+  }
+
+  /* Glow effects */
+  .glow-teal {
+    box-shadow: 0 0 40px hsl(168 80% 59% / 0.3);
+  }
+
+  .glow-violet {
+    box-shadow: 0 0 40px hsl(263 70% 60% / 0.3);
+  }
+
+  /* Background patterns */
+  .bg-grid-pattern {
+    background-image:
+      linear-gradient(hsl(var(--border) / 0.5) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(var(--border) / 0.5) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+
+  .bg-dot-pattern {
+    background-image: radial-gradient(circle, hsl(var(--border)) 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+
+  /* Radial gradient backgrounds (themed) */
+  .bg-radial-teal-top {
+    background: radial-gradient(ellipse at top, hsl(168 80% 59% / 0.08), transparent 50%);
+  }
+
+  .bg-radial-violet-bottom {
+    background: radial-gradient(ellipse at bottom right, hsl(263 70% 60% / 0.06), transparent 50%);
+  }
+}

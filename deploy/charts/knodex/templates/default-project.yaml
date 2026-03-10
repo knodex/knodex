@@ -1,0 +1,28 @@
+{{- if .Values.defaultProject.create -}}
+apiVersion: knodex.io/v1alpha1
+kind: Project
+metadata:
+  name: {{ .Values.defaultProject.name | default "default" }}
+  labels:
+    {{- include "knodex.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rbac
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "10"
+spec:
+  description: {{ .Values.defaultProject.spec.description | default "Default project - allows deployments to any namespace" | quote }}
+  destinations:
+    {{- toYaml .Values.defaultProject.spec.destinations | nindent 4 }}
+  {{- with .Values.defaultProject.spec.clusterResourceWhitelist }}
+  clusterResourceWhitelist:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.defaultProject.spec.namespaceResourceWhitelist }}
+  namespaceResourceWhitelist:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.defaultProject.spec.roles }}
+  roles:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

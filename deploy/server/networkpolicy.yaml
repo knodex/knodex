@@ -1,0 +1,56 @@
+# Server NetworkPolicy
+# - Ingress: Allow external traffic (serves both API and embedded web UI)
+# - Egress: Allow DNS, Kubernetes API, and Redis
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: knodex-server
+  labels:
+    app.kubernetes.io/name: knodex
+    app.kubernetes.io/component: server
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: knodex
+      app.kubernetes.io/component: server
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow traffic from any pod (for NodePort/LoadBalancer access in dev)
+    # Production overlay will restrict this to ingress-nginx namespace
+    - from: []
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    # Allow DNS resolution (cluster DNS)
+    # Note: Uses namespaceSelector only (no podSelector) to avoid Kustomize commonLabels
+    # from adding branch/environment labels that kube-dns doesn't have
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Allow Kubernetes API server (for in-cluster communication)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 6443
+    # Allow Redis communication
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: knodex
+              app.kubernetes.io/component: redis
+      ports:
+        - protocol: TCP
+          port: 6379

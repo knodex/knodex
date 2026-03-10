@@ -1,0 +1,67 @@
+# Alpha Team Project - Restricted to specific namespace
+# This project allows developers to deploy only to ns-alpha-team namespace
+apiVersion: knodex.io/v1alpha1
+kind: Project
+metadata:
+  name: proj-alpha-team
+  labels:
+    team: alpha
+spec:
+  description: "Alpha Team project - can deploy to ns-alpha-team namespace"
+
+  # Restrict deployments to alpha team's namespace only
+  destinations:
+    - namespace: ns-alpha-team
+
+  # Allow common Kubernetes resources
+  namespaceResourceWhitelist:
+    - group: ""
+      kind: ConfigMap
+    - group: ""
+      kind: Secret
+    - group: ""
+      kind: Service
+    - group: ""
+      kind: PersistentVolumeClaim
+    - group: apps
+      kind: Deployment
+    - group: apps
+      kind: StatefulSet
+    - group: batch
+      kind: Job
+    - group: batch
+      kind: CronJob
+
+  # Block cluster-scoped resources by default (empty whitelist)
+  clusterResourceWhitelist: []
+
+  # Project-specific roles using Casbin policies
+  roles:
+    - name: admin
+      description: "Full access to project resources"
+      policies:
+        - "p, proj:proj-alpha-team:admin, project, *, proj-alpha-team, allow"
+        - "p, proj:proj-alpha-team:admin, instance, *, proj-alpha-team/*, allow"
+        - "p, proj:proj-alpha-team:admin, rgd, view, *, allow"
+      groups:
+        - alpha-admins
+
+    - name: developer
+      description: "Can deploy and manage instances"
+      policies:
+        - "p, proj:proj-alpha-team:developer, project, view, proj-alpha-team, allow"
+        - "p, proj:proj-alpha-team:developer, instance, deploy, proj-alpha-team/*, allow"
+        - "p, proj:proj-alpha-team:developer, instance, view, proj-alpha-team/*, allow"
+        - "p, proj:proj-alpha-team:developer, instance, delete, proj-alpha-team/*, allow"
+        - "p, proj:proj-alpha-team:developer, rgd, view, *, allow"
+      groups:
+        - alpha-developers
+
+    - name: viewer
+      description: "Read-only access to project resources"
+      policies:
+        - "p, proj:proj-alpha-team:viewer, project, view, proj-alpha-team, allow"
+        - "p, proj:proj-alpha-team:viewer, instance, view, proj-alpha-team/*, allow"
+        - "p, proj:proj-alpha-team:viewer, rgd, view, *, allow"
+      groups:
+        - alpha-viewers

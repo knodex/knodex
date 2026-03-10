@@ -1,0 +1,33 @@
+---
+# knodex-accounts ConfigMap
+# Contains local user account definitions (ArgoCD-style pattern)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: knodex-accounts
+  labels:
+    app.kubernetes.io/name: knodex
+    app.kubernetes.io/component: auth
+data:
+  # Account definitions in ArgoCD-style format
+  # Format: accounts.<username> = comma-separated capabilities (e.g., "apiKey, login")
+  # Format: accounts.<username>.enabled = "true" or "false"
+  accounts.admin: "apiKey, login"
+  accounts.admin.enabled: "true"
+---
+# knodex-secret Secret
+# Contains credentials and JWT signing key (ArgoCD-style pattern)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: knodex-secret
+  labels:
+    app.kubernetes.io/name: knodex
+    app.kubernetes.io/component: auth
+type: Opaque
+stringData:
+  # JWT signing secret - will be auto-generated if empty
+  # In production, this should be set to a strong random value
+  server.secretkey: ""
+  # Password hashes are stored as: accounts.<username>.password
+  # The server will populate this when the admin password is bootstrapped

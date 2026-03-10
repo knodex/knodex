@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: knodex-config
+  labels:
+    app.kubernetes.io/name: knodex
+data:
+  # Server configuration
+  SERVER_ADDRESS: ":8080"
+  LOG_LEVEL: "info"
+  LOG_FORMAT: "json"
+  REDIS_ADDRESS: "knodex-redis:6379"
+  KUBERNETES_IN_CLUSTER: "true"
+
+  # RBAC configuration
+  # Default Casbin role for OIDC users whose groups don't match any mapping.
+  # Valid values: "role:serveradmin" or "" (empty to disable, recommended).
+  # Note: role:readonly is no longer a global role — it is project-scoped only.
+  # Assign users to project-scoped roles via OIDC group mappings instead.
+  RBAC_DEFAULT_ROLE: ""
+
+  # Audit redaction fields (comma-separated, case-insensitive)
+  # Field names stripped from audit event details as a defense-in-depth safety net.
+  AUDIT_REDACT_FIELDS: "privateKey,password,bearerToken,token,secret,tlsClientCert,tlsClientKey,clientSecret"
+
+  # Enterprise license configuration (Enterprise builds only)
+  # Path to the license JWT file (mounted from knodex-license Secret)
+  KNODEX_LICENSE_PATH: "/etc/knodex/license.jwt"
+  # Alternatively, set the license JWT directly as an environment variable:
+  # KNODEX_LICENSE_TEXT: "<jwt-token>"

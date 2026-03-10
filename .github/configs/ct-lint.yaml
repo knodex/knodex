@@ -1,0 +1,31 @@
+# chart-testing configuration
+# Reference: https://github.com/helm/chart-testing
+
+# The chart directories to test
+chart-dirs:
+  - deploy/charts
+
+# Charts that should be skipped
+excluded-charts: []
+
+# Check version increment when upgrading
+check-version-increment: false
+
+# Validate chart schema
+validate-chart-schema: true
+
+# Validate maintainers
+validate-maintainers: true
+
+# Validate yaml schema for values.yaml
+validate-yaml: true
+
+# Additional chart repos for dependencies
+chart-repos:
+  - bitnami=https://charts.bitnami.com/bitnami
+
+# Helm extra arguments
+helm-extra-args: "--timeout 600s"
+
+# Target branch
+target-branch: main

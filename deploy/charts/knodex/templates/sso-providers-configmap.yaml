@@ -1,0 +1,23 @@
+{{- if and .Values.server.auth.oidc.enabled .Values.server.auth.oidc.providers }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "knodex.fullname" . }}-sso-providers
+  labels:
+    {{- include "knodex.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sso
+    knodex.io/config-type: sso
+data:
+  providers.json: |
+    [
+      {{- range $i, $provider := .Values.server.auth.oidc.providers }}
+      {{- if $i }},{{ end }}
+      {
+        "name": {{ $provider.name | quote }},
+        "issuerURL": {{ $provider.issuerURL | quote }},
+        "redirectURL": {{ $provider.redirectURL | quote }},
+        "scopes": {{ $provider.scopes | default (list "openid" "email" "profile") | toJson }}
+      }
+      {{- end }}
+    ]
+{{- end }}

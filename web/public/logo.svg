@@ -1,0 +1,230 @@
+<svg width="200" height="200" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Concept 1: The K-Dex Device (Improved)
+       A polished Pokédex-inspired device with depth, glow effects,
+       detailed lens, proper hinge, and a clean K lettermark -->
+  <defs>
+    <!-- Brand gradient -->
+    <linearGradient id="brand" x1="0" y1="0" x2="200" y2="200" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#2dd4bf"/>
+      <stop offset="100%" stop-color="#8b5cf6"/>
+    </linearGradient>
+
+    <!-- Device body gradient (subtle top-to-bottom lighting) -->
+    <linearGradient id="body" x1="100" y1="10" x2="100" y2="190" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#242028"/>
+      <stop offset="50%" stop-color="#1c1917"/>
+      <stop offset="100%" stop-color="#151213"/>
+    </linearGradient>
+
+    <!-- Inner bezel gradient -->
+    <linearGradient id="bezel" x1="100" y1="15" x2="100" y2="185" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#2a2528"/>
+      <stop offset="100%" stop-color="#1a1618"/>
+    </linearGradient>
+
+    <!-- Screen gradient -->
+    <linearGradient id="screen" x1="50" y1="88" x2="150" y2="170" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0c0e14"/>
+      <stop offset="100%" stop-color="#111418"/>
+    </linearGradient>
+
+    <!-- Lens glow -->
+    <radialGradient id="lens-glow" cx="63" cy="46" r="14">
+      <stop offset="0%" stop-color="#5ef5e4"/>
+      <stop offset="60%" stop-color="#2dd4bf"/>
+      <stop offset="100%" stop-color="#0d9488"/>
+    </radialGradient>
+
+    <!-- Lens outer glow (ambient) -->
+    <radialGradient id="lens-ambient" cx="63" cy="46" r="28">
+      <stop offset="0%" stop-color="#2dd4bf" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#2dd4bf" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Screen K glow -->
+    <radialGradient id="k-glow" cx="100" cy="130" r="45">
+      <stop offset="0%" stop-color="#2dd4bf" stop-opacity="0.12"/>
+      <stop offset="50%" stop-color="#8b5cf6" stop-opacity="0.06"/>
+      <stop offset="100%" stop-color="#8b5cf6" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Indicator light glows -->
+    <radialGradient id="red-glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%" stop-color="#ff6b6b"/>
+      <stop offset="60%" stop-color="#ef4444"/>
+      <stop offset="100%" stop-color="#b91c1c"/>
+    </radialGradient>
+    <radialGradient id="amber-glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%" stop-color="#fcd34d"/>
+      <stop offset="60%" stop-color="#f59e0b"/>
+      <stop offset="100%" stop-color="#b45309"/>
+    </radialGradient>
+    <radialGradient id="green-glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%" stop-color="#34d399"/>
+      <stop offset="60%" stop-color="#10b981"/>
+      <stop offset="100%" stop-color="#047857"/>
+    </radialGradient>
+
+    <!-- Screen scan-line pattern -->
+    <pattern id="scanlines" width="4" height="4" patternUnits="userSpaceOnUse">
+      <line x1="0" y1="0" x2="4" y2="0" stroke="#2dd4bf" stroke-width="0.3" opacity="0.06"/>
+    </pattern>
+
+    <!-- Screen grid pattern -->
+    <pattern id="grid" width="10" height="10" patternUnits="userSpaceOnUse">
+      <path d="M 10 0 L 0 0 0 10" fill="none" stroke="#2dd4bf" stroke-width="0.3" opacity="0.04"/>
+    </pattern>
+
+    <!-- Drop shadow filter for device -->
+    <filter id="device-shadow" x="-10%" y="-5%" width="120%" height="115%">
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#000" flood-opacity="0.5"/>
+    </filter>
+
+    <!-- Inner shadow for screen -->
+    <filter id="screen-inset" x="-5%" y="-5%" width="110%" height="110%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="3" result="blur"/>
+      <feOffset dx="0" dy="2" result="offset"/>
+      <feComposite in="offset" in2="SourceAlpha" operator="in" result="shadow"/>
+      <feFlood flood-color="#000" flood-opacity="0.6" result="color"/>
+      <feComposite in="color" in2="shadow" operator="in" result="final"/>
+      <feMerge>
+        <feMergeNode in="final"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Glow filter for K -->
+    <filter id="k-bloom" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- ===== DEVICE BODY ===== -->
+  <!-- Outer shadow -->
+  <rect x="28" y="13" width="144" height="174" rx="22" fill="#0a0808" opacity="0.4" filter="url(#device-shadow)"/>
+
+  <!-- Main body -->
+  <rect x="28" y="13" width="144" height="174" rx="22" fill="url(#body)" stroke="url(#brand)" stroke-width="2"/>
+
+  <!-- Inner bezel (subtle raised edge) -->
+  <rect x="33" y="18" width="134" height="164" rx="18" fill="none" stroke="#2a2528" stroke-width="1" opacity="0.6"/>
+
+  <!-- Surface highlight (top edge catch light) -->
+  <path d="M 52 15 Q 100 10, 148 15" stroke="white" stroke-width="0.5" opacity="0.08" fill="none"/>
+
+  <!-- ===== TOP PANEL ===== -->
+
+  <!-- Lens ambient glow -->
+  <circle cx="63" cy="46" r="28" fill="url(#lens-ambient)"/>
+
+  <!-- Lens outer ring -->
+  <circle cx="63" cy="46" r="20" fill="#0a0c10" stroke="#1a2a28" stroke-width="2"/>
+
+  <!-- Lens mid ring -->
+  <circle cx="63" cy="46" r="16" fill="#080a0e" stroke="#0d9488" stroke-width="1.5" opacity="0.6"/>
+
+  <!-- Lens inner fill -->
+  <circle cx="63" cy="46" r="12" fill="url(#lens-glow)"/>
+
+  <!-- Lens highlight (specular) -->
+  <ellipse cx="58" cy="40" rx="5" ry="3.5" fill="white" opacity="0.55" transform="rotate(-15 58 40)"/>
+
+  <!-- Lens secondary highlight -->
+  <ellipse cx="67" cy="52" rx="3" ry="2" fill="white" opacity="0.12" transform="rotate(20 67 52)"/>
+
+  <!-- Indicator lights with glows -->
+  <!-- Red -->
+  <circle cx="100" cy="39" r="5.5" fill="#1a0808" stroke="#3a1515" stroke-width="1"/>
+  <circle cx="100" cy="39" r="4" fill="url(#red-glow)"/>
+  <ellipse cx="98.5" cy="37.5" rx="1.8" ry="1.2" fill="white" opacity="0.4"/>
+
+  <!-- Amber -->
+  <circle cx="117" cy="39" r="5.5" fill="#1a1408" stroke="#3a2a15" stroke-width="1"/>
+  <circle cx="117" cy="39" r="4" fill="url(#amber-glow)"/>
+  <ellipse cx="115.5" cy="37.5" rx="1.8" ry="1.2" fill="white" opacity="0.35"/>
+
+  <!-- Green -->
+  <circle cx="134" cy="39" r="5.5" fill="#081a10" stroke="#153a20" stroke-width="1"/>
+  <circle cx="134" cy="39" r="4" fill="url(#green-glow)"/>
+  <ellipse cx="132.5" cy="37.5" rx="1.8" ry="1.2" fill="white" opacity="0.35"/>
+
+  <!-- Small decorative dots (speaker grille hint) -->
+  <circle cx="100" cy="55" r="1.2" fill="#333" opacity="0.5"/>
+  <circle cx="107" cy="55" r="1.2" fill="#333" opacity="0.5"/>
+  <circle cx="114" cy="55" r="1.2" fill="#333" opacity="0.5"/>
+  <circle cx="121" cy="55" r="1.2" fill="#333" opacity="0.5"/>
+  <circle cx="128" cy="55" r="1.2" fill="#333" opacity="0.5"/>
+  <circle cx="135" cy="55" r="1.2" fill="#333" opacity="0.5"/>
+  <circle cx="100" cy="61" r="1.2" fill="#333" opacity="0.4"/>
+  <circle cx="107" cy="61" r="1.2" fill="#333" opacity="0.4"/>
+  <circle cx="114" cy="61" r="1.2" fill="#333" opacity="0.4"/>
+  <circle cx="121" cy="61" r="1.2" fill="#333" opacity="0.4"/>
+  <circle cx="128" cy="61" r="1.2" fill="#333" opacity="0.4"/>
+  <circle cx="135" cy="61" r="1.2" fill="#333" opacity="0.4"/>
+
+  <!-- ===== HINGE ===== -->
+  <!-- Hinge groove -->
+  <rect x="32" y="73" width="136" height="8" rx="1" fill="#111015"/>
+  <!-- Hinge ridge top -->
+  <line x1="34" y1="73" x2="166" y2="73" stroke="#2a2528" stroke-width="0.8"/>
+  <!-- Hinge center highlight -->
+  <line x1="34" y1="77" x2="166" y2="77" stroke="#333038" stroke-width="0.6"/>
+  <!-- Hinge ridge bottom -->
+  <line x1="34" y1="81" x2="166" y2="81" stroke="#1a1818" stroke-width="0.8"/>
+
+  <!-- ===== SCREEN ===== -->
+  <!-- Screen bezel -->
+  <rect x="42" y="86" width="116" height="88" rx="10" fill="#0a0a0e"/>
+
+  <!-- Screen surface -->
+  <rect x="46" y="90" width="108" height="80" rx="7" fill="url(#screen)" filter="url(#screen-inset)"/>
+
+  <!-- Screen grid overlay -->
+  <rect x="46" y="90" width="108" height="80" rx="7" fill="url(#grid)"/>
+
+  <!-- Screen scanline overlay -->
+  <rect x="46" y="90" width="108" height="80" rx="7" fill="url(#scanlines)"/>
+
+  <!-- K glow backdrop -->
+  <circle cx="100" cy="130" r="35" fill="url(#k-glow)"/>
+
+  <!-- ===== K LETTERMARK ===== -->
+  <g filter="url(#k-bloom)">
+    <!-- K vertical stroke -->
+    <path d="M 80 103 L 80 157" stroke="url(#brand)" stroke-width="6" stroke-linecap="round"/>
+    <!-- K upper diagonal -->
+    <path d="M 82 130 L 118 103" stroke="url(#brand)" stroke-width="6" stroke-linecap="round"/>
+    <!-- K lower diagonal -->
+    <path d="M 90 126 L 120 157" stroke="url(#brand)" stroke-width="6" stroke-linecap="round"/>
+  </g>
+
+  <!-- Data readout lines (left of K) -->
+  <line x1="52" y1="108" x2="72" y2="108" stroke="#2dd4bf" stroke-width="1" opacity="0.15"/>
+  <line x1="52" y1="113" x2="68" y2="113" stroke="#2dd4bf" stroke-width="0.8" opacity="0.1"/>
+  <line x1="52" y1="145" x2="72" y2="145" stroke="#8b5cf6" stroke-width="1" opacity="0.12"/>
+  <line x1="52" y1="150" x2="65" y2="150" stroke="#8b5cf6" stroke-width="0.8" opacity="0.08"/>
+
+  <!-- Data readout lines (right of K) -->
+  <line x1="128" y1="110" x2="148" y2="110" stroke="#8b5cf6" stroke-width="1" opacity="0.15"/>
+  <line x1="130" y1="115" x2="148" y2="115" stroke="#8b5cf6" stroke-width="0.8" opacity="0.1"/>
+  <line x1="125" y1="148" x2="148" y2="148" stroke="#2dd4bf" stroke-width="1" opacity="0.12"/>
+  <line x1="130" y1="153" x2="148" y2="153" stroke="#2dd4bf" stroke-width="0.8" opacity="0.08"/>
+
+  <!-- Screen edge highlight (subtle reflection) -->
+  <path d="M 53 90 Q 100 88, 147 90" stroke="white" stroke-width="0.4" opacity="0.06" fill="none"/>
+
+  <!-- ===== BOTTOM CONTROLS ===== -->
+  <!-- D-pad base -->
+  <circle cx="65" cy="180" r="4" fill="#1a1818" stroke="#2a2528" stroke-width="0.8"/>
+  <!-- D-pad cross -->
+  <line x1="62" y1="180" x2="68" y2="180" stroke="#333" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="65" y1="177" x2="65" y2="183" stroke="#333" stroke-width="1.5" stroke-linecap="round"/>
+
+  <!-- Action buttons -->
+  <circle cx="135" cy="179" r="3" fill="#1a1818" stroke="#2a2528" stroke-width="0.8"/>
+  <circle cx="145" cy="179" r="3" fill="#1a1818" stroke="#2a2528" stroke-width="0.8"/>
+</svg>

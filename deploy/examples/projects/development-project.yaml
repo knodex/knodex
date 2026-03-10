@@ -1,0 +1,69 @@
+# Development Project - Multi-environment namespace pattern
+# This project allows developers to deploy to dev, staging, and feature namespaces
+apiVersion: knodex.io/v1alpha1
+kind: Project
+metadata:
+  name: proj-development
+  labels:
+    environment: non-production
+spec:
+  description: "Development project - deploy to dev, staging, and feature namespaces"
+
+  # Allow multiple namespace patterns for different environments
+  destinations:
+    - namespace: "dev*"
+    - namespace: "staging*"
+    - namespace: "feature*"
+    - namespace: "sandbox"
+
+  # Allow common development resources
+  namespaceResourceWhitelist:
+    - group: ""
+      kind: ConfigMap
+    - group: ""
+      kind: Secret
+    - group: ""
+      kind: Service
+    - group: ""
+      kind: Pod
+    - group: apps
+      kind: Deployment
+    - group: apps
+      kind: ReplicaSet
+    - group: batch
+      kind: Job
+    - group: networking.k8s.io
+      kind: Ingress
+
+  clusterResourceWhitelist: []
+
+  roles:
+    - name: lead-developer
+      description: "Can manage all development environments"
+      policies:
+        - "p, proj:proj-development:lead-developer, project, *, proj-development, allow"
+        - "p, proj:proj-development:lead-developer, instance, *, proj-development/*, allow"
+        - "p, proj:proj-development:lead-developer, rgd, view, *, allow"
+      groups:
+        - dev-leads
+
+    - name: developer
+      description: "Can deploy to development and feature namespaces"
+      policies:
+        - "p, proj:proj-development:developer, project, view, proj-development, allow"
+        - "p, proj:proj-development:developer, instance, deploy, proj-development/dev-*, allow"
+        - "p, proj:proj-development:developer, instance, deploy, proj-development/feature-*, allow"
+        - "p, proj:proj-development:developer, instance, view, proj-development/*, allow"
+        - "p, proj:proj-development:developer, rgd, view, *, allow"
+      groups:
+        - developers
+
+    - name: qa-engineer
+      description: "Can deploy to staging namespaces"
+      policies:
+        - "p, proj:proj-development:qa-engineer, project, view, proj-development, allow"
+        - "p, proj:proj-development:qa-engineer, instance, deploy, proj-development/staging-*, allow"
+        - "p, proj:proj-development:qa-engineer, instance, view, proj-development/*, allow"
+        - "p, proj:proj-development:qa-engineer, rgd, view, *, allow"
+      groups:
+        - qa-engineers

@@ -1,0 +1,60 @@
+# Platform Project - Cluster-wide access for platform team
+# This project allows platform administrators to deploy to any namespace
+# and manage cluster-scoped resources
+apiVersion: knodex.io/v1alpha1
+kind: Project
+metadata:
+  name: proj-platform
+  labels:
+    team: platform
+spec:
+  description: "Platform team project - full cluster access for infrastructure"
+
+  # Allow deployments to ANY namespace
+  destinations:
+    - namespace: "*"
+
+  # Allow all namespace-scoped resources
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+
+  # Allow specific cluster-scoped resources for platform management
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+    - group: networking.k8s.io
+      kind: IngressClass
+    - group: storage.k8s.io
+      kind: StorageClass
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+
+  # Deny certain sensitive cluster resources
+  clusterResourceBlacklist:
+    - group: ""
+      kind: Node
+    - group: certificates.k8s.io
+      kind: CertificateSigningRequest
+
+  roles:
+    - name: platform-admin
+      description: "Full platform administration access"
+      policies:
+        - "p, proj:proj-platform:platform-admin, project, *, *, allow"
+        - "p, proj:proj-platform:platform-admin, instance, *, */*, allow"
+        - "p, proj:proj-platform:platform-admin, rgd, *, *, allow"
+      groups:
+        - platform-admins
+
+    - name: platform-operator
+      description: "Can deploy and manage platform infrastructure"
+      policies:
+        - "p, proj:proj-platform:platform-operator, project, view, *, allow"
+        - "p, proj:proj-platform:platform-operator, instance, deploy, */*, allow"
+        - "p, proj:proj-platform:platform-operator, instance, view, */*, allow"
+        - "p, proj:proj-platform:platform-operator, rgd, view, *, allow"
+      groups:
+        - platform-operators

@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: knodex-sso-providers
+data:
+  providers.json: |
+    [
+      {
+        "name": "azuread",
+        "issuerURL": "https://login.microsoftonline.com/YOUR_TENANT_ID/v2.0",
+        "redirectURL": "http://localhost:8080/api/v1/auth/oidc/callback",
+        "scopes": ["openid", "email", "profile"]
+      }
+    ]
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: knodex-sso-secrets
+type: Opaque
+stringData:
+  azuread.client-id: "YOUR_CLIENT_ID"
+  azuread.client-secret: "your-azure-ad-client-secret-here"

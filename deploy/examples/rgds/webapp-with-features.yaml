@@ -1,0 +1,160 @@
+# Example RGD: Web Application with Conditional Features
+# Demonstrates: includeWhen conditions, schema.spec references, template resources
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: webapp-with-features
+  namespace: default
+  annotations:
+    knodex.io/catalog: "true"
+    knodex.io/description: "Web application with optional database, cache, and monitoring features"
+    knodex.io/tags: "webapp,conditional,features,database,cache,monitoring"
+    knodex.io/category: "examples"
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: WebApp
+    spec:
+      name: string
+      replicas: integer | default=1
+      enableDatabase: boolean | default=false
+      enableCache: boolean | default=false
+
+  resources:
+    # Main application deployment - always included
+    - id: app
+      template:
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: ${schema.spec.name}
+          labels:
+            app: ${schema.spec.name}
+        spec:
+          replicas: ${schema.spec.replicas}
+          selector:
+            matchLabels:
+              app: ${schema.spec.name}
+          template:
+            metadata:
+              labels:
+                app: ${schema.spec.name}
+            spec:
+              containers:
+                - name: webapp
+                  image: nginx:latest
+                  ports:
+                    - containerPort: 80
+
+    # Service for the application
+    - id: appsvc
+      template:
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: ${schema.spec.name}-svc
+        spec:
+          selector:
+            app: ${schema.spec.name}
+          ports:
+            - port: 80
+              targetPort: 80
+
+    # PostgreSQL database - conditionally included
+    - id: db
+      includeWhen:
+        - ${schema.spec.enableDatabase == true}
+      template:
+        apiVersion: apps/v1
+        kind: StatefulSet
+        metadata:
+          name: ${schema.spec.name}-postgres
+          labels:
+            app: ${schema.spec.name}
+            component: database
+        spec:
+          serviceName: ${schema.spec.name}-postgres
+          replicas: 1
+          selector:
+            matchLabels:
+              app: ${schema.spec.name}
+              component: database
+          template:
+            metadata:
+              labels:
+                app: ${schema.spec.name}
+                component: database
+            spec:
+              containers:
+                - name: postgres
+                  image: postgres:15-alpine
+                  env:
+                    - name: POSTGRES_DB
+                      value: ${schema.spec.name}
+                    - name: POSTGRES_PASSWORD
+                      value: postgres
+                  ports:
+                    - containerPort: 5432
+
+    # Database service - conditionally included
+    - id: dbsvc
+      includeWhen:
+        - ${schema.spec.enableDatabase == true}
+      template:
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: ${schema.spec.name}-postgres
+        spec:
+          clusterIP: None
+          selector:
+            app: ${schema.spec.name}
+            component: database
+          ports:
+            - port: 5432
+
+    # Redis cache - conditionally included
+    - id: cache
+      includeWhen:
+        - ${schema.spec.enableCache == true}
+      template:
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: ${schema.spec.name}-redis
+          labels:
+            app: ${schema.spec.name}
+            component: cache
+        spec:
+          replicas: 1
+          selector:
+            matchLabels:
+              app: ${schema.spec.name}
+              component: cache
+          template:
+            metadata:
+              labels:
+                app: ${schema.spec.name}
+                component: cache
+            spec:
+              containers:
+                - name: redis
+                  image: redis:7-alpine
+                  ports:
+                    - containerPort: 6379
+
+    # Cache service - conditionally included
+    - id: cachesvc
+      includeWhen:
+        - ${schema.spec.enableCache == true}
+      template:
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: ${schema.spec.name}-redis
+        spec:
+          selector:
+            app: ${schema.spec.name}
+            component: cache
+          ports:
+            - port: 6379

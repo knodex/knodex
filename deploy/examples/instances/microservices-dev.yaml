@@ -1,0 +1,10 @@
+apiVersion: kro.run/v1alpha1
+kind: MicroservicesPlatform
+metadata:
+  name: my-platform-dev
+  namespace: default
+spec:
+  platformName: demo-platform
+  environment: dev
+  useExistingDatabase: false
+  highAvailability: false

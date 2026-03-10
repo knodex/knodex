@@ -1,0 +1,20 @@
+FROM alpine:3.23
+
+WORKDIR /app
+
+# Add ca-certificates and create non-root user with high UID to avoid K8s conflicts
+RUN apk --no-cache add ca-certificates && \
+    addgroup -g 10001 -S appgroup && \
+    adduser -S -u 10001 -G appgroup -h /app -s /sbin/nologin appuser
+
+# Copy pre-built binary
+COPY bin/knodex-linux /app/knodex
+
+# Set ownership
+RUN chown -R appuser:appgroup /app
+
+USER appuser
+
+EXPOSE 8080
+
+CMD ["/app/knodex"]
