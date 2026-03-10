@@ -21,6 +21,9 @@ on:
       - '.github/workflows/e2e-tests.yml'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 # Cancel in-progress runs on new commits
 concurrency:
   group: e2e-${{ github.ref }}
@@ -51,6 +54,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
         uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
@@ -81,9 +86,9 @@ jobs:
           sudo mv ./kind /usr/local/bin/kind
 
           # Create cluster using CI config (no extraPortMappings)
-          kind create cluster --name ${{ env.KIND_CLUSTER }} --config scripts/kind-config-ci.yaml --wait 120s
-          kubectl cluster-info --context kind-${{ env.KIND_CLUSTER }}
-          kubectl config use-context kind-${{ env.KIND_CLUSTER }}
+          kind create cluster --name "$KIND_CLUSTER" --config scripts/kind-config-ci.yaml --wait 120s
+          kubectl cluster-info --context "kind-$KIND_CLUSTER"
+          kubectl config use-context "kind-$KIND_CLUSTER"
 
       - name: Install cluster prerequisites
         run: ./scripts/ensure-prereqs.sh
@@ -118,9 +123,9 @@ jobs:
 
       - name: Load images into Kind
         run: |
-          kind load docker-image knodex-server:local --name ${{ env.KIND_CLUSTER }}
-          kind load docker-image mock-oidc:local --name ${{ env.KIND_CLUSTER }}
-          kind load docker-image bitnami/redis@sha256:5179ef5fcc0aee9b3a16e8030ea7b1a81f94033c06e1676c0c4b18c237de2e82 --name ${{ env.KIND_CLUSTER }}
+          kind load docker-image knodex-server:local --name "$KIND_CLUSTER"
+          kind load docker-image mock-oidc:local --name "$KIND_CLUSTER"
+          kind load docker-image bitnami/redis@sha256:5179ef5fcc0aee9b3a16e8030ea7b1a81f94033c06e1676c0c4b18c237de2e82 --name "$KIND_CLUSTER"
 
       - name: Deploy application
         run: ./scripts/qa-deploy.sh deploy-only
@@ -186,4 +191,4 @@ jobs:
 
       - name: Cleanup Kind cluster
         if: always()
-        run: kind delete cluster --name ${{ env.KIND_CLUSTER }} || true
+        run: kind delete cluster --name "$KIND_CLUSTER" || true

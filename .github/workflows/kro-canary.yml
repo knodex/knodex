@@ -42,6 +42,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
@@ -53,27 +55,27 @@ jobs:
         # WARNING: docker prune removes ALL images/volumes on this runner.
         # Safe because canary runs on dedicated self-hosted runners with concurrency: 1.
         run: |
-          kind delete cluster --name ${{ env.KIND_CLUSTER }} 2>/dev/null || true
+          kind delete cluster --name "$KIND_CLUSTER" 2>/dev/null || true
           docker system prune -af --volumes 2>/dev/null || true
 
       - name: Create Kind cluster
         run: |
-          kind create cluster --name ${{ env.KIND_CLUSTER }} --config scripts/kind-config-ci.yaml --wait 120s
-          kubectl cluster-info --context kind-${{ env.KIND_CLUSTER }}
-          kubectl config use-context kind-${{ env.KIND_CLUSTER }}
+          kind create cluster --name "$KIND_CLUSTER" --config scripts/kind-config-ci.yaml --wait 120s
+          kubectl cluster-info --context "kind-$KIND_CLUSTER"
+          kubectl config use-context "kind-$KIND_CLUSTER"
 
       - name: Install KRO from ref
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Installing KRO from ref: ${{ env.KRO_REF }}"
+          echo "Installing KRO from ref: $KRO_REF"
 
           # Clean up any previous clone
           rm -rf /tmp/kro
 
           # Clone KRO at the specified ref for canary testing source code
-          git clone --depth 1 --branch ${{ env.KRO_REF }} https://github.com/kubernetes-sigs/kro.git /tmp/kro 2>/dev/null || \
-            { git clone https://github.com/kubernetes-sigs/kro.git /tmp/kro && cd /tmp/kro && git checkout ${{ env.KRO_REF }}; }
+          git clone --depth 1 --branch "$KRO_REF" https://github.com/kubernetes-sigs/kro.git /tmp/kro 2>/dev/null || \
+            { git clone https://github.com/kubernetes-sigs/kro.git /tmp/kro && cd /tmp/kro && git checkout "$KRO_REF"; }
 
           KRO_COMMIT=$(cd /tmp/kro && git rev-parse --short HEAD)
           echo "KRO_COMMIT=$KRO_COMMIT" >> $GITHUB_ENV
@@ -95,7 +97,7 @@ jobs:
           KRO_IMAGE="registry.k8s.io/kro/kro:$KRO_RELEASE_TAG"
           echo "Pre-pulling KRO image: $KRO_IMAGE"
           docker pull "$KRO_IMAGE"
-          kind load docker-image "$KRO_IMAGE" --name ${{ env.KIND_CLUSTER }}
+          kind load docker-image "$KRO_IMAGE" --name "$KIND_CLUSTER"
 
           # Install KRO from the OCI helm chart matching the release
           # Using the published chart avoids config mismatches between main branch
@@ -174,8 +176,8 @@ jobs:
 
       - name: Load images into Kind
         run: |
-          kind load docker-image knodex-server:local --name ${{ env.KIND_CLUSTER }}
-          kind load docker-image mock-oidc:local --name ${{ env.KIND_CLUSTER }}
+          kind load docker-image knodex-server:local --name "$KIND_CLUSTER"
+          kind load docker-image mock-oidc:local --name "$KIND_CLUSTER"
 
       - name: Deploy Knodex
         run: |
@@ -209,7 +211,7 @@ jobs:
           cd server
 
           UPDATE_FLAG=""
-          if [ "${{ inputs.update_baselines }}" = "true" ]; then
+          if [ "$UPDATE_BASELINES" = "true" ]; then
             UPDATE_FLAG="-update"
           fi
 
@@ -226,6 +228,7 @@ jobs:
         env:
           CANARY_BASE_URL: http://localhost:8080
           REPO_ROOT: ${{ github.workspace }}
+          UPDATE_BASELINES: ${{ inputs.update_baselines }}
 
       - name: Parse test failures
         id: parse
@@ -264,8 +267,7 @@ jobs:
       - name: Create compatibility issue
         if: steps.canary.outputs.canary_failed == 'true' && steps.check_issue.outputs.existing_issue == ''
         run: |
-          KRO_COMMIT="${{ env.KRO_COMMIT }}"
-          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
 
           cat > /tmp/canary-issue-body.md <<'CANARY_ISSUE_BODY'
           ## KRO Canary Compatibility Alert
@@ -309,9 +311,7 @@ jobs:
       - name: Update existing issue
         if: steps.canary.outputs.canary_failed == 'true' && steps.check_issue.outputs.existing_issue != ''
         run: |
-          ISSUE_NUM="${{ steps.check_issue.outputs.existing_issue }}"
-          KRO_COMMIT="${{ env.KRO_COMMIT }}"
-          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
 
           {
             echo "## Canary Update ($(date -u +"%Y-%m-%d"))"
@@ -322,31 +322,35 @@ jobs:
             echo "**Workflow Run:** $RUN_URL"
           } > /tmp/canary-comment-body.md
 
-          gh issue comment "$ISSUE_NUM" --body-file /tmp/canary-comment-body.md
+          gh issue comment "$CANARY_ISSUE_NUM" --body-file /tmp/canary-comment-body.md
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PARSE_FAILED_FEATURES: ${{ steps.parse.outputs.failed_features }}
+          CANARY_ISSUE_NUM: ${{ steps.check_issue.outputs.existing_issue }}
 
       - name: Generate summary
         if: always()
         run: |
           echo "## KRO Canary Test Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**KRO ref:** \`${{ env.KRO_REF }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "**KRO commit:** \`${{ env.KRO_COMMIT }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**KRO ref:** \`$KRO_REF\`" >> $GITHUB_STEP_SUMMARY
+          echo "**KRO commit:** \`$KRO_COMMIT\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
-          if [ "${{ steps.canary.outputs.canary_failed }}" = "true" ]; then
+          if [ "$CANARY_FAILED" = "true" ]; then
             echo "### :warning: Schema Mismatches Detected" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "Failed features: ${{ steps.parse.outputs.failed_features }}" >> $GITHUB_STEP_SUMMARY
+            echo "Failed features: $CANARY_FAILED_FEATURES" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "A \`kro-compatibility\` issue has been created/updated." >> $GITHUB_STEP_SUMMARY
           else
             echo "### :white_check_mark: All Canary Tests Passed" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "Knodex is compatible with KRO \`${{ env.KRO_REF }}\` (\`${{ env.KRO_COMMIT }}\`)." >> $GITHUB_STEP_SUMMARY
+            echo "Knodex is compatible with KRO \`$KRO_REF\` (\`$KRO_COMMIT\`)." >> $GITHUB_STEP_SUMMARY
           fi
+        env:
+          CANARY_FAILED: ${{ steps.canary.outputs.canary_failed }}
+          CANARY_FAILED_FEATURES: ${{ steps.parse.outputs.failed_features }}
 
       - name: Upload test artifacts
         if: always()
@@ -367,4 +371,4 @@ jobs:
 
       - name: Cleanup Kind cluster
         if: always()
-        run: kind delete cluster --name ${{ env.KIND_CLUSTER }} || true
+        run: kind delete cluster --name "$KIND_CLUSTER" || true
