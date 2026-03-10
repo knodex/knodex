@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/knodex/knodex/compare/v0.1.0...v0.2.0) (2026-03-10)
+
+
+### Features
+
+* initial open-source release of Knodex ([dc9bac1](https://github.com/knodex/knodex/commit/dc9bac1fdb725b9d6bd133fd7c0352525b15e3c7))
+
 ## [0.1.0](https://github.com/knodex/knodex/compare/v0.0.22...v0.1.0) (2026-03-10)
 
 
