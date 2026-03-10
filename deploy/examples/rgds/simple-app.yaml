@@ -1,0 +1,60 @@
+# Example RGD: Simple Application
+# Demonstrates: Basic template resources without conditions
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: simple-app
+  namespace: default
+  annotations:
+    knodex.io/catalog: "true"
+    knodex.io/description: "Simple application deployment with basic service"
+    knodex.io/tags: "simple,basic,example"
+    knodex.io/category: "examples"
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: SimpleApp
+    spec:
+      appName: string
+      image: string | default="nginx:latest"
+      port: integer | default=80
+
+  resources:
+    # Deployment
+    - id: deployment
+      template:
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: ${schema.spec.appName}
+          labels:
+            app: ${schema.spec.appName}
+        spec:
+          replicas: 1
+          selector:
+            matchLabels:
+              app: ${schema.spec.appName}
+          template:
+            metadata:
+              labels:
+                app: ${schema.spec.appName}
+            spec:
+              containers:
+                - name: app
+                  image: ${schema.spec.image}
+                  ports:
+                    - containerPort: ${schema.spec.port}
+
+    # Service
+    - id: service
+      template:
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: ${schema.spec.appName}
+        spec:
+          selector:
+            app: ${schema.spec.appName}
+          ports:
+            - port: ${schema.spec.port}
+              targetPort: ${schema.spec.port}

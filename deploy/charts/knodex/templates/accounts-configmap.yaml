@@ -1,0 +1,27 @@
+# STORY-148: Local user accounts ConfigMap (ArgoCD pattern)
+# This ConfigMap defines local user accounts. Credentials are stored in the accounts-secret.
+# Format:
+#   accounts.<username>: "capabilities,..."  (comma-separated: apiKey, login)
+#   accounts.<username>.enabled: "true" or "false"
+#
+# The server will create this ConfigMap automatically if it doesn't exist,
+# with a default admin account enabled.
+{{- if .Values.server.auth.localAccounts.configMap.create }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "knodex.fullname" . }}-accounts
+  labels:
+    {{- include "knodex.labels" . | nindent 4 }}
+    app.kubernetes.io/component: auth
+data:
+  {{- range $username, $account := .Values.server.auth.localAccounts.accounts }}
+  accounts.{{ $username }}: {{ $account.capabilities | default "apiKey, login" | quote }}
+  accounts.{{ $username }}.enabled: {{ $account.enabled | default true | quote }}
+  {{- end }}
+  {{- if not .Values.server.auth.localAccounts.accounts }}
+  # Default admin account - can be overridden via values.yaml
+  accounts.admin: "apiKey, login"
+  accounts.admin.enabled: "true"
+  {{- end }}
+{{- end }}

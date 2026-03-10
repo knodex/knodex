@@ -1,0 +1,88 @@
+# E2E Testing Values Override
+# This file enables OIDC authentication for E2E testing with a mock OIDC provider
+
+# Server configuration for E2E
+server:
+  config:
+    logLevel: "debug"  # More verbose logging for E2E tests
+
+  # Authentication configuration for E2E
+  auth:
+    # JWT configuration
+    jwt:
+      expiry: "1h"
+
+    # OIDC authentication - ENABLED for E2E testing
+    oidc:
+      enabled: true
+      providers:
+        # Mock OIDC provider for E2E testing
+        # Runs at http://localhost:4444 during test execution
+        - name: mock
+          issuerURL: "http://localhost:4444"
+          clientID: "knodex-e2e"
+          clientSecret: "mock-client-secret-for-testing"
+          redirectURL: "http://localhost:9000/api/v1/auth/oidc/callback"
+          scopes:
+            - openid
+            - email
+            - profile
+            - groups
+
+      # Group mappings for E2E test users
+      # Maps OIDC groups to project roles using the new Project-based RBAC
+      groupMappings:
+        # Global Admin test user (groups: ["global-admins"])
+        - group: "global-admins"
+          globalAdmin: true
+
+        # Alpha Team Project roles (proj-alpha-team)
+        - group: "alpha-admins"
+          project: "proj-alpha-team"
+          role: "platform-admin"
+
+        - group: "alpha-developers"
+          project: "proj-alpha-team"
+          role: "developer"
+
+        - group: "alpha-viewers"
+          project: "proj-alpha-team"
+          role: "viewer"
+
+        # Beta Team Project roles (proj-beta-team)
+        - group: "beta-admins"
+          project: "proj-beta-team"
+          role: "platform-admin"
+
+        - group: "beta-developers"
+          project: "proj-beta-team"
+          role: "developer"
+
+        - group: "beta-viewers"
+          project: "proj-beta-team"
+          role: "viewer"
+
+        # Shared/Platform Project roles
+        - group: "platform-admins"
+          project: "proj-platform"
+          role: "platform-admin"
+
+        - group: "platform-operators"
+          project: "proj-platform"
+          role: "developer"
+
+# Enterprise features for E2E testing
+enterprise:
+  enabled: true
+  # Organization identity for multi-tenant catalog filtering
+  organization: "e2e-org"
+
+# Note: This file should be used with:
+#   helm install knodex ./deploy/charts/knodex \
+#     -f ./deploy/charts/knodex/ci/values-e2e.yaml
+#
+# Or in qa-deploy.sh:
+#   helm upgrade --install knodex ./deploy/charts/knodex \
+#     --namespace knodex-${BRANCH_NAME} \
+#     --values ./deploy/charts/knodex/ci/values-e2e.yaml \
+#     --create-namespace

@@ -1,0 +1,370 @@
+name: KRO Canary Tests
+
+on:
+  # Weekly: Monday 6:00 UTC
+  schedule:
+    - cron: '0 6 * * 1'
+
+  # Manual trigger for on-demand runs
+  workflow_dispatch:
+    inputs:
+      kro_ref:
+        description: 'KRO git ref to test against (default: main)'
+        required: false
+        default: 'main'
+        type: string
+      update_baselines:
+        description: 'Update golden file baselines'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  issues: write
+  actions: read
+
+# Only one canary at a time
+concurrency:
+  group: kro-canary
+  cancel-in-progress: false
+
+env:
+  KIND_CLUSTER: knodex-canary
+  KRO_REF: ${{ inputs.kro_ref || 'main' }}
+
+jobs:
+  canary:
+    name: KRO Canary (ref=${{ inputs.kro_ref || 'main' }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      - name: Clean up stale resources
+        # WARNING: docker prune removes ALL images/volumes on this runner.
+        # Safe because canary runs on dedicated self-hosted runners with concurrency: 1.
+        run: |
+          kind delete cluster --name ${{ env.KIND_CLUSTER }} 2>/dev/null || true
+          docker system prune -af --volumes 2>/dev/null || true
+
+      - name: Create Kind cluster
+        run: |
+          kind create cluster --name ${{ env.KIND_CLUSTER }} --config scripts/kind-config-ci.yaml --wait 120s
+          kubectl cluster-info --context kind-${{ env.KIND_CLUSTER }}
+          kubectl config use-context kind-${{ env.KIND_CLUSTER }}
+
+      - name: Install KRO from ref
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Installing KRO from ref: ${{ env.KRO_REF }}"
+
+          # Clean up any previous clone
+          rm -rf /tmp/kro
+
+          # Clone KRO at the specified ref for canary testing source code
+          git clone --depth 1 --branch ${{ env.KRO_REF }} https://github.com/kubernetes-sigs/kro.git /tmp/kro 2>/dev/null || \
+            { git clone https://github.com/kubernetes-sigs/kro.git /tmp/kro && cd /tmp/kro && git checkout ${{ env.KRO_REF }}; }
+
+          KRO_COMMIT=$(cd /tmp/kro && git rev-parse --short HEAD)
+          echo "KRO_COMMIT=$KRO_COMMIT" >> $GITHUB_ENV
+          echo "KRO commit: $KRO_COMMIT"
+
+          # Resolve latest release version from GitHub API
+          KRO_RELEASE_TAG=$(gh release view --repo kubernetes-sigs/kro --json tagName --jq '.tagName' 2>/dev/null || echo "")
+          if [ -z "$KRO_RELEASE_TAG" ]; then
+            echo "ERROR: Could not determine KRO release tag from GitHub API"
+            exit 1
+          fi
+          echo "KRO release tag: $KRO_RELEASE_TAG"
+          echo "KRO_IMAGE_TAG=$KRO_RELEASE_TAG" >> $GITHUB_ENV
+
+          # Strip 'v' prefix for helm chart version (OCI chart uses semver without v)
+          KRO_CHART_VERSION="${KRO_RELEASE_TAG#v}"
+
+          # Pre-pull KRO image and load into Kind to avoid pull timeouts
+          KRO_IMAGE="registry.k8s.io/kro/kro:$KRO_RELEASE_TAG"
+          echo "Pre-pulling KRO image: $KRO_IMAGE"
+          docker pull "$KRO_IMAGE"
+          kind load docker-image "$KRO_IMAGE" --name ${{ env.KIND_CLUSTER }}
+
+          # Install KRO from the OCI helm chart matching the release
+          # Using the published chart avoids config mismatches between main branch
+          # chart templates and release binary (main may have new env vars/flags
+          # that the release binary doesn't support)
+          echo "Installing KRO from OCI chart version $KRO_CHART_VERSION"
+          helm install kro oci://registry.k8s.io/kro/charts/kro \
+            --version "$KRO_CHART_VERSION" \
+            --namespace kro --create-namespace \
+            --wait --timeout 300s
+
+          echo "KRO installed successfully"
+
+      - name: Verify KRO is running
+        run: |
+          echo "Verifying KRO controller is running..."
+          kubectl wait --for=condition=available --timeout=120s deployment -l app.kubernetes.io/name=kro -A || \
+          kubectl wait --for=condition=available --timeout=120s deployment -l app=kro -A || \
+          (echo "ERROR: KRO controller not running"; kubectl get pods -A; exit 1)
+          echo "KRO controller verified"
+
+      - name: Install cluster prerequisites (CRDs)
+        run: ./scripts/ensure-prereqs.sh
+
+      - name: Apply reference RGDs
+        run: |
+          echo "Applying reference RGDs..."
+          kubectl apply -f deploy/test/reference-rgds/ -n default
+
+          echo "Waiting for KRO to process RGDs and generate CRDs..."
+          # Wait for all RGDs to have a Ready condition
+          for rgd in $(kubectl get rgd -n default -o jsonpath='{.items[*].metadata.name}'); do
+            echo "Waiting for RGD: $rgd"
+            for i in $(seq 1 60); do
+              STATUS=$(kubectl get rgd "$rgd" -n default -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "")
+              if [ "$STATUS" = "True" ]; then
+                echo "  $rgd is Ready"
+                break
+              fi
+              if [ $i -eq 60 ]; then
+                echo "  WARNING: $rgd did not become Ready within 60s"
+                kubectl get rgd "$rgd" -n default -o yaml
+              fi
+              sleep 1
+            done
+          done
+
+          echo "Reference RGDs applied and processed"
+          kubectl get rgd -n default
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Build enterprise image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: Dockerfile
+          load: true
+          tags: knodex-server:local
+          build-args: |
+            BUILD_TAGS=enterprise
+            BUILD_MODE=enterprise
+          cache-from: type=gha,scope=canary-enterprise
+          cache-to: type=gha,mode=max,scope=canary-enterprise,ignore-error=true
+
+      - name: Build mock OIDC server
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: server
+          file: server/test/mocks/oidc/Dockerfile
+          load: true
+          tags: mock-oidc:local
+          cache-from: type=gha,scope=canary-mock-oidc
+          cache-to: type=gha,mode=max,scope=canary-mock-oidc,ignore-error=true
+
+      - name: Load images into Kind
+        run: |
+          kind load docker-image knodex-server:local --name ${{ env.KIND_CLUSTER }}
+          kind load docker-image mock-oidc:local --name ${{ env.KIND_CLUSTER }}
+
+      - name: Deploy Knodex
+        run: |
+          ./scripts/qa-deploy.sh deploy-only
+        env:
+          ENTERPRISE_BUILD: 'true'
+
+      - name: Wait for Knodex deployment
+        run: |
+          kubectl wait --for=condition=available --timeout=300s deployment/knodex-server -n knodex
+
+      - name: Port forward Knodex
+        run: |
+          (
+            while true; do
+              kubectl port-forward -n knodex svc/knodex-server 8080:8080 2>&1 || true
+              sleep 1
+            done
+          ) &
+          echo $! > /tmp/port-forward-canary.pid
+
+          echo "Waiting for Knodex server..."
+          timeout 120 bash -c 'until curl -sf http://127.0.0.1:8080/healthz > /dev/null 2>&1; do sleep 2; done'
+          echo "Knodex ready"
+
+      - name: Run canary tests
+        id: canary
+        continue-on-error: true
+        timeout-minutes: 15
+        run: |
+          cd server
+
+          UPDATE_FLAG=""
+          if [ "${{ inputs.update_baselines }}" = "true" ]; then
+            UPDATE_FLAG="-update"
+          fi
+
+          go test -tags=canary -v -count=1 ./test/canary/ $UPDATE_FLAG 2>&1 | tee /tmp/canary-output.log
+          TEST_EXIT=$?
+
+          echo "test_exit=$TEST_EXIT" >> $GITHUB_OUTPUT
+
+          if [ $TEST_EXIT -ne 0 ]; then
+            echo "canary_failed=true" >> $GITHUB_OUTPUT
+          else
+            echo "canary_failed=false" >> $GITHUB_OUTPUT
+          fi
+        env:
+          CANARY_BASE_URL: http://localhost:8080
+          REPO_ROOT: ${{ github.workspace }}
+
+      - name: Parse test failures
+        id: parse
+        if: steps.canary.outputs.canary_failed == 'true'
+        run: |
+          echo "Parsing canary test output for mismatches..."
+
+          # Extract failed test names
+          FAILED_FEATURES=$(grep -E '--- FAIL: TestCanary' /tmp/canary-output.log | sed 's/.*TestCanarySchemaCompat\///' | sed 's/ .*//' || echo "")
+
+          if [ -z "$FAILED_FEATURES" ]; then
+            FAILED_FEATURES=$(grep -E 'FAIL.*canary' /tmp/canary-output.log | head -1 || echo "unknown")
+          fi
+
+          echo "failed_features=$FAILED_FEATURES" >> $GITHUB_OUTPUT
+
+          # Build diff summary from test output
+          DIFF_SUMMARY=$(grep -A 20 'schema mismatch' /tmp/canary-output.log | head -60 || echo "No diff captured")
+          # Store multiline output
+          {
+            echo "diff_summary<<ENDOFDIFF"
+            echo "$DIFF_SUMMARY"
+            echo "ENDOFDIFF"
+          } >> $GITHUB_OUTPUT
+
+      - name: Check for existing canary issue
+        id: check_issue
+        if: steps.canary.outputs.canary_failed == 'true'
+        run: |
+          # Check if an open issue already exists with kro-compatibility label
+          EXISTING=$(gh issue list --label "kro-compatibility" --state open --json number,title --jq '.[0].number // empty' 2>/dev/null || echo "")
+          echo "existing_issue=$EXISTING" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create compatibility issue
+        if: steps.canary.outputs.canary_failed == 'true' && steps.check_issue.outputs.existing_issue == ''
+        run: |
+          KRO_COMMIT="${{ env.KRO_COMMIT }}"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          cat > /tmp/canary-issue-body.md <<'CANARY_ISSUE_BODY'
+          ## KRO Canary Compatibility Alert
+
+          The weekly canary test detected a schema mismatch between KRO `main` output and Knodex baselines.
+          CANARY_ISSUE_BODY
+
+          # Append dynamic values safely (avoids shell interpretation of diff content)
+          {
+            echo ""
+            echo "**KRO Commit:** \`$KRO_COMMIT\`"
+            echo "**Failed Features:** $PARSE_FAILED_FEATURES"
+            echo "**Workflow Run:** $RUN_URL"
+            echo ""
+            echo "### Diff Summary"
+            echo ""
+            echo '```'
+            echo "$PARSE_DIFF_SUMMARY"
+            echo '```'
+            echo ""
+            echo "### Next Steps"
+            echo ""
+            echo "1. Review the [workflow run]($RUN_URL) for full diff output"
+            echo "2. Determine if KRO introduced new features or changed behavior"
+            echo "3. Update Knodex to handle the new output if needed"
+            echo "4. Run \`go test -tags=canary -run TestCanary -update ./server/test/canary/\` to regenerate baselines"
+            echo ""
+            echo "---"
+            echo "*Auto-generated by KRO Canary workflow*"
+          } >> /tmp/canary-issue-body.md
+
+          gh issue create \
+            --title "KRO canary: schema mismatch detected (KRO $KRO_COMMIT)" \
+            --label "kro-compatibility" \
+            --body-file /tmp/canary-issue-body.md
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PARSE_DIFF_SUMMARY: ${{ steps.parse.outputs.diff_summary }}
+          PARSE_FAILED_FEATURES: ${{ steps.parse.outputs.failed_features }}
+
+      - name: Update existing issue
+        if: steps.canary.outputs.canary_failed == 'true' && steps.check_issue.outputs.existing_issue != ''
+        run: |
+          ISSUE_NUM="${{ steps.check_issue.outputs.existing_issue }}"
+          KRO_COMMIT="${{ env.KRO_COMMIT }}"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          {
+            echo "## Canary Update ($(date -u +"%Y-%m-%d"))"
+            echo ""
+            echo "Still failing against KRO \`$KRO_COMMIT\`."
+            echo ""
+            echo "**Failed Features:** $PARSE_FAILED_FEATURES"
+            echo "**Workflow Run:** $RUN_URL"
+          } > /tmp/canary-comment-body.md
+
+          gh issue comment "$ISSUE_NUM" --body-file /tmp/canary-comment-body.md
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PARSE_FAILED_FEATURES: ${{ steps.parse.outputs.failed_features }}
+
+      - name: Generate summary
+        if: always()
+        run: |
+          echo "## KRO Canary Test Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**KRO ref:** \`${{ env.KRO_REF }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**KRO commit:** \`${{ env.KRO_COMMIT }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ steps.canary.outputs.canary_failed }}" = "true" ]; then
+            echo "### :warning: Schema Mismatches Detected" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Failed features: ${{ steps.parse.outputs.failed_features }}" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "A \`kro-compatibility\` issue has been created/updated." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### :white_check_mark: All Canary Tests Passed" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Knodex is compatible with KRO \`${{ env.KRO_REF }}\` (\`${{ env.KRO_COMMIT }}\`)." >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Upload test artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: canary-results
+          path: |
+            /tmp/canary-output.log
+          retention-days: 30
+
+      - name: Stop port forward
+        if: always()
+        run: |
+          if [ -f /tmp/port-forward-canary.pid ]; then
+            kill $(cat /tmp/port-forward-canary.pid) 2>/dev/null || true
+          fi
+          pkill -f "kubectl port-forward" 2>/dev/null || true
+
+      - name: Cleanup Kind cluster
+        if: always()
+        run: kind delete cluster --name ${{ env.KIND_CLUSTER }} || true

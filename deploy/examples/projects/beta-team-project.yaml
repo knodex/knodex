@@ -1,0 +1,54 @@
+# Beta Team Project - Wildcard namespace pattern
+# This project allows developers to deploy to any namespace starting with "beta-"
+apiVersion: knodex.io/v1alpha1
+kind: Project
+metadata:
+  name: proj-beta-team
+  labels:
+    team: beta
+spec:
+  description: "Beta Team project - can deploy to beta* namespaces"
+
+  # Allow deployments to any namespace starting with "beta"
+  destinations:
+    - namespace: "beta*"
+
+  # Allow common Kubernetes resources
+  namespaceResourceWhitelist:
+    - group: ""
+      kind: ConfigMap
+    - group: ""
+      kind: Secret
+    - group: ""
+      kind: Service
+    - group: apps
+      kind: Deployment
+    - group: networking.k8s.io
+      kind: Ingress
+
+  # Block secrets in beta namespaces (security measure)
+  namespaceResourceBlacklist:
+    - group: ""
+      kind: Secret
+
+  clusterResourceWhitelist: []
+
+  roles:
+    - name: admin
+      description: "Full access to beta namespaces"
+      policies:
+        - "p, proj:proj-beta-team:admin, project, *, proj-beta-team, allow"
+        - "p, proj:proj-beta-team:admin, instance, *, proj-beta-team/*, allow"
+        - "p, proj:proj-beta-team:admin, rgd, view, *, allow"
+      groups:
+        - beta-admins
+
+    - name: developer
+      description: "Can deploy to beta namespaces"
+      policies:
+        - "p, proj:proj-beta-team:developer, project, view, proj-beta-team, allow"
+        - "p, proj:proj-beta-team:developer, instance, deploy, proj-beta-team/*, allow"
+        - "p, proj:proj-beta-team:developer, instance, view, proj-beta-team/*, allow"
+        - "p, proj:proj-beta-team:developer, rgd, view, *, allow"
+      groups:
+        - beta-developers

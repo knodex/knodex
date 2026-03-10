@@ -1,0 +1,67 @@
+# Production Project - Strict access control for production environment
+# This project has tight restrictions on who can deploy and what resources
+apiVersion: knodex.io/v1alpha1
+kind: Project
+metadata:
+  name: proj-production
+  labels:
+    environment: production
+spec:
+  description: "Production project - strict controls for production namespaces"
+
+  # Only allow specific production namespaces
+  destinations:
+    - namespace: "prod-app"
+    - namespace: "prod-data"
+    - namespace: "prod-monitoring"
+
+  # Allow only specific resources in production
+  namespaceResourceWhitelist:
+    - group: ""
+      kind: ConfigMap
+    - group: ""
+      kind: Service
+    - group: apps
+      kind: Deployment
+    - group: apps
+      kind: StatefulSet
+    - group: autoscaling
+      kind: HorizontalPodAutoscaler
+
+  # Block dangerous resources in production
+  namespaceResourceBlacklist:
+    - group: ""
+      kind: Pod  # No ad-hoc pods in production
+    - group: batch
+      kind: Job  # No ad-hoc jobs
+
+  clusterResourceWhitelist: []
+
+  roles:
+    - name: release-manager
+      description: "Can deploy approved releases to production"
+      policies:
+        - "p, proj:proj-production:release-manager, project, view, proj-production, allow"
+        - "p, proj:proj-production:release-manager, instance, deploy, proj-production/prod-*, allow"
+        - "p, proj:proj-production:release-manager, instance, view, proj-production/*, allow"
+        - "p, proj:proj-production:release-manager, rgd, view, *, allow"
+      groups:
+        - release-managers
+
+    - name: sre
+      description: "Site Reliability Engineering - full production access"
+      policies:
+        - "p, proj:proj-production:sre, project, *, proj-production, allow"
+        - "p, proj:proj-production:sre, instance, *, proj-production/*, allow"
+        - "p, proj:proj-production:sre, rgd, view, *, allow"
+      groups:
+        - sre-team
+
+    - name: oncall
+      description: "On-call engineers - view access for incident response"
+      policies:
+        - "p, proj:proj-production:oncall, project, view, proj-production, allow"
+        - "p, proj:proj-production:oncall, instance, view, proj-production/*, allow"
+        - "p, proj:proj-production:oncall, rgd, view, *, allow"
+      groups:
+        - oncall-engineers

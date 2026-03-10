@@ -1,0 +1,593 @@
+# Default values for knodex
+
+# Global settings
+nameOverride: ""
+fullnameOverride: ""
+
+# -- Global settings shared across all pods
+global:
+  # -- Node selector for all pods
+  nodeSelector: {}
+  # -- Tolerations for all pods
+  tolerations: []
+  # -- Affinity rules for all pods
+  affinity: {}
+  # -- Image pull secrets for all pods
+  imagePullSecrets:
+    - name: ghcr-secret
+
+# Server configuration
+server:
+  replicaCount: 1
+
+  # -- Annotations to add to server pods
+  podAnnotations: {}
+  # -- Labels to add to server pods
+  podLabels: {}
+  # -- Priority class name for server pods
+  priorityClassName: ""
+  # -- Termination grace period in seconds (default: 30)
+  # terminationGracePeriodSeconds: 30
+  # -- Deployment strategy
+  strategy: {}
+  #   type: RollingUpdate
+  #   rollingUpdate:
+  #     maxUnavailable: 0
+  #     maxSurge: 1
+  # -- DNS policy for server pods
+  dnsPolicy: ""
+  # -- DNS configuration for server pods
+  dnsConfig: {}
+  # -- Topology spread constraints for server pods
+  topologySpreadConstraints: []
+  # -- Per-server node selector (overrides global.nodeSelector when set; use {} to clear global)
+  # nodeSelector: {}
+  # -- Per-server tolerations (overrides global.tolerations when set; use [] to clear global)
+  # tolerations: []
+  # -- Per-server affinity rules (overrides global.affinity when set; use {} to clear global)
+  # affinity: {}
+
+  image:
+    repository: ghcr.io/knodex/knodex
+    pullPolicy: IfNotPresent
+    # -- Overrides the image tag. Defaults to the chart appVersion.
+    tag: ""
+
+  service:
+    type: ClusterIP
+    port: 8080
+    # -- Additional annotations for the server service
+    annotations: {}
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    # limits:
+    #   cpu: 500m
+    #   memory: 256Mi
+
+  # Environment configuration
+  config:
+    serverAddress: ":8080"
+    logLevel: "info"
+    logFormat: "json"
+    # -- Comma-separated list of allowed CORS origins (required when behind ingress/load balancer)
+    # @default -- `""` (server defaults to same-origin)
+    corsAllowedOrigins: ""
+    # -- Enable Swagger UI endpoint for API documentation
+    # @default -- `false`
+    swaggerUI: false
+    # redisDB: 0  # Optional: Redis database number
+
+    # Session cookie configuration
+    cookie:
+      # -- Secure flag on session cookies (requires HTTPS). Set to false for local HTTP development.
+      # @default -- `true`
+      secure: true
+      # -- Domain attribute on session cookies. Set for cross-subdomain auth (e.g., ".example.com").
+      # @default -- `""` (same-origin)
+      domain: ""
+
+    # Rate limiting configuration
+    rateLimit:
+      userRequestsPerMinute: 100
+      userBurstSize: 100
+      # -- Trusted proxy CIDRs for X-Forwarded-For header parsing.
+      # Required behind load balancers to correctly identify client IPs for rate limiting.
+      # @default -- `[]`
+      trustedProxies: []
+      # Example:
+      # trustedProxies:
+      #   - "10.0.0.0/8"
+      #   - "172.16.0.0/12"
+
+    # Policy cache configuration
+    policyCache:
+      enabled: true
+      ttlSeconds: 300
+      syncIntervalMinutes: 10
+      watchEnabled: true
+
+  # Health check configuration
+  livenessProbe:
+    httpGet:
+      path: /healthz
+      port: http
+    initialDelaySeconds: 10
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+  readinessProbe:
+    httpGet:
+      path: /readyz
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+  # -- Startup probe for slow-starting containers
+  startupProbe: {}
+  #   httpGet:
+  #     path: /healthz
+  #     port: http
+  #   failureThreshold: 30
+  #   periodSeconds: 5
+  # -- Lifecycle hooks for the server container
+  lifecycle: {}
+  #   preStop:
+  #     exec:
+  #       command: ["/bin/sh", "-c", "sleep 10"]
+  # -- Extra environment variables for the server container
+  # NOTE: Variables here are appended after chart-managed env vars.
+  # Duplicate names will override chart defaults (Kubernetes uses last value).
+  extraEnv: []
+  # -- Extra environment variable sources (ConfigMaps, Secrets)
+  # WARNING: Allows mounting arbitrary Secrets/ConfigMaps into the server process.
+  # Ensure Helm release access is restricted in multi-tenant environments.
+  extraEnvFrom: []
+  # -- Extra volume mounts for the server container
+  extraVolumeMounts: []
+  # -- Extra volumes for the server pod
+  extraVolumes: []
+
+  # -- PodDisruptionBudget configuration
+  pdb:
+    # -- Minimum number of available pods (mutually exclusive with maxUnavailable)
+    minAvailable: 1
+    # -- Maximum number of unavailable pods (mutually exclusive with minAvailable)
+    # maxUnavailable: ""
+
+  # -- Server pod security context (matches upstream Dockerfile UID 10001)
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    fsGroup: 10001
+    seccompProfile:
+      type: RuntimeDefault
+
+  # -- Server container security context
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+        - ALL
+
+  # -- Server autoscaling configuration (HorizontalPodAutoscaler)
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 80
+    behavior:
+      scaleDown:
+        stabilizationWindowSeconds: 300
+        percentValue: 25
+        periodSeconds: 60
+      scaleUp:
+        stabilizationWindowSeconds: 0
+        percentValue: 100
+        podsValue: 2
+        periodSeconds: 15
+
+  # -- Authentication configuration
+  auth:
+    # Admin username (password is auto-generated)
+    adminUsername: "admin"
+
+    # Local users are stored in ConfigMap (definitions) and Secret (credentials)
+    localAccounts:
+      # Create the ConfigMap for account definitions
+      configMap:
+        create: true
+      # Create the Secret for credentials
+      secret:
+        create: true
+      # Account definitions (optional - server creates admin account if empty)
+      accounts: {}
+      # Example account configuration:
+      # accounts:
+      #   admin:
+      #     capabilities: "apiKey, login"
+      #     enabled: true
+      #     # password: "$2a$12$..."  # bcrypt hash (generate with htpasswd -bnBC 12)
+      #   readonly:
+      #     capabilities: "login"
+      #     enabled: true
+
+    # NOTE: Admin password is auto-generated by the server on first startup
+    # and stored in Kubernetes secret: knodex-initial-admin-password
+    #
+    # Retrieve the password with:
+    #   kubectl get secret knodex-initial-admin-password -o jsonpath='{.data.password}' | base64 -d
+
+    # JWT configuration
+    jwt:
+      expiry: "1h"
+
+    # Casbin RBAC configuration
+    casbin:
+      # -- Role persistence TTL in Redis (e.g., "24h", "12h")
+      # @default -- `""` (server defaults to 24h)
+      roleTTL: ""
+      # -- Bootstrap admin user IDs
+      # @default -- `[]`
+      adminUsers: []
+      # Example:
+      # adminUsers:
+      #   - "admin@example.com"
+      #   - "platform-admin"
+
+    # OIDC authentication (SSO)
+    # Providers are configured via a watched ConfigMap and Secret.
+    # The server hot-reloads SSO configuration — no pod restart required.
+    #
+    # The chart creates two resources:
+    #   - knodex-sso-providers ConfigMap: non-sensitive config (always created when oidc.enabled + providers)
+    #   - knodex-sso-secrets Secret: credentials (only created when clientSecret is provided inline)
+    #
+    # External Secrets: set oidc.existingSecret to the name of a Secret managed
+    # by your external secret operator (ESO, Vault, etc.). The secret must contain
+    # keys: <provider-name>.client-id and <provider-name>.client-secret for each provider.
+    oidc:
+      # -- Enable OIDC authentication
+      enabled: false
+      # -- Name of an existing Kubernetes Secret containing SSO credentials.
+      # The secret must contain keys: `<provider-name>.client-id` and `<provider-name>.client-secret`
+      # for each configured provider. When set, the chart skips creating its own SSO secret.
+      # @default -- `""` (chart creates its own secret)
+      existingSecret: ""
+      # -- OIDC token claim name that contains user groups
+      # @default -- `"groups"`
+      groupsClaim: "groups"
+      # -- Allowed redirect origins for OIDC callbacks (CWE-601 open redirect protection)
+      # @default -- `[]`
+      allowedRedirectOrigins: []
+      # Example:
+      # allowedRedirectOrigins:
+      #   - "https://knodex.example.com"
+      #   - "https://knodex-staging.example.com"
+      # -- Default RBAC role for OIDC users not matching any group mapping
+      # @default -- `""` (server default)
+      rbacDefaultRole: ""
+      # -- OIDC providers (creates knodex-sso-providers ConfigMap and knodex-sso-secrets Secret)
+      providers: []
+      # Example OIDC provider configurations:
+      # providers:
+      #   # Microsoft Entra ID (formerly Azure AD)
+      #   - name: azure-ad
+      #     issuerURL: "https://login.microsoftonline.com/{tenant-id}/v2.0"
+      #     clientID: "your-application-client-id"
+      #     clientSecret: "your-client-secret-value"
+      #     redirectURL: "https://knodex.example.com/api/v1/auth/oidc/callback"
+      #     scopes:
+      #       - openid
+      #       - email
+      #       - profile
+      #
+      #   # With External Secrets (omit clientID and clientSecret):
+      #   - name: azure-ad
+      #     issuerURL: "https://login.microsoftonline.com/{tenant-id}/v2.0"
+      #     redirectURL: "https://knodex.example.com/api/v1/auth/oidc/callback"
+      #     scopes:
+      #       - openid
+      #       - email
+      #       - profile
+      #
+      #   # Keycloak
+      #   - name: keycloak
+      #     issuerURL: "https://keycloak.example.com/realms/myrealm"
+      #     clientID: "knodex"
+      #     clientSecret: "your-client-secret"
+      #     redirectURL: "https://knodex.example.com/api/v1/auth/oidc/callback"
+      #     scopes:
+      #       - openid
+      #       - email
+      #       - profile
+      #       - groups
+      #
+      #   # Google
+      #   - name: google
+      #     issuerURL: "https://accounts.google.com"
+      #     clientID: "your-google-client-id.apps.googleusercontent.com"
+      #     clientSecret: "your-google-client-secret"
+      #     redirectURL: "https://knodex.example.com/api/v1/auth/oidc/callback"
+      #     scopes:
+      #       - openid
+      #       - email
+      #       - profile
+
+      # OIDC Group-to-Project Mappings
+      # Map OIDC groups from your Identity Provider to Knodex projects/roles
+      # Each mapping can either:
+      #   1. Assign users to a project with a specific role (platform-admin, developer, viewer)
+      #   2. Grant Global Admin privileges (full system access)
+      #
+      # Users matching multiple groups will receive all corresponding project memberships.
+      # Role precedence within a project: platform-admin > developer > viewer
+      groupMappings: []
+      # Example group mappings:
+      # groupMappings:
+      #   # Map "engineering" IdP group to "engineering" project as developers
+      #   - group: "engineering"
+      #     project: "engineering"
+      #     role: "developer"
+      #
+      #   # Map "platform-team" to "platform" project as platform admins
+      #   - group: "platform-team"
+      #     project: "platform"
+      #     role: "platform-admin"
+      #
+      #   # Map "qa-team" to multiple projects (need separate entries)
+      #   - group: "qa-team"
+      #     project: "engineering"
+      #     role: "viewer"
+      #
+      #   # Grant Global Admin to specific IdP group
+      #   - group: "kro-global-admins"
+      #     globalAdmin: true
+      #
+      # Configuration rules:
+      #   - "group" is always required (exact match, case-sensitive, supports wildcards: dev-*, *-admin)
+      #   - Either (project + role) OR globalAdmin must be set, not both
+      #   - Valid roles: "platform-admin", "developer", "viewer"
+      #   - Empty groupMappings array is valid (default state)
+
+      # -- Path to a file-based OIDC group mappings YAML (alternative to inline groupMappings).
+      # When set, the server reads group mappings from this file path instead of the
+      # OIDC_GROUP_MAPPINGS env var. Mount the file via extraVolumes or an external ConfigMap.
+      # @default -- `""`
+      groupMappingsFile: ""
+
+# -- Enterprise features
+enterprise:
+  # -- Enable enterprise edition (uses knodex-ee image)
+  enabled: false
+  # -- Enterprise image configuration (overrides server.image.repository when enterprise.enabled=true)
+  image:
+    repository: ghcr.io/knodex/knodex-ee
+  # -- Organization identity for multi-tenant RGD catalog filtering (Enterprise feature).
+  # When set, only RGDs labeled with `knodex.io/organization: <value>` (or unlabeled shared RGDs)
+  # are visible in the catalog. Must be ≤63 characters (Kubernetes label value limit).
+  # @default -- `""` (server defaults to `"default"`)
+  organization: ""
+  license:
+    # -- Name of an existing Kubernetes Secret containing the license JWT.
+    # The secret **must** contain a key named `license.jwt` with the raw JWT token as its value.
+    # If the key is missing, the license mount will silently be empty and enterprise features will not activate.
+    # The secret must exist in the same namespace as the Knodex release.
+    # @default -- `""` (chart creates its own secret)
+    existingSecret: ""
+    # -- Inline license JWT text. When set, the chart creates a secret with key `license.jwt`
+    # containing this value **and** sets the `KNODEX_LICENSE_TEXT` environment variable.
+    # If both `existingSecret` and `text` are set, `existingSecret` takes precedence for the volume mount.
+    # @default -- `""` (no inline license)
+    text: ""
+
+  # -- Custom views configuration (Enterprise feature)
+  views:
+    enabled: false
+    # Custom views filter RGDs by the knodex.io/category annotation
+    # and appear in the sidebar below the standard navigation
+    items: []
+    # Example views:
+    # items:
+    #   - name: Testing Resources
+    #     slug: testing
+    #     icon: flask
+    #     category: testing
+    #     order: 1
+    #     description: RGDs for testing and QA environments
+    #   - name: Database Templates
+    #     slug: databases
+    #     icon: database
+    #     category: database
+    #     order: 2
+    #     description: Database provisioning templates
+    #   - name: Network Infrastructure
+    #     slug: networking
+    #     icon: network
+    #     category: networking
+    #     order: 3
+    #     description: Network and connectivity resources
+
+  # -- Audit configuration (Enterprise feature)
+  audit:
+    # -- Field names to redact from audit event details (case-insensitive).
+    # The server strips any matching key from audit Details as a defense-in-depth
+    # safety net. Operators have full control: add custom fields or remove
+    # defaults that conflict with legitimate field names in your CRDs.
+    redactFields:
+      - privateKey
+      - password
+      - bearerToken
+      - token
+      - secret
+      - tlsClientCert
+      - tlsClientKey
+      - clientSecret
+      # To add custom fields, append to the list:
+      # - apiKey
+      # - connectionString
+      # - webhookSecret
+
+  # -- Compliance configuration (Enterprise feature)
+  compliance:
+    # -- Violation history retention in days
+    # @default -- `""` (server default)
+    historyRetentionDays: ""
+
+  # -- OPA Gatekeeper integration (Enterprise feature)
+  gatekeeper:
+    enabled: false
+
+  # -- Network policy configuration (Enterprise feature)
+  networkPolicy:
+    enabled: false
+    # Server network policy customization
+    server:
+      # Additional ingress rules (merged with defaults)
+      additionalIngress: []
+      # Additional egress rules (merged with defaults)
+      additionalEgress: []
+      # Specify ingress sources (default: allow all)
+      # Production should restrict this to ingress controller namespace
+      # Example to restrict to ingress-nginx:
+      # ingressFrom:
+      #   - namespaceSelector:
+      #       matchLabels:
+      #         kubernetes.io/metadata.name: ingress-nginx
+      ingressFrom: []
+
+# Ingress configuration
+ingress:
+  enabled: false
+  className: "nginx"
+  annotations: {}
+  # kubernetes.io/tls-acme: "true"
+  hosts:
+    - host: knodex.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  #  - secretName: knodex-tls
+  #    hosts:
+  #      - knodex.local
+
+# Gateway API HTTPRoute configuration (alternative to ingress)
+gateway:
+  # -- Enable HTTPRoute resource (requires Gateway API CRDs)
+  enabled: false
+  # -- Annotations for the HTTPRoute
+  annotations: {}
+  # -- Parent gateway references
+  parentRefs:
+    - name: internal-gateway
+      namespace: kube-system
+  # -- Hostnames for the HTTPRoute
+  hostnames:
+    - "knodex.staging.knodex.io"
+
+# Redis configuration (Bitnami Redis subchart)
+# NOTE: auth.enabled changed to true in v0.0.15 (production default).
+# Bitnami auto-generates a password Secret when auth.enabled=true.
+# Existing dev environments using helm upgrade may need to set redis.auth.password
+# or delete the existing Redis PVC/Secret before upgrading.
+#
+# NOTE: Bitnami removed semver tags from Docker Hub. The image is pinned by digest
+# to ensure reproducible deployments. Update the digest when upgrading Redis.
+# Current image: bitnami/redis (Redis 8.6.1)
+redis:
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: true
+  image:
+    # Bitnami no longer publishes semver tags — pin by digest for reproducibility.
+    # To update: docker pull bitnami/redis:latest && docker inspect --format='{{index .RepoDigests 0}}' bitnami/redis:latest
+    digest: "sha256:5179ef5fcc0aee9b3a16e8030ea7b1a81f94033c06e1676c0c4b18c237de2e82"
+    tag: ""
+  master:
+    persistence:
+      enabled: false
+    resources:
+      limits:
+        cpu: 200m
+        memory: 128Mi
+      requests:
+        cpu: 50m
+        memory: 64Mi
+
+# External Redis (when redis.enabled=false)
+# Use this section when connecting to a managed Redis service (Azure Cache, ElastiCache, etc.)
+externalRedis:
+  host: ""
+  port: 6379
+  password: ""
+  username: ""  # Redis 6+ ACL username
+  tls:
+    enabled: false
+    insecureSkipVerify: false  # Only for development with self-signed certs
+
+# ServiceAccount configuration
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# RBAC configuration
+rbac:
+  create: true
+
+# Default Project
+# Creates a default Project CRD resource (similar to ArgoCD's default AppProject)
+defaultProject:
+  # -- Create the default project on install/upgrade
+  create: true
+  # -- Name of the default project
+  name: default
+  spec:
+    description: "Default project - allows deployments to any namespace"
+    # -- Allowed deployment destinations
+    destinations:
+      - namespace: default
+    # -- Roles for the default project (optional)
+    # roles:
+    #   - name: admin
+    #     description: "Full access to default project"
+    #     policies:
+    #       - "p, proj:default:admin, project, *, default, allow"
+    #       - "p, proj:default:admin, instance, *, default/*, allow"
+    #       - "p, proj:default:admin, rgd, view, *, allow"
+    #     groups:
+    #       - my-admin-group
+
+# CRD installation
+crds:
+  # -- Install the Project CRD (projects.knodex.io)
+  install: true
+
+# ------------------------------------------------------------------------------
+# Kro (Kubernetes Resource Orchestrator) dependency
+# https://kro.run/docs/getting-started/Installation/
+# ------------------------------------------------------------------------------
+kro:
+  # Enable kro installation as a dependency
+  # Set to true to install kro alongside knodex
+  enabled: false
+  # Kro configuration values (passed to the kro subchart)
+  # See https://github.com/kubernetes-sigs/kro for available options
+  # Example:
+  #   resources:
+  #     limits:
+  #       cpu: 500m
+  #       memory: 256Mi
+  #     requests:
+  #       cpu: 100m
+  #       memory: 128Mi

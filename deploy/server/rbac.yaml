@@ -1,0 +1,67 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: knodex
+  labels:
+    app.kubernetes.io/name: knodex
+rules:
+  # Read ResourceGraphDefinitions
+  - apiGroups: ["kro.run"]
+    resources: ["resourcegraphdefinitions"]
+    verbs: ["get", "list", "watch"]
+  # Read CRDs to extract schemas and install RBAC CRDs
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list", "watch", "create", "update"]
+  # Manage namespaces for organization creation and namespace selector
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  # Manage RBAC resources (Projects CRD)
+  # Note: Users and RepositoryConfigs follow ArgoCD pattern - stored in Secrets, not CRDs
+  - apiGroups: ["knodex.io"]
+    resources: ["projects"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["knodex.io"]
+    resources: ["projects/status"]
+    verbs: ["get", "update", "patch"]
+  # Manage instances (CRs created by Kro)
+  - apiGroups: ["kro.run"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Manage ConfigMaps and Secrets for auth (account storage)
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Note: Specific child resource permissions (pods, deployments, etc.) removed
+  # after managed resources feature was deleted. The wildcard rule below
+  # already covers get/list for all resources via API discovery.
+  # API discovery for listing available API groups and resources
+  # Required for the searchable API group/kind selectors
+  - nonResourceURLs: ["/api", "/api/*", "/apis", "/apis/*"]
+    verbs: ["get"]
+  # Read-only access to all resources for API discovery
+  # The discovery client needs to enumerate available resource types
+  - apiGroups: ["*"]
+    resources: ["*"]
+    verbs: ["get", "list"]
+  # Gatekeeper constraints - create, update, delete constraints
+  - apiGroups: ["constraints.gatekeeper.sh"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: knodex
+  labels:
+    app.kubernetes.io/name: knodex
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: knodex
+subjects:
+  - kind: ServiceAccount
+    name: knodex
+    # Namespace will be set by kustomize overlay
+    namespace: knodex

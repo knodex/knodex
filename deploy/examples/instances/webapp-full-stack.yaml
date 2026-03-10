@@ -1,0 +1,10 @@
+apiVersion: kro.run/v1alpha1
+kind: WebApp
+metadata:
+  name: my-webapp-fullstack
+  namespace: default
+spec:
+  name: fullstack-app
+  replicas: 3
+  enableDatabase: true
+  enableCache: true
