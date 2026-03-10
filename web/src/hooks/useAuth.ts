@@ -16,19 +16,46 @@ export function useIsAuthenticated() {
   return useUserStore((state) => state.isAuthenticated);
 }
 
+export function useSessionStatus() {
+  return useUserStore((state) => state.sessionStatus);
+}
+
+export function useSessionError() {
+  return useUserStore((state) => state.sessionError);
+}
+
+/**
+ * Check if a persisted session marker exists.
+ * First checks the Zustand store's rehydrated state (fast, no I/O),
+ * then falls back to direct localStorage read for the initial render
+ * before Zustand has rehydrated.
+ */
+export function hasPersistedSession(): boolean {
+  // Fast path: check rehydrated store state (no I/O)
+  if (useUserStore.getState().hasSession) return true;
+
+  // Fallback: direct localStorage read for pre-rehydration renders
+  try {
+    const stored = localStorage.getItem('user-storage');
+    if (!stored) return false;
+    const parsed = JSON.parse(stored);
+    return parsed?.state?.hasSession === true;
+  } catch {
+    return false;
+  }
+}
+
 export function useAuth() {
   const user = useUser();
   const isAuthenticated = useIsAuthenticated();
   const login = useUserStore((state) => state.login);
   const logout = useUserStore((state) => state.logout);
-  const isTokenExpired = useUserStore((state) => state.isTokenExpired);
 
   return {
     user,
     isAuthenticated,
     login,
     logout,
-    isTokenExpired,
   };
 }
 

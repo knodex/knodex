@@ -176,40 +176,23 @@ export async function authenticateAs(page: Page, role: TestUserRole): Promise<vo
   // Inject token into localStorage (must match frontend's userStore)
   await page.evaluate(
     ({ token, user }) => {
-      // Frontend expects 'jwt_token' (see userStore.ts line 90)
+      // Frontend expects 'jwt_token' for Bearer header fallback (see client.ts request interceptor)
       localStorage.setItem('jwt_token', token)
 
-      // Also set Zustand persist storage (key: 'user-storage')
-      // This matches how userStore persists authentication state
-      // NOTE: isGlobalAdmin was removed - authorization uses Casbin via useCanI() hook
-      // The JWT contains casbin_roles and permissions for proper authorization
-      // tokenExp must be set so ProtectedRoute's isTokenExpired() doesn't redirect to /login
-      const tokenExpUnix = Math.floor(Date.now() / 1000) + 3600 // 1 hour from now
+      // Set Zustand persist storage (key: 'user-storage')
+      // Only set fields that Zustand's partialize actually rehydrates:
+      // - hasSession: gates ProtectedRoute's sync localStorage check
+      // - currentProject: preserves project selection across refreshes
+      // All other user state (roles, groups, etc.) is populated by useSessionRestore
+      // calling GET /api/v1/account/info on page load.
       const userStorage = {
         state: {
+          hasSession: true,
           currentProject: user.projects[0] || null,
-          token: token,
-          isAuthenticated: true,
-          roles: user.roles || {},
-          projects: user.projects || [],
-          tokenExp: tokenExpUnix,
-          casbinRoles: user.casbinRoles || [],
-          permissions: user.permissions || {},
-          groups: user.groups || [],
-          user: {
-            id: user.sub,
-            email: user.email,
-            name: user.displayName,
-          },
         },
         version: 0
       }
-      console.log('[AUTH-HELPER] Setting user-storage with roles:', user.roles)
       localStorage.setItem('user-storage', JSON.stringify(userStorage))
-
-      // Verify it was saved correctly
-      const saved = JSON.parse(localStorage.getItem('user-storage') || '{}')
-      console.log('[AUTH-HELPER] Verified saved state has roles:', saved.state?.roles)
     },
     { token, user }
   )
@@ -305,22 +288,11 @@ export async function authenticateWithToken(page: Page, user: PreloadedTestUser)
     ({ token, user }) => {
       localStorage.setItem('jwt_token', token)
 
-      const tokenExpUnix = Math.floor(Date.now() / 1000) + 3600
+      // Only set fields that Zustand's partialize rehydrates
       const userStorage = {
         state: {
+          hasSession: true,
           currentProject: user.projects[0] || null,
-          token: token,
-          isAuthenticated: true,
-          roles: user.roles || {},
-          projects: user.projects || [],
-          tokenExp: tokenExpUnix,
-          casbinRoles: user.casbin_roles || user.casbinRoles || [],
-          groups: user.groups || [],
-          user: {
-            id: user.user_id || user.sub || '',
-            email: user.email,
-            name: user.display_name || user.displayName || '',
-          },
         },
         version: 0
       }
@@ -360,34 +332,19 @@ export async function setupAuthWithToken(
   })
 
   // Step 3: Set auth tokens in localStorage
-  // NOTE: isGlobalAdmin was removed - authorization uses Casbin via useCanI() hook
-  // The JWT contains casbin_roles and permissions for proper authorization
-
   await page.evaluate(
     ({ token, user }) => {
       localStorage.setItem('jwt_token', token)
 
-      const tokenExpUnix = Math.floor(Date.now() / 1000) + 3600
+      // Only set fields that Zustand's partialize rehydrates
       const userStorage = {
         state: {
+          hasSession: true,
           currentProject: user.projects[0] || null,
-          token: token,
-          isAuthenticated: true,
-          roles: user.roles || {},
-          projects: user.projects || [],
-          tokenExp: tokenExpUnix,
-          casbinRoles: user.casbin_roles || user.casbinRoles || [],
-          groups: user.groups || [],
-          user: {
-            id: user.user_id || user.sub || '',
-            email: user.email,
-            name: user.display_name || user.displayName || '',
-          },
         },
         version: 0
       }
       localStorage.setItem('user-storage', JSON.stringify(userStorage))
-      console.log('[setupAuthWithToken] Auth set for user:', user.email || user.sub)
     },
     { token: user.token, user }
   )

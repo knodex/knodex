@@ -36,7 +36,7 @@ env:
 jobs:
   canary:
     name: KRO Canary (ref=${{ inputs.kro_ref || 'main' }})
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, azure, staging]
     timeout-minutes: 30
 
     steps:
@@ -50,9 +50,11 @@ jobs:
           cache-dependency-path: server/go.sum
 
       - name: Clean up stale resources
+        # WARNING: docker prune removes ALL images/volumes on this runner.
+        # Safe because canary runs on dedicated self-hosted runners with concurrency: 1.
         run: |
           kind delete cluster --name ${{ env.KIND_CLUSTER }} 2>/dev/null || true
-          rm -rf /tmp/kro
+          docker system prune -af --volumes 2>/dev/null || true
 
       - name: Create Kind cluster
         run: |
@@ -60,61 +62,50 @@ jobs:
           kubectl cluster-info --context kind-${{ env.KIND_CLUSTER }}
           kubectl config use-context kind-${{ env.KIND_CLUSTER }}
 
-      - name: Clone KRO
+      - name: Install KRO from ref
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Cloning KRO from ref: ${{ env.KRO_REF }}"
-          git clone --depth 1 --branch ${{ env.KRO_REF }} https://github.com/kubernetes-sigs/kro.git /tmp/kro || \
-            (git clone https://github.com/kubernetes-sigs/kro.git /tmp/kro && cd /tmp/kro && git checkout ${{ env.KRO_REF }})
+          echo "Installing KRO from ref: ${{ env.KRO_REF }}"
+
+          # Clean up any previous clone
+          rm -rf /tmp/kro
+
+          # Clone KRO at the specified ref for canary testing source code
+          git clone --depth 1 --branch ${{ env.KRO_REF }} https://github.com/kubernetes-sigs/kro.git /tmp/kro 2>/dev/null || \
+            { git clone https://github.com/kubernetes-sigs/kro.git /tmp/kro && cd /tmp/kro && git checkout ${{ env.KRO_REF }}; }
 
           KRO_COMMIT=$(cd /tmp/kro && git rev-parse --short HEAD)
           echo "KRO_COMMIT=$KRO_COMMIT" >> $GITHUB_ENV
           echo "KRO commit: $KRO_COMMIT"
 
-      - name: Build KRO image
-        run: |
-          cd /tmp/kro
-          echo "Building KRO controller binary..."
-          CGO_ENABLED=0 GOOS=linux go build -o kro-controller ./cmd/controller/ || \
-            CGO_ENABLED=0 GOOS=linux go build -o kro-controller .
-
-          cat > /tmp/kro/Dockerfile.ci <<'DOCKERFILE'
-          FROM gcr.io/distroless/static:nonroot
-          COPY kro-controller /kro-controller
-          USER 65532:65532
-          ENTRYPOINT ["/kro-controller"]
-          DOCKERFILE
-
-          docker build -t kro-controller:local -f /tmp/kro/Dockerfile.ci /tmp/kro
-          echo "KRO image built successfully"
-
-      - name: Load KRO image into Kind
-        run: |
-          kind load docker-image kro-controller:local --name ${{ env.KIND_CLUSTER }}
-
-      - name: Install KRO from ref
-        run: |
-          cd /tmp/kro
-
-          # Find and install KRO Helm chart with local image override
-          HELM_SET="--set image.repository=kro-controller --set image.tag=local --set image.pullPolicy=Never"
-          if [ -d "helm/kro" ]; then
-            echo "Found Helm chart at helm/kro/"
-            helm install kro ./helm/kro --namespace kro --create-namespace --wait --timeout 300s $HELM_SET
-          elif [ -f "helm/Chart.yaml" ]; then
-            echo "Found Helm chart at helm/"
-            helm install kro ./helm --namespace kro --create-namespace --wait --timeout 300s $HELM_SET
-          elif [ -d "charts/kro" ]; then
-            echo "Found Helm chart at charts/kro/"
-            helm install kro ./charts/kro --namespace kro --create-namespace --wait --timeout 300s $HELM_SET
-          elif [ -f "charts/Chart.yaml" ]; then
-            echo "Found Helm chart at charts/"
-            helm install kro ./charts --namespace kro --create-namespace --wait --timeout 300s $HELM_SET
-          else
-            echo "No Helm chart found, trying kubectl apply"
-            kubectl apply -f config/ 2>/dev/null || kubectl apply -k config/default/ 2>/dev/null || \
-              { echo "ERROR: No KRO install method succeeded"; exit 1; }
-            kubectl wait --for=condition=available --timeout=300s deployment -l app.kubernetes.io/name=kro -A
+          # Resolve latest release version from GitHub API
+          KRO_RELEASE_TAG=$(gh release view --repo kubernetes-sigs/kro --json tagName --jq '.tagName' 2>/dev/null || echo "")
+          if [ -z "$KRO_RELEASE_TAG" ]; then
+            echo "ERROR: Could not determine KRO release tag from GitHub API"
+            exit 1
           fi
+          echo "KRO release tag: $KRO_RELEASE_TAG"
+          echo "KRO_IMAGE_TAG=$KRO_RELEASE_TAG" >> $GITHUB_ENV
+
+          # Strip 'v' prefix for helm chart version (OCI chart uses semver without v)
+          KRO_CHART_VERSION="${KRO_RELEASE_TAG#v}"
+
+          # Pre-pull KRO image and load into Kind to avoid pull timeouts
+          KRO_IMAGE="registry.k8s.io/kro/kro:$KRO_RELEASE_TAG"
+          echo "Pre-pulling KRO image: $KRO_IMAGE"
+          docker pull "$KRO_IMAGE"
+          kind load docker-image "$KRO_IMAGE" --name ${{ env.KIND_CLUSTER }}
+
+          # Install KRO from the OCI helm chart matching the release
+          # Using the published chart avoids config mismatches between main branch
+          # chart templates and release binary (main may have new env vars/flags
+          # that the release binary doesn't support)
+          echo "Installing KRO from OCI chart version $KRO_CHART_VERSION"
+          helm install kro oci://registry.k8s.io/kro/charts/kro \
+            --version "$KRO_CHART_VERSION" \
+            --namespace kro --create-namespace \
+            --wait --timeout 300s
 
           echo "KRO installed successfully"
 

@@ -25,7 +25,6 @@ export interface LoginUserInfo {
   groups?: string[];
   roles?: Record<string, string>;
   casbinRoles?: string[];
-  permissions?: Record<string, boolean>;
 }
 
 /**
@@ -141,8 +140,10 @@ export interface AccountInfoResponse {
  * Returns server-side authoritative data including filtered groups
  * (only groups with Casbin policy mappings).
  */
-export async function getAccountInfo(): Promise<AccountInfoResponse> {
-  const response = await apiClient.get<AccountInfoResponse>('/v1/account/info');
+export async function getAccountInfo(options?: { signal?: AbortSignal }): Promise<AccountInfoResponse> {
+  const response = await apiClient.get<AccountInfoResponse>('/v1/account/info', {
+    signal: options?.signal,
+  });
   return response.data;
 }
 

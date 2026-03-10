@@ -172,23 +172,11 @@ async function authenticateWithCustomUser(
     ({ token, user }) => {
       localStorage.setItem('jwt_token', token);
 
-      const tokenExpUnix = Math.floor(Date.now() / 1000) + 3600;
+      // Only persist fields that Zustand's partialize rehydrates
       const userStorage = {
         state: {
+          hasSession: true,
           currentProject: user.defaultProject || user.projects[0] || null,
-          token: token,
-          isAuthenticated: true,
-          roles: user.roles || {},
-          projects: user.projects || [],
-          groups: user.groups || [],
-          tokenExp: tokenExpUnix,
-          casbinRoles: user.casbinRoles || [],
-          permissions: user.permissions || {},
-          user: {
-            id: user.sub,
-            email: user.email,
-            name: user.displayName || '',
-          },
         },
         version: 0,
       };
@@ -198,6 +186,26 @@ async function authenticateWithCustomUser(
     },
     { token, user }
   );
+
+  // Mock /api/v1/account/info for session restore
+  await page.route('**/api/v1/account/info', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        userID: user.sub,
+        email: user.email,
+        displayName: user.displayName,
+        groups: user.groups || [],
+        casbinRoles: user.casbinRoles,
+        projects: user.projects,
+        roles: user.roles || {},
+        issuer: 'knodex',
+        tokenExpiresAt: Math.floor(Date.now() / 1000) + 3600,
+        tokenIssuedAt: Math.floor(Date.now() / 1000) - 60,
+      }),
+    });
+  });
 
   // Wait for localStorage to be set
   await page.waitForTimeout(100);

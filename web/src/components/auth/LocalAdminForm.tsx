@@ -80,7 +80,7 @@ export function LocalAdminForm({ onSuccess }: LocalAdminFormProps) {
 
     try {
       const resp = await localAdminLogin(data);
-      login(resp.user, resp.expiresAt);
+      login(resp.user);
       onSuccess?.();
     } catch (err: unknown) {
       logger.error('[LocalAdminForm] Login failed:', err);

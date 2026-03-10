@@ -6,48 +6,28 @@ import { render, screen } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { ProtectedRoute } from './ProtectedRoute';
 
-// Mock the useAuth hook
+// Mock useSessionRestore as a no-op (restore logic tested in useSessionRestore.test.ts)
+vi.mock('@/hooks/useSessionRestore', () => ({
+  useSessionRestore: vi.fn(),
+}));
+
+// Mock hasPersistedSession and useSessionStatus
+const mockHasPersistedSession = vi.fn();
+const mockSessionStatus = vi.fn();
+
 vi.mock('@/hooks/useAuth', () => ({
-  useIsAuthenticated: vi.fn(),
+  hasPersistedSession: () => mockHasPersistedSession(),
+  useSessionStatus: () => mockSessionStatus(),
 }));
-
-// Mock the user store
-const mockLogout = vi.fn();
-const mockIsTokenExpired = vi.fn();
-
-vi.mock('@/stores/userStore', () => ({
-  useUserStore: vi.fn((selector) =>
-    selector({
-      logout: mockLogout,
-      isTokenExpired: mockIsTokenExpired,
-      user: null,
-      projects: [],
-      roles: {},
-      currentProject: null,
-      isAuthenticated: false,
-      groups: [],
-      issuer: null,
-      casbinRoles: [],
-      permissions: {},
-      tokenExp: null,
-      tokenIat: null,
-      login: vi.fn(),
-      setCurrentProject: vi.fn(),
-    })
-  ),
-}));
-
-const { useIsAuthenticated } = await import('@/hooks/useAuth');
 
 describe('ProtectedRoute', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockIsTokenExpired.mockReturnValue(false);
+    mockHasPersistedSession.mockReturnValue(true);
+    mockSessionStatus.mockReturnValue('valid');
   });
 
-  it('renders children when authenticated and token is valid', () => {
-    vi.mocked(useIsAuthenticated).mockReturnValue(true);
-
+  it('renders children when localStorage has session and status is valid', () => {
     render(
       <MemoryRouter initialEntries={['/dashboard']}>
         <Routes>
@@ -68,8 +48,8 @@ describe('ProtectedRoute', () => {
     expect(screen.queryByText('Login Page')).not.toBeInTheDocument();
   });
 
-  it('redirects to login when not authenticated', () => {
-    vi.mocked(useIsAuthenticated).mockReturnValue(false);
+  it('redirects to login when no localStorage session', () => {
+    mockHasPersistedSession.mockReturnValue(false);
 
     render(
       <MemoryRouter initialEntries={['/dashboard']}>
@@ -91,9 +71,74 @@ describe('ProtectedRoute', () => {
     expect(screen.getByText('Login Page')).toBeInTheDocument();
   });
 
-  it('redirects to login when token is expired', () => {
-    vi.mocked(useIsAuthenticated).mockReturnValue(true);
-    mockIsTokenExpired.mockReturnValue(true);
+  it('renders children when sessionStatus is idle', () => {
+    mockSessionStatus.mockReturnValue('idle');
+
+    render(
+      <MemoryRouter initialEntries={['/dashboard']}>
+        <Routes>
+          <Route
+            path="/dashboard"
+            element={
+              <ProtectedRoute>
+                <div>Protected Content</div>
+              </ProtectedRoute>
+            }
+          />
+          <Route path="/login" element={<div>Login Page</div>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(screen.getByText('Protected Content')).toBeInTheDocument();
+  });
+
+  it('renders children when sessionStatus is validating', () => {
+    mockSessionStatus.mockReturnValue('validating');
+
+    render(
+      <MemoryRouter initialEntries={['/dashboard']}>
+        <Routes>
+          <Route
+            path="/dashboard"
+            element={
+              <ProtectedRoute>
+                <div>Protected Content</div>
+              </ProtectedRoute>
+            }
+          />
+          <Route path="/login" element={<div>Login Page</div>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(screen.getByText('Protected Content')).toBeInTheDocument();
+  });
+
+  it('renders children when sessionStatus is error (error shown in DashboardLayout)', () => {
+    mockSessionStatus.mockReturnValue('error');
+
+    render(
+      <MemoryRouter initialEntries={['/dashboard']}>
+        <Routes>
+          <Route
+            path="/dashboard"
+            element={
+              <ProtectedRoute>
+                <div>Protected Content</div>
+              </ProtectedRoute>
+            }
+          />
+          <Route path="/login" element={<div>Login Page</div>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(screen.getByText('Protected Content')).toBeInTheDocument();
+  });
+
+  it('redirects to login when sessionStatus is logged_out', () => {
+    mockSessionStatus.mockReturnValue('logged_out');
 
     render(
       <MemoryRouter initialEntries={['/dashboard']}>
@@ -113,11 +158,10 @@ describe('ProtectedRoute', () => {
 
     expect(screen.queryByText('Protected Content')).not.toBeInTheDocument();
     expect(screen.getByText('Login Page')).toBeInTheDocument();
-    expect(mockLogout).toHaveBeenCalled();
   });
 
   it('saves the intended location for redirect after login', () => {
-    vi.mocked(useIsAuthenticated).mockReturnValue(false);
+    mockHasPersistedSession.mockReturnValue(false);
 
     render(
       <MemoryRouter initialEntries={['/dashboard/settings']}>
@@ -138,19 +182,19 @@ describe('ProtectedRoute', () => {
     expect(screen.getByText('Login Page')).toBeInTheDocument();
   });
 
-  it('handles nested routes correctly', () => {
-    vi.mocked(useIsAuthenticated).mockReturnValue(true);
+  it('does not redirect to login during session restore (race condition test)', () => {
+    // localStorage has session, but status is still validating
+    mockHasPersistedSession.mockReturnValue(true);
+    mockSessionStatus.mockReturnValue('validating');
 
     render(
-      <MemoryRouter initialEntries={['/app/nested/route']}>
+      <MemoryRouter initialEntries={['/dashboard']}>
         <Routes>
           <Route
-            path="/app/*"
+            path="/dashboard"
             element={
               <ProtectedRoute>
-                <Routes>
-                  <Route path="nested/route" element={<div>Nested Content</div>} />
-                </Routes>
+                <div>Protected Content</div>
               </ProtectedRoute>
             }
           />
@@ -159,7 +203,8 @@ describe('ProtectedRoute', () => {
       </MemoryRouter>
     );
 
-    expect(screen.getByText('Nested Content')).toBeInTheDocument();
+    // Key assertion: NO redirect to login during restore
+    expect(screen.getByText('Protected Content')).toBeInTheDocument();
     expect(screen.queryByText('Login Page')).not.toBeInTheDocument();
   });
 });

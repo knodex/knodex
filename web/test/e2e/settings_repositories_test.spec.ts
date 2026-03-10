@@ -157,16 +157,7 @@ test.describe('Global Admin - Repository Configuration', () => {
 
     // Verify via API that test connection endpoint exists
     const token = await page.evaluate(() => {
-      const storage = localStorage.getItem('user-storage');
-      if (storage) {
-        try {
-          const parsed = JSON.parse(storage);
-          return parsed?.state?.token;
-        } catch {
-          return null;
-        }
-      }
-      return null;
+      return localStorage.getItem('jwt_token');
     });
 
     if (token) {
@@ -234,16 +225,7 @@ test.describe('Global Admin - Repository Configuration', () => {
 
     // Verify API access for repository management
     const token = await page.evaluate(() => {
-      const storage = localStorage.getItem('user-storage');
-      if (storage) {
-        try {
-          const parsed = JSON.parse(storage);
-          return parsed?.state?.token;
-        } catch {
-          return null;
-        }
-      }
-      return null;
+      return localStorage.getItem('jwt_token');
     });
 
     if (token) {

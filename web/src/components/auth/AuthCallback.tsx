@@ -47,7 +47,7 @@ export function AuthCallback() {
         .then((resp) => {
           if (cancelled) return;
           // Store user info in Zustand store (JWT is in HttpOnly cookie)
-          login(resp.user, resp.expiresAt);
+          login(resp.user);
           navigate('/', { replace: true });
         })
         .catch((err) => {

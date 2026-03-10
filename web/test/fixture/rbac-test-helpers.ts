@@ -180,26 +180,14 @@ export async function loginAs(page: Page, user: TestUser, targetPath: string = "
     sessionStorage.clear();
   });
 
-  // Set auth state with all fields needed by userStore (especially tokenExp for ProtectedRoute)
+  // Set auth state — only persist fields that Zustand's partialize rehydrates
   await page.evaluate(
     ({ token, user }) => {
       localStorage.setItem("jwt_token", token);
-      const tokenExpUnix = Math.floor(Date.now() / 1000) + 3600;
       const userStorage = {
         state: {
+          hasSession: true,
           currentProject: user.projects[0] || null,
-          token: token,
-          isAuthenticated: true,
-          roles: user.roles || {},
-          projects: user.projects || [],
-          tokenExp: tokenExpUnix,
-          casbinRoles: user.casbin_roles || [],
-          groups: [],
-          user: {
-            id: user.user_id || "",
-            email: user.email || "",
-            name: user.display_name || "",
-          },
         },
         version: 0,
       };
@@ -207,6 +195,26 @@ export async function loginAs(page: Page, user: TestUser, targetPath: string = "
     },
     { token, user }
   );
+
+  // Mock /api/v1/account/info for session restore
+  await page.route('**/api/v1/account/info', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        userID: user.user_id || '',
+        email: user.email || '',
+        displayName: user.display_name || '',
+        groups: [],
+        casbinRoles: user.casbin_roles || [],
+        projects: user.projects || [],
+        roles: user.roles || {},
+        issuer: 'knodex',
+        tokenExpiresAt: Math.floor(Date.now() / 1000) + 3600,
+        tokenIssuedAt: Math.floor(Date.now() / 1000) - 60,
+      }),
+    });
+  });
 
   await page.goto(actualTarget, { waitUntil: "domcontentloaded" });
   await page.waitForLoadState('networkidle');

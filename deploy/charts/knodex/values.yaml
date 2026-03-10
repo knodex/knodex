@@ -545,6 +545,29 @@ serviceAccount:
 rbac:
   create: true
 
+# Default Project
+# Creates a default Project CRD resource (similar to ArgoCD's default AppProject)
+defaultProject:
+  # -- Create the default project on install/upgrade
+  create: true
+  # -- Name of the default project
+  name: default
+  spec:
+    description: "Default project - allows deployments to any namespace"
+    # -- Allowed deployment destinations
+    destinations:
+      - namespace: default
+    # -- Roles for the default project (optional)
+    # roles:
+    #   - name: admin
+    #     description: "Full access to default project"
+    #     policies:
+    #       - "p, proj:default:admin, project, *, default, allow"
+    #       - "p, proj:default:admin, instance, *, default/*, allow"
+    #       - "p, proj:default:admin, rgd, view, *, allow"
+    #     groups:
+    #       - my-admin-group
+
 # CRD installation
 crds:
   # -- Install the Project CRD (projects.knodex.io)

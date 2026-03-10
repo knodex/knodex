@@ -26,7 +26,6 @@ vi.mock('@/api/auth', () => ({
 // Mock the user store
 const mockLogin = vi.fn();
 const mockLogout = vi.fn();
-const mockIsTokenExpired = vi.fn(() => false);
 
 const mockState = {
   login: mockLogin,
@@ -39,11 +38,12 @@ const mockState = {
   groups: [],
   issuer: null,
   casbinRoles: [],
-  permissions: {},
-  tokenExp: null,
-  tokenIat: null,
+  sessionStatus: 'idle' as const,
+  sessionError: null,
+  hasSession: false,
   setCurrentProject: vi.fn(),
-  isTokenExpired: mockIsTokenExpired,
+  restoreSession: vi.fn(),
+  setSessionStatus: vi.fn(),
 };
 
 vi.mock('@/stores/userStore', () => ({
@@ -165,7 +165,7 @@ describe('AuthCallback', () => {
 
     // login should be called with user info and expiresAt
     await waitFor(() => {
-      expect(mockLogin).toHaveBeenCalledWith(mockResp.user, mockResp.expiresAt);
+      expect(mockLogin).toHaveBeenCalledWith(mockResp.user);
     });
 
     // Should navigate to dashboard with replace:true (prevents back-button to callback)

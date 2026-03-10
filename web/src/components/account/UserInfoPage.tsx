@@ -23,7 +23,6 @@ export function UserInfoPage() {
   const casbinRoles = useUserStore((s) => s.casbinRoles);
   const roles = useUserStore((s) => s.roles);
   const issuer = useUserStore((s) => s.issuer);
-  const tokenIat = useUserStore((s) => s.tokenIat);
 
   // Fetch server-authoritative account info for filtered groups.
   // The backend filters groups to only those with Casbin policy mappings,
@@ -85,7 +84,7 @@ export function UserInfoPage() {
           </CardHeader>
           <CardContent className="space-y-3">
             <InfoRow label="Issuer" value={isLocal ? "Local" : (issuer || "OIDC")} mono={!isLocal} />
-            <InfoRow label="Issued At" value={formatTimestamp(tokenIat)} />
+            <InfoRow label="Issued At" value={isAccountLoading ? "Loading..." : formatTimestamp(accountInfo?.tokenIssuedAt ?? null)} />
           </CardContent>
         </Card>
 

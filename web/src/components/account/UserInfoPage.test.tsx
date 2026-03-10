@@ -44,8 +44,6 @@ const oidcUserState = {
   projects: ["proj-alpha", "proj-beta"],
   roles: { "proj-alpha": "developer", "proj-beta": "viewer" } as Record<string, string>,
   issuer: "https://auth.example.com",
-  tokenExp: Math.floor(Date.now() / 1000) + 3600, // 60 min from now
-  tokenIat: Math.floor(Date.now() / 1000) - 600,  // 10 min ago
 };
 
 // Local admin mock state
@@ -56,8 +54,6 @@ const localAdminState = {
   projects: ["default"],
   roles: {} as Record<string, string>,
   issuer: null as string | null,
-  tokenExp: Math.floor(Date.now() / 1000) + 3600,
-  tokenIat: Math.floor(Date.now() / 1000) - 600,
 };
 
 let mockState = { ...oidcUserState };

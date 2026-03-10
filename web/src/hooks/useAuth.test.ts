@@ -7,11 +7,14 @@ import {
   useCurrentProject,
   useIsAuthenticated,
   useAuth,
+  useSessionStatus,
+  useSessionError,
+  hasPersistedSession,
   matchesNamespacePattern,
   projectAllowsNamespace,
 } from './useAuth';
 import { useUserStore } from '@/stores/userStore';
-import type { LoginUserInfo } from '@/stores/userStore';
+import type { LoginUserInfo } from '@/api/auth';
 import type { Project } from '@/types/project';
 
 describe('useAuth hooks', () => {
@@ -115,7 +118,6 @@ describe('useAuth hooks', () => {
       expect(result.current.isAuthenticated).toBe(false);
       expect(typeof result.current.login).toBe('function');
       expect(typeof result.current.logout).toBe('function');
-      expect(typeof result.current.isTokenExpired).toBe('function');
     });
 
     it('should update state on login', () => {
@@ -144,6 +146,95 @@ describe('useAuth hooks', () => {
 
       expect(result.current.isAuthenticated).toBe(false);
       expect(result.current.user).toBeNull();
+    });
+  });
+
+  describe('useSessionStatus', () => {
+    it('should return idle initially after logout', () => {
+      // After logout, sessionStatus is 'logged_out'
+      const { result } = renderHook(() => useSessionStatus());
+      expect(result.current).toBe('logged_out');
+    });
+
+    it('should return valid after login', () => {
+      act(() => {
+        useUserStore.getState().login(makeUserInfo());
+      });
+
+      const { result } = renderHook(() => useSessionStatus());
+      expect(result.current).toBe('valid');
+    });
+  });
+
+  describe('useSessionError', () => {
+    it('should return null initially', () => {
+      const { result } = renderHook(() => useSessionError());
+      expect(result.current).toBeNull();
+    });
+
+    it('should return error after setSessionStatus', () => {
+      act(() => {
+        useUserStore.getState().setSessionStatus('error', 'Network error');
+      });
+
+      const { result } = renderHook(() => useSessionError());
+      expect(result.current).toBe('Network error');
+    });
+  });
+
+  describe('hasPersistedSession', () => {
+    it('should return true when localStorage has hasSession: true', () => {
+      localStorage.setItem('user-storage', JSON.stringify({
+        state: { hasSession: true, currentProject: 'proj-1' },
+        version: 0,
+      }));
+
+      expect(hasPersistedSession()).toBe(true);
+    });
+
+    it('should return true when hasSession is true even if currentProject is null', () => {
+      localStorage.setItem('user-storage', JSON.stringify({
+        state: { hasSession: true, currentProject: null },
+        version: 0,
+      }));
+
+      expect(hasPersistedSession()).toBe(true);
+    });
+
+    it('should return false when localStorage is empty', () => {
+      expect(hasPersistedSession()).toBe(false);
+    });
+
+    it('should return false when localStorage has malformed JSON', () => {
+      localStorage.setItem('user-storage', 'not valid json');
+      expect(hasPersistedSession()).toBe(false);
+    });
+
+    it('should return false when hasSession is false', () => {
+      localStorage.setItem('user-storage', JSON.stringify({
+        state: { hasSession: false, currentProject: null },
+        version: 0,
+      }));
+
+      expect(hasPersistedSession()).toBe(false);
+    });
+
+    it('should return false when hasSession field is missing (legacy format)', () => {
+      localStorage.setItem('user-storage', JSON.stringify({
+        state: { currentProject: 'proj-1' },
+        version: 0,
+      }));
+
+      expect(hasPersistedSession()).toBe(false);
+    });
+
+    it('should return false when localStorage.getItem throws', () => {
+      const originalGetItem = localStorage.getItem;
+      localStorage.getItem = () => { throw new Error('SecurityError'); };
+
+      expect(hasPersistedSession()).toBe(false);
+
+      localStorage.getItem = originalGetItem;
     });
   });
 

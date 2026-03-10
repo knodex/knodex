@@ -87,9 +87,10 @@ apiClient.interceptors.response.use(
       const isAuthPath = AUTH_PATHS.some(path => window.location.pathname.startsWith(path));
 
       const now = Date.now();
-      if (!isAuthPath && (now - lastRedirectTimestamp >= REDIRECT_COOLDOWN_MS)) {
+      const { sessionStatus } = useUserStore.getState();
+      // Skip logout during session restore — the restore hook handles its own error path
+      if (!isAuthPath && sessionStatus !== 'validating' && (now - lastRedirectTimestamp >= REDIRECT_COOLDOWN_MS)) {
         lastRedirectTimestamp = now;
-        // Use Zustand store logout (clears both store and localStorage) instead of hard redirect
         useUserStore.getState().logout();
       }
     }

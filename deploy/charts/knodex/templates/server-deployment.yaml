@@ -52,17 +52,46 @@ spec:
       {{- end }}
       initContainers:
         - name: wait-for-redis
-          image: "busybox:1.37"
+          {{- $redisRepo := printf "%s/%s" (.Values.redis.image.registry | default "docker.io") (.Values.redis.image.repository | default "bitnami/redis") }}
+          {{- if .Values.redis.image.digest }}
+          image: "{{ $redisRepo }}@{{ .Values.redis.image.digest }}"
+          {{- else }}
+          image: "{{ $redisRepo }}:{{ .Values.redis.image.tag }}"
+          {{- end }}
           command:
             - sh
             - -c
             - |
-              echo "Waiting for Redis at {{ include "knodex.redisHost" . }}:{{ include "knodex.redisPort" . }}..."
-              until nc -z {{ include "knodex.redisHost" . }} {{ include "knodex.redisPort" . }}; do
+              REDIS_HOST="{{ include "knodex.redisHost" . }}"
+              REDIS_PORT="{{ include "knodex.redisPort" . }}"
+              echo "Waiting for Redis at ${REDIS_HOST}:${REDIS_PORT}..."
+              AUTH_ARGS=""
+              if [ -n "${REDIS_PASSWORD}" ]; then
+                AUTH_ARGS="-a ${REDIS_PASSWORD}"
+              fi
+              until redis-cli -h "${REDIS_HOST}" -p "${REDIS_PORT}" ${AUTH_ARGS} --no-auth-warning ping 2>/dev/null | grep -q PONG; do
                 echo "Redis not ready, retrying in 2s..."
                 sleep 2
               done
               echo "Redis is ready"
+          env:
+            {{- if .Values.redis.enabled }}
+            {{- if .Values.redis.auth.enabled }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-redis
+                  key: redis-password
+            {{- end }}
+            {{- else }}
+            {{- if .Values.externalRedis.password }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "knodex.fullname" . }}-redis
+                  key: redis-password
+            {{- end }}
+            {{- end }}
           securityContext:
             {{- toYaml .Values.server.securityContext | nindent 12 }}
           resources:

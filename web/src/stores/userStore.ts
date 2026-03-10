@@ -4,26 +4,12 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { logger } from '@/lib/logger';
-
-// Helper to check specific permission from stored user data
-// NOTE: For UI visibility only - actual authorization is enforced by backend via Casbin
-export const hasPermission = (permissions: Record<string, boolean> | undefined, permission: string): boolean => {
-  if (!permissions) return false;
-
-  // Admin has all permissions
-  if (permissions['*:*']) {
-    return true;
-  }
-
-  return permissions[permission] ?? false;
-};
+import type { LoginUserInfo, AccountInfoResponse } from '@/api/auth';
 
 export interface User {
   id: string;
   email: string;
   name?: string;
-  // NOTE: isGlobalAdmin was removed - use useCanI() hook for permission checks
-  // This follows the ArgoCD-aligned pattern where permissions are checked via Casbin
 }
 
 export interface Project {
@@ -31,40 +17,71 @@ export interface Project {
   displayName: string;
 }
 
-// LoginUserInfo matches the server's UserInfo struct from LoginResponse.
-// After the HttpOnly cookie migration, the frontend receives user info directly
-// from the server response (not by decoding the JWT).
-export interface LoginUserInfo {
+export type SessionStatus = 'idle' | 'validating' | 'valid' | 'error' | 'logged_out';
+
+interface UserStatePayload {
   id: string;
   email: string;
-  displayName?: string;
-  projects?: string[];
-  defaultProject?: string;
-  groups?: string[];
-  roles?: Record<string, string>;
-  casbinRoles?: string[];
-  permissions?: Record<string, boolean>;
+  name?: string;
+  projects: string[];
+  roles: Record<string, string>;
+  groups: string[];
+  casbinRoles: string[];
+  issuer: string | null;
 }
 
 export interface UserState {
   // State
   user: User | null;
   projects: string[];
-  roles: Record<string, string>; // projectId -> role name
+  roles: Record<string, string>;
   currentProject: string | null;
   isAuthenticated: boolean;
-  groups: string[]; // OIDC groups
-  issuer: string | null; // JWT issuer
-  casbinRoles: string[]; // Casbin roles
-  permissions: Record<string, boolean>; // Pre-computed permissions
-  tokenExp: number | null; // Token expiry as Unix timestamp
-  tokenIat: number | null; // Token issued-at as Unix timestamp
+  groups: string[];
+  issuer: string | null;
+  casbinRoles: string[];
+  sessionStatus: SessionStatus;
+  sessionError: string | null;
+  hasSession: boolean;
 
   // Actions
-  login: (userInfo: LoginUserInfo, expiresAt?: string) => void;
+  login: (userInfo: LoginUserInfo) => void;
+  restoreSession: (info: AccountInfoResponse) => void;
+  setSessionStatus: (status: SessionStatus, error?: string) => void;
   logout: () => void;
   setCurrentProject: (projectId: string) => void;
-  isTokenExpired: () => boolean;
+}
+
+function _setUserState(
+  payload: UserStatePayload,
+  set: (state: Partial<UserState>) => void,
+  get: () => UserState
+) {
+  const currentProject = get().currentProject;
+  const projectStillValid = currentProject && payload.projects.includes(currentProject);
+  const resolvedProject = projectStillValid
+    ? currentProject
+    : payload.projects[0] || null;
+
+  if (currentProject && !projectStillValid) {
+    logger.warn(
+      `[UserStore] Project context changed: '${currentProject}' is no longer accessible. Switching to '${resolvedProject}'.`
+    );
+  }
+
+  set({
+    user: { id: payload.id, email: payload.email, name: payload.name },
+    projects: payload.projects,
+    roles: payload.roles,
+    groups: payload.groups,
+    casbinRoles: payload.casbinRoles,
+    issuer: payload.issuer,
+    currentProject: resolvedProject,
+    isAuthenticated: true,
+    sessionStatus: 'valid',
+    sessionError: null,
+    hasSession: true,
+  });
 }
 
 export const useUserStore = create<UserState>()(
@@ -78,32 +95,46 @@ export const useUserStore = create<UserState>()(
       groups: [],
       issuer: null,
       casbinRoles: [],
-      permissions: {},
-      tokenExp: null,
-      tokenIat: null,
+      sessionStatus: 'idle' as SessionStatus,
+      sessionError: null,
+      hasSession: false,
 
-      login: (userInfo: LoginUserInfo, expiresAt?: string) => {
-        const user: User = {
-          id: userInfo.id,
-          email: userInfo.email,
-          name: userInfo.displayName,
-        };
+      login: (userInfo: LoginUserInfo) => {
+        _setUserState(
+          {
+            id: userInfo.id,
+            email: userInfo.email,
+            name: userInfo.displayName,
+            projects: userInfo.projects || [],
+            roles: userInfo.roles || {},
+            groups: userInfo.groups || [],
+            casbinRoles: userInfo.casbinRoles || [],
+            issuer: null,
+          },
+          set,
+          get
+        );
+      },
 
-        const expTimestamp = expiresAt ? Math.floor(new Date(expiresAt).getTime() / 1000) : null;
+      restoreSession: (info: AccountInfoResponse) => {
+        _setUserState(
+          {
+            id: info.userID,
+            email: info.email,
+            name: info.displayName,
+            projects: info.projects,
+            roles: info.roles,
+            groups: info.groups,
+            casbinRoles: info.casbinRoles,
+            issuer: info.issuer,
+          },
+          set,
+          get
+        );
+      },
 
-        set({
-          user,
-          projects: userInfo.projects || [],
-          roles: userInfo.roles || {},
-          currentProject: userInfo.defaultProject || userInfo.projects?.[0] || null,
-          isAuthenticated: true,
-          groups: userInfo.groups || [],
-          issuer: null,
-          casbinRoles: userInfo.casbinRoles || [],
-          permissions: userInfo.permissions || {},
-          tokenExp: expTimestamp,
-          tokenIat: Math.floor(Date.now() / 1000),
-        });
+      setSessionStatus: (status: SessionStatus, error?: string) => {
+        set({ sessionStatus: status, sessionError: error ?? null });
       },
 
       logout: () => {
@@ -116,9 +147,9 @@ export const useUserStore = create<UserState>()(
           groups: [],
           issuer: null,
           casbinRoles: [],
-          permissions: {},
-          tokenExp: null,
-          tokenIat: null,
+          sessionStatus: 'logged_out',
+          sessionError: null,
+          hasSession: false,
         });
       },
 
@@ -131,40 +162,13 @@ export const useUserStore = create<UserState>()(
 
         set({ currentProject: projectId });
       },
-
-      isTokenExpired: () => {
-        const { tokenExp } = get();
-        if (!tokenExp) return true;
-        return tokenExp * 1000 < Date.now();
-      },
     }),
     {
-      // NOTE: This persists non-sensitive user metadata (display name, project list,
-      // roles, permissions) to localStorage for session rehydration across page reloads.
-      // The JWT itself is stored exclusively in an HttpOnly cookie and is NOT persisted here.
-      // Accepted risk: user metadata in localStorage is not security-sensitive.
       name: 'user-storage',
       partialize: (state) => ({
+        hasSession: state.hasSession,
         currentProject: state.currentProject,
-        roles: state.roles,
-        projects: state.projects,
-        user: state.user,
-        casbinRoles: state.casbinRoles,
-        permissions: state.permissions,
-        tokenExp: state.tokenExp,
-        groups: state.groups,
       }),
-      onRehydrateStorage: () => (state) => {
-        if (!state) return;
-        // Restore isAuthenticated from persisted tokenExp on page reload.
-        // The JWT lives in an HttpOnly cookie (survives refresh), but
-        // isAuthenticated is intentionally excluded from partialize so it
-        // defaults to false. Re-derive it here from the stored expiry.
-        const { tokenExp, user } = state;
-        if (user && tokenExp && tokenExp * 1000 > Date.now()) {
-          useUserStore.setState({ isAuthenticated: true });
-        }
-      },
     }
   )
 );

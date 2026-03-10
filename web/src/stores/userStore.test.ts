@@ -3,7 +3,7 @@
 
 import { renderHook, act } from '@testing-library/react';
 import { useUserStore } from './userStore';
-import type { LoginUserInfo } from './userStore';
+import type { LoginUserInfo, AccountInfoResponse } from '@/api/auth';
 
 describe('useUserStore', () => {
   beforeEach(() => {
@@ -24,16 +24,32 @@ describe('useUserStore', () => {
     ...overrides,
   });
 
+  const makeAccountInfo = (overrides: Partial<AccountInfoResponse> = {}): AccountInfoResponse => ({
+    userID: 'user-123',
+    email: 'test@example.com',
+    displayName: 'Test User',
+    projects: ['org-1', 'org-2'],
+    roles: {},
+    groups: [],
+    casbinRoles: [],
+    issuer: 'https://auth.example.com',
+    tokenExpiresAt: Math.floor(Date.now() / 1000) + 3600,
+    tokenIssuedAt: Math.floor(Date.now() / 1000) - 600,
+    ...overrides,
+  });
+
   describe('login', () => {
     it('should set user state from user info', () => {
       const userInfo = makeUserInfo();
       const { result } = renderHook(() => useUserStore());
 
       act(() => {
-        result.current.login(userInfo, '2099-01-01T00:00:00Z');
+        result.current.login(userInfo);
       });
 
       expect(result.current.isAuthenticated).toBe(true);
+      expect(result.current.sessionStatus).toBe('valid');
+      expect(result.current.hasSession).toBe(true);
       expect(result.current.user).toEqual({
         id: 'user-123',
         email: 'test@example.com',
@@ -51,13 +67,12 @@ describe('useUserStore', () => {
         projects: [],
         defaultProject: '',
         casbinRoles: ['role:serveradmin'],
-        permissions: { '*:*': true },
       });
 
       const { result } = renderHook(() => useUserStore());
 
       act(() => {
-        result.current.login(userInfo, '2099-01-01T00:00:00Z');
+        result.current.login(userInfo);
       });
 
       expect(result.current.user).toEqual({
@@ -66,16 +81,12 @@ describe('useUserStore', () => {
         name: 'Admin User',
       });
       expect(result.current.isAuthenticated).toBe(true);
+      expect(result.current.sessionStatus).toBe('valid');
     });
 
-    it('should fallback to first project when defaultProject is missing', () => {
+    it('should use first project as currentProject (generic fallback)', () => {
       const userInfo = makeUserInfo({
-        id: 'platform-admin-alpha',
-        email: 'platformadmin@test.com',
-        displayName: 'Platform Admin User',
         projects: ['org-alpha', 'org-beta'],
-        defaultProject: undefined,
-        casbinRoles: [],
       });
 
       const { result } = renderHook(() => useUserStore());
@@ -89,13 +100,27 @@ describe('useUserStore', () => {
       expect(result.current.projects).toEqual(['org-alpha', 'org-beta']);
     });
 
-    it('should set currentProject to null when no projects and no defaultProject', () => {
+    it('should ignore defaultProject hint and use generic projects[0] fallback', () => {
+      // Server sets defaultProject, but the store treats all projects equally
+      // and falls back to projects[0] when no persisted project exists
       const userInfo = makeUserInfo({
-        id: 'global-admin',
-        email: 'admin@test.com',
-        displayName: 'Global Admin',
+        projects: ['org-1', 'org-2'],
+        defaultProject: 'org-2',
+      });
+
+      const { result } = renderHook(() => useUserStore());
+
+      act(() => {
+        result.current.login(userInfo);
+      });
+
+      // Uses projects[0], NOT defaultProject — no special-casing
+      expect(result.current.currentProject).toBe('org-1');
+    });
+
+    it('should set currentProject to null when no projects', () => {
+      const userInfo = makeUserInfo({
         projects: [],
-        defaultProject: undefined,
         casbinRoles: ['role:serveradmin'],
       });
 
@@ -108,15 +133,221 @@ describe('useUserStore', () => {
       expect(result.current.isAuthenticated).toBe(true);
       expect(result.current.currentProject).toBeNull();
     });
-  });
 
-  describe('logout', () => {
-    it('should clear all user state', () => {
+    it('should set sessionStatus to valid and hasSession to true on login', () => {
       const userInfo = makeUserInfo();
       const { result } = renderHook(() => useUserStore());
 
       act(() => {
-        result.current.login(userInfo, '2099-01-01T00:00:00Z');
+        result.current.login(userInfo);
+      });
+
+      expect(result.current.sessionStatus).toBe('valid');
+      expect(result.current.hasSession).toBe(true);
+    });
+  });
+
+  describe('restoreSession', () => {
+    it('should map AccountInfoResponse fields correctly', () => {
+      const info = makeAccountInfo({
+        userID: 'restored-user',
+        email: 'restored@example.com',
+        displayName: 'Restored User',
+        projects: ['proj-a'],
+        roles: { 'proj-a': 'admin' },
+        groups: ['eng-team'],
+        casbinRoles: ['role:serveradmin'],
+        issuer: 'https://issuer.example.com',
+      });
+
+      const { result } = renderHook(() => useUserStore());
+
+      act(() => {
+        result.current.restoreSession(info);
+      });
+
+      expect(result.current.user).toEqual({
+        id: 'restored-user',
+        email: 'restored@example.com',
+        name: 'Restored User',
+      });
+      expect(result.current.isAuthenticated).toBe(true);
+      expect(result.current.sessionStatus).toBe('valid');
+      expect(result.current.hasSession).toBe(true);
+      expect(result.current.projects).toEqual(['proj-a']);
+      expect(result.current.roles).toEqual({ 'proj-a': 'admin' });
+      expect(result.current.groups).toEqual(['eng-team']);
+      expect(result.current.casbinRoles).toEqual(['role:serveradmin']);
+      expect(result.current.issuer).toBe('https://issuer.example.com');
+    });
+
+    it('should preserve currentProject if it exists in info.projects', () => {
+      const { result } = renderHook(() => useUserStore());
+
+      // Login first to set currentProject, then switch to org-2
+      act(() => {
+        result.current.login(makeUserInfo({
+          projects: ['org-1', 'org-2'],
+        }));
+      });
+      act(() => {
+        result.current.setCurrentProject('org-2');
+      });
+      expect(result.current.currentProject).toBe('org-2');
+
+      // Restore session with same projects — should preserve org-2
+      act(() => {
+        result.current.restoreSession(makeAccountInfo({
+          projects: ['org-1', 'org-2'],
+        }));
+      });
+
+      expect(result.current.currentProject).toBe('org-2');
+    });
+
+    it('should fall back to projects[0] when current project not in list', () => {
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const { result } = renderHook(() => useUserStore());
+
+      // Set up persisted project
+      act(() => {
+        result.current.login(makeUserInfo({
+          projects: ['org-old'],
+        }));
+      });
+
+      // Restore with different projects (user removed from org-old)
+      act(() => {
+        result.current.restoreSession(makeAccountInfo({
+          projects: ['org-new', 'org-other'],
+        }));
+      });
+
+      expect(result.current.currentProject).toBe('org-new');
+      consoleSpy.mockRestore();
+    });
+
+    it('should set currentProject to null when projects is empty', () => {
+      const { result } = renderHook(() => useUserStore());
+
+      act(() => {
+        result.current.restoreSession(makeAccountInfo({
+          projects: [],
+        }));
+      });
+
+      expect(result.current.currentProject).toBeNull();
+    });
+  });
+
+  describe('login and restoreSession parity', () => {
+    it('should produce identical store state from equivalent data', () => {
+      const { result: loginResult } = renderHook(() => useUserStore());
+
+      act(() => {
+        loginResult.current.login(makeUserInfo({
+          id: 'parity-user',
+          email: 'parity@test.com',
+          displayName: 'Parity User',
+          projects: ['proj-1'],
+          groups: ['team-a'],
+          roles: { 'proj-1': 'dev' },
+          casbinRoles: ['role:serveradmin'],
+        }));
+      });
+
+      const loginState = {
+        user: loginResult.current.user,
+        isAuthenticated: loginResult.current.isAuthenticated,
+        sessionStatus: loginResult.current.sessionStatus,
+        hasSession: loginResult.current.hasSession,
+        projects: loginResult.current.projects,
+        groups: loginResult.current.groups,
+        roles: loginResult.current.roles,
+        casbinRoles: loginResult.current.casbinRoles,
+        currentProject: loginResult.current.currentProject,
+      };
+
+      // Reset store
+      act(() => {
+        loginResult.current.logout();
+      });
+      localStorage.clear();
+
+      const { result: restoreResult } = renderHook(() => useUserStore());
+
+      act(() => {
+        restoreResult.current.restoreSession(makeAccountInfo({
+          userID: 'parity-user',
+          email: 'parity@test.com',
+          displayName: 'Parity User',
+          projects: ['proj-1'],
+          groups: ['team-a'],
+          roles: { 'proj-1': 'dev' },
+          casbinRoles: ['role:serveradmin'],
+          issuer: 'https://auth.example.com',
+        }));
+      });
+
+      const restoreState = {
+        user: restoreResult.current.user,
+        isAuthenticated: restoreResult.current.isAuthenticated,
+        sessionStatus: restoreResult.current.sessionStatus,
+        hasSession: restoreResult.current.hasSession,
+        projects: restoreResult.current.projects,
+        groups: restoreResult.current.groups,
+        roles: restoreResult.current.roles,
+        casbinRoles: restoreResult.current.casbinRoles,
+        currentProject: restoreResult.current.currentProject,
+      };
+
+      expect(loginState.user).toEqual(restoreState.user);
+      expect(loginState.isAuthenticated).toBe(restoreState.isAuthenticated);
+      expect(loginState.sessionStatus).toBe(restoreState.sessionStatus);
+      expect(loginState.hasSession).toBe(restoreState.hasSession);
+      expect(loginState.projects).toEqual(restoreState.projects);
+      expect(loginState.groups).toEqual(restoreState.groups);
+      expect(loginState.roles).toEqual(restoreState.roles);
+      expect(loginState.casbinRoles).toEqual(restoreState.casbinRoles);
+      expect(loginState.currentProject).toBe(restoreState.currentProject);
+    });
+  });
+
+  describe('setSessionStatus', () => {
+    it('should set status and error correctly', () => {
+      const { result } = renderHook(() => useUserStore());
+
+      act(() => {
+        result.current.setSessionStatus('error', 'Network error');
+      });
+
+      expect(result.current.sessionStatus).toBe('error');
+      expect(result.current.sessionError).toBe('Network error');
+    });
+
+    it('should clear error when not provided', () => {
+      const { result } = renderHook(() => useUserStore());
+
+      act(() => {
+        result.current.setSessionStatus('error', 'Some error');
+      });
+
+      act(() => {
+        result.current.setSessionStatus('validating');
+      });
+
+      expect(result.current.sessionStatus).toBe('validating');
+      expect(result.current.sessionError).toBeNull();
+    });
+  });
+
+  describe('logout', () => {
+    it('should clear all user state and set logged_out status', () => {
+      const userInfo = makeUserInfo();
+      const { result } = renderHook(() => useUserStore());
+
+      act(() => {
+        result.current.login(userInfo);
       });
       expect(result.current.isAuthenticated).toBe(true);
 
@@ -128,6 +359,8 @@ describe('useUserStore', () => {
       expect(result.current.user).toBeNull();
       expect(result.current.projects).toEqual([]);
       expect(result.current.currentProject).toBeNull();
+      expect(result.current.sessionStatus).toBe('logged_out');
+      expect(result.current.hasSession).toBe(false);
     });
   });
 
@@ -135,7 +368,7 @@ describe('useUserStore', () => {
     beforeEach(() => {
       const userInfo = makeUserInfo({
         projects: ['org-1', 'org-2', 'org-3'],
-        defaultProject: 'org-1',
+        // defaultProject not used by store — generic projects[0] fallback applies
       });
 
       const { result } = renderHook(() => useUserStore());
@@ -167,42 +400,40 @@ describe('useUserStore', () => {
     });
   });
 
-  describe('isTokenExpired', () => {
-    it('should return true if no expiry exists', () => {
-      const { result } = renderHook(() => useUserStore());
-      expect(result.current.isTokenExpired()).toBe(true);
-    });
-
-    it('should return true if token is expired', () => {
-      const pastDate = new Date(Date.now() - 100_000).toISOString();
-      const userInfo = makeUserInfo();
-      const { result } = renderHook(() => useUserStore());
-
-      act(() => {
-        result.current.login(userInfo, pastDate);
-      });
-
-      expect(result.current.isTokenExpired()).toBe(true);
-    });
-
-    it('should return false if token is valid', () => {
-      const futureDate = new Date(Date.now() + 3_600_000).toISOString();
-      const userInfo = makeUserInfo();
-      const { result } = renderHook(() => useUserStore());
-
-      act(() => {
-        result.current.login(userInfo, futureDate);
-      });
-
-      expect(result.current.isTokenExpired()).toBe(false);
-    });
-  });
-
   describe('persistence', () => {
-    it('should persist currentProject to localStorage', () => {
+    it('should persist only hasSession and currentProject to localStorage', () => {
       const userInfo = makeUserInfo({
         projects: ['org-1', 'org-2'],
-        defaultProject: 'org-1',
+        // defaultProject not used by store — generic projects[0] fallback applies
+      });
+
+      const { result } = renderHook(() => useUserStore());
+
+      act(() => {
+        result.current.login(userInfo);
+      });
+
+      const storage = localStorage.getItem('user-storage');
+      expect(storage).toBeTruthy();
+
+      if (storage) {
+        const parsed = JSON.parse(storage);
+        // Only hasSession and currentProject should be persisted
+        expect(parsed.state.hasSession).toBe(true);
+        expect(parsed.state.currentProject).toBe('org-1');
+        // These should NOT be persisted
+        expect(parsed.state.user).toBeUndefined();
+        expect(parsed.state.roles).toBeUndefined();
+        expect(parsed.state.projects).toBeUndefined();
+        expect(parsed.state.groups).toBeUndefined();
+        expect(parsed.state.casbinRoles).toBeUndefined();
+      }
+    });
+
+    it('should persist currentProject changes', () => {
+      const userInfo = makeUserInfo({
+        projects: ['org-1', 'org-2'],
+        // defaultProject not used by store — generic projects[0] fallback applies
       });
 
       const { result } = renderHook(() => useUserStore());
@@ -224,88 +455,23 @@ describe('useUserStore', () => {
       }
     });
 
-    it('should persist user data to localStorage (isAuthenticated excluded from partialize)', () => {
+    it('should clear hasSession on logout', () => {
       const userInfo = makeUserInfo();
       const { result } = renderHook(() => useUserStore());
 
       act(() => {
-        result.current.login(userInfo, '2099-01-01T00:00:00Z');
+        result.current.login(userInfo);
+      });
+
+      act(() => {
+        result.current.logout();
       });
 
       const storage = localStorage.getItem('user-storage');
-      expect(storage).toBeTruthy();
-
       if (storage) {
         const parsed = JSON.parse(storage);
-        // isAuthenticated is intentionally excluded from partialize;
-        // it is rehydrated from tokenExp on page load instead.
-        expect(parsed.state.user).toBeTruthy();
-        expect(parsed.state.roles).toBeTruthy();
+        expect(parsed.state.hasSession).toBe(false);
       }
-    });
-
-    it('should rehydrate authentication state on page load', () => {
-      const userInfo = makeUserInfo();
-
-      const { result: firstRender } = renderHook(() => useUserStore());
-      act(() => {
-        firstRender.current.login(userInfo, '2099-01-01T00:00:00Z');
-      });
-
-      expect(firstRender.current.isAuthenticated).toBe(true);
-
-      // Capture localStorage before simulating refresh
-      const savedStorage = localStorage.getItem('user-storage');
-      expect(savedStorage).toBeTruthy();
-
-      // Simulate page refresh: reset in-memory store to defaults, keep localStorage intact
-      act(() => {
-        useUserStore.setState({
-          isAuthenticated: false,
-          user: null,
-          projects: [],
-          tokenExp: null,
-        });
-      });
-      // Restore localStorage (setState may have triggered persist)
-      localStorage.setItem('user-storage', savedStorage!);
-
-      // Trigger rehydration from localStorage
-      act(() => {
-        useUserStore.persist.rehydrate();
-      });
-
-      const { result: secondRender } = renderHook(() => useUserStore());
-
-      expect(secondRender.current.isAuthenticated).toBe(true);
-      expect(secondRender.current.user).toEqual({
-        id: 'user-123',
-        email: 'test@example.com',
-        name: 'Test User',
-      });
-      expect(secondRender.current.projects).toEqual(['org-1', 'org-2']);
-    });
-
-    it('should not rehydrate isAuthenticated when token is expired', () => {
-      const userInfo = makeUserInfo();
-      const pastDate = new Date(Date.now() - 100_000).toISOString();
-
-      const { result } = renderHook(() => useUserStore());
-      act(() => {
-        result.current.login(userInfo, pastDate);
-      });
-
-      // Capture localStorage, reset store, restore localStorage, then rehydrate
-      const savedStorage = localStorage.getItem('user-storage');
-      act(() => {
-        useUserStore.setState({ isAuthenticated: false });
-      });
-      localStorage.setItem('user-storage', savedStorage!);
-      act(() => {
-        useUserStore.persist.rehydrate();
-      });
-
-      expect(result.current.isAuthenticated).toBe(false);
     });
   });
 });

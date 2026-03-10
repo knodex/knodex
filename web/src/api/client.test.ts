@@ -15,10 +15,13 @@ vi.mock('@/lib/logger', () => ({
 
 // Mock userStore
 const mockLogout = vi.fn();
+let mockSessionStatus = 'valid';
+
 vi.mock('@/stores/userStore', () => ({
   useUserStore: {
     getState: () => ({
       logout: mockLogout,
+      sessionStatus: mockSessionStatus,
     }),
   },
 }));
@@ -33,6 +36,7 @@ describe('API Client 401 Interceptor', () => {
     vi.clearAllMocks();
     vi.useFakeTimers();
     _resetRedirectState();
+    mockSessionStatus = 'valid';
 
     // Save original pathname descriptor
     originalPathname = Object.getOwnPropertyDescriptor(window, 'location');
@@ -93,8 +97,9 @@ describe('API Client 401 Interceptor', () => {
     expect(mockLogout).not.toHaveBeenCalled();
   });
 
-  it('triggers logout on 401 for non-auth paths', async () => {
+  it('triggers logout on 401 for non-auth paths when session is valid', async () => {
     mockPathname('/dashboard');
+    mockSessionStatus = 'valid';
 
     const error = {
       response: {
@@ -110,6 +115,24 @@ describe('API Client 401 Interceptor', () => {
     expect(mockLogout).toHaveBeenCalledOnce();
     // Should record redirect timestamp
     expect(_getLastRedirectTimestamp()).toBeGreaterThan(0);
+  });
+
+  it('does NOT trigger logout on 401 during session validation', async () => {
+    mockPathname('/dashboard');
+    mockSessionStatus = 'validating';
+
+    const error = {
+      response: {
+        status: 401,
+        data: { code: 'UNAUTHORIZED', message: 'token expired' },
+      },
+      message: 'Unauthorized',
+    };
+
+    await expect(getErrorHandler()(error)).rejects.toBeDefined();
+
+    // Should NOT call logout during session restore
+    expect(mockLogout).not.toHaveBeenCalled();
   });
 
   it('debounces multiple 401 responses - only first triggers redirect', async () => {

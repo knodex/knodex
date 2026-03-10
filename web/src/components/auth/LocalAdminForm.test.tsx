@@ -27,11 +27,12 @@ vi.mock('@/stores/userStore', () => ({
       groups: [],
       issuer: null,
       casbinRoles: [],
-      permissions: {},
-      tokenExp: null,
-      tokenIat: null,
+      sessionStatus: 'idle',
+      sessionError: null,
+      hasSession: false,
       setCurrentProject: vi.fn(),
-      isTokenExpired: vi.fn(() => false),
+      restoreSession: vi.fn(),
+      setSessionStatus: vi.fn(),
     })
   ),
 }));
