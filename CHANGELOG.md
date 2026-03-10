@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.1](https://github.com/knodex/knodex/compare/v0.1.0...v0.1.1) (2026-03-10)
+
+
+### Bug Fixes
+
+* **ci:** harden GitHub Actions workflows against shell injection ([4d87dc1](https://github.com/knodex/knodex/commit/4d87dc1a80b2e41baa39b7ac6db9ba16f917374a))
+* correct OpenAPI license to AGPL-3.0 ([5aad5f7](https://github.com/knodex/knodex/commit/5aad5f7faca881ca4d37555c1c20cdeac988d09e))
+
 ## [0.1.0](https://github.com/knodex/knodex/compare/v0.0.22...v0.1.0) (2026-03-10)
 
 
