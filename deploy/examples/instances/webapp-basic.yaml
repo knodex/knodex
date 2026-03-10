@@ -1,0 +1,10 @@
+apiVersion: kro.run/v1alpha1
+kind: WebApp
+metadata:
+  name: my-webapp-basic
+  namespace: default
+spec:
+  name: demo-webapp
+  replicas: 2
+  enableDatabase: false
+  enableCache: false

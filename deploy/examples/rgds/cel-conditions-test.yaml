@@ -1,0 +1,150 @@
+# Example RGD: CEL Conditions Test (webapp-full-featured)
+# Demonstrates: Template conditional resources with affectedProperties propagation
+#
+# Test matrix:
+#   Field              | Used By                    | Expected Behavior
+#   -------------------|----------------------------|------------------------------------------
+#   name               | app (non-cond) + cache     | Always visible (in non-conditional)
+#   visibleAnnotation  | app + database + cache     | Always visible (in non-conditional)
+#   hiddenAnnotation   | database + cache ONLY      | Hidden when BOTH enables are false
+#   database (object)  | database ONLY              | Hidden when enableDatabase=false
+#   enableDatabase     | Controlling field           | Always visible (controller)
+#   enableCache        | Controlling field           | Always visible (controller)
+#   image              | app (non-cond)             | Always visible
+#   port               | app (non-cond)             | Always visible
+#   advanced.*         | app (non-cond)             | Advanced section (hidden behind toggle)
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: cel-conditions-test
+  annotations:
+    knodex.io/catalog: "true"
+    knodex.io/title: "CEL Conditions Test App"
+    knodex.io/description: "Test application with conditional template resources for affectedProperties verification"
+    knodex.io/tags: "test,cel,conditions,conditional"
+    knodex.io/category: "examples"
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: CELTestApp
+    spec:
+      name: string
+      image: string | default="nginx:latest"
+      port: integer | default=80
+      visibleAnnotation: string | default=""
+      hiddenAnnotation: string | default=""
+      enableDatabase: boolean | default=false
+      enableCache: boolean | default=false
+      database:
+        name: string | default="mydb"
+      advanced:
+        replicas: integer | default=1
+        enableMonitoring: boolean | default=false
+
+  resources:
+    # Always-present Deployment — uses name, visibleAnnotation, image, port, advanced.*
+    - id: app
+      template:
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: ${schema.spec.name}
+          annotations:
+            visible: ${schema.spec.visibleAnnotation}
+        spec:
+          replicas: ${schema.spec.advanced.replicas}
+          selector:
+            matchLabels:
+              app: ${schema.spec.name}
+          template:
+            metadata:
+              labels:
+                app: ${schema.spec.name}
+            spec:
+              containers:
+                - name: app
+                  image: ${schema.spec.image}
+                  ports:
+                    - containerPort: ${schema.spec.port}
+
+    # Conditional database — uses database.name, visibleAnnotation, hiddenAnnotation
+    - id: database
+      includeWhen:
+        - ${schema.spec.enableDatabase == true}
+      template:
+        apiVersion: apps/v1
+        kind: StatefulSet
+        metadata:
+          name: ${schema.spec.name}-db
+          annotations:
+            visible: ${schema.spec.visibleAnnotation}
+            hidden: ${schema.spec.hiddenAnnotation}
+        spec:
+          serviceName: ${schema.spec.name}-db
+          replicas: 1
+          selector:
+            matchLabels:
+              app: ${schema.spec.name}
+              component: database
+          template:
+            metadata:
+              labels:
+                app: ${schema.spec.name}
+                component: database
+            spec:
+              containers:
+                - name: postgres
+                  image: postgres:15-alpine
+                  env:
+                    - name: POSTGRES_DB
+                      value: ${schema.spec.database.name}
+                  ports:
+                    - containerPort: 5432
+
+    # Conditional cache — uses name, visibleAnnotation, hiddenAnnotation
+    - id: cache
+      includeWhen:
+        - ${schema.spec.enableCache == true}
+      template:
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: ${schema.spec.name}-cache
+          annotations:
+            visible: ${schema.spec.visibleAnnotation}
+            hidden: ${schema.spec.hiddenAnnotation}
+        spec:
+          replicas: 1
+          selector:
+            matchLabels:
+              app: ${schema.spec.name}
+              component: cache
+          template:
+            metadata:
+              labels:
+                app: ${schema.spec.name}
+                component: cache
+            spec:
+              containers:
+                - name: redis
+                  image: redis:7-alpine
+                  ports:
+                    - containerPort: 6379
+
+    # Conditional monitoring (nested advanced field)
+    - id: monitoring
+      includeWhen:
+        - ${schema.spec.advanced.enableMonitoring}
+      template:
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: ${schema.spec.name}-monitoring
+          labels:
+            app: ${schema.spec.name}
+        data:
+          prometheus.yml: |
+            scrape_configs:
+              - job_name: app
+                static_configs:
+                  - targets: ['localhost:9090']

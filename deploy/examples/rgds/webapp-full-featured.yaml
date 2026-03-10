@@ -1,0 +1,190 @@
+# Example RGD: Full-Featured Web Application
+# Demonstrates: Template conditional resources with affectedProperties propagation
+#
+# Test matrix:
+#   Field              | Used By                         | Expected Behavior
+#   -------------------|---------------------------------|------------------------------------------
+#   name               | app (non-cond) + cache (cond)   | Always visible (in non-conditional)
+#   image              | app (non-cond)                  | Always visible
+#   port               | app (non-cond)                  | Always visible
+#   visibleAnnotation  | app + database + cache          | Always visible (in non-conditional)
+#   hiddenAnnotation   | database + cache ONLY           | Hidden when BOTH enables are false
+#   enableDatabase     | Controlling field                | Always visible (controller)
+#   enableCache        | Controlling field                | Always visible (controller)
+#   database (object)  | database ONLY                   | Hidden when enableDatabase=false
+#   advanced.*         | app (non-cond)                  | Advanced section (hidden behind toggle)
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: webapp-full-featured
+  annotations:
+    knodex.io/catalog: "true"
+    knodex.io/deployment-modes: "direct,gitops"
+    knodex.io/title: "Full-Featured Web App"
+    knodex.io/description: "Full-featured web application with conditional database, cache, and advanced configuration"
+    knodex.io/tags: "webapp,fullstack,conditions,test"
+    knodex.io/category: "applications"
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: WebApp
+    spec:
+      # Basic fields - always visible
+      name: string
+      image: string | default="nginx:latest"
+      port: integer | default=8080
+      visibleAnnotation: string | default=""
+      hiddenAnnotation: string | default=""
+      # Conditional toggles
+      enableDatabase: boolean | default=false
+      enableCache: boolean | default=false
+      # Object field used only by conditional resource
+      database:
+        name: string | default="mydb"
+      # Advanced fields - hidden by default behind toggle
+      advanced:
+        replicas: integer | default=2
+        resources:
+          limits:
+            cpu: string | default="500m"
+            memory: string | default="512Mi"
+        healthCheck:
+          enabled: boolean | default=true
+          path: string | default="/health"
+          interval: integer | default=30
+
+  resources:
+    # Main application - always included
+    # Uses: name, image, port, visibleAnnotation, advanced.*
+    - id: app
+      template:
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: ${schema.spec.name}
+          annotations:
+            app.knodex.io/visible: "${schema.spec.visibleAnnotation}"
+        spec:
+          replicas: ${schema.spec.advanced.replicas}
+          selector:
+            matchLabels:
+              app: ${schema.spec.name}
+          template:
+            metadata:
+              labels:
+                app: ${schema.spec.name}
+            spec:
+              containers:
+                - name: app
+                  image: ${schema.spec.image}
+                  ports:
+                    - containerPort: ${schema.spec.port}
+                  resources:
+                    limits:
+                      cpu: ${schema.spec.advanced.resources.limits.cpu}
+                      memory: ${schema.spec.advanced.resources.limits.memory}
+                  livenessProbe:
+                    httpGet:
+                      path: ${schema.spec.advanced.healthCheck.path}
+                      port: ${schema.spec.port}
+                    periodSeconds: ${schema.spec.advanced.healthCheck.interval}
+
+    # Database - conditionally included when enableDatabase == true
+    # Uses: database.name, visibleAnnotation (shared), hiddenAnnotation (exclusive)
+    - id: database
+      includeWhen:
+        - ${schema.spec.enableDatabase == true}
+      template:
+        apiVersion: apps/v1
+        kind: StatefulSet
+        metadata:
+          name: ${schema.spec.name}-db
+          annotations:
+            app.knodex.io/visible: "${schema.spec.visibleAnnotation}"
+            app.knodex.io/hidden: "${schema.spec.hiddenAnnotation}"
+        spec:
+          serviceName: ${schema.spec.name}-db
+          replicas: 1
+          selector:
+            matchLabels:
+              app: ${schema.spec.name}
+              component: database
+          template:
+            metadata:
+              labels:
+                app: ${schema.spec.name}
+                component: database
+            spec:
+              containers:
+                - name: postgres
+                  image: postgres:15-alpine
+                  env:
+                    - name: POSTGRES_DB
+                      value: ${schema.spec.database.name}
+                  ports:
+                    - containerPort: 5432
+
+    # Database Service - also conditional on enableDatabase
+    - id: databaseSvc
+      includeWhen:
+        - ${schema.spec.enableDatabase == true}
+      template:
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: ${schema.spec.name}-db
+        spec:
+          selector:
+            app: ${schema.spec.name}
+            component: database
+          ports:
+            - port: 5432
+              targetPort: 5432
+
+    # Cache - conditionally included when enableCache == true
+    # Uses: name (shared with app), visibleAnnotation (shared), hiddenAnnotation (exclusive)
+    - id: cache
+      includeWhen:
+        - ${schema.spec.enableCache == true}
+      template:
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: ${schema.spec.name}-cache
+          annotations:
+            app.knodex.io/visible: "${schema.spec.visibleAnnotation}"
+            app.knodex.io/hidden: "${schema.spec.hiddenAnnotation}"
+        spec:
+          replicas: 1
+          selector:
+            matchLabels:
+              app: ${schema.spec.name}
+              component: cache
+          template:
+            metadata:
+              labels:
+                app: ${schema.spec.name}
+                component: cache
+            spec:
+              containers:
+                - name: redis
+                  image: redis:7-alpine
+                  ports:
+                    - containerPort: 6379
+
+    # Cache Service - also conditional on enableCache
+    - id: cacheSvc
+      includeWhen:
+        - ${schema.spec.enableCache == true}
+      template:
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: ${schema.spec.name}-cache
+        spec:
+          selector:
+            app: ${schema.spec.name}
+            component: cache
+          ports:
+            - port: 6379
+              targetPort: 6379

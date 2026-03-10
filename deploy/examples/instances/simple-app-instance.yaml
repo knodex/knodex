@@ -1,0 +1,9 @@
+apiVersion: kro.run/v1alpha1
+kind: SimpleApp
+metadata:
+  name: my-nginx-app
+  namespace: default
+spec:
+  appName: my-nginx
+  image: nginx:latest
+  port: 80

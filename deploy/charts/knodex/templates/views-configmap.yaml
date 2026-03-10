@@ -1,0 +1,20 @@
+{{- if .Values.enterprise.views.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "knodex.fullname" . }}-views
+  labels:
+    {{- include "knodex.labels" . | nindent 4 }}
+    app.kubernetes.io/component: server
+data:
+  # Custom views configuration (Enterprise only)
+  # These views filter RGDs by the knodex.io/category annotation
+  # and appear in the sidebar below the standard navigation
+  views.yaml: |
+    views:
+      {{- if .Values.enterprise.views.items }}
+      {{- toYaml .Values.enterprise.views.items | nindent 6 }}
+      {{- else }}
+      []
+      {{- end }}
+{{- end }}

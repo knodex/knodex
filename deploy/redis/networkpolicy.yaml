@@ -1,0 +1,40 @@
+# Redis NetworkPolicy
+# - Ingress: Allow from server pods only
+# - Egress: Allow DNS only (Redis doesn't need external connectivity)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: knodex-redis
+  labels:
+    app.kubernetes.io/name: knodex
+    app.kubernetes.io/component: redis
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: knodex
+      app.kubernetes.io/component: redis
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow traffic from server pods only
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: knodex
+              app.kubernetes.io/component: server
+      ports:
+        - protocol: TCP
+          port: 6379
+  egress:
+    # Allow DNS resolution (needed for startup)
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53

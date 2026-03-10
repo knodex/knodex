@@ -1,0 +1,130 @@
+{{- if .Values.enterprise.networkPolicy.enabled }}
+---
+# Server NetworkPolicy
+# - Ingress: Configurable via enterprise.networkPolicy.server.ingressFrom (default: allow all)
+# - Egress: Allow DNS, Kubernetes API, and Redis
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "knodex.fullname" . }}-server
+  labels:
+    {{- include "knodex.server.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "knodex.server.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    {{- if .Values.enterprise.networkPolicy.server.ingressFrom }}
+    - from:
+        {{- toYaml .Values.enterprise.networkPolicy.server.ingressFrom | nindent 8 }}
+      ports:
+        - protocol: TCP
+          port: 8080
+    {{- else }}
+    # Allow traffic from any pod (for NodePort/LoadBalancer access)
+    # Production should restrict this to ingress controller namespace
+    - from: []
+      ports:
+        - protocol: TCP
+          port: 8080
+    {{- end }}
+    {{- if .Values.enterprise.networkPolicy.server.additionalIngress }}
+    {{- toYaml .Values.enterprise.networkPolicy.server.additionalIngress | nindent 4 }}
+    {{- end }}
+  egress:
+    # Allow DNS resolution (cluster DNS)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Allow Kubernetes API server (for in-cluster communication)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 6443
+    # Allow Redis communication
+    {{- if .Values.redis.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis
+              app.kubernetes.io/instance: {{ .Release.Name }}
+      ports:
+        - protocol: TCP
+          port: 6379
+    {{- else }}
+    # External Redis - allow outbound to configured host
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: {{ .Values.externalRedis.port | default 6379 }}
+    {{- end }}
+    {{- if .Values.server.auth.oidc.enabled }}
+    # Allow OIDC provider communication (HTTPS)
+    # Includes private ranges for internal IdPs (e.g., self-hosted Keycloak)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443
+    {{- end }}
+    {{- if .Values.enterprise.networkPolicy.server.additionalEgress }}
+    {{- toYaml .Values.enterprise.networkPolicy.server.additionalEgress | nindent 4 }}
+    {{- end }}
+{{- if .Values.redis.enabled }}
+---
+# Redis NetworkPolicy
+# - Ingress: Allow from server pods only
+# - Egress: Allow DNS only (Redis doesn't need external connectivity)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "knodex.fullname" . }}-redis
+  labels:
+    {{- include "knodex.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: redis
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow traffic from server pods only
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "knodex.server.selectorLabels" . | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 6379
+  egress:
+    # Allow DNS resolution (needed for startup)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+{{- end }}
+{{- end }}

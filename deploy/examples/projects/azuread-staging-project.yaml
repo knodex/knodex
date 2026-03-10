@@ -1,0 +1,84 @@
+# Azure EntraID Staging Project - OIDC group-based RBAC
+# Maps Azure AD (Microsoft Entra ID) security groups to project roles
+apiVersion: knodex.io/v1alpha1
+kind: Project
+metadata:
+  name: proj-azuread-staging
+  labels:
+    environment: staging
+    oidc-provider: azuread
+spec:
+  description: "Azure EntraID staging project - OIDC group-based access control"
+
+  # Allow staging namespace patterns
+  destinations:
+    - namespace: "staging*"
+    - namespace: "knodex*"
+
+  # Allow common Kubernetes resources
+  namespaceResourceWhitelist:
+    - group: ""
+      kind: ConfigMap
+    - group: ""
+      kind: Secret
+    - group: ""
+      kind: Service
+    - group: ""
+      kind: Pod
+    - group: apps
+      kind: Deployment
+    - group: apps
+      kind: ReplicaSet
+    - group: apps
+      kind: StatefulSet
+    - group: batch
+      kind: Job
+    - group: batch
+      kind: CronJob
+    - group: networking.k8s.io
+      kind: Ingress
+
+  clusterResourceWhitelist: []
+
+  roles:
+    # Admin role - full project management
+    # Azure EntraID Group Object ID: 7e24cb11-e404-4b4d-9e2c-96d6e7b4733c
+    # ArgoCD 6-part format: "p, subject, resource_type, action, scope, effect"
+    - name: admin
+      description: "Full administrative access to staging project (Azure AD group)"
+      policies:
+        # Project self-management (AC-CFG-01, AC-CFG-02, AC-CFG-03)
+        - "p, proj:proj-azuread-staging:admin, projects, get, proj-azuread-staging, allow"
+        - "p, proj:proj-azuread-staging:admin, projects, update, proj-azuread-staging, allow"
+        # Repository management - scoped to this project
+        - "p, proj:proj-azuread-staging:admin, repositories, *, proj-azuread-staging/*, allow"
+        # Instance management - scoped to this project
+        - "p, proj:proj-azuread-staging:admin, instances, *, proj-azuread-staging/*, allow"
+        # RGD catalog access - scoped to this project
+        - "p, proj:proj-azuread-staging:admin, rgds, *, proj-azuread-staging/*, allow"
+        # Settings access - read only
+        - "p, proj:proj-azuread-staging:admin, settings, get, *, allow"
+        # Compliance management - view and update constraint enforcement (STORY-181)
+        - "p, proj:proj-azuread-staging:admin, compliance, *, *, allow"
+      groups:
+        - "7e24cb11-e404-4b4d-9e2c-96d6e7b4733c"
+
+    # Reader role - view-only access
+    # Azure EntraID Group Object ID: a9563419-38a1-4f85-92f2-5133f99d0ebd
+    # ArgoCD 6-part format: "p, subject, resource_type, action, scope, effect"
+    - name: reader
+      description: "Read-only access to staging project (Azure AD group)"
+      policies:
+        # Project read access
+        - "p, proj:proj-azuread-staging:reader, projects, get, proj-azuread-staging, allow"
+        # Repository read access - scoped to this project
+        - "p, proj:proj-azuread-staging:reader, repositories, get, proj-azuread-staging/*, allow"
+        - "p, proj:proj-azuread-staging:reader, repositories, list, proj-azuread-staging/*, allow"
+        # Instance read access - scoped to this project
+        - "p, proj:proj-azuread-staging:reader, instances, get, proj-azuread-staging/*, allow"
+        - "p, proj:proj-azuread-staging:reader, instances, list, proj-azuread-staging/*, allow"
+        # RGD catalog read access - scoped to this project
+        - "p, proj:proj-azuread-staging:reader, rgds, get, proj-azuread-staging/*, allow"
+        - "p, proj:proj-azuread-staging:reader, rgds, list, proj-azuread-staging/*, allow"
+      groups:
+        - "a9563419-38a1-4f85-92f2-5133f99d0ebd"

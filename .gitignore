@@ -1,0 +1,36 @@
+node_modules
+bin
+
+# Test results (all automated test output)
+test-results/
+
+# QA overlay temporary files
+.qa-overlays/
+knodex-deadcode-analysis
+
+# Legacy QA directories (now unified in test-results/)
+web/qa/
+web/test/qa/
+
+# Environment variables (secrets)
+.env
+.env.local
+
+# Ephemeral development artifacts
+*_VALIDATION.md
+*SECURITY_AUDIT*.md
+*-SECURITY-FIXES.md
+DEADCODE_ANALYSIS.md
+E2E-*-INTEGRATION.md
+pr-description.md
+
+# Helm chart dependencies (downloaded by helm dependency build)
+deploy/charts/knodex/charts/
+deploy/charts/knodex/Chart.lock
+.helm-packages/
+
+# MkDocs build output
+site/
+
+.env.qa
+

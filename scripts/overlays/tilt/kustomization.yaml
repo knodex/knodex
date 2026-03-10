@@ -1,0 +1,103 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: knodex-tilt
+
+resources:
+  - ../../../deploy/server
+  - ../../../deploy/redis
+
+# Use local dev images
+images:
+  - name: knodex-server
+    newName: knodex-server-dev
+    newTag: latest
+
+# Rename namespace from knodex to knodex-tilt
+patches:
+  # Patch the namespace resource itself
+  - target:
+      kind: Namespace
+      name: knodex
+    patch: |
+      - op: replace
+        path: /metadata/name
+        value: knodex-tilt
+      - op: add
+        path: /metadata/labels/environment
+        value: tilt
+
+  # Fix ClusterRoleBinding to reference knodex-tilt namespace
+  - target:
+      kind: ClusterRoleBinding
+      name: knodex
+    patch: |
+      - op: replace
+        path: /subjects/0/namespace
+        value: knodex-tilt
+
+  # Fix Gatekeeper ClusterRoleBinding namespace
+  - target:
+      kind: ClusterRoleBinding
+      name: knodex-gatekeeper-reader
+    patch: |
+      - op: replace
+        path: /subjects/0/namespace
+        value: knodex-tilt
+
+  # Remove security context for dev containers (running as root for hot-reload)
+  - target:
+      kind: Deployment
+      name: knodex-server
+    patch: |
+      - op: remove
+        path: /spec/template/spec/securityContext
+      - op: remove
+        path: /spec/template/spec/containers/0/securityContext
+      - op: replace
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: Never
+      - op: remove
+        path: /spec/template/spec/containers/0/readinessProbe
+      - op: remove
+        path: /spec/template/spec/containers/0/livenessProbe
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: 500m
+            memory: 512Mi
+          limits:
+            cpu: 2000m
+            memory: 2Gi
+
+  # Configure Redis address
+  - target:
+      kind: ConfigMap
+      name: knodex-config
+    patch: |
+      - op: add
+        path: /data/REDIS_ADDRESS
+        value: "knodex-redis:6379"
+      - op: add
+        path: /data/ADMIN_USERNAME
+        value: "admin"
+      - op: add
+        path: /data/JWT_SECRET
+        value: "tilt-dev-jwt-secret-key-minimum-32chars"
+      - op: add
+        path: /data/CASBIN_ADMIN_USERS
+        value: "user-global-admin"
+      - op: add
+        path: /data/SWAGGER_UI_ENABLED
+        value: "true"
+      - op: add
+        path: /data/KNODEX_LICENSE_TEXT
+        value: "${KNODEX_LICENSE_TEXT:-replace-with-dev-license-jwt}"
+
+# Use labels instead of deprecated commonLabels
+labels:
+  - pairs:
+      environment: tilt
+      managed-by: tilt
+    includeSelectors: false

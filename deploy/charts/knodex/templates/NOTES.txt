@@ -1,0 +1,114 @@
+Knodex has been deployed successfully!
+
+{{- if .Values.ingress.enabled }}
+
+Access the application at:
+{{- range .Values.ingress.hosts }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}
+{{- end }}
+
+{{- else if .Values.gateway.enabled }}
+
+Access the application at:
+{{- range .Values.gateway.hostnames }}
+  https://{{ . }}
+{{- end }}
+
+{{- else }}
+
+Access the application via port-forward:
+
+  kubectl port-forward svc/{{ include "knodex.fullname" . }}-server \
+    -n {{ .Release.Namespace }} 8080:{{ .Values.server.service.port }}
+
+  Then open http://localhost:8080
+
+{{- end }}
+
+--------------------------------------------------------------------------------
+AUTHENTICATION
+--------------------------------------------------------------------------------
+
+{{- if .Values.server.auth.oidc.enabled }}
+OIDC authentication is enabled with the following providers:
+{{- range .Values.server.auth.oidc.providers }}
+  - {{ .name }}: {{ .issuerURL }}
+{{- end }}
+{{- else }}
+Local authentication is enabled.
+{{- end }}
+
+{{- if .Values.server.auth.localAccounts.secret.create }}
+
+To get the admin password:
+
+  kubectl get secret --namespace {{ .Release.Namespace }} knodex-initial-admin-password \
+    -o jsonpath='{.data.password}' | base64 -d && echo
+
+Default admin username: {{ .Values.server.auth.adminUsername | default "admin" }}
+{{- end }}
+
+{{- if or .Values.enterprise.organization .Values.enterprise.license.existingSecret .Values.enterprise.license.text .Values.enterprise.gatekeeper.enabled .Values.enterprise.views.enabled }}
+
+--------------------------------------------------------------------------------
+ENTERPRISE FEATURES
+--------------------------------------------------------------------------------
+{{- end }}
+
+{{- if .Values.enterprise.organization }}
+Organization: {{ .Values.enterprise.organization }}
+  RGDs labeled with knodex.io/organization: {{ .Values.enterprise.organization }} (and unlabeled shared RGDs) will be visible.
+{{- end }}
+
+{{- if .Values.enterprise.license.existingSecret }}
+License secret: {{ .Values.enterprise.license.existingSecret }}
+  The secret MUST contain a key named "license.jwt" with the raw JWT token.
+  Verify with:
+    kubectl get secret --namespace {{ .Release.Namespace }} {{ .Values.enterprise.license.existingSecret }} \
+      -o jsonpath='{.data.license\.jwt}' | base64 -d | head -c 20 && echo "..."
+{{- else if .Values.enterprise.license.text }}
+License: Inline JWT configured via enterprise.license.text
+{{- end }}
+
+{{- if .Values.server.auth.oidc.existingSecret }}
+SSO secret: {{ .Values.server.auth.oidc.existingSecret }}
+  The secret must contain keys: <provider-name>.client-id and <provider-name>.client-secret
+{{- end }}
+
+{{- if .Values.enterprise.gatekeeper.enabled }}
+OPA Gatekeeper integration is enabled.
+{{- end }}
+
+{{- if .Values.enterprise.views.enabled }}
+Custom views are enabled (Enterprise feature).
+{{- end }}
+
+--------------------------------------------------------------------------------
+NEXT STEPS
+--------------------------------------------------------------------------------
+
+1. Ensure Kro (Kubernetes Resource Orchestrator) is installed in your cluster
+   {{- if .Values.kro.enabled }}
+   (Kro is being installed as a dependency)
+   {{- else }}
+   Install Kro: https://kro.run/docs/getting-started/Installation/
+   {{- end }}
+
+2. Create ResourceGraphDefinitions (RGDs) for your organization
+
+3. Create Projects to organize access control:
+   kubectl apply -f - <<PROJEOF
+   apiVersion: knodex.io/v1alpha1
+   kind: Project
+   metadata:
+     name: my-project
+   spec:
+     description: "My first project"
+     sourceRepos:
+       - "*"
+     destinations:
+       - namespace: "my-namespace"
+         server: "*"
+   PROJEOF
+
+For more information, visit: https://github.com/knodex/knodex

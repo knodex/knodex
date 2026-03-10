@@ -1,0 +1,374 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "knodex.fullname" . }}-server
+  labels:
+    {{- include "knodex.server.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.server.autoscaling.enabled }}
+  replicas: {{ .Values.server.replicaCount }}
+  {{- end }}
+  {{- with .Values.server.strategy }}
+  strategy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "knodex.server.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "knodex.server.selectorLabels" . | nindent 8 }}
+        {{- with .Values.server.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.server.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "knodex.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.server.podSecurityContext | nindent 8 }}
+      {{- with .Values.server.priorityClassName }}
+      priorityClassName: {{ . | quote }}
+      {{- end }}
+      {{- if not (kindIs "invalid" .Values.server.terminationGracePeriodSeconds) }}
+      terminationGracePeriodSeconds: {{ .Values.server.terminationGracePeriodSeconds }}
+      {{- end }}
+      {{- if and (eq (toString .Values.server.dnsPolicy) "None") (not .Values.server.dnsConfig) }}
+      {{- fail "server.dnsConfig is required when server.dnsPolicy is 'None'" }}
+      {{- end }}
+      {{- with .Values.server.dnsPolicy }}
+      dnsPolicy: {{ . | quote }}
+      {{- end }}
+      {{- with .Values.server.dnsConfig }}
+      dnsConfig:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        - name: wait-for-redis
+          {{- $redisRepo := printf "%s/%s" (.Values.redis.image.registry | default "docker.io") (.Values.redis.image.repository | default "bitnami/redis") }}
+          {{- if .Values.redis.image.digest }}
+          image: "{{ $redisRepo }}@{{ .Values.redis.image.digest }}"
+          {{- else }}
+          image: "{{ $redisRepo }}:{{ .Values.redis.image.tag }}"
+          {{- end }}
+          command:
+            - sh
+            - -c
+            - |
+              REDIS_HOST="{{ include "knodex.redisHost" . }}"
+              REDIS_PORT="{{ include "knodex.redisPort" . }}"
+              echo "Waiting for Redis at ${REDIS_HOST}:${REDIS_PORT}..."
+              AUTH_ARGS=""
+              if [ -n "${REDIS_PASSWORD}" ]; then
+                AUTH_ARGS="-a ${REDIS_PASSWORD}"
+              fi
+              until redis-cli -h "${REDIS_HOST}" -p "${REDIS_PORT}" ${AUTH_ARGS} --no-auth-warning ping 2>/dev/null | grep -q PONG; do
+                echo "Redis not ready, retrying in 2s..."
+                sleep 2
+              done
+              echo "Redis is ready"
+          env:
+            {{- if .Values.redis.enabled }}
+            {{- if .Values.redis.auth.enabled }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-redis
+                  key: redis-password
+            {{- end }}
+            {{- else }}
+            {{- if .Values.externalRedis.password }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "knodex.fullname" . }}-redis
+                  key: redis-password
+            {{- end }}
+            {{- end }}
+          securityContext:
+            {{- toYaml .Values.server.securityContext | nindent 12 }}
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 10m
+              memory: 16Mi
+      containers:
+        - name: server
+          securityContext:
+            {{- toYaml .Values.server.securityContext | nindent 12 }}
+          image: "{{ include "knodex.server.image" . }}:{{ .Values.server.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.server.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            # Pod metadata
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            # Server configuration
+            - name: SERVER_ADDRESS
+              value: {{ .Values.server.config.serverAddress | quote }}
+            - name: SERVER_PORT
+              value: {{ .Values.server.service.port | quote }}
+            {{- if .Values.server.config.corsAllowedOrigins }}
+            - name: CORS_ALLOWED_ORIGINS
+              value: {{ .Values.server.config.corsAllowedOrigins | quote }}
+            {{- end }}
+            {{- if .Values.server.config.swaggerUI }}
+            - name: SWAGGER_UI_ENABLED
+              value: "true"
+            {{- end }}
+            # Session cookie configuration
+            {{- if not .Values.server.config.cookie.secure }}
+            - name: COOKIE_SECURE
+              value: "false"
+            {{- end }}
+            {{- if .Values.server.config.cookie.domain }}
+            - name: COOKIE_DOMAIN
+              value: {{ .Values.server.config.cookie.domain | quote }}
+            {{- end }}
+            - name: LOG_LEVEL
+              value: {{ .Values.server.config.logLevel | quote }}
+            - name: LOG_FORMAT
+              value: {{ .Values.server.config.logFormat | quote }}
+            - name: KUBERNETES_IN_CLUSTER
+              value: "true"
+            # Redis configuration
+            - name: REDIS_ADDRESS
+              value: "{{ include "knodex.redisHost" . }}:{{ include "knodex.redisPort" . }}"
+            {{- if .Values.redis.enabled }}
+            {{- if .Values.redis.auth.enabled }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-redis
+                  key: redis-password
+            {{- end }}
+            {{- else }}
+            {{- if .Values.externalRedis.password }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "knodex.fullname" . }}-redis
+                  key: redis-password
+            {{- end }}
+            {{- if .Values.externalRedis.username }}
+            - name: REDIS_USERNAME
+              value: {{ .Values.externalRedis.username | quote }}
+            {{- end }}
+            {{- if .Values.externalRedis.tls.enabled }}
+            - name: REDIS_TLS_ENABLED
+              value: "true"
+            {{- if .Values.externalRedis.tls.insecureSkipVerify }}
+            - name: REDIS_TLS_INSECURE_SKIP_VERIFY
+              value: "true"
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- if .Values.server.config.redisDB }}
+            - name: REDIS_DB
+              value: {{ .Values.server.config.redisDB | quote }}
+            {{- end }}
+            # Rate limiting configuration
+            {{- if .Values.server.config.rateLimit }}
+            - name: RATE_LIMIT_USER_REQUESTS_PER_MINUTE
+              value: {{ .Values.server.config.rateLimit.userRequestsPerMinute | default 100 | quote }}
+            - name: RATE_LIMIT_USER_BURST_SIZE
+              value: {{ .Values.server.config.rateLimit.userBurstSize | default 100 | quote }}
+            {{- if .Values.server.config.rateLimit.trustedProxies }}
+            - name: RATE_LIMIT_TRUSTED_PROXIES
+              value: {{ .Values.server.config.rateLimit.trustedProxies | join "," | quote }}
+            {{- end }}
+            {{- end }}
+            # Policy cache configuration
+            {{- if .Values.server.config.policyCache }}
+            - name: CACHE_ENABLED
+              value: {{ .Values.server.config.policyCache.enabled | default true | quote }}
+            - name: CACHE_TTL_SECONDS
+              value: {{ .Values.server.config.policyCache.ttlSeconds | default 300 | quote }}
+            - name: POLICY_SYNC_INTERVAL_MINUTES
+              value: {{ .Values.server.config.policyCache.syncIntervalMinutes | default 10 | quote }}
+            - name: PROJECT_WATCH_ENABLED
+              value: {{ .Values.server.config.policyCache.watchEnabled | default true | quote }}
+            {{- end }}
+            # Views configuration (Enterprise)
+            {{- if .Values.enterprise.views.enabled }}
+            - name: VIEWS_CONFIG_PATH
+              value: "/etc/knodex/views.yaml"
+            {{- end }}
+            # Enterprise organization identity
+            {{- if and .Values.enterprise.enabled .Values.enterprise.organization }}
+            - name: KNODEX_ORGANIZATION
+              value: {{ .Values.enterprise.organization | quote }}
+            {{- end }}
+            # Enterprise license configuration
+            - name: KNODEX_LICENSE_PATH
+              value: "/etc/knodex/license.jwt"
+            {{- if .Values.enterprise.license.text }}
+            - name: KNODEX_LICENSE_TEXT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "knodex.licenseSecretName" . }}
+                  key: license.jwt
+            {{- end }}
+            # Authentication configuration
+            - name: ADMIN_USERNAME
+              value: {{ .Values.server.auth.adminUsername | default "admin" | quote }}
+            # NOTE: ADMIN_PASSWORD is NEVER set via environment variables
+            # The server ALWAYS auto-generates a secure password and stores it
+            # in the Kubernetes secret: knodex-initial-admin-password
+            {{- if .Values.server.auth.jwt.expiry }}
+            - name: JWT_EXPIRY
+              value: {{ .Values.server.auth.jwt.expiry | quote }}
+            {{- end }}
+            # OIDC configuration
+            - name: OIDC_ENABLED
+              value: {{ .Values.server.auth.oidc.enabled | quote }}
+            {{- if .Values.server.auth.oidc.groupsClaim }}
+            - name: OIDC_GROUPS_CLAIM
+              value: {{ .Values.server.auth.oidc.groupsClaim | quote }}
+            {{- end }}
+            {{- if .Values.server.auth.oidc.groupMappings }}
+            - name: OIDC_GROUP_MAPPINGS
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "knodex.fullname" . }}-config
+                  key: OIDC_GROUP_MAPPINGS
+            {{- end }}
+            {{- if .Values.server.auth.oidc.groupMappingsFile }}
+            - name: OIDC_GROUP_MAPPINGS_FILE
+              value: {{ .Values.server.auth.oidc.groupMappingsFile | quote }}
+            {{- end }}
+            {{- if .Values.server.auth.oidc.allowedRedirectOrigins }}
+            - name: ALLOWED_REDIRECT_ORIGINS
+              value: {{ .Values.server.auth.oidc.allowedRedirectOrigins | join "," | quote }}
+            {{- end }}
+            {{- if .Values.server.auth.oidc.rbacDefaultRole }}
+            - name: RBAC_DEFAULT_ROLE
+              value: {{ .Values.server.auth.oidc.rbacDefaultRole | quote }}
+            {{- end }}
+            # Casbin RBAC configuration
+            {{- if .Values.server.auth.casbin.roleTTL }}
+            - name: CASBIN_ROLE_TTL
+              value: {{ .Values.server.auth.casbin.roleTTL | quote }}
+            {{- end }}
+            {{- if .Values.server.auth.casbin.adminUsers }}
+            - name: CASBIN_ADMIN_USERS
+              value: {{ .Values.server.auth.casbin.adminUsers | join "," | quote }}
+            {{- end }}
+            # Enterprise audit redaction
+            {{- if and .Values.enterprise.enabled .Values.enterprise.audit.redactFields }}
+            - name: AUDIT_REDACT_FIELDS
+              value: {{ .Values.enterprise.audit.redactFields | join "," | quote }}
+            {{- end }}
+            # Enterprise compliance
+            {{- if and .Values.enterprise.enabled .Values.enterprise.compliance.historyRetentionDays }}
+            - name: COMPLIANCE_HISTORY_RETENTION_DAYS
+              value: {{ .Values.enterprise.compliance.historyRetentionDays | quote }}
+            {{- end }}
+            {{- with .Values.server.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.server.extraEnvFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          livenessProbe:
+            {{- toYaml .Values.server.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.server.readinessProbe | nindent 12 }}
+          {{- with .Values.server.startupProbe }}
+          startupProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.server.lifecycle }}
+          lifecycle:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.server.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.enterprise.views.enabled }}
+            - name: views-config
+              mountPath: /etc/knodex/views.yaml
+              subPath: views.yaml
+              readOnly: true
+            {{- end }}
+            - name: license
+              mountPath: /etc/knodex/license.jwt
+              subPath: license.jwt
+              readOnly: true
+            {{- with .Values.server.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.enterprise.views.enabled }}
+        - name: views-config
+          configMap:
+            name: {{ include "knodex.fullname" . }}-views
+            optional: true
+        {{- end }}
+        - name: license
+          secret:
+            secretName: {{ include "knodex.licenseSecretName" . }}
+            optional: true
+        {{- with .Values.server.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- if not (kindIs "invalid" .Values.server.nodeSelector) }}
+      {{- with .Values.server.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- else }}
+      {{- with .Values.global.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- end }}
+      {{- if not (kindIs "invalid" .Values.server.affinity) }}
+      {{- with .Values.server.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- else }}
+      {{- with .Values.global.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- end }}
+      {{- if not (kindIs "invalid" .Values.server.tolerations) }}
+      {{- with .Values.server.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- else }}
+      {{- with .Values.global.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- end }}
+      {{- with .Values.server.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
