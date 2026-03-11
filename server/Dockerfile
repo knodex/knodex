@@ -16,11 +16,16 @@ RUN go mod download
 # Copy server source code (context is ./server)
 COPY . ./
 
+# Buildx injects TARGETOS/TARGETARCH automatically for multi-arch builds.
+# Without buildx --platform, empty values default to host architecture.
+ARG TARGETOS
+ARG TARGETARCH
+
 # Build the binary (with optional build tags for enterprise)
 RUN if [ -n "$BUILD_TAGS" ]; then \
-        CGO_ENABLED=0 GOOS=linux go build -tags="$BUILD_TAGS" -ldflags="-w -s" -o /knodex-server .; \
+        CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -tags="$BUILD_TAGS" -ldflags="-w -s" -o /knodex-server .; \
     else \
-        CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /knodex-server .; \
+        CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-w -s" -o /knodex-server .; \
     fi
 
 # Runtime stage

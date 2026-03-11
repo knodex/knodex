@@ -206,7 +206,8 @@ install_mock_oidc() {
         # Check if image exists in Kind
         if ! docker exec "${cluster_name}-control-plane" crictl images 2>/dev/null | grep -q "mock-oidc:local"; then
             log_info "Building Mock OIDC image..."
-            docker build -t mock-oidc:local -f "${PROJECT_DIR}/server/test/mocks/oidc/Dockerfile" "${PROJECT_DIR}/server/" >/dev/null 2>&1 || {
+            local host_platform="linux/$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/')"
+            docker build --platform "${host_platform}" -t mock-oidc:local -f "${PROJECT_DIR}/server/test/mocks/oidc/Dockerfile" "${PROJECT_DIR}/server/" >/dev/null 2>&1 || {
                 log_warn "Failed to build mock-oidc image, deployment may fail"
             }
 
