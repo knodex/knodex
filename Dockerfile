@@ -50,11 +50,16 @@ COPY server/ ./
 # Copy web dist into the embed path
 COPY --from=web-builder /web/dist /build/internal/static/dist
 
+# Buildx injects TARGETOS/TARGETARCH automatically for multi-arch builds.
+# Without --platform, these are empty and Go falls back to host OS/arch.
+ARG TARGETOS
+ARG TARGETARCH
+
 # Build the binary (with optional build tags for enterprise)
 RUN if [ -n "$BUILD_TAGS" ]; then \
-        CGO_ENABLED=0 GOOS=linux go build -tags="$BUILD_TAGS" -ldflags="-w -s" -o /knodex-server .; \
+        CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -tags="$BUILD_TAGS" -ldflags="-w -s" -o /knodex-server .; \
     else \
-        CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /knodex-server .; \
+        CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-w -s" -o /knodex-server .; \
     fi
 
 # Stage 3: Runtime

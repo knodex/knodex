@@ -34,3 +34,5 @@ site/
 
 .env.qa
 
+# Enterprise license private keys (public key is intentionally committed)
+server/ee/license/license_key.pem

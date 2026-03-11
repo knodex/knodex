@@ -90,8 +90,13 @@ build_images() {
         log_info "Building OSS edition..."
     fi
 
+    # Detect host platform for local builds (e.g., arm64 on Apple Silicon)
+    local host_platform="linux/$(uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/')"
+    log_info "Building for platform: ${host_platform}"
+
     log_info "Building unified image (web embedded in Go binary)..."
     docker build \
+        --platform "${host_platform}" \
         --build-arg BUILD_MODE="${WEB_BUILD_MODE}" \
         --build-arg BUILD_TAGS="${BUILD_TAGS}" \
         -t knodex-server:local \
@@ -100,7 +105,7 @@ build_images() {
 
     # Build mock OIDC server for E2E testing
     log_info "Building mock OIDC server image..."
-    docker build -t mock-oidc:local -f server/test/mocks/oidc/Dockerfile server/
+    docker build --platform "${host_platform}" -t mock-oidc:local -f server/test/mocks/oidc/Dockerfile server/
     log_success "Mock OIDC server image built"
 
     # Load into Kind if applicable

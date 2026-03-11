@@ -10,8 +10,12 @@ RUN go mod download
 # Copy source code
 COPY . .
 
+# Buildx injects TARGETOS/TARGETARCH automatically for multi-arch builds.
+ARG TARGETOS
+ARG TARGETARCH
+
 # Build the mock OIDC server
-RUN CGO_ENABLED=0 GOOS=linux go build -o /mock-oidc ./test/mocks/oidc/cmd/main.go
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /mock-oidc ./test/mocks/oidc/cmd/main.go
 
 # Runtime stage
 FROM gcr.io/distroless/static-debian12:nonroot

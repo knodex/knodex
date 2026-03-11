@@ -139,6 +139,7 @@ jobs:
   build-image:
     name: Build Image
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     needs: [test-server, test-web]
     permissions:
       contents: read
@@ -150,11 +151,13 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff6c7fcf5f5b49afe22 # v3.6.0
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
       - name: Log in to Container Registry
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ${{ env.REGISTRY }}
@@ -177,12 +180,12 @@ jobs:
         with:
           context: .
           file: Dockerfile
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=ci-oss
-          cache-to: type=gha,mode=max,scope=ci-oss,ignore-error=true
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:buildcache-ci
+          cache-to: ${{ github.event_name != 'pull_request' && format('type=registry,ref={0}/{1}:buildcache-ci,mode=max,ignore-error=true', env.REGISTRY, env.IMAGE_NAME) || '' }}
 
   # ============================================
   # Stage 4: Build Summary
