@@ -141,15 +141,6 @@ create_secrets() {
         log_success "github-token secret created"
     fi
 
-    # Create JWT secret if configured
-    if [ -n "${JWT_SECRET}" ]; then
-        log_info "Creating JWT secret..."
-        kubectl create secret generic knodex-jwt \
-            --from-literal=JWT_SECRET="${JWT_SECRET}" \
-            --namespace="${NAMESPACE}" \
-            --dry-run=client -o yaml | kubectl apply -f - > /dev/null
-        log_success "JWT secret created"
-    fi
 }
 
 # Deploy mock OIDC server for E2E testing

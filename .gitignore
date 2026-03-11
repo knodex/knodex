@@ -4,9 +4,6 @@ bin
 # Test results (all automated test output)
 test-results/
 
-# Auto Claude data directory
-.auto-claude/
-
 # QA overlay temporary files
 .qa-overlays/
 knodex-deadcode-analysis
@@ -37,13 +34,3 @@ site/
 
 .env.qa
 
-# Auto Claude generated files
-.auto-claude-security.json
-.auto-claude-status
-.claude_settings.json
-.worktrees/
-.security-key
-logs/security/
-
-# Enterprise license private keys (public key is intentionally committed)
-server/ee/license/license_key.pem
