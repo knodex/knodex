@@ -51,11 +51,11 @@ Open http://localhost:8080.
 
 ## Documentation
 
-Full documentation is available at [provops.github.io/knodex](https://provops.github.io/knodex/).
+Full documentation is available at [knodex.io/docs](https://knodex.io/docs).
 
-- [Getting Started](https://provops.github.io/knodex/getting-started/) — Installation and first deployment
-- [Operator Manual](https://provops.github.io/knodex/operator-manual/) — Configuration and maintenance
-- [User Guide](https://provops.github.io/knodex/user-guide/) — Browsing catalogs and deploying instances
+- [Getting Started](https://knodex.io/docs/getting-started/) — Installation and first deployment
+- [Operator Manual](https://knodex.io/docs/operator-manual/) — Configuration and maintenance
+- [User Guide](https://knodex.io/docs/user-guide/) — Browsing catalogs and deploying instances
 
 ## Enterprise Edition
 
@@ -72,7 +72,7 @@ Knodex Enterprise adds features for organizations that need advanced governance 
 | Deployment Compliance Auditing | | Coming soon |
 | AI Template Builder | | Coming soon |
 
-Learn more at [provops.com](https://provops.com).
+Learn more at [knodex.io](https://knodex.io).
 
 ## Community
 
