@@ -63,7 +63,8 @@ server:
     requests:
       cpu: 100m
       memory: 128Mi
-    # limits:
+    limits: {}
+    # Example resource limits:
     #   cpu: 500m
     #   memory: 256Mi
 
@@ -496,9 +497,14 @@ gateway:
 
 # Redis configuration (Bitnami Redis subchart)
 # NOTE: auth.enabled changed to true in v0.0.15 (production default).
-# Bitnami auto-generates a password Secret when auth.enabled=true.
-# Existing dev environments using helm upgrade may need to set redis.auth.password
-# or delete the existing Redis PVC/Secret before upgrading.
+# Bitnami auto-generates a random password Secret when auth.enabled=true.
+# This causes credential mismatch on Redis restarts/upgrades because server
+# pods retain the old password in their immutable env vars.
+#
+# RECOMMENDATION (production): Pin the Redis password using one of:
+#   1. redis.auth.existingSecret + redis.auth.existingSecretPasswordKey
+#      (best practice — manage the secret externally or via sealed-secrets)
+#   2. redis.auth.password (set an explicit password)
 #
 # NOTE: Bitnami removed semver tags from Docker Hub. The image is pinned by digest
 # to ensure reproducible deployments. Update the digest when upgrading Redis.
@@ -508,6 +514,14 @@ redis:
   architecture: standalone
   auth:
     enabled: true
+    # -- Name of an existing Secret containing the Redis password.
+    # The secret must exist in the release namespace. When set, Bitnami
+    # will use this secret instead of auto-generating a random password.
+    # @default -- `""` (Bitnami auto-generates)
+    existingSecret: ""
+    # -- Key within the existingSecret that holds the password.
+    # @default -- `"redis-password"` (Bitnami default)
+    existingSecretPasswordKey: ""
   image:
     # Bitnami no longer publishes semver tags — pin by digest for reproducibility.
     # To update: docker pull bitnami/redis:latest && docker inspect --format='{{index .RepoDigests 0}}' bitnami/redis:latest
@@ -558,7 +572,8 @@ defaultProject:
     destinations:
       - namespace: default
     # -- Roles for the default project (optional)
-    # roles:
+    roles: []
+    # Example role configuration:
     #   - name: admin
     #     description: "Full access to default project"
     #     policies:

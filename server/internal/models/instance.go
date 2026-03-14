@@ -87,6 +87,8 @@ type Instance struct {
 	ProjectID string `json:"projectId,omitempty"`
 	// ProjectName is the display name of the project
 	ProjectName string `json:"projectName,omitempty"`
+	// RGDStatus is the KRO status of the parent RGD (e.g., "Active", "Inactive")
+	RGDStatus string `json:"rgdStatus,omitempty"`
 	// GitOpsDrift indicates the live spec doesn't match the desired spec pushed to Git
 	GitOpsDrift bool `json:"gitopsDrift,omitempty"`
 	// DesiredSpec is the spec that was pushed to Git (for drift comparison)

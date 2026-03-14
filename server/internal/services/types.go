@@ -135,6 +135,7 @@ type RGDResponse struct {
 	Instances              int               `json:"instances"`
 	APIVersion             string            `json:"apiVersion,omitempty"`
 	Kind                   string            `json:"kind,omitempty"`
+	Status                 string            `json:"status,omitempty"`
 	AllowedDeploymentModes []string          `json:"allowedDeploymentModes,omitempty"`
 	CreatedAt              string            `json:"createdAt"`
 	UpdatedAt              string            `json:"updatedAt"`
@@ -186,6 +187,7 @@ func ToRGDResponse(rgd *models.CatalogRGD, instanceCount int) RGDResponse {
 		Instances:              instanceCount,
 		APIVersion:             rgd.APIVersion,
 		Kind:                   rgd.Kind,
+		Status:                 rgd.Status,
 		AllowedDeploymentModes: rgd.AllowedDeploymentModes,
 		CreatedAt:              rgd.CreatedAt.Format("2006-01-02T15:04:05Z"),
 		UpdatedAt:              rgd.UpdatedAt.Format("2006-01-02T15:04:05Z"),

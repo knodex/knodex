@@ -138,6 +138,13 @@ func (t *InstanceTracker) Start(ctx context.Context) error {
 		t.rgdWatcher.SetOnChangeCallback(func() {
 			t.handleRGDChange()
 		})
+
+		// Register update callback to propagate RGD status changes to cached instances
+		t.rgdWatcher.SetOnUpdateCallback(func(action RGDAction, name string, rgd *models.CatalogRGD) {
+			if action == RGDActionUpdate && rgd != nil {
+				t.updateInstancesRGDStatus(rgd)
+			}
+		})
 	}
 
 	// Mark as synced after initial informers are started
@@ -588,6 +595,14 @@ func (t *InstanceTracker) unstructuredToInstance(u *unstructured.Unstructured, r
 		}
 	}
 
+	// Look up parent RGD status from the catalog cache
+	var rgdStatus string
+	if t.rgdWatcher != nil {
+		if parentRGD, found := t.rgdWatcher.GetRGD(rgdNamespace, rgdName); found {
+			rgdStatus = parentRGD.Status
+		}
+	}
+
 	return &models.Instance{
 		Name:            parser.GetName(u),
 		Namespace:       parser.GetNamespace(u),
@@ -607,6 +622,7 @@ func (t *InstanceTracker) unstructuredToInstance(u *unstructured.Unstructured, r
 		UpdatedAt:       updatedAt,
 		ResourceVersion: parser.GetResourceVersion(u),
 		UID:             parser.GetUID(u),
+		RGDStatus:       rgdStatus,
 	}
 }
 
@@ -718,6 +734,21 @@ func (t *InstanceTracker) calculateHealth(conditions []models.InstanceCondition,
 	}
 
 	return models.HealthProgressing
+}
+
+// updateInstancesRGDStatus updates the RGDStatus field on all cached instances
+// belonging to the given RGD when the RGD's status changes.
+func (t *InstanceTracker) updateInstancesRGDStatus(rgd *models.CatalogRGD) {
+	instances := t.cache.GetByRGD(rgd.Namespace, rgd.Name)
+	for _, inst := range instances {
+		if inst.RGDStatus != rgd.Status {
+			// Clone before mutation to avoid data races with concurrent cache readers
+			updated := *inst
+			updated.RGDStatus = rgd.Status
+			t.cache.Set(&updated)
+			t.notifyUpdate(InstanceActionUpdate, updated.Namespace, updated.Kind, updated.Name, &updated)
+		}
+	}
 }
 
 // ListInstances returns instances matching the given options

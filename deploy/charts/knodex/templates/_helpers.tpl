@@ -132,3 +132,27 @@ Redis port
 {{- .Values.externalRedis.port }}
 {{- end }}
 {{- end }}
+
+{{/*
+Redis auth secret name
+Returns existingSecret if set, otherwise the Bitnami-generated secret name.
+*/}}
+{{- define "knodex.redisSecretName" -}}
+{{- if .Values.redis.auth.existingSecret }}
+{{- .Values.redis.auth.existingSecret }}
+{{- else }}
+{{- printf "%s-redis" .Release.Name }}
+{{- end }}
+{{- end }}
+
+{{/*
+Redis auth secret key
+Returns existingSecretPasswordKey if set, otherwise the Bitnami default key.
+*/}}
+{{- define "knodex.redisSecretKey" -}}
+{{- if .Values.redis.auth.existingSecretPasswordKey }}
+{{- .Values.redis.auth.existingSecretPasswordKey }}
+{{- else }}
+{{- "redis-password" }}
+{{- end }}
+{{- end }}

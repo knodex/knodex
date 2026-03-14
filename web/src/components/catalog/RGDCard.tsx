@@ -17,9 +17,12 @@ import {
   Workflow,
   Clock,
   FolderKanban,
+  AlertTriangle,
 } from "lucide-react";
 import type { CatalogRGD } from "@/types/rgd";
 import { cn } from "@/lib/utils";
+import { formatDistanceToNow } from "@/lib/date";
+import { Badge } from "@/components/ui/badge";
 import {
   Tooltip,
   TooltipContent,
@@ -57,6 +60,8 @@ interface RGDCardProps {
 }
 
 export const RGDCard = React.memo(function RGDCard({ rgd, onClick }: RGDCardProps) {
+  const isInactive = rgd.status !== "Active";
+
   const normalizedCategory = useMemo(
     () => (rgd.category || "uncategorized").toLowerCase(),
     [rgd.category]
@@ -68,7 +73,7 @@ export const RGDCard = React.memo(function RGDCard({ rgd, onClick }: RGDCardProp
   }, [rgd.tags, normalizedCategory]);
 
   const formattedTime = useMemo(
-    () => formatRelativeTime(rgd.updatedAt),
+    () => formatDistanceToNow(rgd.updatedAt),
     [rgd.updatedAt]
   );
 
@@ -79,7 +84,8 @@ export const RGDCard = React.memo(function RGDCard({ rgd, onClick }: RGDCardProp
       className={cn(
         "group relative cursor-pointer rounded-lg border border-border/60 bg-card p-5",
         "transition-all duration-200 ease-out",
-        "hover:border-primary/30 hover:bg-accent/5"
+        "hover:border-primary/30 hover:bg-accent/5",
+        isInactive && "opacity-60"
       )}
       onClick={() => onClick?.(rgd)}
     >
@@ -115,11 +121,19 @@ export const RGDCard = React.memo(function RGDCard({ rgd, onClick }: RGDCardProp
             )}
           </div>
         </div>
-        {rgd.version && (
-          <span className="shrink-0 px-2 py-0.5 rounded-md text-xs font-mono font-medium text-muted-foreground bg-muted/80">
-            {rgd.version}
-          </span>
-        )}
+        <div className="flex items-center gap-2 shrink-0">
+          {isInactive && (
+            <Badge variant="destructive" className="gap-1">
+              <AlertTriangle className="h-3 w-3" />
+              Inactive
+            </Badge>
+          )}
+          {rgd.version && (
+            <span className="px-2 py-0.5 rounded-md text-xs font-mono font-medium text-muted-foreground bg-muted/80">
+              {rgd.version}
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Description */}
@@ -168,18 +182,3 @@ export const RGDCard = React.memo(function RGDCard({ rgd, onClick }: RGDCardProp
     </div>
   );
 });
-
-function formatRelativeTime(dateString: string): string {
-  const date = new Date(dateString);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  const diffHours = Math.floor(diffMins / 60);
-  const diffDays = Math.floor(diffHours / 24);
-
-  if (diffDays > 30) return date.toLocaleDateString();
-  if (diffDays > 0) return `${diffDays}d ago`;
-  if (diffHours > 0) return `${diffHours}h ago`;
-  if (diffMins > 0) return `${diffMins}m ago`;
-  return "just now";
-}

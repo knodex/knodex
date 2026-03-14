@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import React, { useMemo } from "react";
-import { Box, Clock, Package } from "lucide-react";
+import { AlertTriangle, Box, Clock, Package } from "lucide-react";
 import type { Instance } from "@/types/rgd";
 import { cn } from "@/lib/utils";
+import { formatDistanceToNow } from "@/lib/date";
 import { HealthBadge } from "./HealthBadge";
 import {
   Tooltip,
@@ -25,7 +26,7 @@ export const InstanceCard = React.memo(function InstanceCard({
   isUpdating = false,
 }: InstanceCardProps) {
   const formattedTime = useMemo(
-    () => formatRelativeTime(instance.createdAt),
+    () => formatDistanceToNow(instance.createdAt),
     [instance.createdAt]
   );
 
@@ -75,10 +76,25 @@ export const InstanceCard = React.memo(function InstanceCard({
       </div>
 
       {/* RGD Info */}
-      <p className="text-sm text-muted-foreground mb-4 leading-relaxed">
-        <span className="text-xs">RGD:</span>{" "}
-        <span className="font-mono text-foreground">{instance.rgdName}</span>
-      </p>
+      <div className="flex items-center gap-2 text-sm text-muted-foreground mb-4 leading-relaxed">
+        <span>
+          <span className="text-xs">RGD:</span>{" "}
+          <span className="font-mono text-foreground">{instance.rgdName}</span>
+        </span>
+        {instance.rgdStatus && instance.rgdStatus !== "Active" && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium text-destructive bg-destructive/10 border border-destructive/20">
+                <AlertTriangle className="h-3 w-3" />
+                RGD Inactive
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>The parent RGD is currently inactive</p>
+            </TooltipContent>
+          </Tooltip>
+        )}
+      </div>
 
       {/* Kind/API Tags */}
       <div className="flex flex-wrap gap-1.5 mb-4">
@@ -107,18 +123,3 @@ export const InstanceCard = React.memo(function InstanceCard({
     </div>
   );
 });
-
-function formatRelativeTime(dateString: string): string {
-  const date = new Date(dateString);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  const diffHours = Math.floor(diffMins / 60);
-  const diffDays = Math.floor(diffHours / 24);
-
-  if (diffDays > 30) return date.toLocaleDateString();
-  if (diffDays > 0) return `${diffDays}d ago`;
-  if (diffHours > 0) return `${diffHours}h ago`;
-  if (diffMins > 0) return `${diffMins}m ago`;
-  return "just now";
-}

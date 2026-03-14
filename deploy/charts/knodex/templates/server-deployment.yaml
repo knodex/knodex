@@ -22,9 +22,19 @@ spec:
         {{- with .Values.server.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      {{- with .Values.server.podAnnotations }}
+      {{- $hasRedisChecksum := and .Values.redis.enabled .Values.redis.auth.enabled }}
+      {{- $redisSecret := dict }}
+      {{- if $hasRedisChecksum }}
+      {{- $redisSecret = (lookup "v1" "Secret" .Release.Namespace (include "knodex.redisSecretName" .)) | default dict }}
+      {{- end }}
+      {{- if or $redisSecret.data .Values.server.podAnnotations }}
       annotations:
+        {{- if $redisSecret.data }}
+        checksum/redis-secret: {{ $redisSecret.data | toJson | sha256sum }}
+        {{- end }}
+        {{- with .Values.server.podAnnotations }}
         {{- toYaml . | nindent 8 }}
+        {{- end }}
       {{- end }}
     spec:
       {{- with .Values.global.imagePullSecrets }}
@@ -80,8 +90,8 @@ spec:
             - name: REDIS_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Release.Name }}-redis
-                  key: redis-password
+                  name: {{ include "knodex.redisSecretName" . }}
+                  key: {{ include "knodex.redisSecretKey" . }}
             {{- end }}
             {{- else }}
             {{- if .Values.externalRedis.password }}
@@ -157,8 +167,8 @@ spec:
             - name: REDIS_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Release.Name }}-redis
-                  key: redis-password
+                  name: {{ include "knodex.redisSecretName" . }}
+                  key: {{ include "knodex.redisSecretKey" . }}
             {{- end }}
             {{- else }}
             {{- if .Values.externalRedis.password }}

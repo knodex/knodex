@@ -13,11 +13,14 @@ import {
   AlertCircle,
   ExternalLink,
   FolderKanban,
+  AlertTriangle,
 } from "lucide-react";
 import { useRGD, useRGDResourceGraph } from "@/hooks/useRGDs";
 import type { CatalogRGD } from "@/types/rgd";
 import { cn } from "@/lib/utils";
+import { formatDateTime } from "@/lib/date";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 
 // Lazy load ResourceGraphView to code-split @xyflow/react (~200KB)
 // This ensures ReactFlow is only loaded when user views the Resources tab
@@ -50,6 +53,7 @@ export function RGDDetailView({ rgd, onBack, onDeploy }: RGDDetailViewProps) {
   // Fetch full RGD details
   const { data: fullRGD } = useRGD(rgd.name, rgd.namespace);
   const displayRGD = fullRGD || rgd;
+  const isInactive = displayRGD.status !== "Active";
 
   const normalizedTags = useMemo(() => {
     const category = (displayRGD.category || "uncategorized").toLowerCase();
@@ -76,9 +80,17 @@ export function RGDDetailView({ rgd, onBack, onDeploy }: RGDDetailViewProps) {
               <Box className="h-6 w-6 text-muted-foreground" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold tracking-tight text-foreground">
-                {displayRGD.title || displayRGD.name}
-              </h1>
+              <div className="flex items-center gap-3">
+                <h1 className="text-2xl font-bold tracking-tight text-foreground">
+                  {displayRGD.title || displayRGD.name}
+                </h1>
+                {isInactive && (
+                  <Badge variant="destructive" className="gap-1">
+                    <AlertTriangle className="h-3 w-3" />
+                    Inactive
+                  </Badge>
+                )}
+              </div>
               {displayRGD.title && displayRGD.title !== displayRGD.name && (
                 <p className="text-sm text-muted-foreground font-mono mt-0.5">{displayRGD.name}</p>
               )}
@@ -142,7 +154,7 @@ export function RGDDetailView({ rgd, onBack, onDeploy }: RGDDetailViewProps) {
           </Link>
           <span className="flex items-center gap-1.5">
             <Clock className="h-3.5 w-3.5" />
-            Updated {formatDate(displayRGD.updatedAt)}
+            Updated {formatDateTime(displayRGD.updatedAt)}
           </span>
         </div>
       </div>
@@ -191,6 +203,15 @@ function OverviewTab({ rgd }: { rgd: CatalogRGD }) {
             <dt className="text-muted-foreground">Name</dt>
             <dd className="text-foreground font-mono">{rgd.name}</dd>
           </div>
+          <div className="flex justify-between">
+            <dt className="text-muted-foreground">Status</dt>
+            <dd className={cn(
+              "text-foreground font-medium",
+              rgd.status !== "Active" && "text-destructive"
+            )}>
+              {rgd.status || "Unknown"}
+            </dd>
+          </div>
           {rgd.labels?.["knodex.io/project"] && (
             <div className="flex justify-between">
               <dt className="text-muted-foreground">Project</dt>
@@ -221,11 +242,11 @@ function OverviewTab({ rgd }: { rgd: CatalogRGD }) {
         <dl className="space-y-2 text-sm">
           <div className="flex justify-between">
             <dt className="text-muted-foreground">Created</dt>
-            <dd className="text-foreground">{formatDate(rgd.createdAt)}</dd>
+            <dd className="text-foreground">{formatDateTime(rgd.createdAt)}</dd>
           </div>
           <div className="flex justify-between">
             <dt className="text-muted-foreground">Updated</dt>
-            <dd className="text-foreground">{formatDate(rgd.updatedAt)}</dd>
+            <dd className="text-foreground">{formatDateTime(rgd.updatedAt)}</dd>
           </div>
         </dl>
       </div>
@@ -316,14 +337,3 @@ function ResourcesTab({ rgd }: { rgd: CatalogRGD }) {
   );
 }
 
-function formatDate(dateString: string): string {
-  if (!dateString) return "N/A";
-  const date = new Date(dateString);
-  return date.toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
