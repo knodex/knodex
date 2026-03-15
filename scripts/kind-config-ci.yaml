@@ -8,5 +8,9 @@ nodes:
         nodeRegistration:
           kubeletExtraArgs:
             node-labels: "ingress-ready=true"
-    # No extraPortMappings - CI uses kubectl port-forward instead
-    # Port mappings don't work reliably in DinD (ARC runner) environments
+    extraPortMappings:
+      # NodePort 30080 mapped to host port 8080 (same as local dev config)
+      # Eliminates need for kubectl port-forward which drops under load
+      - containerPort: 30080
+        hostPort: 8080
+        protocol: TCP

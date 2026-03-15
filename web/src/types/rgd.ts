@@ -308,6 +308,10 @@ export interface Instance {
   updatedAt: string;
   deploymentMode?: DeploymentMode;
   gitInfo?: GitInfo;
+  /** Kubernetes unique identifier */
+  uid?: string;
+  /** KRO status of the parent RGD (e.g., "Active", "Inactive") */
+  rgdStatus?: string;
   /** Kubernetes resource version for optimistic concurrency control */
   resourceVersion?: string;
   /** True when live spec doesn't match the desired spec pushed to Git */

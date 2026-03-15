@@ -586,6 +586,181 @@ func TestInstanceHealth_Values(t *testing.T) {
 	}
 }
 
+// --- STORY-271: Instance lifecycle with inactive RGDs ---
+
+func TestInstanceTracker_InactiveRGD_InstancesPreserved(t *testing.T) {
+	// When an RGD goes inactive, instances should remain in cache
+	// because inactive RGDs now stay in the catalog cache (STORY-271).
+	// Key: the informer key for the inactive RGD must still appear in currentKeys
+	// so handleRGDChange does NOT close the informer and purge instances.
+	rgdCache := NewRGDCache()
+	rgdCache.Set(&models.CatalogRGD{
+		Name:       "my-rgd",
+		Namespace:  "default",
+		Status:     "Active",
+		Kind:       "TestResource",
+		APIVersion: "example.com/v1",
+	})
+	rgdWatcher := NewRGDWatcherWithCache(rgdCache)
+
+	instanceCache := NewInstanceCache()
+	instanceCache.Set(&models.Instance{
+		Name:         "instance-1",
+		Namespace:    "ns1",
+		Kind:         "TestResource",
+		RGDName:      "my-rgd",
+		RGDNamespace: "default",
+		RGDStatus:    "Active",
+	})
+	instanceCache.Set(&models.Instance{
+		Name:         "instance-2",
+		Namespace:    "ns2",
+		Kind:         "TestResource",
+		RGDName:      "my-rgd",
+		RGDNamespace: "default",
+		RGDStatus:    "Active",
+	})
+
+	tracker := NewInstanceTrackerWithCache(instanceCache)
+	tracker.rgdWatcher = rgdWatcher
+
+	// Pre-create an informer entry for the RGD (simulates a running informer)
+	rgd := rgdCache.All()[0]
+	gvr := tracker.gvrFromRGD(rgd)
+	key := tracker.informerKey(rgd, gvr)
+	tracker.informers[key] = make(chan struct{})
+	tracker.informerRGDs[key] = rgdRef{namespace: "default", name: "my-rgd"}
+
+	// Simulate RGD going inactive — it stays in the catalog cache
+	rgdCache.Set(&models.CatalogRGD{
+		Name:       "my-rgd",
+		Namespace:  "default",
+		Status:     "Inactive",
+		Kind:       "TestResource",
+		APIVersion: "example.com/v1",
+	})
+
+	// Trigger handleRGDChange — instances should NOT be purged because
+	// the inactive RGD remains in cache and its key is still in currentKeys
+	tracker.handleRGDChange()
+
+	// Verify instances are still in cache
+	if _, found := instanceCache.Get("ns1", "TestResource", "instance-1"); !found {
+		t.Error("expected instance-1 to remain in cache after RGD goes inactive")
+	}
+	if _, found := instanceCache.Get("ns2", "TestResource", "instance-2"); !found {
+		t.Error("expected instance-2 to remain in cache after RGD goes inactive")
+	}
+
+	// Verify the informer is still running (not closed)
+	tracker.informersMu.RLock()
+	_, informerExists := tracker.informers[key]
+	tracker.informersMu.RUnlock()
+	if !informerExists {
+		t.Error("expected informer to still be running for inactive RGD")
+	}
+}
+
+func TestInstanceTracker_DeletedRGD_InstancesPurged(t *testing.T) {
+	// When an RGD is truly deleted, instances should be purged
+	rgdCache := NewRGDCache()
+	rgdCache.Set(&models.CatalogRGD{
+		Name:       "my-rgd",
+		Namespace:  "default",
+		Status:     "Active",
+		Kind:       "TestResource",
+		APIVersion: "example.com/v1",
+	})
+	rgdWatcher := NewRGDWatcherWithCache(rgdCache)
+
+	instanceCache := NewInstanceCache()
+	instanceCache.Set(&models.Instance{
+		Name:         "instance-1",
+		Namespace:    "ns1",
+		Kind:         "TestResource",
+		RGDName:      "my-rgd",
+		RGDNamespace: "default",
+	})
+
+	tracker := NewInstanceTrackerWithCache(instanceCache)
+	tracker.rgdWatcher = rgdWatcher
+
+	// Build current informer keys for the existing RGD
+	rgd := rgdCache.All()[0]
+	gvr := tracker.gvrFromRGD(rgd)
+	key := tracker.informerKey(rgd, gvr)
+	tracker.informers[key] = make(chan struct{})
+	tracker.informerRGDs[key] = rgdRef{namespace: "default", name: "my-rgd"}
+
+	// Now truly delete the RGD from cache
+	rgdCache.Delete("default", "my-rgd")
+
+	// Trigger handleRGDChange — instances SHOULD be purged
+	tracker.handleRGDChange()
+
+	// Verify instance was purged
+	if _, found := instanceCache.Get("ns1", "TestResource", "instance-1"); found {
+		t.Error("expected instance-1 to be purged after RGD is deleted")
+	}
+}
+
+func TestInstanceTracker_RGDStatusChangePropagation(t *testing.T) {
+	// When RGD status changes, instances should get updated RGDStatus
+	rgdCache := NewRGDCache()
+	rgdCache.Set(&models.CatalogRGD{
+		Name:      "my-rgd",
+		Namespace: "default",
+		Status:    "Active",
+	})
+	rgdWatcher := NewRGDWatcherWithCache(rgdCache)
+
+	instanceCache := NewInstanceCache()
+	instanceCache.Set(&models.Instance{
+		Name:         "instance-1",
+		Namespace:    "ns1",
+		Kind:         "TestResource",
+		RGDName:      "my-rgd",
+		RGDNamespace: "default",
+		RGDStatus:    "Active",
+	})
+
+	tracker := NewInstanceTrackerWithCache(instanceCache)
+	tracker.rgdWatcher = rgdWatcher
+
+	// Track WebSocket notifications
+	var notifications []string
+	tracker.SetOnUpdateCallback(func(action InstanceAction, namespace, kind, name string, instance *models.Instance) {
+		if action == InstanceActionUpdate && instance != nil {
+			notifications = append(notifications, namespace+"/"+kind+"/"+name+"="+instance.RGDStatus)
+		}
+	})
+
+	// Simulate RGD status change to Inactive
+	updatedRGD := &models.CatalogRGD{
+		Name:      "my-rgd",
+		Namespace: "default",
+		Status:    "Inactive",
+	}
+	tracker.updateInstancesRGDStatus(updatedRGD)
+
+	// Verify instance's RGDStatus was updated
+	inst, found := instanceCache.Get("ns1", "TestResource", "instance-1")
+	if !found {
+		t.Fatal("expected instance to remain in cache")
+	}
+	if inst.RGDStatus != "Inactive" {
+		t.Errorf("expected RGDStatus 'Inactive', got %q", inst.RGDStatus)
+	}
+
+	// Verify WebSocket notification was fired
+	if len(notifications) != 1 {
+		t.Errorf("expected 1 WebSocket notification, got %d", len(notifications))
+	}
+	if len(notifications) > 0 && notifications[0] != "ns1/TestResource/instance-1=Inactive" {
+		t.Errorf("unexpected notification: %s", notifications[0])
+	}
+}
+
 func TestInstanceCondition_Fields(t *testing.T) {
 	condition := models.InstanceCondition{
 		Type:               "Ready",

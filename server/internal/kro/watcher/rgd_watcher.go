@@ -379,13 +379,14 @@ func (w *RGDWatcher) handleDelete(obj interface{}) {
 	w.notifyUpdate(RGDActionDelete, u.GetName(), nil)
 }
 
-// shouldIncludeInCatalog checks if the RGD has the catalog annotation and is Active.
+// shouldIncludeInCatalog checks if the RGD has the catalog annotation.
 // Simplified visibility model:
-// - knodex.io/catalog: "true" is the GATEWAY to the catalog
-// - RGDs without this annotation are NOT part of the catalog system (invisible to everyone)
-// - catalog: true alone = visible to ALL authenticated users (public)
-// - catalog: true + project label = visible to project members only
-// - status.state must be "Active" — Inactive or unprocessed RGDs are excluded
+//   - knodex.io/catalog: "true" is the GATEWAY to the catalog
+//   - RGDs without this annotation are NOT part of the catalog system (invisible to everyone)
+//   - catalog: true alone = visible to ALL authenticated users (public)
+//   - catalog: true + project label = visible to project members only
+//   - Inactive RGDs are included with an "Inactive" status so the UI can show them
+//     with a badge and disabled deploy button, preserving instance visibility
 func (w *RGDWatcher) shouldIncludeInCatalog(u *unstructured.Unstructured) bool {
 	// Check for catalog annotation using parser helper
 	value, ok := parser.GetAnnotation(u, kro.CatalogAnnotation)
@@ -396,16 +397,6 @@ func (w *RGDWatcher) shouldIncludeInCatalog(u *unstructured.Unstructured) bool {
 	// Accept "true", "yes", "1"
 	value = strings.ToLower(value)
 	if value != "true" && value != "yes" && value != "1" {
-		return false
-	}
-
-	// Check KRO status - only include Active RGDs
-	// Empty status means KRO hasn't processed this RGD yet (exclude)
-	state := parser.GetStatusFieldStringOrDefault(u, "", "state")
-	if state != "Active" {
-		w.logger.Debug("skipping inactive RGD",
-			"name", parser.GetName(u),
-			"state", state)
 		return false
 	}
 

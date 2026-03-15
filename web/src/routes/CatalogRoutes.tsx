@@ -68,11 +68,16 @@ export function RGDDetailRoute() {
     );
   }
 
+  // Disable deploy for inactive RGDs (AC-2) and users without permission
+  // Hide deploy button if permission check errored (fail-closed for UX clarity)
+  const isActive = rgd.status === "Active";
+  const canDeployRGD = isActive && !isErrorCanDeploy && (isLoadingCanDeploy || canDeploy);
+
   return (
     <RGDDetailView
       rgd={rgd}
       onBack={handleBack}
-      onDeploy={isLoadingCanDeploy || isErrorCanDeploy || canDeploy ? handleDeploy : undefined}
+      onDeploy={canDeployRGD ? handleDeploy : undefined}
     />
   );
 }
