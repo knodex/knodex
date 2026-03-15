@@ -244,9 +244,6 @@ export async function setupAuthAndNavigate(
 
   // Navigate to target - Zustand will rehydrate from localStorage
   await page.goto(targetPath, { waitUntil: 'domcontentloaded' })
-
-  // Wait for page to fully load and Zustand to rehydrate auth from localStorage
-  await page.waitForLoadState('networkidle')
 }
 
 /**
@@ -255,8 +252,7 @@ export async function setupAuthAndNavigate(
  */
 export async function switchRole(page: Page, role: TestUserRole): Promise<void> {
   await authenticateAs(page, role)
-  await page.reload()
-  await page.waitForLoadState('networkidle')
+  await page.reload({ waitUntil: 'domcontentloaded' })
 }
 
 /**
@@ -351,9 +347,6 @@ export async function setupAuthWithToken(
 
   // Step 4: Navigate to target - Zustand will rehydrate from localStorage
   await page.goto(targetPath, { waitUntil: 'domcontentloaded' })
-
-  // Step 5: Wait for page to fully load and Zustand to rehydrate auth from localStorage
-  await page.waitForLoadState('networkidle')
 }
 
 /**
@@ -402,8 +395,7 @@ export async function isAuthenticated(page: Page): Promise<boolean> {
  */
 export async function clearAuth(page: Page): Promise<void> {
   await authenticateAs(page, TestUserRole.UNAUTHENTICATED)
-  await page.reload()
-  await page.waitForLoadState('networkidle')
+  await page.reload({ waitUntil: 'domcontentloaded' })
 }
 
 /**

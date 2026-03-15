@@ -586,11 +586,11 @@ func TestInstanceHealth_Values(t *testing.T) {
 	}
 }
 
-// --- Instance lifecycle with inactive RGDs ---
+// --- STORY-271: Instance lifecycle with inactive RGDs ---
 
 func TestInstanceTracker_InactiveRGD_InstancesPreserved(t *testing.T) {
 	// When an RGD goes inactive, instances should remain in cache
-	// because inactive RGDs now stay in the catalog cache.
+	// because inactive RGDs now stay in the catalog cache (STORY-271).
 	// Key: the informer key for the inactive RGD must still appear in currentKeys
 	// so handleRGDChange does NOT close the informer and purge instances.
 	rgdCache := NewRGDCache()

@@ -29,6 +29,7 @@ const createMockRGD = (
   instances: 0,
   apiVersion: 'kro.run/v1alpha1',
   kind: 'ResourceGraphDefinition',
+  status: 'Active',
   allowedDeploymentModes,
   createdAt: '2026-01-20T10:00:00Z',
   updatedAt: '2026-01-20T10:00:00Z',

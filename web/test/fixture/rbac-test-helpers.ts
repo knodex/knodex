@@ -217,7 +217,6 @@ export async function loginAs(page: Page, user: TestUser, targetPath: string = "
   });
 
   await page.goto(actualTarget, { waitUntil: "domcontentloaded" });
-  await page.waitForLoadState('networkidle');
 }
 
 // Evidence directory - unified at project root test-results/

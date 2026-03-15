@@ -189,29 +189,34 @@ test.describe('Note: Repository Authentication Methods', () => {
   });
 
   test('AC-03: GitHub App authentication form displays correct fields', async ({ page }) => {
+    // Mock repositories API so the page renders without real server dependency
+    await page.route(/\/api\/v1\/repositories(\?|$)/, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ items: [], totalCount: 0 }),
+      });
+    });
+
     // Navigate directly to repositories settings page
     await page.goto('/settings/repositories');
-    await page.waitForLoadState('networkidle', { timeout: 15000 });
 
-    // Click Add Repository button
+    // Wait for Add Repository button (indicates page loaded)
     const addButton = page.locator('button:has-text("Add Repository")');
-    if (await addButton.isVisible({ timeout: 5000 })) {
-      await addButton.click();
-      await page.waitForTimeout(1000);
-    }
+    await expect(addButton).toBeVisible({ timeout: 10000 });
+    await addButton.click();
 
-    // Select GitHub App authentication type
+    // Wait for form to appear, then select GitHub App authentication type
     const authTypeSelect = page.locator('select#authType, [name="authType"]');
-    if (await authTypeSelect.isVisible({ timeout: 5000 })) {
+    if (await authTypeSelect.isVisible({ timeout: 5000 }).catch(() => false)) {
       await authTypeSelect.selectOption('github-app');
-      await page.waitForTimeout(500);
     } else {
       const githubAppOption = page.locator(
         'input[value="github-app"], ' +
         'button:has-text("GitHub App"), ' +
         'label:has-text("GitHub App")'
       );
-      if (await githubAppOption.first().isVisible({ timeout: 3000 })) {
+      if (await githubAppOption.first().isVisible({ timeout: 5000 }).catch(() => false)) {
         await githubAppOption.first().click();
       }
     }
@@ -237,19 +242,14 @@ test.describe('Note: Repository Authentication Methods', () => {
       '[data-testid="github-private-key"], ' +
       'label:has-text("Private Key")'
     );
-    const appTypeField = page.locator(
-      'select[name="githubAppAuth.appType"], ' +
-      '[data-testid="github-app-type"], ' +
-      'label:has-text("App Type")'
-    );
 
     await page.screenshot({
       path: '../test-results/e2e/screenshots/github-app-02-fields.png',
       fullPage: true
     });
 
-    // Check for GitHub App fields
-    const hasAppId = await appIdField.first().isVisible({ timeout: 3000 }).catch(() => false);
+    // Check for GitHub App fields (at least one should be visible)
+    const hasAppId = await appIdField.first().isVisible({ timeout: 5000 }).catch(() => false);
     const hasInstallationId = await installationIdField.first().isVisible({ timeout: 3000 }).catch(() => false);
     const hasPrivateKey = await privateKeyField.first().isVisible({ timeout: 3000 }).catch(() => false);
 

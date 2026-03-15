@@ -1106,7 +1106,7 @@ func TestRGDWatcher_DeploymentModes_HandleAddUpdate(t *testing.T) {
 	}
 }
 
-// --- Status filtering tests ---
+// --- Status filtering tests (STORY-223, updated by STORY-271) ---
 
 func TestRGDWatcher_ShouldIncludeInCatalog_StatusFiltering(t *testing.T) {
 	fakeClient := testutil.NewFakeDynamicClient(t)
@@ -1127,7 +1127,7 @@ func TestRGDWatcher_ShouldIncludeInCatalog_StatusFiltering(t *testing.T) {
 			expected: true,
 		},
 		{
-			name: "catalog true + Inactive status → included",
+			name: "catalog true + Inactive status → included (STORY-271)",
 			annotations: map[string]string{
 				kro.CatalogAnnotation: "true",
 			},
@@ -1135,7 +1135,7 @@ func TestRGDWatcher_ShouldIncludeInCatalog_StatusFiltering(t *testing.T) {
 			expected: true,
 		},
 		{
-			name: "catalog true + no status (not yet processed) → included",
+			name: "catalog true + no status (not yet processed) → included (STORY-271)",
 			annotations: map[string]string{
 				kro.CatalogAnnotation: "true",
 			},
@@ -1149,7 +1149,7 @@ func TestRGDWatcher_ShouldIncludeInCatalog_StatusFiltering(t *testing.T) {
 			expected:    false,
 		},
 		{
-			name: "catalog true + unknown status string → included",
+			name: "catalog true + unknown status string → included (STORY-271)",
 			annotations: map[string]string{
 				kro.CatalogAnnotation: "true",
 			},
@@ -1177,13 +1177,13 @@ func TestRGDWatcher_HandleAdd_InactiveIncluded(t *testing.T) {
 		kro.CatalogAnnotation: "true",
 	}
 
-	// Inactive RGDs ARE now included in the catalog cache
+	// STORY-271: Inactive RGDs ARE now included in the catalog cache
 	rgd := createTestRGDWithStatus("inactive-rgd", "default", annotations, nil, "Inactive")
 	watcher.handleAdd(rgd)
 
 	cached, found := watcher.cache.Get("default", "inactive-rgd")
 	if !found {
-		t.Fatal("expected Inactive RGD to be added to cache")
+		t.Fatal("expected Inactive RGD to be added to cache (STORY-271)")
 	}
 	if cached.Status != "Inactive" {
 		t.Errorf("expected Status 'Inactive', got %q", cached.Status)
@@ -1198,13 +1198,13 @@ func TestRGDWatcher_HandleAdd_NoStatusIncluded(t *testing.T) {
 		kro.CatalogAnnotation: "true",
 	}
 
-	// RGDs without status are now included (shown as "Inactive" in UI)
+	// STORY-271: RGDs without status are now included (shown as "Inactive" in UI)
 	rgd := createTestRGDWithStatus("new-rgd", "default", annotations, nil, "")
 	watcher.handleAdd(rgd)
 
 	cached, found := watcher.cache.Get("default", "new-rgd")
 	if !found {
-		t.Fatal("expected RGD without status to be added to cache")
+		t.Fatal("expected RGD without status to be added to cache (STORY-271)")
 	}
 	if cached.Status != "Inactive" {
 		t.Errorf("expected Status 'Inactive' (default), got %q", cached.Status)
@@ -1219,12 +1219,12 @@ func TestRGDWatcher_HandleUpdate_InactiveToActive(t *testing.T) {
 		kro.CatalogAnnotation: "true",
 	}
 
-	// Initially Inactive - now IS in cache (with Inactive status)
+	// STORY-271: Initially Inactive - now IS in cache (with Inactive status)
 	oldRGD := createTestRGDWithStatus("transitioning-rgd", "default", annotations, nil, "Inactive")
 	watcher.handleAdd(oldRGD)
 	cached, found := watcher.cache.Get("default", "transitioning-rgd")
 	if !found {
-		t.Fatal("expected Inactive RGD to be in cache")
+		t.Fatal("expected Inactive RGD to be in cache (STORY-271)")
 	}
 	if cached.Status != "Inactive" {
 		t.Fatalf("expected Status 'Inactive', got %q", cached.Status)
@@ -1270,10 +1270,10 @@ func TestRGDWatcher_HandleUpdate_ActiveToInactive(t *testing.T) {
 
 	watcher.handleUpdate(oldRGD, newRGD)
 
-	// Should remain in cache with updated Inactive status
+	// STORY-271: Should remain in cache with updated Inactive status
 	cached, found := watcher.cache.Get("default", "transitioning-rgd")
 	if !found {
-		t.Fatal("expected RGD to remain in cache after Active→Inactive transition")
+		t.Fatal("expected RGD to remain in cache after Active→Inactive transition (STORY-271)")
 	}
 	if cached.Status != "Inactive" {
 		t.Errorf("expected Status 'Inactive', got %q", cached.Status)

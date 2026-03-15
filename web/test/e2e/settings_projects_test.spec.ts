@@ -368,55 +368,31 @@ test.describe('Global Admin - Projects Settings UI', () => {
   });
 
   test('AC-129-10: Empty State when no projects exist', async ({ page }) => {
-    // This test checks the empty state UI when no projects are configured
-    // We'll just verify the empty state elements are present in the component
+    // Mock projects API to return empty list (deterministic empty state)
+    await page.route(/\/api\/v1\/projects(\?|$)/, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ items: [], totalCount: 0 }),
+      });
+    });
 
     await page.goto(`/settings/projects`);
-    await page.waitForLoadState('networkidle', { timeout: 15000 });
 
-    // Wait for loading state to disappear
-    const loadingIndicator = page.locator('text=/loading/i');
-    await loadingIndicator.waitFor({ state: 'hidden', timeout: 10000 }).catch(() => {
-      console.log('Loading indicator did not disappear, continuing...');
-    });
+    // Wait for empty state to render - "No projects configured" from ProjectList component
+    const emptyState = page.getByText('No projects configured');
+    await expect(emptyState).toBeVisible({ timeout: 10000 });
 
     await page.screenshot({
       path: '../test-results/e2e/screenshots/projects-10-page-state.png',
       fullPage: true
     });
 
-    // Check if empty state is visible (if no projects) or list is shown (if projects exist)
-    // The page shows "No projects configured" or "0 projects configured" when empty
-    const emptyStateTexts = [
-      page.getByText('No projects configured'),
-      page.getByText('0 projects configured'),
-      page.getByText(/no projects/i),
-      page.getByText(/create your first/i)
-    ];
-    const projectList = page.locator('article, [data-testid="project-card"]').first();
+    // Verify empty state has a CTA button (Create Project button)
+    const createCTA = page.getByRole('button', { name: /Create Project/i });
+    await expect(createCTA).toBeVisible({ timeout: 5000 });
 
-    let hasEmptyState = false;
-    for (const emptyState of emptyStateTexts) {
-      if (await emptyState.isVisible({ timeout: 1000 }).catch(() => false)) {
-        hasEmptyState = true;
-        break;
-      }
-    }
-    const hasProjects = await projectList.isVisible({ timeout: 3000 }).catch(() => false);
-
-    console.log(`Empty state visible: ${hasEmptyState}`);
-    console.log(`Projects visible: ${hasProjects}`);
-
-    // Either empty state OR projects should be shown
-    expect(hasEmptyState || hasProjects).toBeTruthy();
-
-    if (hasEmptyState) {
-      // Verify empty state has a CTA button (Create Project button)
-      const createCTA = page.locator('button:has-text("Create"), button:has-text("Add")');
-      await expect(createCTA).toBeVisible({ timeout: 5000 });
-    }
-
-    console.log('✓ Empty State or Project List displays correctly');
+    console.log('✓ Empty State displays correctly with Create Project CTA');
   });
 
   test('AC-129-11: RBAC Protection - Settings accessible only to Global Admin', async ({ page }) => {

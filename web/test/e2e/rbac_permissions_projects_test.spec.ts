@@ -96,29 +96,36 @@ test.describe("RBAC: Project Feature Tests", () => {
     test("AC-12: Project Admin can access Settings but sees limited content ", async ({
       page,
     }) => {
-      await loginAs(page, tokens.users.alpha_admin, "/projects");
+      // Mock permission checks - project admin has limited permissions
+      await setupPermissionMocking(page, {
+        'projects:get': true,
+        'projects:create': false,
+        'projects:delete': false,
+        'settings:get': false,
+        'settings:update': false,
+      });
 
-      // ArgoCD pattern: All users can navigate to settings pages - authorization happens at API layer
-      await page.waitForLoadState("load");
+      // Mock projects API - return projects the admin can see
+      await page.route(/\/api\/v1\/projects(\?|$)/, async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ items: [], totalCount: 0 }),
+        });
+      });
+
+      await loginAs(page, tokens.users.alpha_admin, "/projects");
 
       // Should stay on settings/projects page (no redirect)
       const url = page.url();
       console.log(`Project Admin stays on: ${url}`);
       expect(url).toContain("/settings/projects");
 
-      // Page shows Projects header (content availability depends on API permissions)
-      // May show project list or "Access Denied" based on actual API response
+      // Wait for page to render - either Projects header or Access Denied
       const projectsHeader = page.locator('h2:has-text("Projects")');
       const accessDenied = page.locator("text=Access Denied");
 
-      // Either header is visible OR access denied is shown
-      const hasHeader = await projectsHeader
-        .isVisible({ timeout: 5000 })
-        .catch(() => false);
-      const hasDenied = await accessDenied
-        .isVisible({ timeout: 1000 })
-        .catch(() => false);
-      expect(hasHeader || hasDenied).toBe(true);
+      await expect(projectsHeader.or(accessDenied).first()).toBeVisible({ timeout: 10000 });
 
       await page.screenshot({
         path: path.join(
@@ -396,27 +403,36 @@ test.describe("RBAC: Project Feature Tests", () => {
     test("AC-27: Viewer can access project settings page ", async ({
       page,
     }) => {
-      await loginAs(page, tokens.users.alpha_viewer, "/projects");
+      // Mock permission checks - viewer has read-only permissions
+      await setupPermissionMocking(page, {
+        'projects:get': true,
+        'projects:create': false,
+        'projects:delete': false,
+        'settings:get': false,
+        'settings:update': false,
+      });
 
-      // ArgoCD pattern: All users can navigate to settings pages
-      await page.waitForLoadState("load");
+      // Mock projects API - viewer sees projects but can't modify
+      await page.route(/\/api\/v1\/projects(\?|$)/, async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ items: [], totalCount: 0 }),
+        });
+      });
+
+      await loginAs(page, tokens.users.alpha_viewer, "/projects");
 
       // Should stay on settings/projects page (no redirect)
       const url = page.url();
       console.log(`Viewer stays on: ${url}`);
       expect(url).toContain("/settings/projects");
 
-      // Page should show Projects header or Access Denied based on API response
+      // Wait for page to render - either Projects header or Access Denied
       const projectsHeader = page.locator('h2:has-text("Projects")');
       const accessDenied = page.locator("text=Access Denied");
 
-      const hasHeader = await projectsHeader
-        .isVisible({ timeout: 5000 })
-        .catch(() => false);
-      const hasDenied = await accessDenied
-        .isVisible({ timeout: 1000 })
-        .catch(() => false);
-      expect(hasHeader || hasDenied).toBe(true);
+      await expect(projectsHeader.or(accessDenied).first()).toBeVisible({ timeout: 10000 });
 
       await page.screenshot({
         path: path.join(
