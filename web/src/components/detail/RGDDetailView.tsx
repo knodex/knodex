@@ -9,18 +9,26 @@ import {
   Clock,
   Layers,
   Box,
+  Link2,
   Loader2,
   AlertCircle,
   ExternalLink,
   FolderKanban,
   AlertTriangle,
+  Puzzle,
 } from "lucide-react";
-import { useRGD, useRGDResourceGraph } from "@/hooks/useRGDs";
+import { useRGD, useRGDResourceGraph, useRGDList } from "@/hooks/useRGDs";
 import type { CatalogRGD } from "@/types/rgd";
 import { cn } from "@/lib/utils";
 import { formatDateTime } from "@/lib/date";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { AddOnsTab } from "./AddOnsTab";
+import { DependsOnTab } from "./DependsOnTab";
+import { useKindToRGDMap } from "@/hooks/useKindToRGDMap";
+import { useDynamicTabs } from "@/hooks/useDynamicTabs";
+import type { Tab, ConditionalTab } from "@/hooks/useDynamicTabs";
+import { TabBar } from "@/components/shared/TabBar";
 
 // Lazy load ResourceGraphView to code-split @xyflow/react (~200KB)
 // This ensures ReactFlow is only loaded when user views the Resources tab
@@ -28,15 +36,9 @@ const ResourceGraphView = lazy(() =>
   import("@/components/graph").then((m) => ({ default: m.ResourceGraphView }))
 );
 
-type TabId = "overview" | "resources";
+type TabId = "overview" | "resources" | "addons" | "depends-on";
 
-interface Tab {
-  id: TabId;
-  label: string;
-  icon: React.ReactNode;
-}
-
-const TABS: Tab[] = [
+const BASE_TABS: Tab<TabId>[] = [
   { id: "overview", label: "Overview", icon: <Layers className="h-4 w-4" /> },
   { id: "resources", label: "Resources", icon: <Box className="h-4 w-4" /> },
 ];
@@ -48,12 +50,39 @@ interface RGDDetailViewProps {
 }
 
 export function RGDDetailView({ rgd, onBack, onDeploy }: RGDDetailViewProps) {
-  const [activeTab, setActiveTab] = useState<TabId>("overview");
-
   // Fetch full RGD details
   const { data: fullRGD } = useRGD(rgd.name, rgd.namespace);
   const displayRGD = fullRGD || rgd;
   const isInactive = displayRGD.status !== "Active";
+
+  // Fetch add-ons (RGDs that extend this RGD's Kind)
+  const { data: addOnsData } = useRGDList(
+    displayRGD.kind ? { extendsKind: displayRGD.kind, pageSize: 100 } : undefined
+  );
+  const addOnsCount = addOnsData?.totalCount ?? 0;
+
+  const dependsOnCount = displayRGD.dependsOnKinds?.length || 0;
+
+  // Build conditional tabs
+  const conditionalTabs = useMemo<ConditionalTab<TabId>[]>(() => [
+    {
+      condition: dependsOnCount > 0,
+      tab: { id: "depends-on", label: `Depends On (${dependsOnCount})`, icon: <Link2 className="h-4 w-4" /> },
+    },
+    {
+      condition: addOnsCount > 0,
+      tab: { id: "addons", label: `Add-ons (${addOnsCount})`, icon: <Puzzle className="h-4 w-4" /> },
+    },
+  ], [addOnsCount, dependsOnCount]);
+
+  const { tabs, activeTab, setActiveTab } = useDynamicTabs(BASE_TABS, conditionalTabs, "overview" as TabId);
+
+  // Reset to overview when navigating between RGDs
+  const [prevRGDName, setPrevRGDName] = useState(rgd.name);
+  if (prevRGDName !== rgd.name) {
+    setPrevRGDName(rgd.name);
+    setActiveTab("overview");
+  }
 
   const normalizedTags = useMemo(() => {
     const category = (displayRGD.category || "uncategorized").toLowerCase();
@@ -160,33 +189,21 @@ export function RGDDetailView({ rgd, onBack, onDeploy }: RGDDetailViewProps) {
       </div>
 
       {/* Tabs */}
-      <div className="border-b border-border">
-        <nav className="flex gap-1 -mb-px">
-          {TABS.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={cn(
-                "flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors",
-                activeTab === tab.id
-                  ? "border-primary text-foreground"
-                  : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
-              )}
-            >
-              {tab.icon}
-              {tab.label}
-            </button>
-          ))}
-        </nav>
-      </div>
+      <TabBar tabs={tabs} activeTab={activeTab} onChange={setActiveTab} />
 
       {/* Tab content */}
-      <div className="min-h-[300px]">
+      <div id={`panel-${activeTab}`} className="min-h-[300px]" role="tabpanel" aria-labelledby={`tab-${activeTab}`}>
         {activeTab === "overview" && (
           <OverviewTab rgd={displayRGD} />
         )}
         {activeTab === "resources" && (
           <ResourcesTab rgd={displayRGD} />
+        )}
+        {activeTab === "depends-on" && (
+          <DependsOnTab rgd={displayRGD} />
+        )}
+        {activeTab === "addons" && displayRGD.kind && (
+          <AddOnsTab kind={displayRGD.kind} />
         )}
       </div>
     </div>
@@ -194,6 +211,8 @@ export function RGDDetailView({ rgd, onBack, onDeploy }: RGDDetailViewProps) {
 }
 
 function OverviewTab({ rgd }: { rgd: CatalogRGD }) {
+  const { kindToRGD } = useKindToRGDMap();
+
   return (
     <div className="grid gap-6 md:grid-cols-2">
       <div className="rounded-lg border border-border bg-card p-4">
@@ -234,6 +253,26 @@ function OverviewTab({ rgd }: { rgd: CatalogRGD }) {
             <dt className="text-muted-foreground">Kind</dt>
             <dd className="text-foreground font-mono">{rgd.kind || "N/A"}</dd>
           </div>
+          {rgd.extendsKinds && rgd.extendsKinds.length > 0 && (
+            <div className="flex justify-between">
+              <dt className="text-muted-foreground">Extends</dt>
+              <dd className="text-foreground flex flex-wrap gap-1.5 justify-end">
+                {rgd.extendsKinds.map((kind) => (
+                  <ExtendsKindLink key={kind} kind={kind} rgd={kindToRGD.get(kind)} />
+                ))}
+              </dd>
+            </div>
+          )}
+          {rgd.dependsOnKinds && rgd.dependsOnKinds.length > 0 && (
+            <div className="flex justify-between">
+              <dt className="text-muted-foreground">Depends On</dt>
+              <dd className="flex flex-wrap gap-1.5 justify-end">
+                {rgd.dependsOnKinds.map((kind) => (
+                  <DependsOnKindLink key={kind} kind={kind} />
+                ))}
+              </dd>
+            </div>
+          )}
         </dl>
       </div>
 
@@ -268,6 +307,42 @@ function OverviewTab({ rgd }: { rgd: CatalogRGD }) {
       )}
     </div>
   );
+}
+
+// Renders a single extends-kind as a link to the parent RGD detail page.
+// Pure display component — Kind resolution is done by the parent via useKindToRGDMap.
+// Falls back to plain text when the parent RGD is not in the catalog.
+function ExtendsKindLink({ kind, rgd: parentRGD }: { kind: string; rgd?: CatalogRGD }) {
+  if (!parentRGD) {
+    return <span className="font-mono text-muted-foreground">{kind}</span>;
+  }
+
+  return (
+    <Link
+      to={`/catalog/${encodeURIComponent(parentRGD.name)}`}
+      className="font-mono text-primary hover:underline"
+    >
+      {kind}
+    </Link>
+  );
+}
+
+function DependsOnKindLink({ kind }: { kind: string }) {
+  const { kindToRGD } = useKindToRGDMap();
+  const parentRGD = kindToRGD.get(kind);
+
+  if (parentRGD) {
+    return (
+      <Link
+        to={`/catalog/${encodeURIComponent(parentRGD.name)}`}
+        className="text-primary hover:underline font-mono text-xs"
+      >
+        {kind}
+      </Link>
+    );
+  }
+
+  return <span className="text-foreground font-mono text-xs">{kind}</span>;
 }
 
 function ResourcesTab({ rgd }: { rgd: CatalogRGD }) {
@@ -336,4 +411,3 @@ function ResourcesTab({ rgd }: { rgd: CatalogRGD }) {
     </div>
   );
 }
-

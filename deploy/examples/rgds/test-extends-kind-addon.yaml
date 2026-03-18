@@ -1,0 +1,23 @@
+# Test RGD: Monitoring Add-on (child)
+# Used to verify the extends-kind feature (STORY-272)
+# This RGD extends SimpleAKSCluster — it should appear in the "Add-ons" tab
+# of the simple-aks-cluster catalog detail page.
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: aks-monitoring-addon
+  namespace: default
+  annotations:
+    knodex.io/catalog: "true"
+    knodex.io/title: "AKS Monitoring Add-on"
+    knodex.io/description: "Deploys Prometheus + Grafana monitoring stack on an AKS cluster"
+    knodex.io/tags: "monitoring,prometheus,grafana,aks"
+    knodex.io/category: "observability"
+    knodex.io/extends-kind: "SimpleAKSCluster"
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: AKSMonitoringAddon
+    spec:
+      clusterRef: string
+      retentionDays: integer | default=30

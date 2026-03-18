@@ -1,0 +1,23 @@
+# Example RGD: Logging Add-on for SimpleApp
+# Demonstrates: extends-kind feature — appears in the "Add-ons" tab
+# for any SimpleApp instance in the catalog.
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: simple-app-logging-addon
+  namespace: default
+  annotations:
+    knodex.io/catalog: "true"
+    knodex.io/title: "Logging Add-on"
+    knodex.io/description: "Adds centralized log aggregation via Fluentd sidecar to a SimpleApp deployment"
+    knodex.io/tags: "logging,fluentd,observability"
+    knodex.io/category: "observability"
+    knodex.io/extends-kind: "SimpleApp"
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: SimpleAppLoggingAddon
+    spec:
+      appRef: string
+      logLevel: string | default="info"
+      retentionDays: integer | default=7

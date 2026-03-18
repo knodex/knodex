@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -16,6 +16,10 @@ vi.mock('@/hooks/useInstances', () => ({
 
 vi.mock('@/hooks/useCanI', () => ({
   useCanI: vi.fn(),
+}));
+
+vi.mock('@/hooks/useRGDs', () => ({
+  useRGDList: vi.fn(),
 }));
 
 // Mock child components
@@ -41,6 +45,14 @@ vi.mock('./EditInstanceSpecDialog', () => ({
 
 vi.mock('./GitOpsDriftBanner', () => ({
   GitOpsDriftBanner: () => null,
+}));
+
+vi.mock('./InstanceAddOns', () => ({
+  InstanceAddOns: () => <div data-testid="instance-add-ons">Instance Add-Ons</div>,
+}));
+
+vi.mock('./InstanceDependsOn', () => ({
+  InstanceDependsOn: () => <div data-testid="instance-depends-on">Instance Depends On</div>,
 }));
 
 vi.mock('./InstanceStatusCard', () => ({
@@ -120,6 +132,7 @@ describe('InstanceDetailView', () => {
 
     const { useDeleteInstance } = await import('@/hooks/useInstances');
     const { useCanI } = await import('@/hooks/useCanI');
+    const { useRGDList } = await import('@/hooks/useRGDs');
 
     vi.mocked(useDeleteInstance).mockReturnValue({
       mutateAsync: mockMutateAsync,
@@ -131,6 +144,12 @@ describe('InstanceDetailView', () => {
     vi.mocked(useCanI).mockReturnValue({
       allowed: true,
       isLoading: false,
+    } as any);
+
+    vi.mocked(useRGDList).mockReturnValue({
+      data: { items: [], totalCount: 0 },
+      isLoading: false,
+      error: null,
     } as any);
   });
 
@@ -180,11 +199,14 @@ describe('InstanceDetailView', () => {
       expect(screen.getByTestId('git-status-display')).toBeInTheDocument();
     });
 
-    it('renders deployment timeline', () => {
+    it('renders deployment timeline in Deployment History tab', async () => {
+      const user = userEvent.setup();
       renderWithProviders(
         <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
       );
 
+      // Deployment timeline is behind the Deployment History tab
+      await user.click(screen.getByRole('tab', { name: /deployment history/i }));
       expect(screen.getByTestId('deployment-timeline')).toBeInTheDocument();
     });
   });
@@ -242,6 +264,32 @@ describe('InstanceDetailView', () => {
       );
 
       expect(useCanI).toHaveBeenCalledWith('instances', 'delete', 'test-namespace');
+    });
+
+    it('checks correct permission for edit spec button', async () => {
+      const { useCanI } = await import('@/hooks/useCanI');
+
+      renderWithProviders(
+        <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
+      );
+
+      expect(useCanI).toHaveBeenCalledWith('instances', 'update', 'test-namespace');
+    });
+
+    it('shows action buttons when useCanI returns an error (fail-open)', async () => {
+      const { useCanI } = await import('@/hooks/useCanI');
+      vi.mocked(useCanI).mockReturnValue({
+        allowed: false,
+        isLoading: false,
+        isError: true,
+      } as any);
+
+      renderWithProviders(
+        <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
+      );
+
+      expect(screen.getByRole('button', { name: /delete/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /edit spec/i })).toBeInTheDocument();
     });
   });
 
@@ -434,66 +482,85 @@ describe('InstanceDetailView', () => {
     });
   });
 
-  describe('Spec/Status Collapsible Sections', () => {
-    it('renders spec section when spec exists', () => {
+  describe('Tab Navigation', () => {
+    it('shows Status tab as active by default with status content', () => {
       renderWithProviders(
         <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
       );
 
-      // Use exact name "Spec" to distinguish from "Edit Spec" button
-      expect(screen.getByRole('button', { name: /^Spec$/i })).toBeInTheDocument();
+      // Status tab exists and is active (has border-primary class)
+      const statusTab = screen.getByRole('tab', { name: /^Status$/i });
+      expect(statusTab).toBeInTheDocument();
+      expect(statusTab.className).toContain('border-primary');
+
+      // Status content is visible
+      expect(screen.getByTestId('git-status-display')).toBeInTheDocument();
     });
 
-    it('expands spec section when clicked', async () => {
+    it('switches to Deployment History tab and shows timeline', async () => {
       const user = userEvent.setup();
       renderWithProviders(
         <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
       );
 
-      const specButton = screen.getByRole('button', { name: /^Spec$/i });
-      await user.click(specButton);
+      await user.click(screen.getByRole('tab', { name: /deployment history/i }));
 
-      expect(screen.getByText(/"replicas": 3/)).toBeInTheDocument();
-      expect(screen.getByText(/"image": "nginx:latest"/)).toBeInTheDocument();
+      expect(screen.getByTestId('deployment-timeline')).toBeInTheDocument();
+      // Status content should be hidden
+      expect(screen.queryByTestId('git-status-display')).not.toBeInTheDocument();
     });
 
-    it('collapses spec section when clicked again', async () => {
+    it('shows Add-ons tab when add-ons exist', async () => {
+      const { useRGDList } = await import('@/hooks/useRGDs');
+      vi.mocked(useRGDList).mockReturnValue({
+        data: { items: [{ name: 'addon-1' }], totalCount: 2 },
+        isLoading: false,
+        error: null,
+      } as any);
+
+      renderWithProviders(
+        <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
+      );
+
+      expect(screen.getByRole('tab', { name: /add-ons \(2\)/i })).toBeInTheDocument();
+    });
+
+    it('hides Add-ons tab when add-ons count is 0', () => {
+      renderWithProviders(
+        <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
+      );
+
+      expect(screen.queryByRole('tab', { name: /add-ons/i })).not.toBeInTheDocument();
+    });
+
+    it('shows InstanceAddOns content when Add-ons tab is clicked', async () => {
+      const { useRGDList } = await import('@/hooks/useRGDs');
+      vi.mocked(useRGDList).mockReturnValue({
+        data: { items: [], totalCount: 2 },
+        isLoading: false,
+        error: null,
+      } as any);
+
       const user = userEvent.setup();
       renderWithProviders(
         <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
       );
 
-      const specButton = screen.getByRole('button', { name: /^Spec$/i });
-      await user.click(specButton);
-      expect(screen.getByText(/"replicas": 3/)).toBeInTheDocument();
+      await user.click(screen.getByRole('tab', { name: /add-ons \(2\)/i }));
 
-      await user.click(specButton);
-      expect(screen.queryByText(/"replicas": 3/)).not.toBeInTheDocument();
+      expect(screen.getByTestId('instance-add-ons')).toBeInTheDocument();
+      expect(screen.queryByTestId('git-status-display')).not.toBeInTheDocument();
     });
 
-    it('renders unified status card when status exists', () => {
+    it('shows Spec tab when instance.spec is non-empty', () => {
       renderWithProviders(
         <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
       );
 
-      // Status is now rendered via InstanceStatusCard, not a collapsible button
-      // The status card shows fields as structured key-values
-      expect(screen.getByText('Running')).toBeInTheDocument();
+      expect(screen.getByRole('tab', { name: /^Spec$/i })).toBeInTheDocument();
     });
 
-    it('does not render raw JSON status section (replaced by unified card)', () => {
-      renderWithProviders(
-        <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
-      );
-
-      // The old collapsible status button should no longer exist
-      // Only the Spec button should be a collapsible section
-      const buttons = screen.getAllByRole('button');
-      const statusButtons = buttons.filter(btn => btn.textContent?.trim() === 'Status');
-      expect(statusButtons).toHaveLength(0);
-    });
-
-    it('does not render spec section when spec is empty', () => {
+    it('hides Spec tab when spec is empty', () => {
       const instanceWithoutSpec: Instance = {
         ...mockInstance,
         spec: {},
@@ -503,21 +570,117 @@ describe('InstanceDetailView', () => {
         <InstanceDetailView instance={instanceWithoutSpec} onBack={mockOnBack} />
       );
 
-      // Collapsible "Spec" section should not render, but "Edit Spec" button may still exist
-      expect(screen.queryByRole('button', { name: /^Spec$/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('tab', { name: /^Spec$/i })).not.toBeInTheDocument();
     });
 
-    it('does not render status section when status is empty', () => {
-      const instanceWithoutStatus: Instance = {
+    it('hides Spec tab when spec is undefined', () => {
+      const instanceWithUndefinedSpec: Instance = {
         ...mockInstance,
-        status: {},
+        spec: undefined,
       };
 
       renderWithProviders(
-        <InstanceDetailView instance={instanceWithoutStatus} onBack={mockOnBack} />
+        <InstanceDetailView instance={instanceWithUndefinedSpec} onBack={mockOnBack} />
       );
 
-      expect(screen.queryByRole('button', { name: /status/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('tab', { name: /^Spec$/i })).not.toBeInTheDocument();
+    });
+
+    it('shows spec content when Spec tab is clicked', async () => {
+      const user = userEvent.setup();
+      renderWithProviders(
+        <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
+      );
+
+      await user.click(screen.getByRole('tab', { name: /^Spec$/i }));
+
+      const specContent = screen.getByTestId('spec-content');
+      expect(within(specContent).getByText(/"replicas": 3/)).toBeInTheDocument();
+      expect(within(specContent).getByText(/"image": "nginx:latest"/)).toBeInTheDocument();
+    });
+
+    it('renders tabs in correct order: Status, Add-ons, Deployment History, Spec', async () => {
+      const { useRGDList } = await import('@/hooks/useRGDs');
+      vi.mocked(useRGDList).mockReturnValue({
+        data: { items: [{ name: 'addon-1' }], totalCount: 1 },
+        isLoading: false,
+        error: null,
+      } as any);
+
+      renderWithProviders(
+        <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
+      );
+
+      const tabButtons = screen.getAllByRole('tab');
+      expect(tabButtons).toHaveLength(4);
+      expect(tabButtons[0]).toHaveTextContent(/^Status$/);
+      expect(tabButtons[1]).toHaveTextContent(/^Add-ons/);
+      expect(tabButtons[2]).toHaveTextContent(/^Deployment History$/);
+      expect(tabButtons[3]).toHaveTextContent(/^Spec$/);
+    });
+
+    it('calls useRGDList with extendsKind and pageSize 100 for add-ons count', async () => {
+      const { useRGDList } = await import('@/hooks/useRGDs');
+
+      renderWithProviders(
+        <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
+      );
+
+      expect(useRGDList).toHaveBeenCalledWith({ extendsKind: 'TestResource', pageSize: 100 });
+    });
+
+    it('calls useRGDList with undefined when instance.kind is falsy', async () => {
+      const { useRGDList } = await import('@/hooks/useRGDs');
+      const instanceWithoutKind: Instance = { ...mockInstance, kind: '' };
+
+      renderWithProviders(
+        <InstanceDetailView instance={instanceWithoutKind} onBack={mockOnBack} />
+      );
+
+      expect(useRGDList).toHaveBeenCalledWith(undefined);
+    });
+
+    it('resets to Status tab when the active tab is removed from the tab list', async () => {
+      const { useRGDList } = await import('@/hooks/useRGDs');
+      let currentMockReturn: ReturnType<typeof vi.fn> = {
+        data: { items: [], totalCount: 2 },
+        isLoading: false,
+        error: null,
+      };
+      vi.mocked(useRGDList).mockImplementation(() => currentMockReturn as any);
+
+      const user = userEvent.setup();
+      const queryClient = createQueryClient();
+      const { rerender } = render(
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter>
+            <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
+          </MemoryRouter>
+        </QueryClientProvider>
+      );
+
+      // Navigate to Add-ons tab
+      await user.click(screen.getByRole('tab', { name: /add-ons \(2\)/i }));
+      expect(screen.queryByTestId('git-status-display')).not.toBeInTheDocument();
+
+      // Simulate add-ons count dropping to 0 (background re-fetch returns empty)
+      currentMockReturn = {
+        data: { items: [], totalCount: 0 },
+        isLoading: false,
+        error: null,
+      };
+      rerender(
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter>
+            <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
+          </MemoryRouter>
+        </QueryClientProvider>
+      );
+
+      // useEffect detects "addons" is no longer in tabs and resets to Status
+      await waitFor(() => {
+        expect(screen.getByTestId('git-status-display')).toBeInTheDocument();
+      });
     });
   });
 

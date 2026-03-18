@@ -106,6 +106,10 @@ curl -s "http://localhost:8080/api/v1/rgds?category=database" \
 # Search by name
 curl -s "http://localhost:8080/api/v1/rgds?search=postgres" \
   -H "Authorization: Bearer $TOKEN" | jq
+
+# Filter add-ons that extend a specific Kind
+curl -s "http://localhost:8080/api/v1/rgds?extendsKind=SimpleAKSCluster" \
+  -H "Authorization: Bearer $TOKEN" | jq
 ```
 
 ### Get RGD Details

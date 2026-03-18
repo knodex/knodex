@@ -45,6 +45,18 @@ Click on an instance to view:
 - **Created**: When the instance was deployed
 - **Status**: Current health status
 
+### Deploy Add-ons on an Instance
+
+If the instance's RGD Kind has add-ons (other RGDs with `knodex.io/extends-kind` pointing to it), a **Deploy on this instance** section appears above the deployment history.
+
+1. Open the instance detail page
+2. Browse the listed add-ons
+3. Click **Deploy** on the desired add-on
+4. The deploy form opens with the external reference pre-filled (instance name and namespace)
+5. Fill remaining parameters and deploy
+
+See [Deploying Instances - Method 3](../deploying-instances/#method-3-from-instance-detail-add-on-deployment) for details.
+
 ### Deleting an Instance
 
 To delete an instance:

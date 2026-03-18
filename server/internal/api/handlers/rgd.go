@@ -265,9 +265,19 @@ func (h *RGDHandler) parseAndValidateFilters(r *http.Request) (services.RGDFilte
 		)
 	}
 
+	// ExtendsKind filter
+	if extendsKind := q.Get("extendsKind"); extendsKind != "" {
+		filters.ExtendsKind = extendsKind
+	}
+
 	// Search filter
 	if search := q.Get("search"); search != "" {
 		filters.Search = search
+	}
+
+	// DependsOnKind filter
+	if dok := q.Get("dependsOnKind"); dok != "" {
+		filters.DependsOnKind = dok
 	}
 
 	// Pagination - page

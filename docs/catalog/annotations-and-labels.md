@@ -72,6 +72,41 @@ The `knodex.io/category` annotation determines both the category label and the i
 Category values are case-insensitive. `Database`, `DATABASE`, and `database` are equivalent.
 {{< /alert >}}
 
+### Extends-Kind Annotation
+
+Declare that an RGD extends (is an add-on for) a parent RGD Kind.
+
+| Annotation                | Values                          | Description                                   |
+| ------------------------- | ------------------------------- | --------------------------------------------- |
+| `knodex.io/extends-kind`  | Comma-separated Kind names      | Parent RGD Kinds this RGD extends             |
+
+```yaml
+metadata:
+  annotations:
+    knodex.io/catalog: "true"
+    knodex.io/extends-kind: "SimpleAKSCluster"
+```
+
+When set:
+
+- The **catalog detail page** for this RGD shows an "Extends" row in the Overview tab, linking to the parent RGD(s)
+- The **parent RGD's detail page** gains an "Add-ons (N)" tab listing all child RGDs that extend its Kind
+- The **instance detail page** for parent instances shows a "Deploy on this instance" section with one-click add-on deployment
+
+#### Multiple Parents
+
+An RGD can extend multiple parent Kinds:
+
+```yaml
+knodex.io/extends-kind: "SimpleAKSCluster,SimpleEKSCluster"
+```
+
+#### Parsing Rules
+
+- **Comma-separated**: Multiple Kinds separated by commas
+- **Whitespace-tolerant**: `"KindA, KindB"` works the same as `"KindA,KindB"`
+- **Case-sensitive**: Kind names must match exactly (e.g., `SimpleAKSCluster`, not `simpleakscluster`)
+
 ### Deployment Mode Annotations
 
 Control which deployment modes are available for an RGD.
@@ -170,7 +205,9 @@ The label value must match the project namespace name exactly (e.g., `proj-alpha
 
 See [Project Scoping](../project-scoping/) for detailed visibility rules.
 
-## Complete Example
+## Complete Examples
+
+### Standard RGD
 
 An RGD with all metadata annotations, organization scoping, and project visibility:
 
@@ -190,6 +227,22 @@ metadata:
     knodex.io/deployment-modes: "gitops"
 ```
 
+### Add-on RGD (Extends a Parent)
+
+An RGD that extends a parent Kind, appearing as an add-on in the parent's catalog detail:
+
+```yaml
+metadata:
+  name: aks-monitoring-addon
+  annotations:
+    knodex.io/catalog: "true"
+    knodex.io/title: "AKS Monitoring Add-on"
+    knodex.io/description: "Deploys Prometheus + Grafana monitoring stack on an AKS cluster"
+    knodex.io/tags: "monitoring,prometheus,grafana,aks"
+    knodex.io/category: "observability"
+    knodex.io/extends-kind: "SimpleAKSCluster"
+```
+
 ## Reference
 
 ### Annotation Summary
@@ -202,6 +255,7 @@ metadata:
 | `knodex.io/tags`             | No       | Searchable/filterable tags     | All          |
 | `knodex.io/category`         | No       | Category grouping with icon    | All          |
 | `knodex.io/version`          | No       | RGD version                    | All          |
+| `knodex.io/extends-kind`     | No       | Declares parent RGD Kind(s)    | All          |
 | `knodex.io/deployment-modes` | No       | Restricts deployment modes     | All          |
 
 ### Label Summary

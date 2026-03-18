@@ -22,6 +22,7 @@ import (
 	"github.com/knodex/knodex/server/internal/config"
 	"github.com/knodex/knodex/server/internal/k8s/parser"
 	"github.com/knodex/knodex/server/internal/kro"
+	kroparser "github.com/knodex/knodex/server/internal/kro/parser"
 	"github.com/knodex/knodex/server/internal/models"
 )
 
@@ -458,6 +459,17 @@ func (w *RGDWatcher) unstructuredToRGD(u *unstructured.Unstructured) *models.Cat
 	// Extract KRO status state (defaults to "Inactive" if not yet processed)
 	status := parser.GetStatusFieldStringOrDefault(u, "Inactive", "state")
 
+	// Parse extends-kind annotation (comma-separated parent Kinds)
+	var extendsKinds []string
+	if extendsStr, ok := parser.GetAnnotation(u, kro.ExtendsKindAnnotation); ok && extendsStr != "" {
+		for _, k := range strings.Split(extendsStr, ",") {
+			k = strings.TrimSpace(k)
+			if k != "" {
+				extendsKinds = append(extendsKinds, k)
+			}
+		}
+	}
+
 	// Parse allowed deployment modes from annotation
 	var allowedModes []string
 	if modesStr, ok := parser.GetAnnotation(u, kro.DeploymentModesAnnotation); ok {
@@ -481,6 +493,9 @@ func (w *RGDWatcher) unstructuredToRGD(u *unstructured.Unstructured) *models.Cat
 		title = parser.GetName(u)
 	}
 
+	// Extract unique externalRef Kinds using the resource parser
+	dependsOnKinds := extractDependsOnKinds(rawSpec, parser.GetName(u))
+
 	return &models.CatalogRGD{
 		Name:                   parser.GetName(u),
 		Title:                  title,
@@ -493,16 +508,46 @@ func (w *RGDWatcher) unstructuredToRGD(u *unstructured.Unstructured) *models.Cat
 		Organization:           organization,
 		Labels:                 labels,
 		Annotations:            annotations,
+		ExtendsKinds:           extendsKinds,
 		InstanceCount:          0, // Will be populated by instance tracker
 		APIVersion:             apiVersion,
 		Kind:                   kind,
 		Status:                 status,
+		DependsOnKinds:         dependsOnKinds,
 		AllowedDeploymentModes: allowedModes,
 		CreatedAt:              createdAt,
 		UpdatedAt:              updatedAt,
 		ResourceVersion:        parser.GetResourceVersion(u),
 		RawSpec:                rawSpec,
 	}
+}
+
+// extractDependsOnKinds parses the RGD spec to find unique Kinds from externalRef resources.
+func extractDependsOnKinds(rawSpec map[string]interface{}, rgdName string) []string {
+	if rawSpec == nil {
+		return nil
+	}
+
+	p := kroparser.NewResourceParser()
+	graph, err := p.ParseRGDResources(rgdName, "", rawSpec)
+	if err != nil || graph == nil {
+		return nil
+	}
+
+	extRefs := graph.GetExternalRefs()
+	if len(extRefs) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]bool)
+	var kinds []string
+	for _, ref := range extRefs {
+		if ref.ExternalRef != nil && ref.ExternalRef.Kind != "" && !seen[ref.ExternalRef.Kind] {
+			seen[ref.ExternalRef.Kind] = true
+			kinds = append(kinds, ref.ExternalRef.Kind)
+		}
+	}
+	return kinds
 }
 
 // ListRGDs returns all RGDs matching the given options

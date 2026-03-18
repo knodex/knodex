@@ -69,6 +69,13 @@ type CatalogRGD struct {
 	// Status is the KRO processing state (e.g., "Active", "Inactive")
 	// Empty/missing status means KRO has not yet processed the RGD
 	Status string `json:"status"`
+	// ExtendsKinds lists the parent RGD Kinds that this RGD extends.
+	// Parsed from the knodex.io/extends-kind annotation (comma-separated).
+	// Empty slice means this RGD does not extend any other RGD.
+	ExtendsKinds []string `json:"extendsKinds,omitempty"`
+	// DependsOnKinds lists the unique Kinds from externalRef resources in the RGD.
+	// Populated at watcher time from parsing spec.resources externalRef entries.
+	DependsOnKinds []string `json:"dependsOnKinds,omitempty"`
 	// AllowedDeploymentModes restricts which deployment modes can be used
 	// Valid values: "direct", "gitops", "hybrid" (case-insensitive)
 	// Empty slice means all modes are allowed (default, backward compatible)
@@ -111,12 +118,16 @@ type ListOptions struct {
 	// When true, users see: public RGDs + their project RGDs
 	// When false with empty/nil Projects: no visibility filtering (admin view)
 	IncludePublic bool
+	// ExtendsKind filters RGDs that extend the specified Kind
+	ExtendsKind string
 	// Tags filters by tags (AND logic)
 	Tags []string
 	// Category filters by category
 	Category string
 	// Search filters by name/title/description (case-insensitive contains)
 	Search string
+	// DependsOnKind filters RGDs that have this Kind in their DependsOnKinds
+	DependsOnKind string
 	// Page is the page number (1-indexed)
 	Page int
 	// PageSize is the number of items per page

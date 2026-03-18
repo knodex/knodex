@@ -166,6 +166,7 @@ Filters are cumulative (AND logic):
 2. Opens detailed view with tabs:
    - **Overview**
    - **Schema**
+   - **Add-ons** (parent RGDs only)
    - **Examples**
    - **Deployments**
 
@@ -178,11 +179,14 @@ Filters are cumulative (AND logic):
 | **Name**        | Nginx Web Application                         |
 | **API Version** | `kro.run/v1alpha1`                            |
 | **Kind**        | `WebApplication`                              |
+| **Extends**     | `SimpleAKSCluster` (links to parent RGD)      |
 | **Description** | High-performance web server and reverse proxy |
 | **Version**     | `v1.2.0`                                      |
 | **Created**     | 2024-01-15                                    |
 | **Updated**     | 2024-01-20                                    |
 | **Namespace**   | `default` (or organization namespace)         |
+
+The **Extends** row appears only for RGDs that have the `knodex.io/extends-kind` annotation. Each parent Kind links to its catalog detail page.
 
 **Quick Actions:**
 
@@ -270,6 +274,23 @@ ingress:
 ```
 
 [Copy] [Deploy with this config]
+
+### Add-ons Tab
+
+The **Add-ons** tab appears on parent RGDs when other RGDs declare `knodex.io/extends-kind` pointing to this RGD's Kind. It shows a count badge (e.g., "Add-ons (3)") and lists all extending RGDs as cards.
+
+Each add-on card displays:
+
+| Element         | Description                                       |
+| --------------- | ------------------------------------------------- |
+| **Name**        | Add-on RGD display name                           |
+| **Description** | Brief summary                                     |
+| **Category**    | Category badge                                    |
+| **View Button** | Navigate to the add-on's catalog detail page      |
+
+**Use Case:** Discover monitoring, logging, security, or networking add-ons that can be deployed on top of an existing parent instance.
+
+See [Annotations & Labels](../../catalog/annotations-and-labels/) for how to configure the `knodex.io/extends-kind` annotation.
 
 ### Deployments Tab
 
