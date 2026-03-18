@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/knodex/knodex/compare/v0.2.0...v0.3.0) (2026-03-18)
+
+
+### Features
+
+* **catalog:** add dependency tracking and add-ons UI ([#39](https://github.com/knodex/knodex/issues/39)) ([56b6463](https://github.com/knodex/knodex/commit/56b6463307c78fa515504f28a8d2513d770881d5))
+
 ## [0.2.0](https://github.com/knodex/knodex/compare/v0.1.0...v0.2.0) (2026-03-15)
 
 
