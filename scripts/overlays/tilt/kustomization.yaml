@@ -98,6 +98,7 @@ patches:
 # Use labels instead of deprecated commonLabels
 labels:
   - pairs:
+      app: knodex
       environment: tilt
       managed-by: tilt
     includeSelectors: false

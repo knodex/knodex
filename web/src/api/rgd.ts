@@ -36,8 +36,14 @@ export async function listRGDs(params?: RGDListParams): Promise<RGDListResponse>
   if (params?.tags && params.tags.length > 0) {
     queryParams.tags = params.tags.join(",");
   }
+  if (params?.extendsKind) {
+    queryParams.extendsKind = params.extendsKind;
+  }
   if (params?.search) {
     queryParams.search = params.search;
+  }
+  if (params?.dependsOnKind) {
+    queryParams.dependsOnKind = params.dependsOnKind;
   }
   if (params?.page) {
     queryParams.page = String(params.page);

@@ -40,6 +40,7 @@ const (
 	VersionAnnotation         = "knodex.io/version"
 	TitleAnnotation           = "knodex.io/title"
 	DeploymentModesAnnotation = "knodex.io/deployment-modes"
+	ExtendsKindAnnotation     = "knodex.io/extends-kind"
 )
 
 // Label keys for RBAC project filtering on cluster-scoped RGDs.

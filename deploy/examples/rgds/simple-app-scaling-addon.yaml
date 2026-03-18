@@ -1,0 +1,24 @@
+# Example RGD: Autoscaling Add-on for SimpleApp
+# Demonstrates: extends-kind feature — appears in the "Add-ons" tab
+# for any SimpleApp instance in the catalog.
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: simple-app-scaling-addon
+  namespace: default
+  annotations:
+    knodex.io/catalog: "true"
+    knodex.io/title: "Autoscaling Add-on"
+    knodex.io/description: "Configures a HorizontalPodAutoscaler for a SimpleApp deployment"
+    knodex.io/tags: "scaling,hpa,performance"
+    knodex.io/category: "infrastructure"
+    knodex.io/extends-kind: "SimpleApp"
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: SimpleAppScalingAddon
+    spec:
+      appRef: string
+      minReplicas: integer | default=1
+      maxReplicas: integer | default=5
+      targetCPUPercent: integer | default=80

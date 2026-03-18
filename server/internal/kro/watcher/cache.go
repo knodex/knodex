@@ -14,18 +14,22 @@ import (
 
 // RGDCache provides thread-safe storage for discovered RGDs
 type RGDCache struct {
-	mu           sync.RWMutex
-	rgds         map[string]*models.CatalogRGD // key: namespace/name
-	tagIndex     map[string]map[string]bool    // tag -> set of cache keys (namespace/name)
-	projectIndex map[string]map[string]bool    // project -> set of cache keys (namespace/name)
+	mu                 sync.RWMutex
+	rgds               map[string]*models.CatalogRGD // key: namespace/name
+	tagIndex           map[string]map[string]bool    // tag -> set of cache keys (namespace/name)
+	projectIndex       map[string]map[string]bool    // project -> set of cache keys (namespace/name)
+	extendsKindIndex   map[string]map[string]bool    // kind -> set of cache keys for RGDs that extend that kind
+	dependsOnKindIndex map[string]map[string]bool    // kind -> set of cache keys for RGDs that depend on that kind
 }
 
 // NewRGDCache creates a new RGD cache
 func NewRGDCache() *RGDCache {
 	return &RGDCache{
-		rgds:         make(map[string]*models.CatalogRGD),
-		tagIndex:     make(map[string]map[string]bool),
-		projectIndex: make(map[string]map[string]bool),
+		rgds:               make(map[string]*models.CatalogRGD),
+		tagIndex:           make(map[string]map[string]bool),
+		projectIndex:       make(map[string]map[string]bool),
+		extendsKindIndex:   make(map[string]map[string]bool),
+		dependsOnKindIndex: make(map[string]map[string]bool),
 	}
 }
 
@@ -66,6 +70,26 @@ func (c *RGDCache) Set(rgd *models.CatalogRGD) {
 				}
 			}
 		}
+
+		// Remove old extends-kind index entries
+		for _, kind := range oldRGD.ExtendsKinds {
+			if keys, ok := c.extendsKindIndex[kind]; ok {
+				delete(keys, key)
+				if len(keys) == 0 {
+					delete(c.extendsKindIndex, kind)
+				}
+			}
+		}
+
+		// Remove old depends-on-kind index entries
+		for _, kind := range oldRGD.DependsOnKinds {
+			if keys, ok := c.dependsOnKindIndex[kind]; ok {
+				delete(keys, key)
+				if len(keys) == 0 {
+					delete(c.dependsOnKindIndex, kind)
+				}
+			}
+		}
 	}
 
 	// Add/update the RGD in the main cache
@@ -88,6 +112,22 @@ func (c *RGDCache) Set(rgd *models.CatalogRGD) {
 			}
 			c.projectIndex[projectLabel][key] = true
 		}
+	}
+
+	// Add new extends-kind index entries
+	for _, kind := range rgd.ExtendsKinds {
+		if c.extendsKindIndex[kind] == nil {
+			c.extendsKindIndex[kind] = make(map[string]bool)
+		}
+		c.extendsKindIndex[kind][key] = true
+	}
+
+	// Add new depends-on-kind index entries
+	for _, kind := range rgd.DependsOnKinds {
+		if c.dependsOnKindIndex[kind] == nil {
+			c.dependsOnKindIndex[kind] = make(map[string]bool)
+		}
+		c.dependsOnKindIndex[kind][key] = true
 	}
 }
 
@@ -129,6 +169,26 @@ func (c *RGDCache) Delete(namespace, name string) {
 					if len(keys) == 0 {
 						delete(c.projectIndex, projectLabel)
 					}
+				}
+			}
+		}
+
+		// Remove extends-kind index entries
+		for _, kind := range oldRGD.ExtendsKinds {
+			if keys, ok := c.extendsKindIndex[kind]; ok {
+				delete(keys, key)
+				if len(keys) == 0 {
+					delete(c.extendsKindIndex, kind)
+				}
+			}
+		}
+
+		// Remove depends-on-kind index entries
+		for _, kind := range oldRGD.DependsOnKinds {
+			if keys, ok := c.dependsOnKindIndex[kind]; ok {
+				delete(keys, key)
+				if len(keys) == 0 {
+					delete(c.dependsOnKindIndex, kind)
 				}
 			}
 		}
@@ -200,6 +260,24 @@ func (c *RGDCache) List(opts models.ListOptions) models.CatalogRGDList {
 func (c *RGDCache) getCandidateKeys(opts models.ListOptions) map[string]bool {
 	var tagCandidates map[string]bool
 	var projectCandidates map[string]bool
+	var extendsKindCandidates map[string]bool
+	var dependsOnKindCandidates map[string]bool
+
+	// Use extends-kind index if filter is present
+	if opts.ExtendsKind != "" {
+		extendsKindCandidates = c.extendsKindIndex[opts.ExtendsKind]
+		if extendsKindCandidates == nil {
+			return make(map[string]bool) // No RGDs extend this kind
+		}
+	}
+
+	// Use depends-on-kind index if filter is present
+	if opts.DependsOnKind != "" {
+		dependsOnKindCandidates = c.dependsOnKindIndex[opts.DependsOnKind]
+		if dependsOnKindCandidates == nil {
+			return make(map[string]bool) // No RGDs depend on this kind
+		}
+	}
 
 	// Use tag index if tags filter is present
 	if len(opts.Tags) > 0 {
@@ -244,26 +322,63 @@ func (c *RGDCache) getCandidateKeys(opts models.ListOptions) map[string]bool {
 		}
 	}
 
-	// Combine tag and project candidates
-	if tagCandidates != nil && projectCandidates != nil {
-		// Both filters: intersect the sets
-		result := make(map[string]bool)
-		for key := range tagCandidates {
-			if projectCandidates[key] {
-				result[key] = true
-			}
-		}
-		return result
-	} else if tagCandidates != nil {
-		// Only tag filter
-		return tagCandidates
-	} else if projectCandidates != nil {
-		// Only project filter
-		return projectCandidates
+	// Combine all candidate sets by intersecting them
+	candidateSets := []map[string]bool{}
+	if tagCandidates != nil {
+		candidateSets = append(candidateSets, tagCandidates)
+	}
+	if projectCandidates != nil {
+		candidateSets = append(candidateSets, projectCandidates)
+	}
+	if extendsKindCandidates != nil {
+		candidateSets = append(candidateSets, extendsKindCandidates)
+	}
+	if dependsOnKindCandidates != nil {
+		candidateSets = append(candidateSets, dependsOnKindCandidates)
 	}
 
-	// No index optimization applicable
-	return nil
+	if len(candidateSets) == 0 {
+		return nil // No index optimization applicable
+	}
+	if len(candidateSets) == 1 {
+		return candidateSets[0]
+	}
+
+	// Intersect all candidate sets
+	result := make(map[string]bool)
+	for key := range candidateSets[0] {
+		inAll := true
+		for _, set := range candidateSets[1:] {
+			if !set[key] {
+				inAll = false
+				break
+			}
+		}
+		if inAll {
+			result[key] = true
+		}
+	}
+	return result
+}
+
+// GetByDependsOnKind returns all RGDs that depend on the given Kind via externalRef.
+// Uses the dependsOnKindIndex for O(k) lookup where k is the number of matching RGDs.
+func (c *RGDCache) GetByDependsOnKind(kind string) []*models.CatalogRGD {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	keys := c.dependsOnKindIndex[kind]
+	if len(keys) == 0 {
+		return nil
+	}
+
+	result := make([]*models.CatalogRGD, 0, len(keys))
+	for key := range keys {
+		if rgd, ok := c.rgds[key]; ok {
+			result = append(result, rgd)
+		}
+	}
+	return result
 }
 
 // Count returns the total number of RGDs in the cache
@@ -271,6 +386,26 @@ func (c *RGDCache) Count() int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return len(c.rgds)
+}
+
+// GetByExtendsKind returns all RGDs that extend the given Kind.
+// Uses the extendsKindIndex for efficient lookup.
+func (c *RGDCache) GetByExtendsKind(kind string) []*models.CatalogRGD {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	keys := c.extendsKindIndex[kind]
+	if len(keys) == 0 {
+		return nil
+	}
+
+	result := make([]*models.CatalogRGD, 0, len(keys))
+	for key := range keys {
+		if rgd, ok := c.rgds[key]; ok {
+			result = append(result, rgd)
+		}
+	}
+	return result
 }
 
 // All returns all RGDs in the cache (for debugging/testing)
@@ -291,6 +426,8 @@ func (c *RGDCache) Clear() {
 	c.rgds = make(map[string]*models.CatalogRGD)
 	c.tagIndex = make(map[string]map[string]bool)
 	c.projectIndex = make(map[string]map[string]bool)
+	c.extendsKindIndex = make(map[string]map[string]bool)
+	c.dependsOnKindIndex = make(map[string]map[string]bool)
 }
 
 // matchesFilter checks if an RGD matches the filter options
@@ -405,6 +542,34 @@ func (c *RGDCache) matchesFilter(rgd *models.CatalogRGD, opts models.ListOptions
 			if !rgdTags[strings.ToLower(filterTag)] {
 				return false
 			}
+		}
+	}
+
+	// ExtendsKind filter (defense-in-depth: also checked via index in getCandidateKeys)
+	if opts.ExtendsKind != "" {
+		found := false
+		for _, k := range rgd.ExtendsKinds {
+			if k == opts.ExtendsKind {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+
+	// DependsOnKind filter (defense-in-depth: also checked via index in getCandidateKeys)
+	if opts.DependsOnKind != "" {
+		found := false
+		for _, k := range rgd.DependsOnKinds {
+			if k == opts.DependsOnKind {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
 		}
 	}
 

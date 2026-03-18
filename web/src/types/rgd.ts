@@ -22,8 +22,12 @@ export interface CatalogRGD {
   instances: number;
   apiVersion?: string;
   kind?: string;
+  /** Parent RGD Kinds this RGD extends (from knodex.io/extends-kind annotation) */
+  extendsKinds?: string[];
   /** KRO processing state (e.g., "Active", "Inactive") */
   status?: string;
+  /** Kinds of external references this RGD depends on (populated from externalRef resources) */
+  dependsOnKinds?: string[];
   /** Allowed deployment modes for this RGD. If empty/undefined, all modes are allowed. */
   allowedDeploymentModes?: DeploymentMode[];
   createdAt: string;
@@ -48,6 +52,9 @@ export interface RGDListParams {
   category?: string;
   tags?: string[];
   search?: string;
+  /** Filter RGDs that extend the specified Kind */
+  extendsKind?: string;
+  dependsOnKind?: string;
   page?: number;
   pageSize?: number;
   sortBy?: "name" | "namespace" | "createdAt" | "updatedAt" | "category";

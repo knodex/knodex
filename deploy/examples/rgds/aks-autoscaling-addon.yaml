@@ -1,0 +1,36 @@
+# Example RGD: Autoscaling Add-on for SimpleAKSCluster
+# Demonstrates: extends-kind + externalRef — appears in the "Add-ons" tab
+# for any SimpleAKSCluster instance, and shows "Depends On" in catalog.
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: aks-autoscaling-addon
+  namespace: default
+  annotations:
+    knodex.io/catalog: "true"
+    knodex.io/title: "AKS Autoscaling Add-on"
+    knodex.io/description: "Configures cluster autoscaler and node pool scaling policies for an AKS cluster"
+    knodex.io/tags: "scaling,autoscaler,aks,azure"
+    knodex.io/category: "infrastructure"
+    knodex.io/extends-kind: "SimpleAKSCluster"
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: AKSAutoscalingAddon
+    spec:
+      externalRef:
+        cluster:
+          name: string | default="" description="Name of the SimpleAKSCluster instance"
+          namespace: string | default="" description="Namespace of the SimpleAKSCluster instance"
+      minNodes: integer | default=1
+      maxNodes: integer | default=10
+      scaleDownDelay: string | default="10m"
+
+  resources:
+    - id: cluster
+      externalRef:
+        apiVersion: kro.run/v1alpha1
+        kind: SimpleAKSCluster
+        metadata:
+          name: ${schema.spec.externalRef.cluster.name}
+          namespace: ${schema.spec.externalRef.cluster.namespace}

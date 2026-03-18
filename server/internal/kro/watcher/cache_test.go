@@ -1247,3 +1247,644 @@ func TestRGDCache_VisibilityFiltering_CombinedWithOtherFilters(t *testing.T) {
 		}
 	}
 }
+
+func TestRGDCache_ExtendsKindIndex_SetAndQuery(t *testing.T) {
+	t.Parallel()
+
+	cache := NewRGDCache()
+
+	// Create parent RGD
+	parent := catalogRGD("simple-aks", "")
+	parent.Kind = "SimpleAKSCluster"
+	cache.Set(parent)
+
+	// Create child RGDs that extend SimpleAKSCluster
+	child1 := catalogRGD("monitoring-addon", "")
+	child1.Kind = "MonitoringAddon"
+	child1.ExtendsKinds = []string{"SimpleAKSCluster"}
+	cache.Set(child1)
+
+	child2 := catalogRGD("logging-addon", "")
+	child2.Kind = "LoggingAddon"
+	child2.ExtendsKinds = []string{"SimpleAKSCluster"}
+	cache.Set(child2)
+
+	// Child that extends a different kind
+	child3 := catalogRGD("eks-addon", "")
+	child3.Kind = "EKSAddon"
+	child3.ExtendsKinds = []string{"SimpleEKSCluster"}
+	cache.Set(child3)
+
+	// Query RGDs extending SimpleAKSCluster
+	results := cache.GetByExtendsKind("SimpleAKSCluster")
+	if len(results) != 2 {
+		t.Fatalf("expected 2 RGDs extending SimpleAKSCluster, got %d", len(results))
+	}
+
+	// Query RGDs extending SimpleEKSCluster
+	results = cache.GetByExtendsKind("SimpleEKSCluster")
+	if len(results) != 1 {
+		t.Fatalf("expected 1 RGD extending SimpleEKSCluster, got %d", len(results))
+	}
+	if results[0].Name != "eks-addon" {
+		t.Errorf("expected eks-addon, got %s", results[0].Name)
+	}
+
+	// Query non-existent kind
+	results = cache.GetByExtendsKind("NonExistent")
+	if len(results) != 0 {
+		t.Errorf("expected 0 results for non-existent kind, got %d", len(results))
+	}
+}
+
+func TestRGDCache_ExtendsKindIndex_Update(t *testing.T) {
+	t.Parallel()
+
+	cache := NewRGDCache()
+
+	// Create child RGD extending kind A
+	child := catalogRGD("addon", "")
+	child.ExtendsKinds = []string{"KindA"}
+	cache.Set(child)
+
+	// Verify it's indexed under KindA
+	results := cache.GetByExtendsKind("KindA")
+	if len(results) != 1 {
+		t.Fatalf("expected 1 RGD extending KindA, got %d", len(results))
+	}
+
+	// Update to extend KindB instead
+	child2 := catalogRGD("addon", "")
+	child2.ExtendsKinds = []string{"KindB"}
+	cache.Set(child2)
+
+	// KindA should have no results
+	results = cache.GetByExtendsKind("KindA")
+	if len(results) != 0 {
+		t.Errorf("expected 0 RGDs extending KindA after update, got %d", len(results))
+	}
+
+	// KindB should have the result
+	results = cache.GetByExtendsKind("KindB")
+	if len(results) != 1 {
+		t.Fatalf("expected 1 RGD extending KindB after update, got %d", len(results))
+	}
+}
+
+func TestRGDCache_ExtendsKindIndex_Delete(t *testing.T) {
+	t.Parallel()
+
+	cache := NewRGDCache()
+
+	child := catalogRGD("addon", "default")
+	child.ExtendsKinds = []string{"SimpleAKSCluster"}
+	cache.Set(child)
+
+	// Verify indexed
+	results := cache.GetByExtendsKind("SimpleAKSCluster")
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+
+	// Delete
+	cache.Delete("default", "addon")
+
+	// Should be empty
+	results = cache.GetByExtendsKind("SimpleAKSCluster")
+	if len(results) != 0 {
+		t.Errorf("expected 0 results after delete, got %d", len(results))
+	}
+}
+
+func TestRGDCache_ExtendsKindIndex_RespectRBAC(t *testing.T) {
+	t.Parallel()
+
+	cache := NewRGDCache()
+
+	// Parent kind - public RGD (no project restriction)
+	parent := catalogRGD("simple-aks", "")
+	parent.Kind = "SimpleAKSCluster"
+	cache.Set(parent)
+
+	// Public add-on extending SimpleAKSCluster (visible to all authenticated users)
+	publicAddon := catalogRGD("public-addon", "")
+	publicAddon.ExtendsKinds = []string{"SimpleAKSCluster"}
+	cache.Set(publicAddon)
+
+	// Project-restricted add-on extending SimpleAKSCluster (only for project-a)
+	privateAddon := catalogRGD("private-addon", "")
+	privateAddon.ExtendsKinds = []string{"SimpleAKSCluster"}
+	privateAddon.Labels = map[string]string{kro.RGDProjectLabel: "project-a"}
+	cache.Set(privateAddon)
+
+	// User in project-b: should see only public add-on (not project-a's)
+	opts := models.DefaultListOptions()
+	opts.ExtendsKind = "SimpleAKSCluster"
+	opts.IncludePublic = true
+	opts.Projects = []string{"project-b"}
+
+	result := cache.List(opts)
+
+	if result.TotalCount != 1 {
+		t.Errorf("project-b user: expected 1 add-on (public only), got %d", result.TotalCount)
+	}
+	if result.TotalCount > 0 && result.Items[0].Name != "public-addon" {
+		t.Errorf("project-b user: expected public-addon, got %s", result.Items[0].Name)
+	}
+
+	// User in project-a: should see both public and project-a's add-on
+	opts.Projects = []string{"project-a"}
+	result = cache.List(opts)
+
+	if result.TotalCount != 2 {
+		t.Errorf("project-a user: expected 2 add-ons (public + project-a), got %d", result.TotalCount)
+	}
+
+	names := make(map[string]bool)
+	for _, rgd := range result.Items {
+		names[rgd.Name] = true
+	}
+	if !names["public-addon"] {
+		t.Error("project-a user: expected public-addon to be visible")
+	}
+	if !names["private-addon"] {
+		t.Error("project-a user: expected private-addon to be visible")
+	}
+
+	// Verify non-extending RGD (parent itself) is NOT returned
+	for _, rgd := range result.Items {
+		if rgd.Name == "simple-aks" {
+			t.Error("parent RGD simple-aks should not appear in extendsKind results")
+		}
+	}
+}
+
+func TestRGDCache_ExtendsKindIndex_RespectOrgFilter(t *testing.T) {
+	t.Parallel()
+
+	cache := NewRGDCache()
+
+	// Public add-on from orgA
+	orgAAddon := catalogRGD("orga-addon", "")
+	orgAAddon.ExtendsKinds = []string{"SimpleAKSCluster"}
+	orgAAddon.Organization = "orgA"
+	cache.Set(orgAAddon)
+
+	// Public add-on from orgB (should be hidden for orgA user)
+	orgBAddon := catalogRGD("orgb-addon", "")
+	orgBAddon.ExtendsKinds = []string{"SimpleAKSCluster"}
+	orgBAddon.Organization = "orgB"
+	cache.Set(orgBAddon)
+
+	// Shared add-on (no org restriction)
+	sharedAddon := catalogRGD("shared-addon", "")
+	sharedAddon.ExtendsKinds = []string{"SimpleAKSCluster"}
+	cache.Set(sharedAddon)
+
+	// OrgA user: should see orgA addon + shared addon, not orgB addon
+	opts := models.DefaultListOptions()
+	opts.ExtendsKind = "SimpleAKSCluster"
+	opts.Organization = "orgA"
+
+	result := cache.List(opts)
+
+	if result.TotalCount != 2 {
+		t.Errorf("orgA user: expected 2 add-ons (orgA + shared), got %d", result.TotalCount)
+	}
+
+	for _, rgd := range result.Items {
+		if rgd.Name == "orgb-addon" {
+			t.Error("orgB add-on should not be visible to orgA user")
+		}
+	}
+}
+
+func TestRGDCache_ExtendsKindIndex_ListWithFilter(t *testing.T) {
+	t.Parallel()
+
+	cache := NewRGDCache()
+
+	// Create several RGDs
+	parent := catalogRGD("simple-aks", "")
+	parent.Kind = "SimpleAKSCluster"
+	cache.Set(parent)
+
+	child1 := catalogRGD("monitoring", "")
+	child1.ExtendsKinds = []string{"SimpleAKSCluster"}
+	cache.Set(child1)
+
+	child2 := catalogRGD("logging", "")
+	child2.ExtendsKinds = []string{"SimpleAKSCluster"}
+	cache.Set(child2)
+
+	unrelated := catalogRGD("standalone", "")
+	cache.Set(unrelated)
+
+	// List with extendsKind filter
+	opts := models.DefaultListOptions()
+	opts.ExtendsKind = "SimpleAKSCluster"
+	result := cache.List(opts)
+
+	if result.TotalCount != 2 {
+		t.Errorf("expected 2 RGDs extending SimpleAKSCluster, got %d", result.TotalCount)
+	}
+
+	// Verify only child RGDs are returned (not parent or unrelated)
+	for _, rgd := range result.Items {
+		if rgd.Name != "monitoring" && rgd.Name != "logging" {
+			t.Errorf("unexpected RGD in results: %s", rgd.Name)
+		}
+	}
+}
+
+func TestRGDCache_GetByDependsOnKind(t *testing.T) {
+	t.Parallel()
+	cache := NewRGDCache()
+
+	rgd1 := catalogRGD("app-with-cluster", "default")
+	rgd1.DependsOnKinds = []string{"AKSCluster", "KeyVault"}
+	cache.Set(rgd1)
+
+	rgd2 := catalogRGD("standalone-app", "default")
+	cache.Set(rgd2)
+
+	rgd3 := catalogRGD("app-with-vault", "default")
+	rgd3.DependsOnKinds = []string{"KeyVault"}
+	cache.Set(rgd3)
+
+	// Find by AKSCluster - should return only rgd1
+	results := cache.GetByDependsOnKind("AKSCluster")
+	if len(results) != 1 {
+		t.Fatalf("expected 1 RGD depending on AKSCluster, got %d", len(results))
+	}
+	if results[0].Name != "app-with-cluster" {
+		t.Errorf("expected app-with-cluster, got %s", results[0].Name)
+	}
+
+	// Find by KeyVault - should return rgd1 and rgd3
+	results = cache.GetByDependsOnKind("KeyVault")
+	if len(results) != 2 {
+		t.Fatalf("expected 2 RGDs depending on KeyVault, got %d", len(results))
+	}
+
+	// Find by nonexistent kind
+	results = cache.GetByDependsOnKind("NonExistent")
+	if len(results) != 0 {
+		t.Errorf("expected 0 RGDs, got %d", len(results))
+	}
+}
+
+func TestRGDCache_ListFilterByDependsOnKind(t *testing.T) {
+	t.Parallel()
+	cache := NewRGDCache()
+
+	rgd1 := catalogRGD("app-a", "default")
+	rgd1.DependsOnKinds = []string{"AKSCluster"}
+	cache.Set(rgd1)
+
+	rgd2 := catalogRGD("app-b", "default")
+	cache.Set(rgd2)
+
+	opts := models.ListOptions{
+		DependsOnKind: "AKSCluster",
+		Page:          1,
+		PageSize:      20,
+		SortBy:        "name",
+		SortOrder:     "asc",
+	}
+
+	result := cache.List(opts)
+	if result.TotalCount != 1 {
+		t.Fatalf("expected 1 RGD, got %d", result.TotalCount)
+	}
+	if result.Items[0].Name != "app-a" {
+		t.Errorf("expected app-a, got %s", result.Items[0].Name)
+	}
+}
+
+func TestRGDCache_DependsOnKindIndex_SetAndQuery(t *testing.T) {
+	t.Parallel()
+
+	cache := NewRGDCache()
+
+	dep1 := catalogRGD("logging-addon", "default")
+	dep1.DependsOnKinds = []string{"SimpleAKSCluster"}
+	cache.Set(dep1)
+
+	dep2 := catalogRGD("monitoring-addon", "default")
+	dep2.DependsOnKinds = []string{"SimpleAKSCluster"}
+	cache.Set(dep2)
+
+	dep3 := catalogRGD("eks-addon", "default")
+	dep3.DependsOnKinds = []string{"SimpleEKSCluster"}
+	cache.Set(dep3)
+
+	// Query for AKSCluster dependents — should return 2
+	results := cache.GetByDependsOnKind("SimpleAKSCluster")
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results for SimpleAKSCluster, got %d", len(results))
+	}
+	// Verify correct RGDs returned (order is non-deterministic from map iteration)
+	names := map[string]bool{}
+	for _, r := range results {
+		names[r.Name] = true
+	}
+	if !names["logging-addon"] || !names["monitoring-addon"] {
+		t.Errorf("expected logging-addon and monitoring-addon, got %v", names)
+	}
+
+	// Query for EKSCluster dependents — should return 1
+	results = cache.GetByDependsOnKind("SimpleEKSCluster")
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result for SimpleEKSCluster, got %d", len(results))
+	}
+	if results[0].Name != "eks-addon" {
+		t.Errorf("expected eks-addon, got %s", results[0].Name)
+	}
+
+	// Query for non-existent kind — should return nil
+	results = cache.GetByDependsOnKind("NonExistent")
+	if len(results) != 0 {
+		t.Errorf("expected 0 results for NonExistent, got %d", len(results))
+	}
+}
+
+func TestRGDCache_DependsOnKindIndex_Update(t *testing.T) {
+	t.Parallel()
+
+	cache := NewRGDCache()
+
+	dep := catalogRGD("app", "default")
+	dep.DependsOnKinds = []string{"KindA"}
+	cache.Set(dep)
+
+	results := cache.GetByDependsOnKind("KindA")
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result before update, got %d", len(results))
+	}
+
+	// Update: change DependsOnKinds from KindA to KindB
+	dep2 := catalogRGD("app", "default")
+	dep2.DependsOnKinds = []string{"KindB"}
+	cache.Set(dep2)
+
+	results = cache.GetByDependsOnKind("KindA")
+	if len(results) != 0 {
+		t.Errorf("expected 0 results for KindA after update, got %d", len(results))
+	}
+
+	results = cache.GetByDependsOnKind("KindB")
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result for KindB after update, got %d", len(results))
+	}
+}
+
+func TestRGDCache_DependsOnKindIndex_Delete(t *testing.T) {
+	t.Parallel()
+
+	cache := NewRGDCache()
+
+	dep := catalogRGD("app", "default")
+	dep.DependsOnKinds = []string{"SimpleAKSCluster"}
+	cache.Set(dep)
+
+	results := cache.GetByDependsOnKind("SimpleAKSCluster")
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result before delete, got %d", len(results))
+	}
+
+	cache.Delete("default", "app")
+
+	results = cache.GetByDependsOnKind("SimpleAKSCluster")
+	if len(results) != 0 {
+		t.Errorf("expected 0 results after delete, got %d", len(results))
+	}
+}
+
+func TestRGDCache_DependsOnKindIndex_Clear(t *testing.T) {
+	t.Parallel()
+
+	cache := NewRGDCache()
+
+	dep1 := catalogRGD("app-a", "default")
+	dep1.DependsOnKinds = []string{"AKSCluster"}
+	cache.Set(dep1)
+
+	dep2 := catalogRGD("app-b", "default")
+	dep2.DependsOnKinds = []string{"KeyVault"}
+	cache.Set(dep2)
+
+	cache.Clear()
+
+	results := cache.GetByDependsOnKind("AKSCluster")
+	if len(results) != 0 {
+		t.Errorf("expected 0 results for AKSCluster after Clear, got %d", len(results))
+	}
+
+	results = cache.GetByDependsOnKind("KeyVault")
+	if len(results) != 0 {
+		t.Errorf("expected 0 results for KeyVault after Clear, got %d", len(results))
+	}
+}
+
+func TestRGDCache_DependsOnKindIndex_MultipleDependencies(t *testing.T) {
+	t.Parallel()
+
+	cache := NewRGDCache()
+
+	// RGD that depends on two kinds
+	dep := catalogRGD("complex-app", "default")
+	dep.DependsOnKinds = []string{"AKSCluster", "KeyVault"}
+	cache.Set(dep)
+
+	// Should appear in both indexes
+	results := cache.GetByDependsOnKind("AKSCluster")
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result for AKSCluster, got %d", len(results))
+	}
+
+	results = cache.GetByDependsOnKind("KeyVault")
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result for KeyVault, got %d", len(results))
+	}
+
+	// Delete cleans up both index entries
+	cache.Delete("default", "complex-app")
+
+	results = cache.GetByDependsOnKind("AKSCluster")
+	if len(results) != 0 {
+		t.Errorf("expected 0 results for AKSCluster after delete, got %d", len(results))
+	}
+
+	results = cache.GetByDependsOnKind("KeyVault")
+	if len(results) != 0 {
+		t.Errorf("expected 0 results for KeyVault after delete, got %d", len(results))
+	}
+}
+
+func TestRGDCache_DependsOnKindIndex_CleanupEmptyMaps(t *testing.T) {
+	t.Parallel()
+
+	cache := NewRGDCache()
+
+	dep := catalogRGD("app", "default")
+	dep.DependsOnKinds = []string{"AKSCluster"}
+	cache.Set(dep)
+
+	// Verify index entry exists
+	cache.mu.RLock()
+	if _, ok := cache.dependsOnKindIndex["AKSCluster"]; !ok {
+		t.Fatal("expected AKSCluster key in dependsOnKindIndex after Set")
+	}
+	cache.mu.RUnlock()
+
+	// Delete the RGD — should clean up the empty inner map
+	cache.Delete("default", "app")
+
+	cache.mu.RLock()
+	if _, ok := cache.dependsOnKindIndex["AKSCluster"]; ok {
+		t.Error("expected AKSCluster key to be removed from dependsOnKindIndex after Delete (empty map cleanup)")
+	}
+	cache.mu.RUnlock()
+
+	// Also verify cleanup on update (remove old kind, add new)
+	dep2 := catalogRGD("app2", "default")
+	dep2.DependsOnKinds = []string{"KindA"}
+	cache.Set(dep2)
+
+	dep2Updated := catalogRGD("app2", "default")
+	dep2Updated.DependsOnKinds = []string{"KindB"}
+	cache.Set(dep2Updated)
+
+	cache.mu.RLock()
+	if _, ok := cache.dependsOnKindIndex["KindA"]; ok {
+		t.Error("expected KindA key to be removed from dependsOnKindIndex after update (empty map cleanup)")
+	}
+	if _, ok := cache.dependsOnKindIndex["KindB"]; !ok {
+		t.Error("expected KindB key to exist in dependsOnKindIndex after update")
+	}
+	cache.mu.RUnlock()
+}
+
+func TestRGDCache_DependsOnKindIndex_RespectRBAC(t *testing.T) {
+	t.Parallel()
+
+	cache := NewRGDCache()
+
+	// Public addon that depends on SimpleAKSCluster (visible to all authenticated users)
+	publicAddon := catalogRGD("public-logging", "")
+	publicAddon.DependsOnKinds = []string{"SimpleAKSCluster"}
+	cache.Set(publicAddon)
+
+	// Project-restricted addon that depends on SimpleAKSCluster (only for project-a)
+	privateAddon := catalogRGD("private-logging", "")
+	privateAddon.DependsOnKinds = []string{"SimpleAKSCluster"}
+	privateAddon.Labels = map[string]string{kro.RGDProjectLabel: "project-a"}
+	cache.Set(privateAddon)
+
+	// User in project-b: should see only public addon (not project-a's)
+	opts := models.DefaultListOptions()
+	opts.DependsOnKind = "SimpleAKSCluster"
+	opts.IncludePublic = true
+	opts.Projects = []string{"project-b"}
+
+	result := cache.List(opts)
+
+	if result.TotalCount != 1 {
+		t.Errorf("project-b user: expected 1 addon (public only), got %d", result.TotalCount)
+	}
+	if result.TotalCount > 0 && result.Items[0].Name != "public-logging" {
+		t.Errorf("project-b user: expected public-logging, got %s", result.Items[0].Name)
+	}
+
+	// User in project-a: should see both public and project-a's addon
+	opts.Projects = []string{"project-a"}
+	result = cache.List(opts)
+
+	if result.TotalCount != 2 {
+		t.Errorf("project-a user: expected 2 addons (public + project-a), got %d", result.TotalCount)
+	}
+
+	names := make(map[string]bool)
+	for _, rgd := range result.Items {
+		names[rgd.Name] = true
+	}
+	if !names["public-logging"] {
+		t.Error("project-a user: expected public-logging to be visible")
+	}
+	if !names["private-logging"] {
+		t.Error("project-a user: expected private-logging to be visible")
+	}
+}
+
+func TestRGDCache_DependsOnKindIndex_RespectOrgFilter(t *testing.T) {
+	t.Parallel()
+
+	cache := NewRGDCache()
+
+	// OrgA addon depending on AKSCluster
+	orgAAddon := catalogRGD("orga-logging", "")
+	orgAAddon.DependsOnKinds = []string{"AKSCluster"}
+	orgAAddon.Organization = "orgA"
+	cache.Set(orgAAddon)
+
+	// OrgB addon depending on AKSCluster (should be hidden for orgA user)
+	orgBAddon := catalogRGD("orgb-logging", "")
+	orgBAddon.DependsOnKinds = []string{"AKSCluster"}
+	orgBAddon.Organization = "orgB"
+	cache.Set(orgBAddon)
+
+	// Shared addon depending on AKSCluster (no org restriction)
+	sharedAddon := catalogRGD("shared-logging", "")
+	sharedAddon.DependsOnKinds = []string{"AKSCluster"}
+	cache.Set(sharedAddon)
+
+	// OrgA user: should see orgA addon + shared addon, not orgB addon
+	opts := models.DefaultListOptions()
+	opts.DependsOnKind = "AKSCluster"
+	opts.Organization = "orgA"
+
+	result := cache.List(opts)
+
+	if result.TotalCount != 2 {
+		t.Errorf("orgA user: expected 2 addons (orgA + shared), got %d", result.TotalCount)
+	}
+
+	for _, rgd := range result.Items {
+		if rgd.Name == "orgb-logging" {
+			t.Error("orgB addon should not be visible to orgA user")
+		}
+	}
+}
+
+func TestRGDCache_DependsOnKindIndex_ListWithFilter(t *testing.T) {
+	t.Parallel()
+
+	cache := NewRGDCache()
+
+	addon1 := catalogRGD("logging", "")
+	addon1.DependsOnKinds = []string{"SimpleAKSCluster"}
+	cache.Set(addon1)
+
+	addon2 := catalogRGD("monitoring", "")
+	addon2.DependsOnKinds = []string{"SimpleAKSCluster"}
+	cache.Set(addon2)
+
+	unrelated := catalogRGD("standalone", "")
+	cache.Set(unrelated)
+
+	// List with dependsOnKind filter — should exclude unrelated RGDs
+	opts := models.DefaultListOptions()
+	opts.DependsOnKind = "SimpleAKSCluster"
+	result := cache.List(opts)
+
+	if result.TotalCount != 2 {
+		t.Errorf("expected 2 RGDs depending on SimpleAKSCluster, got %d", result.TotalCount)
+	}
+
+	for _, rgd := range result.Items {
+		if rgd.Name != "logging" && rgd.Name != "monitoring" {
+			t.Errorf("unexpected RGD in results: %s", rgd.Name)
+		}
+	}
+}

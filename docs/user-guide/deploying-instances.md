@@ -43,7 +43,21 @@ Deploying an instance creates Kubernetes resources based on ResourceGraphDefinit
 5. Fill deployment form
 6. Click **Deploy Now**
 
-### Method 3: From Example Template
+### Method 3: From Instance Detail (Add-on Deployment)
+
+Deploy an add-on directly from a parent instance's detail page:
+
+1. Navigate to a running instance
+2. Find the **Deploy on this instance** section (above deployment history)
+3. Browse available add-ons for this instance's Kind
+4. Click **Deploy** on an add-on
+5. The deploy form opens with the external reference fields pre-filled (instance name and namespace)
+6. Fill remaining parameters
+7. Click **Deploy Now**
+
+**Use Case:** Deploy monitoring, logging, or other add-ons that reference an existing parent instance. The external reference is pre-populated so the add-on knows which parent instance to attach to.
+
+### Method 4: From Example Template
 
 1. Open RGD details page
 2. Click **Examples** tab

@@ -152,25 +152,23 @@ test.describe('Instance Status Card (Unified Status Display)', () => {
     await expect(conditions.getByText('Conditions')).toBeVisible()
   })
 
-  test('AC-9: raw JSON status section is removed', async ({ page }) => {
-    // There should be no collapsible "Status" button (the old raw JSON section)
-    // Only the Spec collapsible button should exist (exact match to avoid matching "Edit Spec")
-    const specButton = page.getByRole('button', { name: 'Spec', exact: true })
-    await expect(specButton).toBeVisible()
+  test('AC-9: raw JSON status section is removed (status is now a tab, not collapsible)', async ({ page }) => {
+    // Status is now a tab, not a collapsible button. Verify the Status tab exists
+    // and that there is no separate collapsible "Status" section.
+    const statusTab = page.getByRole('tab', { name: 'Status' })
+    await expect(statusTab).toBeVisible()
 
-    // No "Status" collapsible button should exist
-    const allButtons = page.getByRole('button')
-    const buttonTexts = await allButtons.allTextContents()
-    const statusButtons = buttonTexts.filter(text => text.trim() === 'Status')
-    expect(statusButtons).toHaveLength(0)
+    // The status tab should be active by default (border-primary class)
+    await expect(statusTab).toHaveAttribute('aria-selected', 'true')
   })
 
-  test('AC-9: spec raw JSON section still exists', async ({ page }) => {
-    const specButton = page.getByRole('button', { name: 'Spec', exact: true })
-    await expect(specButton).toBeVisible()
+  test('AC-9: spec raw JSON section still exists (now as a Spec tab)', async ({ page }) => {
+    // Spec is now a tab instead of a collapsible section
+    const specTab = page.getByRole('tab', { name: 'Spec' })
+    await expect(specTab).toBeVisible()
 
-    // Click to expand spec section
-    await specButton.click()
+    // Click Spec tab to show spec content
+    await specTab.click()
 
     // Should show JSON content for spec
     await expect(page.getByText('"replicas": 3')).toBeVisible()

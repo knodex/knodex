@@ -342,11 +342,17 @@ func (s *CatalogService) filtersToListOptions(filters RGDFilters) models.ListOpt
 	if filters.Category != "" {
 		opts.Category = filters.Category
 	}
+	if filters.ExtendsKind != "" {
+		opts.ExtendsKind = filters.ExtendsKind
+	}
 	if len(filters.Tags) > 0 {
 		opts.Tags = filters.Tags
 	}
 	if filters.Search != "" {
 		opts.Search = filters.Search
+	}
+	if filters.DependsOnKind != "" {
+		opts.DependsOnKind = filters.DependsOnKind
 	}
 	if filters.Page > 0 {
 		opts.Page = filters.Page
@@ -412,12 +418,14 @@ func (s *CatalogService) listCacheKey(opts models.ListOptions) string {
 	copy(tags, opts.Tags)
 	sort.Strings(tags)
 
-	return fmt.Sprintf("rgd:list:org=%s:ns=%s:cat=%s:tags=%s:search=%s:projects=%s:public=%t:page=%d:size=%d:sort=%s:%s",
+	return fmt.Sprintf("rgd:list:org=%s:ns=%s:cat=%s:tags=%s:ek=%s:search=%s:dok=%s:projects=%s:public=%t:page=%d:size=%d:sort=%s:%s",
 		opts.Organization,
 		opts.Namespace,
 		opts.Category,
 		strings.Join(tags, ","),
+		opts.ExtendsKind,
 		opts.Search,
+		opts.DependsOnKind,
 		strings.Join(projects, ","),
 		opts.IncludePublic,
 		opts.Page,

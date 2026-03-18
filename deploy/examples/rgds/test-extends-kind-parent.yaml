@@ -1,0 +1,20 @@
+# Test RGD: Simple AKS Cluster (parent)
+# Used to verify the extends-kind feature (STORY-272)
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: simple-aks-cluster
+  namespace: default
+  annotations:
+    knodex.io/catalog: "true"
+    knodex.io/title: "Simple AKS Cluster"
+    knodex.io/description: "A simple Azure Kubernetes Service cluster"
+    knodex.io/tags: "kubernetes,aks,azure"
+    knodex.io/category: "infrastructure"
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: SimpleAKSCluster
+    spec:
+      clusterName: string
+      nodeCount: integer | default=3

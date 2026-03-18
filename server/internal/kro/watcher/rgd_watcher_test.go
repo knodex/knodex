@@ -652,6 +652,79 @@ func TestRGDWatcher_TagsParsing(t *testing.T) {
 	}
 }
 
+func TestRGDWatcher_ExtendsKindParsing(t *testing.T) {
+	fakeClient := testutil.NewFakeDynamicClient(t)
+	watcher := NewRGDWatcherWithClient(fakeClient)
+
+	tests := []struct {
+		name            string
+		annotationValue string
+		setAnnotation   bool
+		expectedKinds   []string
+	}{
+		{
+			name:          "no annotation",
+			setAnnotation: false,
+			expectedKinds: nil,
+		},
+		{
+			name:            "empty annotation",
+			annotationValue: "",
+			setAnnotation:   true,
+			expectedKinds:   nil,
+		},
+		{
+			name:            "single kind",
+			annotationValue: "SimpleAKSCluster",
+			setAnnotation:   true,
+			expectedKinds:   []string{"SimpleAKSCluster"},
+		},
+		{
+			name:            "multiple kinds",
+			annotationValue: "SimpleAKSCluster,SimpleEKSCluster",
+			setAnnotation:   true,
+			expectedKinds:   []string{"SimpleAKSCluster", "SimpleEKSCluster"},
+		},
+		{
+			name:            "kinds with whitespace",
+			annotationValue: " SimpleAKSCluster , SimpleEKSCluster ",
+			setAnnotation:   true,
+			expectedKinds:   []string{"SimpleAKSCluster", "SimpleEKSCluster"},
+		},
+		{
+			name:            "kinds with empty entries",
+			annotationValue: "SimpleAKSCluster,,SimpleEKSCluster",
+			setAnnotation:   true,
+			expectedKinds:   []string{"SimpleAKSCluster", "SimpleEKSCluster"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			annotations := map[string]string{
+				kro.CatalogAnnotation: "true",
+			}
+			if tt.setAnnotation {
+				annotations[kro.ExtendsKindAnnotation] = tt.annotationValue
+			}
+
+			rgd := createTestRGD("test-rgd", "default", annotations, nil)
+			result := watcher.unstructuredToRGD(rgd)
+
+			if len(result.ExtendsKinds) != len(tt.expectedKinds) {
+				t.Errorf("expected %d extendsKinds, got %d: %v", len(tt.expectedKinds), len(result.ExtendsKinds), result.ExtendsKinds)
+				return
+			}
+
+			for i, expected := range tt.expectedKinds {
+				if result.ExtendsKinds[i] != expected {
+					t.Errorf("expected extendsKind %q at index %d, got %q", expected, i, result.ExtendsKinds[i])
+				}
+			}
+		})
+	}
+}
+
 func TestRGDWatcher_UpdatedAtTimestamp_InitialAdd(t *testing.T) {
 	fakeClient := testutil.NewFakeDynamicClient(t)
 	watcher := NewRGDWatcherWithClient(fakeClient)
@@ -1370,6 +1443,131 @@ func TestRGDWatcher_GetRGDByKind(t *testing.T) {
 			}
 			if found && rgd.Name != tt.wantName {
 				t.Errorf("GetRGDByKind(%q) name = %q, want %q", tt.kind, rgd.Name, tt.wantName)
+			}
+		})
+	}
+}
+
+func TestExtractDependsOnKinds(t *testing.T) {
+	tests := []struct {
+		name     string
+		rawSpec  map[string]interface{}
+		expected []string
+	}{
+		{
+			name:     "nil spec",
+			rawSpec:  nil,
+			expected: nil,
+		},
+		{
+			name:     "empty spec",
+			rawSpec:  map[string]interface{}{},
+			expected: nil,
+		},
+		{
+			name: "no externalRef resources",
+			rawSpec: map[string]interface{}{
+				"resources": []interface{}{
+					map[string]interface{}{
+						"template": map[string]interface{}{
+							"apiVersion": "v1",
+							"kind":       "ConfigMap",
+						},
+					},
+				},
+			},
+			expected: nil,
+		},
+		{
+			name: "single externalRef",
+			rawSpec: map[string]interface{}{
+				"resources": []interface{}{
+					map[string]interface{}{
+						"externalRef": map[string]interface{}{
+							"apiVersion": "v1",
+							"kind":       "AKSCluster",
+							"metadata": map[string]interface{}{
+								"name":      "${schema.spec.clusterName}",
+								"namespace": "${schema.spec.namespace}",
+							},
+						},
+					},
+				},
+			},
+			expected: []string{"AKSCluster"},
+		},
+		{
+			name: "multiple externalRefs with unique kinds",
+			rawSpec: map[string]interface{}{
+				"resources": []interface{}{
+					map[string]interface{}{
+						"externalRef": map[string]interface{}{
+							"apiVersion": "v1",
+							"kind":       "AKSCluster",
+							"metadata": map[string]interface{}{
+								"name": "${schema.spec.clusterName}",
+							},
+						},
+					},
+					map[string]interface{}{
+						"template": map[string]interface{}{
+							"apiVersion": "v1",
+							"kind":       "ConfigMap",
+						},
+					},
+					map[string]interface{}{
+						"externalRef": map[string]interface{}{
+							"apiVersion": "v1",
+							"kind":       "KeyVault",
+							"metadata": map[string]interface{}{
+								"name": "${schema.spec.vaultName}",
+							},
+						},
+					},
+				},
+			},
+			expected: []string{"AKSCluster", "KeyVault"},
+		},
+		{
+			name: "duplicate externalRef kinds are deduplicated",
+			rawSpec: map[string]interface{}{
+				"resources": []interface{}{
+					map[string]interface{}{
+						"externalRef": map[string]interface{}{
+							"apiVersion": "v1",
+							"kind":       "AKSCluster",
+							"metadata": map[string]interface{}{
+								"name": "${schema.spec.clusterName1}",
+							},
+						},
+					},
+					map[string]interface{}{
+						"externalRef": map[string]interface{}{
+							"apiVersion": "v1",
+							"kind":       "AKSCluster",
+							"metadata": map[string]interface{}{
+								"name": "${schema.spec.clusterName2}",
+							},
+						},
+					},
+				},
+			},
+			expected: []string{"AKSCluster"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := extractDependsOnKinds(tt.rawSpec, "test-rgd")
+
+			if len(result) != len(tt.expected) {
+				t.Fatalf("expected %d kinds, got %d: %v", len(tt.expected), len(result), result)
+			}
+
+			for i, kind := range tt.expected {
+				if result[i] != kind {
+					t.Errorf("expected kind %q at index %d, got %q", kind, i, result[i])
+				}
 			}
 		})
 	}

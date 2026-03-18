@@ -35,16 +35,17 @@ func mockRGDWatcher(t *testing.T) *watcher.RGDWatcher {
 			UpdatedAt:   time.Now(),
 		},
 		{
-			Name:        "redis-cache",
-			Namespace:   "default",
-			Description: "Redis cache for session storage",
-			Version:     "2.0.0",
-			Tags:        []string{"cache", "production"},
-			Category:    "cache",
-			Labels:      map[string]string{"tier": "backend"},
-			Annotations: map[string]string{models.CatalogAnnotation: "true"}, // Required for catalog visibility
-			CreatedAt:   time.Now().Add(-12 * time.Hour),
-			UpdatedAt:   time.Now(),
+			Name:         "redis-cache",
+			Namespace:    "default",
+			Description:  "Redis cache for session storage",
+			Version:      "2.0.0",
+			Tags:         []string{"cache", "production"},
+			Category:     "cache",
+			Labels:       map[string]string{"tier": "backend"},
+			Annotations:  map[string]string{models.CatalogAnnotation: "true"}, // Required for catalog visibility
+			ExtendsKinds: []string{"PostgreSQLCluster"},                       // Extends postgres kind for filter tests
+			CreatedAt:    time.Now().Add(-12 * time.Hour),
+			UpdatedAt:    time.Now(),
 		},
 		{
 			Name:        "mongodb",
@@ -185,6 +186,23 @@ func TestRGDHandler_ListRGDs(t *testing.T) {
 					t.Errorf("expected postgres-cluster, got %s", resp.Items[0].Name)
 				}
 			},
+		},
+		{
+			name:           "filter by extendsKind",
+			query:          "?extendsKind=PostgreSQLCluster",
+			expectedStatus: http.StatusOK,
+			expectedCount:  1,
+			checkResponse: func(t *testing.T, resp *ListRGDsResponse) {
+				if len(resp.Items) > 0 && resp.Items[0].Name != "redis-cache" {
+					t.Errorf("expected redis-cache (extends PostgreSQLCluster), got %s", resp.Items[0].Name)
+				}
+			},
+		},
+		{
+			name:           "filter by extendsKind with no matches",
+			query:          "?extendsKind=NonExistentKind",
+			expectedStatus: http.StatusOK,
+			expectedCount:  0,
 		},
 	}
 

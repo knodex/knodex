@@ -1,7 +1,7 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useCallback, useState } from "react";
+import { useCallback, useState, useMemo } from "react";
 import {
   ArrowLeft,
   Box,
@@ -9,8 +9,9 @@ import {
   Trash2,
   Clock,
   AlertCircle,
-  ChevronDown,
-  ChevronUp,
+  Activity,
+  Code,
+  Puzzle,
 } from "lucide-react";
 import { InstanceStatusCard } from "./InstanceStatusCard";
 import { EditInstanceSpecDialog } from "./EditInstanceSpecDialog";
@@ -21,9 +22,22 @@ import { HealthBadge } from "./HealthBadge";
 import { GitStatusDisplay } from "./GitStatusDisplay";
 import { StatusTimeline } from "./StatusTimeline";
 import { DeploymentTimeline } from "./DeploymentTimeline";
+import { InstanceAddOns } from "./InstanceAddOns";
+import { InstanceDependsOn } from "./InstanceDependsOn";
 import { useDeleteInstance } from "@/hooks/useInstances";
 import { useCanI } from "@/hooks/useCanI";
+import { useRGDList } from "@/hooks/useRGDs";
 import { INSTANCE_ID_ANNOTATION } from "@/types/rgd";
+import { useDynamicTabs } from "@/hooks/useDynamicTabs";
+import type { Tab, ConditionalTab } from "@/hooks/useDynamicTabs";
+import { TabBar } from "@/components/shared/TabBar";
+
+type TabId = "status" | "addons" | "deployment-history" | "spec";
+
+const BASE_TABS: Tab<TabId>[] = [
+  { id: "status", label: "Status", icon: <Activity className="h-4 w-4" /> },
+  { id: "deployment-history", label: "Deployment History", icon: <Clock className="h-4 w-4" /> },
+];
 
 interface InstanceDetailViewProps {
   instance: Instance;
@@ -36,14 +50,36 @@ export function InstanceDetailView({
   onBack,
   onDeleted,
 }: InstanceDetailViewProps) {
-  const [showSpec, setShowSpec] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showEditDialog, setShowEditDialog] = useState(false);
 
   const deleteInstance = useDeleteInstance();
   // Real-time permission checks via backend Casbin enforcer
-  const { allowed: canDelete, isLoading: isLoadingCanDelete, isError: isErrorCanDelete } = useCanI('instances', 'delete', instance?.namespace || '-');
-  const { allowed: canUpdate, isLoading: isLoadingCanUpdate, isError: isErrorCanUpdate } = useCanI('instances', 'update', instance?.namespace || '-');
+  const { allowed: canDelete, isLoading: isLoadingCanDelete, isError: isErrorCanDelete } = useCanI('instances', 'delete', instance.namespace || '-');
+  const { allowed: canUpdate, isLoading: isLoadingCanUpdate, isError: isErrorCanUpdate } = useCanI('instances', 'update', instance.namespace || '-');
+
+  // Fetch add-ons count for tab visibility (React Query deduplicates with InstanceAddOns)
+  const { data: addOnsData } = useRGDList(
+    instance.kind ? { extendsKind: instance.kind, pageSize: 100 } : undefined
+  );
+  const addOnsCount = addOnsData?.totalCount ?? 0;
+
+  // Build conditional tabs
+  const hasSpec = !!(instance.spec && Object.keys(instance.spec).length > 0);
+
+  const conditionalTabs = useMemo<ConditionalTab<TabId>[]>(() => [
+    {
+      condition: addOnsCount > 0,
+      tab: { id: "addons", label: `Add-ons (${addOnsCount})`, icon: <Puzzle className="h-4 w-4" /> },
+      position: 1,
+    },
+    {
+      condition: hasSpec,
+      tab: { id: "spec", label: "Spec", icon: <Code className="h-4 w-4" /> },
+    },
+  ], [addOnsCount, hasSpec]);
+
+  const { tabs, activeTab: effectiveTab, setActiveTab } = useDynamicTabs(BASE_TABS, conditionalTabs, "status" as TabId);
 
   const handleDelete = useCallback(async () => {
     try {
@@ -185,57 +221,52 @@ export function InstanceDetailView({
         </div>
       </div>
 
-      {/* Deployment & Git Status */}
-      <GitStatusDisplay
-        deploymentMode={instance.deploymentMode}
-        gitInfo={instance.gitInfo}
-        annotations={instance.annotations}
-      />
+      {/* Tabs */}
+      <TabBar tabs={tabs} activeTab={effectiveTab} onChange={setActiveTab} />
 
-      {/* GitOps Drift Banner */}
-      <GitOpsDriftBanner instance={instance} />
-
-      {/* Status Timeline (for GitOps/Hybrid deployments) */}
-      {(instance.deploymentMode === "gitops" || instance.deploymentMode === "hybrid") && (
-        <StatusTimeline
-          instanceId={instance.annotations?.[INSTANCE_ID_ANNOTATION]}
-        />
-      )}
-
-      {/* Unified Status Card (state badge + custom fields + conditions) */}
-      {(instance.status || (instance.conditions && instance.conditions.length > 0)) && (
-        <InstanceStatusCard
-          status={instance.status}
-          conditions={instance.conditions}
-        />
-      )}
-
-      {/* Deployment History Timeline */}
-      <DeploymentTimeline namespace={instance.namespace} kind={instance.kind} name={instance.name} />
-
-      {/* Spec/Status collapsible sections */}
-      {instance.spec && Object.keys(instance.spec).length > 0 && (
-        <div className="rounded-lg border border-border bg-card overflow-hidden">
-          <button
-            onClick={() => setShowSpec(!showSpec)}
-            className="w-full px-4 py-3 flex items-center justify-between hover:bg-secondary/50 transition-colors"
-          >
-            <h3 className="text-sm font-medium text-foreground">Spec</h3>
-            {showSpec ? (
-              <ChevronUp className="h-4 w-4 text-muted-foreground" />
-            ) : (
-              <ChevronDown className="h-4 w-4 text-muted-foreground" />
+      {/* Tab content */}
+      <div id={`panel-${effectiveTab}`} className="min-h-[300px]" role="tabpanel" aria-labelledby={`tab-${effectiveTab}`}>
+        {effectiveTab === "status" && (
+          <div className="space-y-6">
+            <GitStatusDisplay
+              deploymentMode={instance.deploymentMode}
+              gitInfo={instance.gitInfo}
+              annotations={instance.annotations}
+            />
+            <GitOpsDriftBanner instance={instance} />
+            {(instance.deploymentMode === "gitops" || instance.deploymentMode === "hybrid") && (
+              <StatusTimeline
+                instanceId={instance.annotations?.[INSTANCE_ID_ANNOTATION]}
+              />
             )}
-          </button>
-          {showSpec && (
-            <div className="px-4 py-3 border-t border-border">
-              <pre className="text-xs font-mono text-muted-foreground overflow-x-auto">
-                {JSON.stringify(instance.spec, null, 2)}
-              </pre>
-            </div>
-          )}
-        </div>
-      )}
+            {(instance.status || (instance.conditions && instance.conditions.length > 0)) && (
+              <InstanceStatusCard
+                status={instance.status}
+                conditions={instance.conditions}
+              />
+            )}
+            {/* Depends On (externalRef dependencies) — rendered within the Status tab */}
+            <InstanceDependsOn instance={instance} />
+          </div>
+        )}
+        {effectiveTab === "addons" && instance.kind && (
+          <InstanceAddOns
+            kind={instance.kind}
+            instanceName={instance.name}
+            instanceNamespace={instance.namespace}
+          />
+        )}
+        {effectiveTab === "deployment-history" && (
+          <DeploymentTimeline namespace={instance.namespace} kind={instance.kind} name={instance.name} />
+        )}
+        {effectiveTab === "spec" && instance.spec && Object.keys(instance.spec).length > 0 && (
+          <div className="rounded-lg border border-border bg-card p-4">
+            <pre className="text-xs font-mono text-muted-foreground overflow-x-auto" data-testid="spec-content">
+              {JSON.stringify(instance.spec, null, 2)}
+            </pre>
+          </div>
+        )}
+      </div>
 
       {/* Delete error */}
       {deleteInstance.isError && (

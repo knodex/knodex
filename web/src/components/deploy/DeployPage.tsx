@@ -3,6 +3,7 @@
 
 /* eslint-disable react-hooks/set-state-in-effect, react-hooks/incompatible-library */
 import { useState, useMemo, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useForm, FormProvider } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
@@ -41,6 +42,9 @@ interface DeployPageProps {
 }
 
 export function DeployPage({ rgd, onBack, onDeploySuccess }: DeployPageProps) {
+  const [searchParams] = useSearchParams();
+  const prefillRef = searchParams.get("prefillRef") || "";
+  const prefillRefNs = searchParams.get("prefillRefNs") || "";
   const { data: schemaResponse, isLoading, error } = useRGDSchema(rgd.name, rgd.namespace);
   const createInstanceMutation = useCreateInstance();
   const [instanceName, setInstanceName] = useState("");
@@ -290,6 +294,8 @@ export function DeployPage({ rgd, onBack, onDeploySuccess }: DeployPageProps) {
           canDeployInProject={canDeployInProject}
           isLoadingPermission={isLoadingPermission}
           isErrorPermission={isErrorPermission}
+          prefillRef={prefillRef}
+          prefillRefNs={prefillRefNs}
           onSubmit={async (values) => {
             createInstanceMutation.mutate(
               {
@@ -360,6 +366,10 @@ interface DeployFormContentProps {
   canDeployInProject: boolean | undefined;
   isLoadingPermission?: boolean;
   isErrorPermission?: boolean;
+  /** Pre-fill value for external ref name (from instance add-on deploy) */
+  prefillRef?: string;
+  /** Pre-fill value for external ref namespace (from instance add-on deploy) */
+  prefillRefNs?: string;
   onSubmit: (values: Record<string, unknown>) => void;
 }
 
@@ -392,6 +402,8 @@ function DeployFormContent({
   canDeployInProject,
   isLoadingPermission,
   isErrorPermission: _isErrorPermission,
+  prefillRef,
+  prefillRefNs,
   onSubmit,
 }: DeployFormContentProps) {
   // Build Zod schema from FormSchema
@@ -416,7 +428,39 @@ function DeployFormContent({
     handleSubmit,
     formState: { errors },
     watch,
+    setValue,
   } = methods;
+
+  // Pre-fill external ref fields from query params (instance add-on deploy)
+  useEffect(() => {
+    if (!prefillRef) return;
+    // Find fields with externalRefSelector and set their name/namespace sub-fields
+    for (const [name, property] of Object.entries(schema.properties)) {
+      if (property.type === "object" && property.properties) {
+        for (const [subName, subProp] of Object.entries(property.properties)) {
+          if (subProp.externalRefSelector) {
+            const autoFill = subProp.externalRefSelector.autoFillFields;
+            if (autoFill?.name) {
+              setValue(`${name}.${subName}.${autoFill.name}`, prefillRef);
+            }
+            if (autoFill?.namespace && prefillRefNs) {
+              setValue(`${name}.${subName}.${autoFill.namespace}`, prefillRefNs);
+            }
+          }
+        }
+      }
+      // Also check top-level fields with externalRefSelector
+      if (property.externalRefSelector) {
+        const autoFill = property.externalRefSelector.autoFillFields;
+        if (autoFill?.name) {
+          setValue(`${name}.${autoFill.name}`, prefillRef);
+        }
+        if (autoFill?.namespace && prefillRefNs) {
+          setValue(`${name}.${autoFill.namespace}`, prefillRefNs);
+        }
+      }
+    }
+  }, [prefillRef, prefillRefNs, schema.properties, setValue]);
 
   const formValues = watch();
   const hasErrors = Object.keys(errors).length > 0;
