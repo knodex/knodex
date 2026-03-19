@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/knodex/knodex/compare/v0.3.0...v0.3.1) (2026-03-19)
+
+
+### Bug Fixes
+
+* **security:** resolve CodeQL code scanning findings ([#41](https://github.com/knodex/knodex/issues/41)) ([260803c](https://github.com/knodex/knodex/commit/260803c04d8c097dc74e5f81b0e9362af54040ea))
+
 ## [0.3.0](https://github.com/knodex/knodex/compare/v0.2.0...v0.3.0) (2026-03-18)
 
 
