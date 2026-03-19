@@ -17,7 +17,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/knodex/knodex/server/internal/api/cookie"
@@ -421,39 +420,10 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	response.WriteJSON(w, http.StatusOK, map[string]string{"message": "logged out"})
 }
 
-// revokeCurrentToken extracts the JWT from the request and blacklists its jti claim.
+// revokeCurrentToken blacklists the JWT's jti claim using the already-validated UserContext.
 // Errors are logged but not returned — logout always succeeds from the client's perspective.
 func (h *AuthHandler) revokeCurrentToken(r *http.Request, userCtx *middleware.UserContext) {
-	// Extract the raw token string from cookie or Authorization header
-	tokenString := ""
-	if c, err := r.Cookie(cookie.SessionCookieName); err == nil && c.Value != "" {
-		tokenString = c.Value
-	} else if authHeader := r.Header.Get("Authorization"); authHeader != "" {
-		if parts := strings.SplitN(authHeader, " ", 2); len(parts) == 2 && parts[0] == "Bearer" {
-			tokenString = parts[1]
-		}
-	}
-	if tokenString == "" {
-		return
-	}
-
-	// Parse without verification to extract jti — token is already validated by Auth middleware
-	parser := jwt.NewParser()
-	token, _, err := parser.ParseUnverified(tokenString, jwt.MapClaims{})
-	if err != nil {
-		slog.Warn("failed to parse JWT for revocation",
-			"user_id", userCtx.UserID,
-			"error", err,
-		)
-		return
-	}
-
-	mapClaims, ok := token.Claims.(jwt.MapClaims)
-	if !ok {
-		return
-	}
-
-	jti, _ := mapClaims["jti"].(string)
+	jti := userCtx.JTI
 	if jti == "" {
 		return
 	}

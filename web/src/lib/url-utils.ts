@@ -8,17 +8,12 @@
 
 /**
  * Sanitize URL parameter value
- * Removes potentially dangerous characters
+ * Strips all characters outside a safe whitelist to prevent injection attacks.
  */
 export function sanitizeUrlParam(value: string): string {
-  // Remove control characters, scripts, and HTML tags
-  return value
-    .replace(/[<>'"]/g, '') // Remove HTML special chars
-    .replace(/javascript:/gi, '') // Remove javascript: protocol
-    .replace(/on\w+=/gi, '') // Remove event handlers
-    .replace(/data:/gi, '') // Remove data: protocol
-    .trim()
-    .slice(0, 200); // Limit length to prevent DoS
+  // Whitelist: alphanumeric, spaces, and common punctuation used in
+  // search queries, tag names, project names, and RGD identifiers.
+  return value.replace(/[^a-zA-Z0-9\s\-_.,:/()@+]/g, '').trim().slice(0, 200);
 }
 
 /**

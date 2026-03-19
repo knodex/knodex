@@ -35,6 +35,7 @@ type UserContext struct {
 	Issuer         string            // JWT issuer (OIDC provider URL or empty for local)
 	TokenExpiresAt int64             // Token expiry as Unix timestamp
 	TokenIssuedAt  int64             // Token issued-at as Unix timestamp
+	JTI            string            // JWT ID for server-side token revocation
 }
 
 // AuthConfig holds configuration for authentication middleware
@@ -93,6 +94,7 @@ func Auth(config AuthConfig) func(http.Handler) http.Handler {
 				Issuer:         claims.Issuer,
 				TokenExpiresAt: claims.ExpiresAt,
 				TokenIssuedAt:  claims.IssuedAt,
+				JTI:            claims.JTI,
 			}
 
 			// Attach user context to request context
@@ -164,6 +166,7 @@ func OptionalAuth(config AuthConfig) func(http.Handler) http.Handler {
 				Issuer:         claims.Issuer,
 				TokenExpiresAt: claims.ExpiresAt,
 				TokenIssuedAt:  claims.IssuedAt,
+				JTI:            claims.JTI,
 			}
 
 			ctx := context.WithValue(r.Context(), UserContextKey, userCtx)

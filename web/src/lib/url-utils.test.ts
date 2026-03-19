@@ -17,18 +17,18 @@ describe("sanitizeUrlParam", () => {
     );
   });
 
-  it("removes javascript: protocol", () => {
-    expect(sanitizeUrlParam("javascript:alert(1)")).toBe("alert(1)");
+  it("preserves javascript: text since colon and letters are whitelisted", () => {
+    expect(sanitizeUrlParam("javascript:alert(1)")).toBe("javascript:alert(1)");
   });
 
-  it("removes event handlers", () => {
-    expect(sanitizeUrlParam("onclick=alert(1)")).toBe("alert(1)");
-    expect(sanitizeUrlParam("onmouseover=evil()")).toBe("evil()");
+  it("strips equals sign from event handler patterns", () => {
+    expect(sanitizeUrlParam("onclick=alert(1)")).toBe("onclickalert(1)");
+    expect(sanitizeUrlParam("onmouseover=evil()")).toBe("onmouseoverevil()");
   });
 
-  it("removes data: protocol", () => {
+  it("strips angle brackets from data: protocol payloads", () => {
     expect(sanitizeUrlParam("data:text/html,<h1>test</h1>")).toBe(
-      "text/html,h1test/h1"
+      "data:text/html,h1test/h1"
     );
   });
 

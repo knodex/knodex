@@ -249,6 +249,19 @@ func (s *Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate redirect_uri to prevent open redirect
+	parsedRedirect, err := url.Parse(redirectURI)
+	if err != nil || parsedRedirect.Host == "" {
+		http.Error(w, "invalid_redirect_uri", http.StatusBadRequest)
+		return
+	}
+	// Only allow localhost and internal cluster URIs (test environments)
+	host := parsedRedirect.Hostname()
+	if host != "localhost" && host != "127.0.0.1" && host != "knodex-server" && host != "knodex-web" {
+		http.Error(w, "redirect_uri_not_allowed", http.StatusBadRequest)
+		return
+	}
+
 	// For testing, if no email is provided, use a default user
 	if email == "" {
 		email = AdminEmail

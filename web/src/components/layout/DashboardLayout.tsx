@@ -23,7 +23,14 @@ function DashboardLayoutInner() {
 
   // Strip HTML tags and truncate for accessibility announcements
   const sanitizeMessage = useCallback((msg: string): string => {
-    return msg.replace(/<[^>]*>/g, '').substring(0, 200);
+    // Loop until stable to prevent bypass via nested tags (e.g., "<<script>script>")
+    let result = msg;
+    let prev: string;
+    do {
+      prev = result;
+      result = result.replace(/<[^>]*>/g, '');
+    } while (result !== prev);
+    return result.substring(0, 200);
   }, []);
 
   // Announce WebSocket connection status changes
