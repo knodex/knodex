@@ -117,6 +117,17 @@ app.get('/.well-known/jwks.json', (req, res) => {
 app.get('/oauth2/auth', (req, res) => {
   const { redirect_uri, state, response_type } = req.query;
 
+  // Validate redirect_uri to prevent open redirect
+  try {
+    const parsed = new URL(redirect_uri);
+    const allowedHosts = ['localhost', '127.0.0.1', 'knodex-server', 'knodex-web'];
+    if (!allowedHosts.includes(parsed.hostname)) {
+      return res.status(400).json({ error: 'redirect_uri_not_allowed' });
+    }
+  } catch {
+    return res.status(400).json({ error: 'invalid_redirect_uri' });
+  }
+
   // For testing, we'll use the first test user (Global Admin)
   const code = 'test-authorization-code-' + Date.now();
 

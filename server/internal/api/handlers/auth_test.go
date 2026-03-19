@@ -13,8 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
-
 	"github.com/knodex/knodex/server/internal/api/middleware"
 	"github.com/knodex/knodex/server/internal/auth"
 )
@@ -369,26 +367,6 @@ func TestLocalLogin_SourceIPPassedThrough(t *testing.T) {
 	assertNoCacheHeaders(t, rec)
 }
 
-// createTestJWT creates a minimal JWT string with the given jti and exp for logout testing
-func createTestJWT(jti string, exp time.Time) string {
-	claims := jwt.MapClaims{
-		"sub":      "user-test",
-		"email":    "test@example.com",
-		"name":     "Test User",
-		"projects": []string{},
-		"iss":      "knodex",
-		"aud":      "knodex-api",
-		"exp":      exp.Unix(),
-		"iat":      time.Now().Unix(),
-	}
-	if jti != "" {
-		claims["jti"] = jti
-	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, _ := token.SignedString([]byte("test-secret"))
-	return tokenString
-}
-
 func TestLogout_RevokesToken(t *testing.T) {
 	t.Parallel()
 
@@ -407,18 +385,16 @@ func TestLogout_RevokesToken(t *testing.T) {
 
 		handler := NewAuthHandler(mockSvc, nil)
 
-		// Create a JWT with a jti claim
 		tokenExp := time.Now().Add(30 * time.Minute)
-		tokenString := createTestJWT("test-jti-for-logout", tokenExp)
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
-		req.Header.Set("Authorization", "Bearer "+tokenString)
 
-		// Set user context (normally done by middleware)
+		// Set user context with JTI (normally done by middleware from validated token)
 		userCtx := &middleware.UserContext{
 			UserID:         "user-test",
 			Email:          "test@example.com",
 			TokenExpiresAt: tokenExp.Unix(),
+			JTI:            "test-jti-for-logout",
 		}
 		ctx := context.WithValue(req.Context(), middleware.UserContextKey, userCtx)
 		req = req.WithContext(ctx)
@@ -451,15 +427,14 @@ func TestLogout_RevokesToken(t *testing.T) {
 		handler := NewAuthHandler(mockSvc, nil)
 
 		tokenExp := time.Now().Add(30 * time.Minute)
-		tokenString := createTestJWT("jti-for-error-test", tokenExp)
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
-		req.Header.Set("Authorization", "Bearer "+tokenString)
 
 		userCtx := &middleware.UserContext{
 			UserID:         "user-test",
 			Email:          "test@example.com",
 			TokenExpiresAt: tokenExp.Unix(),
+			JTI:            "jti-for-error-test",
 		}
 		ctx := context.WithValue(req.Context(), middleware.UserContextKey, userCtx)
 		req = req.WithContext(ctx)
@@ -473,7 +448,7 @@ func TestLogout_RevokesToken(t *testing.T) {
 		}
 	})
 
-	t.Run("revokes token from cookie when no Authorization header", func(t *testing.T) {
+	t.Run("revokes token using JTI from UserContext", func(t *testing.T) {
 		t.Parallel()
 		var revokedJTI string
 
@@ -487,19 +462,14 @@ func TestLogout_RevokesToken(t *testing.T) {
 		handler := NewAuthHandler(mockSvc, nil)
 
 		tokenExp := time.Now().Add(30 * time.Minute)
-		tokenString := createTestJWT("cookie-jti-test", tokenExp)
 
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
-		// Set token via cookie instead of Authorization header
-		req.AddCookie(&http.Cookie{
-			Name:  "knodex_session",
-			Value: tokenString,
-		})
 
 		userCtx := &middleware.UserContext{
 			UserID:         "user-test",
 			Email:          "test@example.com",
 			TokenExpiresAt: tokenExp.Unix(),
+			JTI:            "cookie-jti-test",
 		}
 		ctx := context.WithValue(req.Context(), middleware.UserContextKey, userCtx)
 		req = req.WithContext(ctx)
@@ -528,12 +498,9 @@ func TestLogout_RevokesToken(t *testing.T) {
 
 		handler := NewAuthHandler(mockSvc, nil)
 
-		// Create a JWT without jti
-		tokenString := createTestJWT("", time.Now().Add(30*time.Minute))
-
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
-		req.Header.Set("Authorization", "Bearer "+tokenString)
 
+		// UserContext without JTI
 		userCtx := &middleware.UserContext{
 			UserID:         "user-test",
 			Email:          "test@example.com",
