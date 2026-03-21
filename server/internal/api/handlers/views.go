@@ -62,10 +62,10 @@ func (h *ViewsHandler) checkViewsLicense(w http.ResponseWriter) bool {
 
 	// Not licensed or feature not in license
 	if !h.licenseService.IsLicensed() {
-		response.WriteError(w, http.StatusPaymentRequired, "LICENSE_REQUIRED",
+		response.WriteError(w, http.StatusPaymentRequired, response.ErrCodeLicenseRequired,
 			"This feature requires a valid enterprise license", featureDetail)
 	} else {
-		response.WriteError(w, http.StatusPaymentRequired, "LICENSE_REQUIRED",
+		response.WriteError(w, http.StatusPaymentRequired, response.ErrCodeLicenseRequired,
 			"Views feature is not included in your license", featureDetail)
 	}
 	return false

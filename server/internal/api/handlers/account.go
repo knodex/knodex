@@ -38,14 +38,16 @@ type CanIServiceInterface interface {
 
 // AccountHandler handles account-related endpoints (ArgoCD-style)
 type AccountHandler struct {
-	canIService    CanIServiceInterface
-	projectService rbac.ProjectServiceInterface // optional, nil = skip project existence check
+	canIService         CanIServiceInterface
+	projectService      rbac.ProjectServiceInterface // optional, nil = skip project existence check
+	enterpriseResources map[string]bool              // EE-only resources registered at startup
 }
 
 // NewAccountHandler creates a new AccountHandler
 func NewAccountHandler(canIService CanIServiceInterface) *AccountHandler {
 	return &AccountHandler{
-		canIService: canIService,
+		canIService:         canIService,
+		enterpriseResources: make(map[string]bool),
 	}
 }
 
@@ -54,11 +56,19 @@ func (h *AccountHandler) SetProjectService(ps rbac.ProjectServiceInterface) {
 	h.projectService = ps
 }
 
+// RegisterEnterpriseResource marks a resource as valid for can-i checks in EE builds.
+// Call this at startup for each enterprise feature that is enabled (e.g., "secrets", "compliance").
+// Resources not registered here return 400 "invalid resource type" in OSS builds.
+func (h *AccountHandler) RegisterEnterpriseResource(resource string) {
+	h.enterpriseResources[resource] = true
+}
+
 // projectScopedResources are resources that require a valid project name in the subresource.
 var projectScopedResources = map[string]bool{
 	"instances":    true,
 	"projects":     true,
 	"repositories": true,
+	"secrets":      true,
 	"rgds":         true,
 	"compliance":   true,
 	"applications": true,
@@ -143,7 +153,9 @@ func (h *AccountHandler) CanI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate resource type
+	// Validate resource type.
+	// Base set covers OSS resources; enterprise resources (e.g., "secrets", "compliance") are
+	// added at startup via RegisterEnterpriseResource so OSS builds return 400 for them.
 	validResources := map[string]bool{
 		"instances":    true,
 		"projects":     true,
@@ -152,7 +164,9 @@ func (h *AccountHandler) CanI(w http.ResponseWriter, r *http.Request) {
 		"rgds":         true,
 		"users":        true,
 		"applications": true,
-		"compliance":   true,
+	}
+	for r := range h.enterpriseResources {
+		validResources[r] = true
 	}
 	if !validResources[resource] {
 		response.BadRequest(w, "invalid resource type", map[string]string{

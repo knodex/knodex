@@ -1,7 +1,7 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -200,6 +200,49 @@ describe("RGDDetailView", () => {
       const rgd = createTestRGD({ extendsKinds: [] });
       renderWithProviders(<RGDDetailView rgd={rgd} onBack={vi.fn()} />);
       expect(screen.queryByText("Extends")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("Secrets tab visibility", () => {
+    const originalEnterprise = (globalThis as Record<string, unknown>).__ENTERPRISE__;
+
+    beforeEach(() => {
+      (globalThis as Record<string, unknown>).__ENTERPRISE__ = true;
+    });
+
+    afterEach(() => {
+      (globalThis as Record<string, unknown>).__ENTERPRISE__ = originalEnterprise;
+    });
+
+    it("shows Secrets tab when secretRefs has entries", () => {
+      const rgd = createTestRGD({
+        secretRefs: [
+          { type: "fixed", id: "0-Secret", externalRefId: "dbSecret", name: "my-secret", namespace: "default" },
+        ],
+      });
+      renderWithProviders(
+        <RGDDetailView rgd={rgd} onBack={vi.fn()} />
+      );
+
+      expect(screen.getByRole("tab", { name: /Secrets \(1\)/i })).toBeInTheDocument();
+    });
+
+    it("hides Secrets tab when secretRefs is empty", () => {
+      const rgd = createTestRGD({ secretRefs: [] });
+      renderWithProviders(
+        <RGDDetailView rgd={rgd} onBack={vi.fn()} />
+      );
+
+      expect(screen.queryByRole("tab", { name: /Secrets/i })).not.toBeInTheDocument();
+    });
+
+    it("hides Secrets tab when secretRefs is undefined", () => {
+      const rgd = createTestRGD();
+      renderWithProviders(
+        <RGDDetailView rgd={rgd} onBack={vi.fn()} />
+      );
+
+      expect(screen.queryByRole("tab", { name: /Secrets/i })).not.toBeInTheDocument();
     });
   });
 

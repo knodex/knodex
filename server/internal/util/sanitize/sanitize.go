@@ -26,6 +26,14 @@ var (
 	filenameRegex      = regexp.MustCompile(`[^a-zA-Z0-9._-]`)
 	pathComponentRegex = regexp.MustCompile(`[^a-zA-Z0-9._-]`)
 
+	// DNS1123LabelRegex matches a valid DNS-1123 label (single segment, no dots).
+	// Max 63 characters, lowercase alphanumeric, hyphens allowed in the middle.
+	DNS1123LabelRegex = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
+
+	// DNS1123SubdomainRegex matches a valid DNS-1123 subdomain (dot-separated labels).
+	// Max 253 characters, each label matches DNS1123LabelRegex.
+	DNS1123SubdomainRegex = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`)
+
 	// globReplacer escapes glob wildcard characters.
 	globReplacer = strings.NewReplacer(
 		"*", `\*`,
@@ -148,4 +156,16 @@ func PathComponent(s string) (string, error) {
 		return "", fmt.Errorf("path component %q contains only invalid characters", s)
 	}
 	return cleaned, nil
+}
+
+// IsValidDNS1123Label checks whether s is a valid DNS-1123 label (single segment, no dots).
+// A valid label is 1-63 characters, lowercase alphanumeric with hyphens allowed in the middle.
+func IsValidDNS1123Label(s string) bool {
+	return len(s) > 0 && len(s) <= 63 && DNS1123LabelRegex.MatchString(s)
+}
+
+// IsValidDNS1123Subdomain checks whether s is a valid DNS-1123 subdomain (dot-separated labels).
+// A valid subdomain is 1-253 characters, each segment is a valid DNS-1123 label.
+func IsValidDNS1123Subdomain(s string) bool {
+	return len(s) > 0 && len(s) <= 253 && DNS1123SubdomainRegex.MatchString(s)
 }

@@ -165,10 +165,10 @@ Filters are cumulative (AND logic):
 1. Click on any RGD card or name
 2. Opens detailed view with tabs:
    - **Overview**
-   - **Schema**
+   - **Resources**
+   - **Secrets** (RGDs with secret references only)
+   - **Depends On** (RGDs with dependencies only)
    - **Add-ons** (parent RGDs only)
-   - **Examples**
-   - **Deployments**
 
 ### Overview Tab
 
@@ -291,6 +291,23 @@ Each add-on card displays:
 **Use Case:** Discover monitoring, logging, security, or networking add-ons that can be deployed on top of an existing parent instance.
 
 See [Annotations & Labels](../../catalog/annotations-and-labels/) for how to configure the `knodex.io/extends-kind` annotation.
+
+### Secrets Tab
+
+The **Secrets** tab appears when an RGD has `externalRef` resources with `kind: Secret`. It shows a count badge (e.g., "Secrets (2)") and lists each secret reference as a card.
+
+Each secret card displays:
+
+| Element | Description |
+|---------|-------------|
+| **ExternalRef Name** | Semantic identifier (e.g., `dbSecret`) |
+| **Description** | Purpose of the secret (from the RGD schema) |
+| **Type Badge** | `fixed`, `dynamic`, or `user-provided` |
+| **Name/Namespace** | Literal values (fixed) or CEL expressions (dynamic) |
+
+**Use Case:** Understand which Kubernetes Secrets an RGD requires *before* deploying. Ensure the secrets exist in your target namespace.
+
+See [Managing Secrets](../managing-secrets/) for how to create secrets and deploy RGDs that require them.
 
 ### Deployments Tab
 

@@ -367,11 +367,10 @@ func TestGetAllPolicies(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, policies, "Should have built-in policies")
 
-	// Should have at least the global-admin and global-viewer policies
-	// global-admin: projects, rgds, instances, users, applications = 5 policies
-	// global-viewer: projects get/list, rgds get/list, instances get/list, applications get/list = 8 policies
-	// Total: 13 built-in policies
-	assert.GreaterOrEqual(t, len(policies), 10, "Should have at least 10 built-in policies")
+	// 1-global-role model: role:serveradmin has 11 built-in policies
+	// (wildcard + explicit for projects, rgds, instances, users, applications,
+	// repositories, namespaces, settings, compliance, secrets)
+	assert.GreaterOrEqual(t, len(policies), 11, "Should have at least 11 built-in policies")
 }
 
 func TestGetPoliciesForRole(t *testing.T) {
@@ -689,6 +688,10 @@ func TestConstants(t *testing.T) {
 	assert.Equal(t, "instances", ResourceInstances)
 	assert.Equal(t, "users", ResourceUsers)
 	assert.Equal(t, "applications", ResourceApplications)
+	assert.Equal(t, "repositories", ResourceRepositories)
+	assert.Equal(t, "settings", ResourceSettings)
+	assert.Equal(t, "compliance", ResourceCompliance)
+	assert.Equal(t, "secrets", ResourceSecrets)
 
 	// Verify action constants
 	assert.Equal(t, "get", ActionGet)
@@ -770,11 +773,9 @@ func TestBuiltinPolicies_AllRolesCount(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, policies, "Should have built-in policies")
 
-	// ArgoCD-aligned 2-role model:
-	// - role:admin: 1 policy (wildcard: *, *, allow)
-	// - role:readonly: 10+ policies (get + list for all resources)
-	// Total: ~11+ built-in policies
-	assert.GreaterOrEqual(t, len(policies), 2, "Should have at least 2 built-in policies (admin + readonly)")
+	// 1-global-role model: only role:serveradmin has built-in policies (11 total)
+	// No global readonly role — readonly is project-scoped only
+	assert.GreaterOrEqual(t, len(policies), 11, "Should have at least 11 built-in serveradmin policies")
 }
 
 func TestConcurrentAccess(t *testing.T) {
@@ -1029,8 +1030,8 @@ func TestGetImplicitPermissionsForUser_MultipleRoles(t *testing.T) {
 	permissions, err := enforcer.GetImplicitPermissionsForUser("user:multi-implicit")
 	require.NoError(t, err)
 
-	// Should have permissions from both roles (serveradmin has 10 policies + custom 1)
-	assert.GreaterOrEqual(t, len(permissions), 11, "Should have serveradmin (10) + custom (1) policies")
+	// Should have permissions from both roles (serveradmin has 11 policies + custom 1)
+	assert.GreaterOrEqual(t, len(permissions), 12, "Should have serveradmin (11) + custom (1) policies")
 }
 
 func TestGetImplicitRolesForUser(t *testing.T) {
@@ -1360,6 +1361,47 @@ func TestBuiltinPolicies_ComplianceAccess_NoRole(t *testing.T) {
 func TestResourceComplianceConstant(t *testing.T) {
 	// Verify the compliance resource constant exists and has the correct value
 	assert.Equal(t, "compliance", ResourceCompliance)
+}
+
+func TestResourceSecretsConstant(t *testing.T) {
+	// Verify the secrets resource constant exists and has the correct value
+	assert.Equal(t, "secrets", ResourceSecrets)
+}
+
+func TestBuiltinPolicies_SecretsAccess_ServerAdmin(t *testing.T) {
+	enforcer, err := NewCasbinEnforcer()
+	require.NoError(t, err)
+
+	// Verify serveradmin has secrets/* in built-in policies
+	exists, err := enforcer.HasPolicy(CasbinRoleServerAdmin, "secrets/*", "*", "allow")
+	require.NoError(t, err)
+	assert.True(t, exists, "Built-in serveradmin should have secrets/* policy")
+
+	// Assign serveradmin role and test enforcement
+	_, err = enforcer.AddUserRole("user:admin", CasbinRoleServerAdmin)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name     string
+		obj      string
+		act      string
+		expected bool
+	}{
+		{"admin get secret", "secrets/demo/my-secret", "get", true},
+		{"admin create secret", "secrets/demo/my-secret", "create", true},
+		{"admin update secret", "secrets/demo/my-secret", "update", true},
+		{"admin delete secret", "secrets/demo/my-secret", "delete", true},
+		{"admin list secrets", "secrets/demo/my-secret", "list", true},
+		{"admin wildcard secrets", "secrets/*", "*", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			allowed, err := enforcer.Enforce("user:admin", tt.obj, tt.act)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, allowed)
+		})
+	}
 }
 
 func TestFormatObject_Compliance(t *testing.T) {

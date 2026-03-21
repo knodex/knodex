@@ -202,6 +202,50 @@ func TestAccountHandler_CanI_InvalidResource(t *testing.T) {
 	}
 }
 
+func TestAccountHandler_CanI_EnterpriseResourceNotRegistered_Returns400(t *testing.T) {
+	t.Parallel()
+	// EE resources ("secrets", "compliance") must return 400 in OSS builds (not registered)
+	canIService := &mockCanIService{canIResult: true}
+	handler := NewAccountHandler(canIService)
+
+	for _, resource := range []string{"secrets", "compliance"} {
+		req := createAccountTestRequest(t, http.MethodGet,
+			"/api/v1/account/can-i/"+resource+"/get/-",
+			"test-user@example.com",
+			nil,
+		)
+		req = setupAccountRequestWithPathValues(req, resource, "get", "-")
+		rr := httptest.NewRecorder()
+		handler.CanI(rr, req)
+		if rr.Code != http.StatusBadRequest {
+			t.Errorf("resource %q: expected 400 without EE registration, got %d", resource, rr.Code)
+		}
+	}
+}
+
+func TestAccountHandler_CanI_EnterpriseResourceRegistered_Returns200(t *testing.T) {
+	t.Parallel()
+	// After RegisterEnterpriseResource, EE resources should be valid
+	canIService := &mockCanIService{canIResult: true}
+	handler := NewAccountHandler(canIService)
+	handler.RegisterEnterpriseResource("secrets")
+	handler.RegisterEnterpriseResource("compliance")
+
+	for _, resource := range []string{"secrets", "compliance"} {
+		req := createAccountTestRequest(t, http.MethodGet,
+			"/api/v1/account/can-i/"+resource+"/get/-",
+			"test-user@example.com",
+			nil,
+		)
+		req = setupAccountRequestWithPathValues(req, resource, "get", "-")
+		rr := httptest.NewRecorder()
+		handler.CanI(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Errorf("resource %q: expected 200 after EE registration, got %d", resource, rr.Code)
+		}
+	}
+}
+
 func TestAccountHandler_CanI_InvalidAction(t *testing.T) {
 	t.Parallel()
 	canIService := &mockCanIService{canIResult: true}
@@ -292,7 +336,6 @@ func TestAccountHandler_CanI_AllValidResources(t *testing.T) {
 		"rgds",
 		"users",
 		"applications",
-		"compliance",
 	}
 
 	canIService := &mockCanIService{canIResult: true}

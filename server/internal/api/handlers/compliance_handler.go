@@ -108,7 +108,7 @@ func (h *ComplianceHandler) checkLicenseAccess(w http.ResponseWriter, _ *http.Re
 
 	// OSS build: service is nil, this is a licensing issue
 	if h.service == nil {
-		response.WriteError(w, http.StatusPaymentRequired, "LICENSE_REQUIRED",
+		response.WriteError(w, http.StatusPaymentRequired, response.ErrCodeLicenseRequired,
 			"This feature requires a valid enterprise license", featureDetail)
 		return false
 	}
@@ -149,7 +149,7 @@ func (h *ComplianceHandler) checkComplianceLicense(w http.ResponseWriter, isWrit
 	if h.licenseService.IsReadOnly() && h.licenseService.HasFeature(services.FeatureCompliance) {
 		if isWrite {
 			detail := map[string]string{"feature": services.FeatureCompliance, "reason": "license_expired"}
-			response.WriteError(w, http.StatusPaymentRequired, "LICENSE_REQUIRED",
+			response.WriteError(w, http.StatusPaymentRequired, response.ErrCodeLicenseRequired,
 				"License expired - write operations require a valid license", detail)
 			return false
 		}
@@ -158,10 +158,10 @@ func (h *ComplianceHandler) checkComplianceLicense(w http.ResponseWriter, isWrit
 
 	// Not licensed or feature not in license
 	if !h.licenseService.IsLicensed() {
-		response.WriteError(w, http.StatusPaymentRequired, "LICENSE_REQUIRED",
+		response.WriteError(w, http.StatusPaymentRequired, response.ErrCodeLicenseRequired,
 			"This feature requires a valid enterprise license", featureDetail)
 	} else {
-		response.WriteError(w, http.StatusPaymentRequired, "LICENSE_REQUIRED",
+		response.WriteError(w, http.StatusPaymentRequired, response.ErrCodeLicenseRequired,
 			"Compliance feature is not included in your license", featureDetail)
 	}
 	return false

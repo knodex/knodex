@@ -15,6 +15,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 
+	kroparser "github.com/knodex/knodex/server/internal/kro/parser"
 	kroschema "github.com/knodex/knodex/server/internal/kro/schema"
 	"github.com/knodex/knodex/server/internal/kro/watcher"
 	"github.com/knodex/knodex/server/internal/models"
@@ -297,6 +298,326 @@ func TestSchemaHandler_GetSchema_DegradedResponseStructure(t *testing.T) {
 	// Degraded schema should NOT have Required list (comes from CRD only)
 	if len(schemaResp.Schema.Required) > 0 {
 		t.Errorf("degraded schema should not have required fields, got %v", schemaResp.Schema.Required)
+	}
+}
+
+func TestSchemaHandler_GetSchema_SecretRefsIncluded(t *testing.T) {
+	t.Parallel()
+
+	// Create an RGD with a Secret externalRef.
+	// NOTE: The degraded enrichment path logs a WARN about "externalRef.dbSecret" property
+	// not found — this is expected because the test's schema spec doesn't include that
+	// nested property. The warning does not affect the SecretRefs test assertions.
+	cache := watcher.NewRGDCache()
+	rgd := &models.CatalogRGD{
+		Name:        "app-with-secret",
+		Namespace:   "default",
+		Description: "App needing secrets",
+		APIVersion:  "example.com/v1alpha1",
+		Kind:        "SecretApp",
+		Annotations: map[string]string{models.CatalogAnnotation: "true"},
+		Labels:      map[string]string{},
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+		RawSpec: map[string]interface{}{
+			"schema": map[string]interface{}{
+				"apiVersion": "example.com/v1alpha1",
+				"kind":       "SecretApp",
+				"spec": map[string]interface{}{
+					"name": "string",
+				},
+			},
+			"resources": []interface{}{
+				map[string]interface{}{
+					"externalRef": map[string]interface{}{
+						"apiVersion": "v1",
+						"kind":       "Secret",
+						"metadata": map[string]interface{}{
+							"name":      "${schema.spec.externalRef.dbSecret.name}",
+							"namespace": "${schema.spec.externalRef.dbSecret.namespace}",
+						},
+					},
+				},
+				map[string]interface{}{
+					"externalRef": map[string]interface{}{
+						"apiVersion": "v1",
+						"kind":       "ConfigMap",
+						"metadata": map[string]interface{}{
+							"name":      "${schema.spec.configMapName}",
+							"namespace": "default",
+						},
+					},
+				},
+			},
+		},
+	}
+	cache.Set(rgd)
+	w := watcher.NewRGDWatcherWithCache(cache)
+
+	fakeClient := fakeapiext.NewSimpleClientset()
+	extractor := kroschema.NewExtractorWithClient(fakeClient)
+	handler := NewSchemaHandler(w, extractor)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/rgds/app-with-secret/schema", nil)
+	req.SetPathValue("name", "app-with-secret")
+	rec := httptest.NewRecorder()
+
+	handler.GetSchema(rec, req)
+
+	resp := rec.Result()
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", resp.StatusCode)
+	}
+
+	var schemaResp models.SchemaResponse
+	if err := json.NewDecoder(resp.Body).Decode(&schemaResp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	// SecretRefs should contain exactly 1 entry (Secret, not ConfigMap)
+	if len(schemaResp.SecretRefs) != 1 {
+		t.Fatalf("expected 1 secretRef, got %d: %+v", len(schemaResp.SecretRefs), schemaResp.SecretRefs)
+	}
+
+	sr := schemaResp.SecretRefs[0]
+	if sr.Type != "dynamic" {
+		t.Errorf("secretRef type = %q, want %q", sr.Type, "dynamic")
+	}
+	if sr.NameExpr != "${schema.spec.externalRef.dbSecret.name}" {
+		t.Errorf("secretRef nameExpr = %q", sr.NameExpr)
+	}
+	if sr.NamespaceExpr != "${schema.spec.externalRef.dbSecret.namespace}" {
+		t.Errorf("secretRef namespaceExpr = %q", sr.NamespaceExpr)
+	}
+	if sr.ID != "0-Secret" {
+		t.Errorf("secretRef ID = %q, want %q", sr.ID, "0-Secret")
+	}
+}
+
+func TestSchemaHandler_GetSchema_EmptySecretRefs(t *testing.T) {
+	t.Parallel()
+
+	// Use standard test RGD (no secret externalRefs)
+	handler := setupSchemaHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/rgds/test-app/schema", nil)
+	req.SetPathValue("name", "test-app")
+	rec := httptest.NewRecorder()
+
+	handler.GetSchema(rec, req)
+
+	resp := rec.Result()
+	defer resp.Body.Close()
+
+	var schemaResp models.SchemaResponse
+	if err := json.NewDecoder(resp.Body).Decode(&schemaResp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	// SecretRefs should be empty array (not null) per AC #6
+	if schemaResp.SecretRefs == nil {
+		t.Error("secretRefs should be empty array, not null")
+	}
+	if len(schemaResp.SecretRefs) != 0 {
+		t.Errorf("expected 0 secretRefs, got %d", len(schemaResp.SecretRefs))
+	}
+}
+
+func TestSchemaHandler_GetSchema_SecretRefsIncluded_CRDPath(t *testing.T) {
+	t.Parallel()
+
+	// CRD for "SecretApp" — extractor will find it, exercising the CRD path.
+	crd := &apiextensionsv1.CustomResourceDefinition{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "secretapps.example.com",
+		},
+		Spec: apiextensionsv1.CustomResourceDefinitionSpec{
+			Group: "example.com",
+			Names: apiextensionsv1.CustomResourceDefinitionNames{
+				Kind:   "SecretApp",
+				Plural: "secretapps",
+			},
+			Versions: []apiextensionsv1.CustomResourceDefinitionVersion{
+				{
+					Name: "v1alpha1",
+					Schema: &apiextensionsv1.CustomResourceValidation{
+						OpenAPIV3Schema: &apiextensionsv1.JSONSchemaProps{
+							Type: "object",
+							Properties: map[string]apiextensionsv1.JSONSchemaProps{
+								"spec": {
+									Type: "object",
+									Properties: map[string]apiextensionsv1.JSONSchemaProps{
+										"name": {Type: "string"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	cache := watcher.NewRGDCache()
+	rgd := &models.CatalogRGD{
+		Name:        "secret-app-crd",
+		Namespace:   "default",
+		Description: "App with CRD and secret",
+		APIVersion:  "example.com/v1alpha1",
+		Kind:        "SecretApp",
+		Annotations: map[string]string{models.CatalogAnnotation: "true"},
+		Labels:      map[string]string{},
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+		RawSpec: map[string]interface{}{
+			"schema": map[string]interface{}{
+				"apiVersion": "example.com/v1alpha1",
+				"kind":       "SecretApp",
+				"spec": map[string]interface{}{
+					"name": "string",
+				},
+			},
+			"resources": []interface{}{
+				map[string]interface{}{
+					"externalRef": map[string]interface{}{
+						"apiVersion": "v1",
+						"kind":       "Secret",
+						"metadata": map[string]interface{}{
+							"name":      "${schema.spec.credentialSecret}",
+							"namespace": "${schema.spec.credentialNamespace}",
+						},
+					},
+				},
+			},
+		},
+	}
+	cache.Set(rgd)
+	w := watcher.NewRGDWatcherWithCache(cache)
+
+	fakeClient := fakeapiext.NewSimpleClientset(crd)
+	extractor := kroschema.NewExtractorWithClient(fakeClient)
+	handler := NewSchemaHandler(w, extractor)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/rgds/secret-app-crd/schema", nil)
+	req.SetPathValue("name", "secret-app-crd")
+	rec := httptest.NewRecorder()
+
+	handler.GetSchema(rec, req)
+
+	resp := rec.Result()
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", resp.StatusCode)
+	}
+
+	var schemaResp models.SchemaResponse
+	if err := json.NewDecoder(resp.Body).Decode(&schemaResp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	// Verify we hit the CRD path
+	if !schemaResp.CRDFound {
+		t.Error("expected CRDFound=true")
+	}
+	if schemaResp.Source != "crd+rgd" {
+		t.Errorf("source = %q, want %q", schemaResp.Source, "crd+rgd")
+	}
+
+	// SecretRefs must be populated from the CRD path (line 151 in schema.go)
+	if len(schemaResp.SecretRefs) != 1 {
+		t.Fatalf("expected 1 secretRef in CRD path, got %d: %+v", len(schemaResp.SecretRefs), schemaResp.SecretRefs)
+	}
+	sr := schemaResp.SecretRefs[0]
+	if sr.Type != "dynamic" {
+		t.Errorf("secretRef type = %q, want %q", sr.Type, "dynamic")
+	}
+	if sr.NameExpr != "${schema.spec.credentialSecret}" {
+		t.Errorf("secretRef nameExpr = %q, want %q", sr.NameExpr, "${schema.spec.credentialSecret}")
+	}
+	if sr.NamespaceExpr != "${schema.spec.credentialNamespace}" {
+		t.Errorf("secretRef namespaceExpr = %q, want %q", sr.NamespaceExpr, "${schema.spec.credentialNamespace}")
+	}
+	if sr.ID != "0-Secret" {
+		t.Errorf("secretRef ID = %q, want %q", sr.ID, "0-Secret")
+	}
+}
+
+func TestSchemaHandler_GetSchema_SecretRefsFallbackFromCache(t *testing.T) {
+	t.Parallel()
+
+	// Simulate a non-404 CRD error (e.g., timeout) where schema is nil
+	// but the watcher already cached SecretRefs on the CatalogRGD.
+	// This exercises the fallback path at schema.go line 172-177.
+	cache := watcher.NewRGDCache()
+	rgd := &models.CatalogRGD{
+		Name:        "cached-secret-app",
+		Namespace:   "default",
+		Description: "App with cached secret refs",
+		APIVersion:  "example.com/v1alpha1",
+		Kind:        "CachedSecretApp",
+		Annotations: map[string]string{models.CatalogAnnotation: "true"},
+		Labels:      map[string]string{},
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+		// No RawSpec — triggers the fallback since schema can't be built
+		RawSpec: nil,
+		// Pre-populated SecretRefs from watcher
+		SecretRefs: []kroparser.SecretRef{
+			{
+				Type:      "fixed",
+				Name:      "db-credentials",
+				Namespace: "prod",
+				ID:        "0-Secret",
+			},
+		},
+	}
+	cache.Set(rgd)
+	w := watcher.NewRGDWatcherWithCache(cache)
+
+	// No CRD — extractor returns 404
+	fakeClient := fakeapiext.NewSimpleClientset()
+	extractor := kroschema.NewExtractorWithClient(fakeClient)
+	handler := NewSchemaHandler(w, extractor)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/rgds/cached-secret-app/schema", nil)
+	req.SetPathValue("name", "cached-secret-app")
+	rec := httptest.NewRecorder()
+
+	handler.GetSchema(rec, req)
+
+	resp := rec.Result()
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", resp.StatusCode)
+	}
+
+	var schemaResp models.SchemaResponse
+	if err := json.NewDecoder(resp.Body).Decode(&schemaResp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	// Schema should be nil (no RawSpec to build from) — but we still need
+	// to verify secretRefs are populated from the cached CatalogRGD.
+	// With nil RawSpec, the degraded path can't build a schema, so the
+	// CRD-not-found error is returned with error message.
+	// The fallback at line 172 fires when resp.Schema == nil && rgd.SecretRefs > 0.
+	if len(schemaResp.SecretRefs) != 1 {
+		t.Fatalf("expected 1 secretRef from cache fallback, got %d: %+v", len(schemaResp.SecretRefs), schemaResp.SecretRefs)
+	}
+
+	sr := schemaResp.SecretRefs[0]
+	if sr.Type != "fixed" {
+		t.Errorf("secretRef type = %q, want %q", sr.Type, "fixed")
+	}
+	if sr.Name != "db-credentials" {
+		t.Errorf("secretRef name = %q, want %q", sr.Name, "db-credentials")
+	}
+	if sr.Namespace != "prod" {
+		t.Errorf("secretRef namespace = %q, want %q", sr.Namespace, "prod")
 	}
 }
 

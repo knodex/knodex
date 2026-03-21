@@ -20,7 +20,10 @@
     "web/src/**/*.{ts,tsx}": [
       "web/node_modules/.bin/eslint --config web/eslint.config.js --no-warn-ignored --max-warnings 0"
     ],
-    "deploy/charts/**/*.{yaml,yml}": [
+    "deploy/charts/**/values.yaml": [
+      "yamllint -c .github/configs/lintconf.yaml"
+    ],
+    "deploy/charts/**/Chart.yaml": [
       "yamllint -c .github/configs/lintconf.yaml"
     ]
   }

@@ -93,7 +93,8 @@ func (h *SchemaHandler) GetSchema(w http.ResponseWriter, r *http.Request) {
 	formSchema, crdErr := h.extractor.ExtractSchema(r.Context(), rgd)
 
 	resp := models.SchemaResponse{
-		RGD: name,
+		RGD:        name,
+		SecretRefs: make([]parser.SecretRef, 0),
 	}
 
 	if crdErr != nil {
@@ -145,6 +146,11 @@ func (h *SchemaHandler) GetSchema(w http.ResponseWriter, r *http.Request) {
 				slog.Warn("schema enrichment failed", "rgd", name, "error", enrichErr)
 				resp.Error = "failed to enrich schema with resource metadata"
 			}
+
+			// Populate secret refs from resource graph (ensure non-nil for JSON [] vs null)
+			if resourceGraph != nil && len(resourceGraph.SecretRefs) > 0 {
+				resp.SecretRefs = resourceGraph.SecretRefs
+			}
 		} else {
 			// Degraded path: still enrich with resource graph (conditional sections, externalRef, advanced)
 			var resourceGraph *parser.ResourceGraph
@@ -159,8 +165,16 @@ func (h *SchemaHandler) GetSchema(w http.ResponseWriter, r *http.Request) {
 				if enrichErr := kroschema.EnrichSchemaFromResources(resp.Schema, resourceGraph, h.watcher); enrichErr != nil {
 					slog.Warn("degraded schema resource enrichment failed", "rgd", name, "error", enrichErr)
 				}
+				// Populate secret refs from resource graph (ensure non-nil for JSON [] vs null)
+				if len(resourceGraph.SecretRefs) > 0 {
+					resp.SecretRefs = resourceGraph.SecretRefs
+				}
 			}
 		}
+	} else if len(rgd.SecretRefs) > 0 {
+		// Schema unavailable (non-404 CRD error or degraded build failure) but the
+		// watcher already extracted and cached SecretRefs — use them directly.
+		resp.SecretRefs = rgd.SecretRefs
 	}
 
 	response.WriteJSON(w, http.StatusOK, resp)

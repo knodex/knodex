@@ -13,7 +13,6 @@ import {
   AlertTriangle,
   AlertCircle,
   CheckCircle2,
-  FileCode,
   Box,
   Settings,
   FolderKanban,
@@ -34,6 +33,7 @@ import { DeploymentModeSelector } from "./DeploymentModeSelector";
 import { AdvancedConfigToggle, useAdvancedConfigToggle } from "./AdvancedConfigToggle";
 import { cn } from "@/lib/utils";
 import { useFieldVisibility } from "@/hooks/useFieldVisibility";
+
 
 interface DeployPageProps {
   rgd: CatalogRGD;
@@ -62,7 +62,7 @@ export function DeployPage({ rgd, onBack, onDeploySuccess }: DeployPageProps) {
 
   // Real-time permission check via backend Casbin enforcer
   // Check if user can create instances in the selected project
-  const { allowed: canDeployInProject, isLoading: isLoadingPermission, isError: isErrorPermission } = useCanI(
+  const { allowed: canDeployInProject, isLoading: isLoadingPermission } = useCanI(
     'instances',
     'create',
     selectedProjectId || '-'
@@ -293,7 +293,6 @@ export function DeployPage({ rgd, onBack, onDeploySuccess }: DeployPageProps) {
           submitError={createInstanceMutation.error?.message ?? null}
           canDeployInProject={canDeployInProject}
           isLoadingPermission={isLoadingPermission}
-          isErrorPermission={isErrorPermission}
           prefillRef={prefillRef}
           prefillRefNs={prefillRefNs}
           onSubmit={async (values) => {
@@ -365,7 +364,6 @@ interface DeployFormContentProps {
   submitError: string | null;
   canDeployInProject: boolean | undefined;
   isLoadingPermission?: boolean;
-  isErrorPermission?: boolean;
   /** Pre-fill value for external ref name (from instance add-on deploy) */
   prefillRef?: string;
   /** Pre-fill value for external ref namespace (from instance add-on deploy) */
@@ -401,7 +399,6 @@ function DeployFormContent({
   submitError,
   canDeployInProject,
   isLoadingPermission,
-  isErrorPermission: _isErrorPermission,
   prefillRef,
   prefillRefNs,
   onSubmit,
@@ -654,11 +651,15 @@ function DeployFormContent({
           />
         </div>
 
-        {/* Schema Properties Section */}
-        <div className="rounded-lg border border-border bg-card p-4 space-y-4">
-          <div className="flex items-center gap-2">
-            <FileCode className="h-4 w-4 text-muted-foreground" />
+        {/* Configuration Section */}
+        <div className="rounded-lg border border-border bg-card" data-testid="deploy-config-section">
+          <div className="p-4 space-y-4">
+
+          <div className="flex items-center justify-between">
             <h3 className="text-sm font-medium text-foreground">Configuration</h3>
+            <span className="text-xs text-muted-foreground">
+              {schema.group}/{schema.version}
+            </span>
           </div>
 
           {schema.description && (
@@ -792,6 +793,7 @@ function DeployFormContent({
               No configuration options required for this resource.
             </p>
           )}
+          </div>
         </div>
 
         {/* YAML Preview */}

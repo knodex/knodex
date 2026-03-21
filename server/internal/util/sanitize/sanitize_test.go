@@ -223,3 +223,61 @@ func TestPathComponent(t *testing.T) {
 		})
 	}
 }
+
+func TestIsValidDNS1123Label(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  bool
+	}{
+		{"valid simple", "my-name", true},
+		{"valid single char", "a", true},
+		{"valid numeric", "123", true},
+		{"valid max length", strings.Repeat("a", 63), true},
+		{"invalid too long", strings.Repeat("a", 64), false},
+		{"invalid empty", "", false},
+		{"invalid uppercase", "My-Name", false},
+		{"invalid leading hyphen", "-my-name", false},
+		{"invalid trailing hyphen", "my-name-", false},
+		{"invalid dots", "my.name", false},
+		{"invalid spaces", "my name", false},
+		{"invalid special chars", "my@name", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsValidDNS1123Label(tt.input); got != tt.want {
+				t.Errorf("IsValidDNS1123Label(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsValidDNS1123Subdomain(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  bool
+	}{
+		{"valid simple", "my-name", true},
+		{"valid with dots", "my.name.example", true},
+		{"valid single char", "a", true},
+		{"valid max length", strings.Repeat("a", 253), true},
+		{"invalid too long", strings.Repeat("a", 254), false},
+		{"invalid empty", "", false},
+		{"invalid uppercase", "My.Name", false},
+		{"invalid leading hyphen", "-my-name", false},
+		{"invalid trailing dot", "my.name.", false},
+		{"invalid leading dot", ".my.name", false},
+		{"invalid double dot", "my..name", false},
+		{"invalid spaces", "my name", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsValidDNS1123Subdomain(tt.input); got != tt.want {
+				t.Errorf("IsValidDNS1123Subdomain(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}

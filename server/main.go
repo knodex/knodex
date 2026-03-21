@@ -34,6 +34,7 @@ func main() {
 	// Set enterprise services via build-tag dispatch functions.
 	// In OSS builds, these return nil/noop. In EE builds, these initialize real services.
 	a.SetOrganizationFilter(InitOrganizationFilter(cfg))
+	a.SetSecretsEnabled(InitSecretsEnabled())
 	a.SetLicenseService(InitLicenseService(cfg.License.Path, cfg.License.Text))
 
 	// Register init functions for services that need runtime dependencies (wsHub, redisClient, rgdWatcher).

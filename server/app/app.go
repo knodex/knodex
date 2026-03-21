@@ -115,6 +115,9 @@ type App struct {
 	// Organization filter for enterprise catalog filtering (empty = no filtering)
 	organizationFilter string
 
+	// Secrets enabled flag for enterprise secrets management (false = OSS, true = EE)
+	secretsEnabled bool
+
 	// Enterprise init functions (monorepo build-tag dispatch bridge)
 	complianceInitFunc           ComplianceInitFunc
 	violationHistoryInitFunc     ViolationHistoryInitFunc
@@ -182,6 +185,12 @@ func (a *App) SetAuditAPIServiceInitFunc(fn AuditAPIServiceInitFunc) {
 // In EE builds, this is set to cfg.Organization. In OSS builds, this is empty (no filtering).
 func (a *App) SetOrganizationFilter(org string) {
 	a.organizationFilter = org
+}
+
+// SetSecretsEnabled enables secrets management routes.
+// In EE builds, this is true. In OSS builds, this is false (secrets endpoints return 402).
+func (a *App) SetSecretsEnabled(enabled bool) {
+	a.secretsEnabled = enabled
 }
 
 // Run initializes all services, starts the HTTP server, and blocks until shutdown.
@@ -586,6 +595,7 @@ func (a *App) Run(ctx context.Context) error {
 		SSOStore:                ssoStore,
 		AllowedRedirectOrigins:  cfg.Auth.AllowedRedirectOrigins,
 		CookieConfig:            cookie.Config{Secure: cfg.Cookie.Secure, Domain: cfg.Cookie.Domain},
+		SecretsEnabled:          a.secretsEnabled,     // EE secrets management (false = 402)
 		OrganizationFilter:      a.organizationFilter, // EE catalog filtering (empty = no filter)
 		Organization:            cfg.Organization,     // Display identity for GET /api/v1/settings
 		SwaggerEnabled:          cfg.SwaggerEnabled,   // Serve Swagger UI at /swagger/ (SWAGGER_UI_ENABLED)
