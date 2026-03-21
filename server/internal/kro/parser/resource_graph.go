@@ -66,6 +66,40 @@ type ConditionExpr struct {
 	SchemaFields []string `json:"schemaFields"`
 }
 
+// SecretRef represents a detected secret reference from an externalRef resource.
+// This is the canonical definition used by models.CatalogRGD, models.SchemaResponse,
+// the RGD watcher, and the schema handler.
+type SecretRef struct {
+	// Type is "dynamic" (either name or namespace contains a CEL expression) or "fixed" (both are literals)
+	Type string `json:"type"`
+
+	// Name is the literal secret name (for fixed refs only)
+	Name string `json:"name,omitempty"`
+
+	// Namespace is the literal secret namespace (for fixed refs only)
+	Namespace string `json:"namespace,omitempty"`
+
+	// NameExpr is the name value for dynamic refs. May be a CEL expression (contains "${...}")
+	// when the name is parameterised, or a literal string when only the namespace is dynamic.
+	NameExpr string `json:"nameExpr,omitempty"`
+
+	// NamespaceExpr is the namespace value for dynamic refs. May be a CEL expression or a literal
+	// when only the name is dynamic.
+	NamespaceExpr string `json:"namespaceExpr,omitempty"`
+
+	// ID is the resource ID within the RGD (e.g., "0-Secret")
+	ID string `json:"id"`
+
+	// Description is the human-readable purpose of this secret reference,
+	// extracted from the RGD schema's externalRef field description.
+	Description string `json:"description,omitempty"`
+
+	// ExternalRefID is the semantic identifier for this secret reference,
+	// matching the field name in spec.schema.spec.externalRef (e.g., "dbSecret").
+	// This is distinct from ID (which is the graph resource ID like "0-Secret").
+	ExternalRefID string `json:"externalRefId,omitempty"`
+}
+
 // ResourceGraph represents the parsed resource graph from an RGD.
 type ResourceGraph struct {
 	// RGDName is the name of the RGD this graph belongs to
@@ -79,6 +113,9 @@ type ResourceGraph struct {
 
 	// Edges represent dependencies between resources (from ID -> to ID)
 	Edges []ResourceEdge `json:"edges"`
+
+	// SecretRefs are externalRef resources that reference Kubernetes Secrets
+	SecretRefs []SecretRef `json:"secretRefs,omitempty"`
 }
 
 // ResourceEdge represents a dependency edge between two resources.

@@ -66,6 +66,10 @@ type RGDWatcher struct {
 // Delegates to kro.RGDGVR() for the canonical GVR definition.
 var rgdGVR = kro.RGDGVR()
 
+// sharedResourceParser is reused across all extractDependsOnKindsAndSecretRefs calls
+// to avoid per-event allocation. ResourceParser is stateless and safe for reuse.
+var sharedResourceParser = kroparser.NewResourceParser()
+
 // NewRGDWatcher creates a new RGD watcher
 func NewRGDWatcher(cfg *config.Kubernetes) (*RGDWatcher, error) {
 	var restConfig *rest.Config
@@ -493,8 +497,8 @@ func (w *RGDWatcher) unstructuredToRGD(u *unstructured.Unstructured) *models.Cat
 		title = parser.GetName(u)
 	}
 
-	// Extract unique externalRef Kinds using the resource parser
-	dependsOnKinds := extractDependsOnKinds(rawSpec, parser.GetName(u))
+	// Extract unique externalRef Kinds and secret refs using the resource parser
+	dependsOnKinds, secretRefs := extractDependsOnKindsAndSecretRefs(rawSpec, parser.GetName(u))
 
 	return &models.CatalogRGD{
 		Name:                   parser.GetName(u),
@@ -514,6 +518,7 @@ func (w *RGDWatcher) unstructuredToRGD(u *unstructured.Unstructured) *models.Cat
 		Kind:                   kind,
 		Status:                 status,
 		DependsOnKinds:         dependsOnKinds,
+		SecretRefs:             secretRefs,
 		AllowedDeploymentModes: allowedModes,
 		CreatedAt:              createdAt,
 		UpdatedAt:              updatedAt,
@@ -522,32 +527,32 @@ func (w *RGDWatcher) unstructuredToRGD(u *unstructured.Unstructured) *models.Cat
 	}
 }
 
-// extractDependsOnKinds parses the RGD spec to find unique Kinds from externalRef resources.
-func extractDependsOnKinds(rawSpec map[string]interface{}, rgdName string) []string {
+// extractDependsOnKindsAndSecretRefs parses the RGD spec to find unique Kinds from
+// externalRef resources and extract secret references.
+func extractDependsOnKindsAndSecretRefs(rawSpec map[string]interface{}, rgdName string) ([]string, []kroparser.SecretRef) {
 	if rawSpec == nil {
-		return nil
+		return nil, nil
 	}
 
-	p := kroparser.NewResourceParser()
-	graph, err := p.ParseRGDResources(rgdName, "", rawSpec)
+	graph, err := sharedResourceParser.ParseRGDResources(rgdName, "", rawSpec)
 	if err != nil || graph == nil {
-		return nil
+		return nil, nil
 	}
 
+	// Extract unique externalRef Kinds
 	extRefs := graph.GetExternalRefs()
-	if len(extRefs) == 0 {
-		return nil
-	}
-
-	seen := make(map[string]bool)
 	var kinds []string
-	for _, ref := range extRefs {
-		if ref.ExternalRef != nil && ref.ExternalRef.Kind != "" && !seen[ref.ExternalRef.Kind] {
-			seen[ref.ExternalRef.Kind] = true
-			kinds = append(kinds, ref.ExternalRef.Kind)
+	if len(extRefs) > 0 {
+		seen := make(map[string]bool)
+		for _, ref := range extRefs {
+			if ref.ExternalRef != nil && ref.ExternalRef.Kind != "" && !seen[ref.ExternalRef.Kind] {
+				seen[ref.ExternalRef.Kind] = true
+				kinds = append(kinds, ref.ExternalRef.Kind)
+			}
 		}
 	}
-	return kinds
+
+	return kinds, graph.SecretRefs
 }
 
 // ListRGDs returns all RGDs matching the given options

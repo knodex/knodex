@@ -39,6 +39,7 @@ The User Guide provides step-by-step instructions for:
 - [Browsing Catalog](browsing-catalog/) - Discover available RGDs, search, filter, and view details
 - [Deploying Instances](deploying-instances/) - Deploy applications with guided forms and YAML preview
 - [Managing Instances](managing-instances/) - Monitor status, update configurations, and delete instances
+- [Managing Secrets](managing-secrets/) - Create and manage Kubernetes Secrets used by RGD instances
 - [Viewing Logs](viewing-logs/) - Access logs, monitor metrics, and troubleshoot issues
 
 ## Getting Started
@@ -286,6 +287,7 @@ Access contextual help by clicking the **?** icon next to any field or section.
 | [Browsing Catalog](browsing-catalog/)           | Discover available RGDs                        |
 | [Deploying Instances](deploying-instances/)     | Launch applications                            |
 | [Managing Instances](managing-instances/)       | Monitor and update instances                   |
+| [Managing Secrets](managing-secrets/)           | Create and manage Secrets for RGD instances    |
 | [Viewing Logs](viewing-logs/)                   | Debug and troubleshoot                         |
 | [Compliance Management](../enterprise/compliance-management/) | Policy violations and enforcement (Enterprise) |
 

@@ -1,0 +1,73 @@
+{{- if .Values.redis.enabled }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "knodex.fullname" . }}-test-redis
+  labels:
+    {{- include "knodex.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  {{- with .Values.global.imagePullSecrets }}
+  imagePullSecrets:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  containers:
+    - name: redis-auth-test
+      image: docker.io/bitnami/redis:latest
+      command: ['sh', '-c']
+      args:
+        - |
+          set -e
+          echo "=== Test 1: Redis secret exists and has password ==="
+          if [ -z "$REDIS_PASSWORD" ]; then
+            echo "FAIL: REDIS_PASSWORD is empty"
+            exit 1
+          fi
+          echo "PASS: REDIS_PASSWORD is set (length: ${#REDIS_PASSWORD})"
+
+          echo "=== Test 2: Can authenticate to Redis ==="
+          RESULT=$(redis-cli -h {{ include "knodex.redisHost" . }} -p 6379 -a "$REDIS_PASSWORD" --no-auth-warning ping)
+          if [ "$RESULT" != "PONG" ]; then
+            echo "FAIL: Redis ping returned '$RESULT' (expected PONG)"
+            exit 1
+          fi
+          echo "PASS: Redis authentication successful"
+
+          echo "=== Test 3: Wrong password is rejected ==="
+          RESULT=$(redis-cli -h {{ include "knodex.redisHost" . }} -p 6379 -a "wrong-password-12345" --no-auth-warning ping 2>&1 || true)
+          if echo "$RESULT" | grep -qi "WRONGPASS\|NOAUTH\|ERR"; then
+            echo "PASS: Wrong password correctly rejected"
+          else
+            echo "FAIL: Wrong password was not rejected (got: $RESULT)"
+            exit 1
+          fi
+
+          echo "=== Test 4: Can write and read data ==="
+          redis-cli -h {{ include "knodex.redisHost" . }} -p 6379 -a "$REDIS_PASSWORD" --no-auth-warning SET helm-test-key "helm-test-value" > /dev/null
+          VALUE=$(redis-cli -h {{ include "knodex.redisHost" . }} -p 6379 -a "$REDIS_PASSWORD" --no-auth-warning GET helm-test-key)
+          redis-cli -h {{ include "knodex.redisHost" . }} -p 6379 -a "$REDIS_PASSWORD" --no-auth-warning DEL helm-test-key > /dev/null
+          if [ "$VALUE" != "helm-test-value" ]; then
+            echo "FAIL: Read back '$VALUE' (expected 'helm-test-value')"
+            exit 1
+          fi
+          echo "PASS: Write/read/delete successful"
+
+          echo ""
+          echo "All Redis connection tests passed."
+      env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "knodex.redisSecretRef" . }}
+              key: {{ include "knodex.redisSecretKey" . }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+{{- end }}

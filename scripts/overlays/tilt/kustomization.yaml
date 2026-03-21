@@ -71,6 +71,15 @@ patches:
             cpu: 2000m
             memory: 2Gi
 
+  # Set known JWT signing key for E2E test token validation
+  - target:
+      kind: Secret
+      name: knodex-secret
+    patch: |
+      - op: replace
+        path: /stringData/server.secretkey
+        value: "test-jwt-secret-key-for-qa-testing-only"
+
   # Configure Redis address
   - target:
       kind: ConfigMap

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/knodex/knodex/server/internal/kro"
+	kroparser "github.com/knodex/knodex/server/internal/kro/parser"
 )
 
 // Re-export KRO constants from the centralized kro package for backward compatibility.
@@ -76,6 +77,9 @@ type CatalogRGD struct {
 	// DependsOnKinds lists the unique Kinds from externalRef resources in the RGD.
 	// Populated at watcher time from parsing spec.resources externalRef entries.
 	DependsOnKinds []string `json:"dependsOnKinds,omitempty"`
+	// SecretRefs lists externalRef resources that reference Kubernetes Secrets.
+	// Populated at watcher time from parsing spec.resources externalRef entries.
+	SecretRefs []kroparser.SecretRef `json:"secretRefs,omitempty"`
 	// AllowedDeploymentModes restricts which deployment modes can be used
 	// Valid values: "direct", "gitops", "hybrid" (case-insensitive)
 	// Empty slice means all modes are allowed (default, backward compatible)

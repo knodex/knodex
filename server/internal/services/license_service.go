@@ -14,6 +14,9 @@ const (
 
 	// FeatureViews is the feature key for custom category views.
 	FeatureViews = "views"
+
+	// FeatureSecrets is the feature key for secrets management.
+	FeatureSecrets = "secrets"
 )
 
 // LicenseInfo contains the parsed license data from the JWT claims.

@@ -112,11 +112,28 @@ Returns the user-provided existingSecret or the chart-generated secret name
 {{- end }}
 
 {{/*
+Redis subchart fullname — mirrors Bitnami common.names.fullname for the redis subchart
+so that host references resolve correctly. Logic: fullnameOverride > nameOverride > default ("redis").
+*/}}
+{{- define "knodex.redis.fullname" -}}
+{{- if .Values.redis.fullnameOverride }}
+{{- .Values.redis.fullnameOverride | trunc 63 | trimSuffix "-" }}
+{{- else }}
+{{- $name := default "redis" .Values.redis.nameOverride }}
+{{- if contains $name .Release.Name }}
+{{- .Release.Name | trunc 63 | trimSuffix "-" }}
+{{- else }}
+{{- printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffix "-" }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
 Redis host
 */}}
 {{- define "knodex.redisHost" -}}
 {{- if .Values.redis.enabled }}
-{{- printf "%s-redis-master" (include "knodex.fullname" .) }}
+{{- printf "%s-master" (include "knodex.redis.fullname" .) }}
 {{- else }}
 {{- .Values.externalRedis.host }}
 {{- end }}
@@ -134,14 +151,41 @@ Redis port
 {{- end }}
 
 {{/*
-Redis auth secret name
-Returns existingSecret if set, otherwise the Bitnami-generated secret name.
+Redis auth secret name — chart-managed secret: <fullname>-redis-password.
+This helper is called from both the parent chart and the Bitnami redis subchart
+(via tpl evaluation of redis.auth.existingSecret). It must produce the same name
+in both contexts. It reconstructs the parent chart's fullname using .Release.Name
+and the hardcoded parent chart name "knodex" (rather than .Chart.Name, which
+differs in the subchart). nameOverride / fullnameOverride are read from
+.Values.global so they are accessible in both parent and subchart contexts.
 */}}
 {{- define "knodex.redisSecretName" -}}
-{{- if .Values.redis.auth.existingSecret }}
+{{- $globalOverrides := default dict .Values.global }}
+{{- $knodexOverrides := default dict (index $globalOverrides "knodex") }}
+{{- $fullnameOverride := default "" (index $knodexOverrides "fullnameOverride") }}
+{{- $nameOverride := default "" (index $knodexOverrides "nameOverride") }}
+{{- if $fullnameOverride }}
+{{- printf "%s-redis-password" ($fullnameOverride | trunc 63 | trimSuffix "-") }}
+{{- else }}
+{{- $name := default "knodex" $nameOverride }}
+{{- if contains $name .Release.Name }}
+{{- printf "%s-redis-password" (.Release.Name | trunc 63 | trimSuffix "-") }}
+{{- else }}
+{{- printf "%s-%s-redis-password" .Release.Name $name | trunc 63 | trimSuffix "-" }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
+Redis secret name for use in the parent chart (server deployment, init containers).
+If the user supplied a custom existingSecret (not the default tpl expression),
+use that; otherwise fall back to the chart-managed name from knodex.redisSecretName.
+*/}}
+{{- define "knodex.redisSecretRef" -}}
+{{- if and .Values.redis.auth.existingSecret (not (contains "knodex.redisSecretName" .Values.redis.auth.existingSecret)) }}
 {{- .Values.redis.auth.existingSecret }}
 {{- else }}
-{{- printf "%s-redis" .Release.Name }}
+{{- include "knodex.redisSecretName" . }}
 {{- end }}
 {{- end }}
 

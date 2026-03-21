@@ -16,6 +16,7 @@ import {
   FolderKanban,
   AlertTriangle,
   Puzzle,
+  KeyRound,
 } from "lucide-react";
 import { useRGD, useRGDResourceGraph, useRGDList } from "@/hooks/useRGDs";
 import type { CatalogRGD } from "@/types/rgd";
@@ -29,6 +30,7 @@ import { useKindToRGDMap } from "@/hooks/useKindToRGDMap";
 import { useDynamicTabs } from "@/hooks/useDynamicTabs";
 import type { Tab, ConditionalTab } from "@/hooks/useDynamicTabs";
 import { TabBar } from "@/components/shared/TabBar";
+import { isEnterprise } from "@/hooks/useCompliance";
 
 // Lazy load ResourceGraphView to code-split @xyflow/react (~200KB)
 // This ensures ReactFlow is only loaded when user views the Resources tab
@@ -36,7 +38,14 @@ const ResourceGraphView = lazy(() =>
   import("@/components/graph").then((m) => ({ default: m.ResourceGraphView }))
 );
 
-type TabId = "overview" | "resources" | "addons" | "depends-on";
+// Lazy load CatalogSecretsTab only in enterprise builds.
+// isEnterprise() is a build-time constant: in OSS builds this resolves to null,
+// eliminating the dynamic import from the OSS bundle entirely.
+const CatalogSecretsTab = isEnterprise()
+  ? lazy(() => import("./CatalogSecretsTab").then(m => ({ default: m.CatalogSecretsTab })))
+  : null;
+
+type TabId = "overview" | "resources" | "addons" | "depends-on" | "secrets";
 
 const BASE_TABS: Tab<TabId>[] = [
   { id: "overview", label: "Overview", icon: <Layers className="h-4 w-4" /> },
@@ -62,9 +71,14 @@ export function RGDDetailView({ rgd, onBack, onDeploy }: RGDDetailViewProps) {
   const addOnsCount = addOnsData?.totalCount ?? 0;
 
   const dependsOnCount = displayRGD.dependsOnKinds?.length || 0;
+  const secretRefsCount = displayRGD.secretRefs?.length ?? 0;
 
   // Build conditional tabs
   const conditionalTabs = useMemo<ConditionalTab<TabId>[]>(() => [
+    {
+      condition: isEnterprise() && secretRefsCount > 0,
+      tab: { id: "secrets", label: `Secrets (${secretRefsCount})`, icon: <KeyRound className="h-4 w-4" /> },
+    },
     {
       condition: dependsOnCount > 0,
       tab: { id: "depends-on", label: `Depends On (${dependsOnCount})`, icon: <Link2 className="h-4 w-4" /> },
@@ -73,7 +87,7 @@ export function RGDDetailView({ rgd, onBack, onDeploy }: RGDDetailViewProps) {
       condition: addOnsCount > 0,
       tab: { id: "addons", label: `Add-ons (${addOnsCount})`, icon: <Puzzle className="h-4 w-4" /> },
     },
-  ], [addOnsCount, dependsOnCount]);
+  ], [addOnsCount, dependsOnCount, secretRefsCount]);
 
   const { tabs, activeTab, setActiveTab } = useDynamicTabs(BASE_TABS, conditionalTabs, "overview" as TabId);
 
@@ -198,6 +212,11 @@ export function RGDDetailView({ rgd, onBack, onDeploy }: RGDDetailViewProps) {
         )}
         {activeTab === "resources" && (
           <ResourcesTab rgd={displayRGD} />
+        )}
+        {activeTab === "secrets" && displayRGD.secretRefs && CatalogSecretsTab && (
+          <Suspense fallback={<div className="flex items-center justify-center min-h-[300px]"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>}>
+            <CatalogSecretsTab secretRefs={displayRGD.secretRefs} />
+          </Suspense>
         )}
         {activeTab === "depends-on" && (
           <DependsOnTab rgd={displayRGD} />

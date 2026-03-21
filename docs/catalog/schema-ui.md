@@ -366,6 +366,80 @@ spec:
 
 When `useExistingDatabase` is false, the `externalRef` section is hidden. When checked, a Service resource picker appears.
 
+## Secret Reference Descriptions
+
+When an `externalRef` resource has `kind: Secret`, Knodex detects it as a secret dependency and displays it in the catalog detail **Secrets tab**. RGD authors can add a `description` marker to help users understand what each secret is for.
+
+### Adding Descriptions
+
+Add a `description` marker to the `name` sub-field of the externalRef schema entry:
+
+```yaml
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: WebAppWithSecret
+    spec:
+      externalRef:
+        dbSecret:
+          name: string | default="" description="Name of the Kubernetes Secret containing database credentials"
+          namespace: string | default="" description="Namespace of the Secret"
+
+  resources:
+    - id: dbSecret
+      externalRef:
+        apiVersion: v1
+        kind: Secret
+        metadata:
+          name: ${schema.spec.externalRef.dbSecret.name}
+          namespace: ${schema.spec.externalRef.dbSecret.namespace}
+```
+
+### How It Renders
+
+The description from the `name` sub-field is extracted and shown in the catalog detail Secrets tab as the purpose of that secret reference. Users see:
+
+| Element | Source | Example |
+|---------|--------|---------|
+| **Title** | The externalRef field name (`dbSecret`) | `dbSecret` |
+| **Description** | The `name` sub-field's `description` marker | "Name of the Kubernetes Secret containing database credentials" |
+| **Type badge** | Computed from the name/namespace expressions | `user-provided`, `fixed`, or `dynamic` |
+| **Name/Namespace** | Literal values or CEL expressions | `my-db-secret` / `production` |
+
+{{< alert title="Why the name sub-field?" >}}
+In KRO SimpleSchema, parent objects (like `dbSecret: {...}`) have no description slot of their own — descriptions live on leaf fields. The `name` sub-field best describes *what* the secret is, while `namespace` describes *where* it lives. Knodex uses the `name` description by convention.
+{{< /alert >}}
+
+### Secret Reference Types
+
+Knodex classifies each secret reference based on how the name and namespace are resolved:
+
+| Type | Condition | Catalog Display |
+|------|-----------|-----------------|
+| **user-provided** | Both name and namespace use the passthrough pattern `${schema.spec.externalRef.<id>.name}` | Title, description, and a "user-provided" badge. No name/namespace shown (user supplies these at deploy time). |
+| **fixed** | Name and namespace are literal strings (no `${...}` expressions) | Literal name and namespace displayed |
+| **dynamic** | Name or namespace uses a non-passthrough CEL expression | CEL expressions displayed in monospace |
+
+### Best Practice: Always Add Descriptions
+
+Without a description, the Secrets tab shows only the externalRef field name and type — which may not be meaningful to users deploying the RGD. Add descriptions to help users understand what credentials or certificates each secret should contain.
+
+```yaml
+# Without description — users see only "dbSecret" with no context
+externalRef:
+  dbSecret:
+    name: string | default=""
+    namespace: string | default=""
+
+# With description — users understand what to provide
+externalRef:
+  dbSecret:
+    name: string | default="" description="Name of the Kubernetes Secret containing database credentials"
+    namespace: string | default="" description="Namespace of the Secret"
+```
+
+For the user-facing guide on working with secrets, see [Managing Secrets](../../user-guide/managing-secrets/).
+
 ## UI Rendering Behavior
 
 ### Field Rendering by Type

@@ -67,6 +67,28 @@ patches:
         path: /data/OIDC_ENABLED
         value: "true"
 
+  # Increase rate limits for E2E test suite (all tests run as same user)
+  - target:
+      kind: ConfigMap
+      name: knodex-config
+    patch: |
+      - op: add
+        path: /data/RATE_LIMIT_USER_REQUESTS_PER_MINUTE
+        value: "1000"
+      - op: add
+        path: /data/RATE_LIMIT_USER_BURST_SIZE
+        value: "500"
+
+  # Enterprise license for E2E tests (enables secrets, compliance, views features).
+  # Signed with the dev private key (ee/license/license_key.pem). Valid for 10 years.
+  - target:
+      kind: ConfigMap
+      name: knodex-config
+    patch: |
+      - op: add
+        path: /data/KNODEX_LICENSE_TEXT
+        value: "eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJsaWNlbnNlLmtub2RleC5pbyIsInN1YiI6ImUyZS10ZXN0LWN1c3RvbWVyIiwiZXhwIjoyMDg5NDAzNzk3LCJpYXQiOjE3NzQwNDAxOTcsImZlYXR1cmVzIjpbImNvbXBsaWFuY2UiLCJ2aWV3cyIsInNlY3JldHMiXSwibWF4VXNlcnMiOjk5OTksImxpY2Vuc2VJZCI6ImxpY19lMmVfdGVzdCIsImVkaXRpb24iOiJlbnRlcnByaXNlIn0.Cwe2cyuRZBi-fAq3Ii7GPDI1nw2Cyy1Ts22uo4cYl52HQa1kiFM4XmqVzPhh3n0iTOksOpxLcNxlHc1mswAkpw"
+
   # Set JWT signing key for E2E test token validation
   - target:
       kind: Secret

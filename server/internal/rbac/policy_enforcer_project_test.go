@@ -380,3 +380,280 @@ func TestPolicyEnforcer_ProjectRole_PolicyUpdate(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, allowed, "Viewer should NOT have instance create permission")
 }
+
+// TestPolicyEnforcer_SecretsAccess_AdminRole tests that project admin has full CRUD on secrets
+func TestPolicyEnforcer_SecretsAccess_AdminRole(t *testing.T) {
+	t.Parallel()
+
+	pe := newTestEnforcer(t)
+	ctx := context.Background()
+
+	// Create a project with admin role
+	project := &Project{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "testproject",
+		},
+		Spec: ProjectSpec{
+			Description: "Test project for secrets access",
+			Roles: []ProjectRole{
+				{
+					Name:        "admin",
+					Description: "Project admin",
+					Policies:    []string{},
+					Groups:      []string{"admin-group"},
+				},
+			},
+		},
+	}
+
+	err := pe.LoadProjectPolicies(ctx, project)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name     string
+		object   string
+		action   string
+		expected bool
+	}{
+		{"admin can get secret", "secrets/testproject/mysecret", "get", true},
+		{"admin can create secret", "secrets/testproject/mysecret", "create", true},
+		{"admin can update secret", "secrets/testproject/mysecret", "update", true},
+		{"admin can delete secret", "secrets/testproject/mysecret", "delete", true},
+		{"admin can list secrets", "secrets/testproject/mysecret", "list", true},
+		// Cross-project isolation
+		{"admin cannot access other project secrets", "secrets/otherproject/mysecret", "get", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			allowed, err := pe.CanAccessWithGroups(ctx, "user:admin", []string{"admin-group"}, tt.object, tt.action)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, allowed)
+		})
+	}
+}
+
+// TestPolicyEnforcer_SecretsAccess_ReadonlyRole tests that readonly role can only get/list secrets
+func TestPolicyEnforcer_SecretsAccess_ReadonlyRole(t *testing.T) {
+	t.Parallel()
+
+	pe := newTestEnforcer(t)
+	ctx := context.Background()
+
+	// Create a project with readonly role
+	project := &Project{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "testproject",
+		},
+		Spec: ProjectSpec{
+			Description: "Test project for secrets access",
+			Roles: []ProjectRole{
+				{
+					Name:        "readonly",
+					Description: "Read-only role",
+					Policies:    []string{},
+					Groups:      []string{"readonly-group"},
+				},
+			},
+		},
+	}
+
+	err := pe.LoadProjectPolicies(ctx, project)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name     string
+		object   string
+		action   string
+		expected bool
+	}{
+		// Readonly can get and list
+		{"readonly can get secret", "secrets/testproject/mysecret", "get", true},
+		{"readonly can list secrets", "secrets/testproject/mysecret", "list", true},
+		// Readonly cannot create/update/delete
+		{"readonly cannot create secret", "secrets/testproject/mysecret", "create", false},
+		{"readonly cannot update secret", "secrets/testproject/mysecret", "update", false},
+		{"readonly cannot delete secret", "secrets/testproject/mysecret", "delete", false},
+		// Cross-project isolation
+		{"readonly cannot access other project secrets", "secrets/otherproject/mysecret", "get", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			allowed, err := pe.CanAccessWithGroups(ctx, "user:viewer", []string{"readonly-group"}, tt.object, tt.action)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, allowed)
+		})
+	}
+}
+
+// TestPolicyEnforcer_SecretsAccess_WildcardScoping tests that secrets/* in a custom project
+// policy is correctly scoped to the project (not passed through as global secrets/*)
+func TestPolicyEnforcer_SecretsAccess_WildcardScoping(t *testing.T) {
+	t.Parallel()
+
+	pe := newTestEnforcer(t)
+	ctx := context.Background()
+
+	// Create project "alpha" with a custom role that uses the unqualified "secrets/*" wildcard
+	projectAlpha := &Project{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "alpha",
+		},
+		Spec: ProjectSpec{
+			Description: "Alpha project",
+			Roles: []ProjectRole{
+				{
+					Name:        "developer",
+					Description: "Developer with unscoped secrets wildcard",
+					Policies: []string{
+						"secrets/*, create, allow",
+					},
+					Groups: []string{"alpha-devs"},
+				},
+			},
+		},
+	}
+
+	// Create project "beta" (separate tenant)
+	projectBeta := &Project{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "beta",
+		},
+		Spec: ProjectSpec{
+			Description: "Beta project",
+			Roles:       []ProjectRole{},
+		},
+	}
+
+	err := pe.LoadProjectPolicies(ctx, projectAlpha)
+	require.NoError(t, err)
+	err = pe.LoadProjectPolicies(ctx, projectBeta)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name     string
+		object   string
+		action   string
+		expected bool
+	}{
+		// Alpha developer can create secrets within their own project (scoped correctly)
+		{"alpha developer can create in alpha", "secrets/alpha/mysecret", "create", true},
+		// CRITICAL: alpha developer must NOT be able to create in beta (cross-project isolation)
+		{"alpha developer cannot create in beta", "secrets/beta/mysecret", "create", false},
+		// Cannot create globally
+		{"alpha developer cannot create globally", "secrets/other/mysecret", "create", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			allowed, err := pe.CanAccessWithGroups(ctx, "user:alphadev", []string{"alpha-devs"}, tt.object, tt.action)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, allowed)
+		})
+	}
+}
+
+// TestPolicyEnforcer_SecretsAccess_CustomProjectRole tests custom project role with secrets access
+func TestPolicyEnforcer_SecretsAccess_CustomProjectRole(t *testing.T) {
+	t.Parallel()
+
+	pe := newTestEnforcer(t)
+	ctx := context.Background()
+
+	// Create project with a custom developer role that has secrets create access
+	project := &Project{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "demo",
+		},
+		Spec: ProjectSpec{
+			Description: "Demo project",
+			Roles: []ProjectRole{
+				{
+					Name:        "developer",
+					Description: "Developer role with secrets create",
+					Policies: []string{
+						"secrets/demo/*, create, allow",
+					},
+					Groups: []string{"dev-group"},
+				},
+			},
+		},
+	}
+
+	err := pe.LoadProjectPolicies(ctx, project)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name     string
+		object   string
+		action   string
+		expected bool
+	}{
+		{"developer can create secret", "secrets/demo/mysecret", "create", true},
+		{"developer cannot delete secret", "secrets/demo/mysecret", "delete", false},
+		{"developer cannot get secret", "secrets/demo/mysecret", "get", false},
+		// Cross-project isolation
+		{"developer cannot create secret in other project", "secrets/other/mysecret", "create", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			allowed, err := pe.CanAccessWithGroups(ctx, "user:dev", []string{"dev-group"}, tt.object, tt.action)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, allowed)
+		})
+	}
+}
+
+// TestPolicyEnforcer_SecretsAccess_ArgoFormatPolicy tests AC #3 using the 6-part ArgoCD policy
+// format: "p, proj:demo:developer, secrets, create, demo, allow"
+func TestPolicyEnforcer_SecretsAccess_ArgoFormatPolicy(t *testing.T) {
+	t.Parallel()
+
+	pe := newTestEnforcer(t)
+	ctx := context.Background()
+
+	// Simulate AC #3: project with a developer role using 6-part ArgoCD policy format
+	project := &Project{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "demo",
+		},
+		Spec: ProjectSpec{
+			Description: "Demo project",
+			Roles: []ProjectRole{
+				{
+					Name:        "developer",
+					Description: "Developer role using ArgoCD 6-part format",
+					Policies: []string{
+						// 6-part ArgoCD format: p, subject, resource_type, action, scope, effect
+						"p, proj:demo:developer, secrets, create, demo/*, allow",
+					},
+					Groups: []string{"demo-devs"},
+				},
+			},
+		},
+	}
+
+	err := pe.LoadProjectPolicies(ctx, project)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name     string
+		object   string
+		action   string
+		expected bool
+	}{
+		{"argo format: developer can create secret in demo", "secrets/demo/mysecret", "create", true},
+		{"argo format: developer cannot delete secret", "secrets/demo/mysecret", "delete", false},
+		{"argo format: developer cannot access other project", "secrets/other/mysecret", "create", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			allowed, err := pe.CanAccessWithGroups(ctx, "user:demodev", []string{"demo-devs"}, tt.object, tt.action)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, allowed)
+		})
+	}
+}

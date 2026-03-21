@@ -10,6 +10,7 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Loader2 } from "lucide-react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "sonner";
+import { isEnterprise } from "@/hooks/useCompliance";
 
 // Lazy load route components for code splitting
 const CatalogRoute = lazy(() => import("@/routes/CatalogRoutes").then(m => ({ default: m.CatalogRoute })));
@@ -30,6 +31,15 @@ const ConstraintTemplateDetailPage = lazy(() => import("@/components/compliance/
 const ConstraintsPage = lazy(() => import("@/components/compliance/ConstraintsPage"));
 const ConstraintDetailPage = lazy(() => import("@/components/compliance/ConstraintDetailPage"));
 const ViolationsPage = lazy(() => import("@/components/compliance/ViolationsPage"));
+// SecretsRoutes are only declared (and their chunk generated) in enterprise builds.
+// isEnterprise() is a build-time constant: in OSS builds this resolves to null,
+// eliminating both the dynamic import expression and the secrets chunk from the OSS bundle.
+const SecretsRoute = isEnterprise()
+  ? lazy(() => import("@/routes/SecretsRoutes").then(m => ({ default: m.SecretsRoute })))
+  : null;
+const SecretDetailRoute = isEnterprise()
+  ? lazy(() => import("@/routes/SecretsRoutes").then(m => ({ default: m.SecretDetailRoute })))
+  : null;
 const ViewPage = lazy(() => import("@/components/views/ViewPage").then(m => ({ default: m.ViewPage })));
 const UserInfoPage = lazy(() => import("@/components/account/UserInfoPage").then(m => ({ default: m.UserInfoPage })));
 
@@ -76,6 +86,14 @@ function App() {
                 {/* Instance routes - lazy loaded */}
                 <Route path="instances" element={<Suspense fallback={<RouteLoader />}><InstancesRoute /></Suspense>} />
                 <Route path="instances/:namespace/:kind/:name" element={<Suspense fallback={<RouteLoader />}><InstanceDetailRoute /></Suspense>} />
+
+                {/* Secrets routes - lazy loaded (Enterprise only) */}
+                {SecretsRoute && SecretDetailRoute && (
+                  <>
+                    <Route path="secrets" element={<Suspense fallback={<RouteLoader />}><SecretsRoute /></Suspense>} />
+                    <Route path="secrets/:namespace/:name" element={<Suspense fallback={<RouteLoader />}><SecretDetailRoute /></Suspense>} />
+                  </>
+                )}
 
                 {/* Custom View routes - lazy loaded (Enterprise only) */}
                 <Route path="views/:slug" element={<Suspense fallback={<RouteLoader />}><ViewPage /></Suspense>} />

@@ -1,0 +1,43 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "knodex.fullname" . }}-test-server
+  labels:
+    {{- include "knodex.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  containers:
+    - name: server-health-test
+      image: busybox:1.36
+      command: ['sh', '-c']
+      args:
+        - |
+          set -e
+          SERVER="{{ include "knodex.fullname" . }}-server:{{ .Values.server.service.port }}"
+
+          echo "=== Test 1: Server healthz endpoint ==="
+          RESULT=$(wget -qO- "http://${SERVER}/healthz" 2>&1) || {
+            echo "FAIL: healthz returned non-200"
+            exit 1
+          }
+          echo "PASS: healthz returned 200"
+
+          echo "=== Test 2: Server readyz endpoint ==="
+          RESULT=$(wget -qO- "http://${SERVER}/readyz" 2>&1) || {
+            echo "FAIL: readyz returned non-200 (server may not be ready)"
+            exit 1
+          }
+          echo "PASS: readyz returned 200"
+
+          echo ""
+          echo "All server health tests passed."
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL

@@ -123,6 +123,8 @@ func loadBuiltinPoliciesLocked(e *casbin.Enforcer) error {
 		{"role:serveradmin", "settings/*", "*", "allow"},
 		// Compliance access for serveradmin (Enterprise: OPA Gatekeeper compliance view)
 		{"role:serveradmin", "compliance/*", "*", "allow"},
+		// Secrets management for serveradmin
+		{"role:serveradmin", "secrets/*", "*", "allow"},
 	}
 
 	// Add policies
@@ -287,6 +289,7 @@ const (
 	ResourceRepositories = "repositories"
 	ResourceSettings     = "settings"
 	ResourceCompliance   = "compliance"
+	ResourceSecrets      = "secrets"
 )
 
 // Action constants

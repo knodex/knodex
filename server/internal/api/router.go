@@ -65,6 +65,7 @@ type RouterConfig struct {
 	CookieConfig            cookie.Config // Session cookie configuration (Secure, Domain)
 	OrganizationFilter      string        // Enterprise org filter for catalog (empty = no filtering)
 	Organization            string        // Organization identity for settings endpoint (from KNODEX_ORGANIZATION, default "default")
+	SecretsEnabled          bool          // Enterprise feature: Secrets management (false = 402 Payment Required)
 	SwaggerEnabled          bool          // Enable Swagger UI at /swagger/ (default: false, env: SWAGGER_UI_ENABLED)
 }
 
@@ -272,6 +273,48 @@ func NewRouterWithConfig(healthChecker *health.Checker, rgdWatcher *watcher.RGDW
 		protectedMux.HandleFunc("DELETE /api/v1/projects/{name}", projectHandler.DeleteProject)
 	}
 
+	// Protected API v1 routes - Secrets management (enterprise feature, require authentication + K8s client)
+	if !cfg.SecretsEnabled {
+		// OSS builds: secrets endpoints return 402 Payment Required
+		secretsNotLicensed := func(w http.ResponseWriter, r *http.Request) {
+			response.WriteError(w, http.StatusPaymentRequired, "ENTERPRISE_REQUIRED",
+				"secrets management requires an Enterprise license", nil)
+		}
+		protectedMux.HandleFunc("POST /api/v1/secrets", secretsNotLicensed)
+		protectedMux.HandleFunc("GET /api/v1/secrets", secretsNotLicensed)
+		protectedMux.HandleFunc("HEAD /api/v1/secrets/{name}", secretsNotLicensed)
+		protectedMux.HandleFunc("GET /api/v1/secrets/{name}", secretsNotLicensed)
+		protectedMux.HandleFunc("PUT /api/v1/secrets/{name}", secretsNotLicensed)
+		protectedMux.HandleFunc("DELETE /api/v1/secrets/{name}", secretsNotLicensed)
+	} else if cfg.K8sClient != nil && cfg.PolicyEnforcer != nil {
+		secretsHandler := handlers.NewSecretsHandler(handlers.SecretsHandlerConfig{
+			K8sClient:     cfg.K8sClient,
+			DynamicClient: dynamicClient,
+			Enforcer:      cfg.PolicyEnforcer,
+			Recorder:      cfg.AuditRecorder,
+		})
+		if cfg.LicenseService != nil {
+			secretsHandler.SetLicenseService(cfg.LicenseService)
+		}
+		protectedMux.HandleFunc("POST /api/v1/secrets", secretsHandler.CreateSecret)
+		protectedMux.HandleFunc("GET /api/v1/secrets", secretsHandler.ListSecrets)
+		protectedMux.HandleFunc("HEAD /api/v1/secrets/{name}", secretsHandler.CheckSecretExists)
+		protectedMux.HandleFunc("GET /api/v1/secrets/{name}", secretsHandler.GetSecret)
+		protectedMux.HandleFunc("PUT /api/v1/secrets/{name}", secretsHandler.UpdateSecret)
+		protectedMux.HandleFunc("DELETE /api/v1/secrets/{name}", secretsHandler.DeleteSecret)
+	} else {
+		// Fail-closed: return 503 when K8s client or authorization services are not initialized
+		secretsUnavailable := func(w http.ResponseWriter, r *http.Request) {
+			response.ServiceUnavailable(w, "secrets management temporarily unavailable")
+		}
+		protectedMux.HandleFunc("POST /api/v1/secrets", secretsUnavailable)
+		protectedMux.HandleFunc("GET /api/v1/secrets", secretsUnavailable)
+		protectedMux.HandleFunc("HEAD /api/v1/secrets/{name}", secretsUnavailable)
+		protectedMux.HandleFunc("GET /api/v1/secrets/{name}", secretsUnavailable)
+		protectedMux.HandleFunc("PUT /api/v1/secrets/{name}", secretsUnavailable)
+		protectedMux.HandleFunc("DELETE /api/v1/secrets/{name}", secretsUnavailable)
+	}
+
 	// Protected API v1 routes - Role binding management (require authentication)
 	if cfg.ProjectService != nil && cfg.PolicyEnforcer != nil {
 		roleBindingHandler := handlers.NewRoleBindingHandler(cfg.ProjectService, cfg.PolicyEnforcer, cfg.AuditRecorder)
@@ -294,6 +337,13 @@ func NewRouterWithConfig(healthChecker *health.Checker, rgdWatcher *watcher.RGDW
 		accountHandler := handlers.NewAccountHandler(cfg.AuthService)
 		if cfg.ProjectService != nil {
 			accountHandler.SetProjectService(cfg.ProjectService)
+		}
+		// Register EE-only resources so OSS builds return 400 for unknown resources
+		if cfg.SecretsEnabled {
+			accountHandler.RegisterEnterpriseResource("secrets")
+		}
+		if cfg.ComplianceService != nil {
+			accountHandler.RegisterEnterpriseResource("compliance")
 		}
 		protectedMux.HandleFunc("GET /api/v1/account/can-i/{resource}/{action}/{subresource}", accountHandler.CanI)
 		protectedMux.HandleFunc("GET /api/v1/account/info", accountHandler.Info)
