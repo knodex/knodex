@@ -223,26 +223,42 @@ func TestAccountHandler_CanI_EnterpriseResourceNotRegistered_Returns400(t *testi
 	}
 }
 
-func TestAccountHandler_CanI_EnterpriseResourceRegistered_Returns200(t *testing.T) {
+func TestAccountHandler_CanI_SecretsValidInOSS_Returns200(t *testing.T) {
 	t.Parallel()
-	// After RegisterEnterpriseResource, EE resources should be valid
+	// secrets is an OSS resource and should be valid without EE registration
 	canIService := &mockCanIService{canIResult: true}
 	handler := NewAccountHandler(canIService)
-	handler.RegisterEnterpriseResource("secrets")
+
+	req := createAccountTestRequest(t, http.MethodGet,
+		"/api/v1/account/can-i/secrets/get/-",
+		"test-user@example.com",
+		nil,
+	)
+	req = setupAccountRequestWithPathValues(req, "secrets", "get", "-")
+	rr := httptest.NewRecorder()
+	handler.CanI(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Errorf("secrets: expected 200 as OSS resource, got %d", rr.Code)
+	}
+}
+
+func TestAccountHandler_CanI_EnterpriseResourceRegistered_Returns200(t *testing.T) {
+	t.Parallel()
+	// After RegisterEnterpriseResource, EE-only resources should be valid
+	canIService := &mockCanIService{canIResult: true}
+	handler := NewAccountHandler(canIService)
 	handler.RegisterEnterpriseResource("compliance")
 
-	for _, resource := range []string{"secrets", "compliance"} {
-		req := createAccountTestRequest(t, http.MethodGet,
-			"/api/v1/account/can-i/"+resource+"/get/-",
-			"test-user@example.com",
-			nil,
-		)
-		req = setupAccountRequestWithPathValues(req, resource, "get", "-")
-		rr := httptest.NewRecorder()
-		handler.CanI(rr, req)
-		if rr.Code != http.StatusOK {
-			t.Errorf("resource %q: expected 200 after EE registration, got %d", resource, rr.Code)
-		}
+	req := createAccountTestRequest(t, http.MethodGet,
+		"/api/v1/account/can-i/compliance/get/-",
+		"test-user@example.com",
+		nil,
+	)
+	req = setupAccountRequestWithPathValues(req, "compliance", "get", "-")
+	rr := httptest.NewRecorder()
+	handler.CanI(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Errorf("compliance: expected 200 after EE registration, got %d", rr.Code)
 	}
 }
 

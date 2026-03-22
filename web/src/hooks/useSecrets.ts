@@ -5,8 +5,6 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { AxiosError } from "axios";
 import { listSecrets, createSecret, checkSecretExists, getSecret, updateSecret, deleteSecret } from "@/api/secrets";
 import type { CreateSecretRequest, UpdateSecretRequest } from "@/types/secret";
-import { isEnterprise } from "@/hooks/useCompliance";
-
 /**
  * Hook for fetching secrets list for a project with optional pagination.
  */
@@ -17,7 +15,7 @@ export function useSecretList(
   return useQuery({
     queryKey: ["secrets", project, options?.limit, options?.continue],
     queryFn: () => listSecrets(project, options),
-    enabled: isEnterprise() && !!project,
+    enabled: !!project,
     staleTime: 30 * 1000,
   });
 }
@@ -32,7 +30,6 @@ export function useCreateSecret() {
 
   return useMutation({
     mutationFn: ({ project, ...req }: { project: string } & CreateSecretRequest) => {
-      if (!isEnterprise()) throw new Error("Secrets management requires Enterprise");
       return createSecret(project, req);
     },
     onSuccess: (_, { project }) => {
@@ -48,7 +45,7 @@ export function useSecret(name: string, project: string, namespace: string) {
   return useQuery({
     queryKey: ["secrets", project, namespace, name],
     queryFn: () => getSecret(name, project, namespace),
-    enabled: isEnterprise() && !!name && !!project && !!namespace,
+    enabled: !!name && !!project && !!namespace,
     staleTime: 30 * 1000,
   });
 }
@@ -66,7 +63,6 @@ export function useUpdateSecret() {
       project,
       ...req
     }: { name: string; project: string } & UpdateSecretRequest) => {
-      if (!isEnterprise()) throw new Error("Secrets management requires Enterprise");
       return updateSecret(name, project, req);
     },
     onSuccess: (_, { project, name, namespace }) => {
@@ -96,7 +92,7 @@ export function useSecretExists(name: string, project: string, namespace: string
         throw err;
       }
     },
-    enabled: isEnterprise() && !!name && !!project && !!namespace,
+    enabled: !!name && !!project && !!namespace,
     staleTime: 5 * 60 * 1000, // 5 minutes — secrets rarely change between page loads
     refetchOnWindowFocus: false,
   });
@@ -124,7 +120,6 @@ export function useDeleteSecret() {
       project: string;
       namespace: string;
     }) => {
-      if (!isEnterprise()) throw new Error("Secrets management requires Enterprise");
       return deleteSecret(name, project, namespace);
     },
     onSuccess: (_, { project }) => {

@@ -11,9 +11,6 @@ import type { ReactNode } from "react";
 // Mock the secrets API
 vi.mock("@/api/secrets");
 
-// Capture original __ENTERPRISE__ value for restore in afterEach
-const originalEnterprise = (globalThis as Record<string, unknown>).__ENTERPRISE__;
-
 function createWrapper() {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -29,19 +26,13 @@ function createWrapper() {
   };
 }
 
-describe("useSecrets hooks — isEnterprise() guard", () => {
+describe("useSecrets hooks", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Default to enterprise mode
-    (globalThis as Record<string, unknown>).__ENTERPRISE__ = true;
-  });
-
-  afterEach(() => {
-    (globalThis as Record<string, unknown>).__ENTERPRISE__ = originalEnterprise;
   });
 
   describe("useSecretList", () => {
-    it("fetches secrets list when enterprise and project provided", async () => {
+    it("fetches secrets list when project provided", async () => {
       const mockResponse = { items: [], totalCount: 0, hasMore: false };
       vi.mocked(secretsApi.listSecrets).mockResolvedValue(mockResponse);
 
@@ -54,20 +45,6 @@ describe("useSecrets hooks — isEnterprise() guard", () => {
       });
 
       expect(secretsApi.listSecrets).toHaveBeenCalledWith("my-project", undefined);
-    });
-
-    it("does NOT fetch when not enterprise", async () => {
-      (globalThis as Record<string, unknown>).__ENTERPRISE__ = false;
-
-      const { result } = renderHook(() => useSecretList("my-project"), {
-        wrapper: createWrapper(),
-      });
-
-      // Wait to confirm the query is disabled
-      await new Promise(resolve => setTimeout(resolve, 100));
-
-      expect(result.current.fetchStatus).toBe("idle");
-      expect(secretsApi.listSecrets).not.toHaveBeenCalled();
     });
 
     it("does NOT fetch when project is empty", async () => {
@@ -83,7 +60,7 @@ describe("useSecrets hooks — isEnterprise() guard", () => {
   });
 
   describe("useSecret", () => {
-    it("fetches secret when enterprise and all params provided", async () => {
+    it("fetches secret when all params provided", async () => {
       const mockSecret = {
         name: "my-secret",
         namespace: "default",
@@ -104,20 +81,6 @@ describe("useSecrets hooks — isEnterprise() guard", () => {
       expect(secretsApi.getSecret).toHaveBeenCalledWith("my-secret", "my-project", "default");
     });
 
-    it("does NOT fetch when not enterprise", async () => {
-      (globalThis as Record<string, unknown>).__ENTERPRISE__ = false;
-
-      const { result } = renderHook(
-        () => useSecret("my-secret", "my-project", "default"),
-        { wrapper: createWrapper() }
-      );
-
-      await new Promise(resolve => setTimeout(resolve, 100));
-
-      expect(result.current.fetchStatus).toBe("idle");
-      expect(secretsApi.getSecret).not.toHaveBeenCalled();
-    });
-
     it("does NOT fetch when any required param is empty", async () => {
       const { result } = renderHook(
         () => useSecret("", "my-project", "default"),
@@ -132,7 +95,7 @@ describe("useSecrets hooks — isEnterprise() guard", () => {
   });
 
   describe("useSecretExists", () => {
-    it("checks existence when enterprise and all params provided", async () => {
+    it("checks existence when all params provided", async () => {
       vi.mocked(secretsApi.checkSecretExists).mockResolvedValue(undefined);
 
       const { result } = renderHook(
@@ -171,20 +134,6 @@ describe("useSecrets hooks — isEnterprise() guard", () => {
       // Verify 404 was handled as exists=false (not as a query error)
       expect(result.current.exists).toBe(false);
       expect(result.current.isError).toBe(false);
-    });
-
-    it("does NOT fetch when not enterprise", async () => {
-      (globalThis as Record<string, unknown>).__ENTERPRISE__ = false;
-
-      const { result } = renderHook(
-        () => useSecretExists("my-secret", "my-project", "default"),
-        { wrapper: createWrapper() }
-      );
-
-      await new Promise(resolve => setTimeout(resolve, 100));
-
-      expect(result.current.isLoading).toBe(false);
-      expect(secretsApi.checkSecretExists).not.toHaveBeenCalled();
     });
 
     it("does NOT fetch when any required param is empty", async () => {

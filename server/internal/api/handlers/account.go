@@ -57,7 +57,7 @@ func (h *AccountHandler) SetProjectService(ps rbac.ProjectServiceInterface) {
 }
 
 // RegisterEnterpriseResource marks a resource as valid for can-i checks in EE builds.
-// Call this at startup for each enterprise feature that is enabled (e.g., "secrets", "compliance").
+// Call this at startup for each enterprise feature that is enabled (e.g., "compliance").
 // Resources not registered here return 400 "invalid resource type" in OSS builds.
 func (h *AccountHandler) RegisterEnterpriseResource(resource string) {
 	h.enterpriseResources[resource] = true
@@ -154,7 +154,7 @@ func (h *AccountHandler) CanI(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate resource type.
-	// Base set covers OSS resources; enterprise resources (e.g., "secrets", "compliance") are
+	// Base set covers OSS resources; enterprise resources (e.g., "compliance") are
 	// added at startup via RegisterEnterpriseResource so OSS builds return 400 for them.
 	validResources := map[string]bool{
 		"instances":    true,
@@ -164,6 +164,7 @@ func (h *AccountHandler) CanI(w http.ResponseWriter, r *http.Request) {
 		"rgds":         true,
 		"users":        true,
 		"applications": true,
+		"secrets":      true,
 	}
 	for r := range h.enterpriseResources {
 		validResources[r] = true

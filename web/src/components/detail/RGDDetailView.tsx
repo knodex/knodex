@@ -30,7 +30,6 @@ import { useKindToRGDMap } from "@/hooks/useKindToRGDMap";
 import { useDynamicTabs } from "@/hooks/useDynamicTabs";
 import type { Tab, ConditionalTab } from "@/hooks/useDynamicTabs";
 import { TabBar } from "@/components/shared/TabBar";
-import { isEnterprise } from "@/hooks/useCompliance";
 
 // Lazy load ResourceGraphView to code-split @xyflow/react (~200KB)
 // This ensures ReactFlow is only loaded when user views the Resources tab
@@ -38,12 +37,10 @@ const ResourceGraphView = lazy(() =>
   import("@/components/graph").then((m) => ({ default: m.ResourceGraphView }))
 );
 
-// Lazy load CatalogSecretsTab only in enterprise builds.
-// isEnterprise() is a build-time constant: in OSS builds this resolves to null,
-// eliminating the dynamic import from the OSS bundle entirely.
-const CatalogSecretsTab = isEnterprise()
-  ? lazy(() => import("./CatalogSecretsTab").then(m => ({ default: m.CatalogSecretsTab })))
-  : null;
+// Lazy load CatalogSecretsTab to code-split it from the main bundle.
+const CatalogSecretsTab = lazy(() =>
+  import("./CatalogSecretsTab").then(m => ({ default: m.CatalogSecretsTab }))
+);
 
 type TabId = "overview" | "resources" | "addons" | "depends-on" | "secrets";
 
@@ -76,7 +73,7 @@ export function RGDDetailView({ rgd, onBack, onDeploy }: RGDDetailViewProps) {
   // Build conditional tabs
   const conditionalTabs = useMemo<ConditionalTab<TabId>[]>(() => [
     {
-      condition: isEnterprise() && secretRefsCount > 0,
+      condition: secretRefsCount > 0,
       tab: { id: "secrets", label: `Secrets (${secretRefsCount})`, icon: <KeyRound className="h-4 w-4" /> },
     },
     {
