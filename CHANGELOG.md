@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.0](https://github.com/knodex/knodex/compare/v0.3.1...v0.4.0) (2026-03-22)
+
+
+### Features
+
+* **secrets:** add secrets management and catalog improvements ([9ea567a](https://github.com/knodex/knodex/commit/9ea567a899ef4ca70cff08df7502885ab837a309))
+
+
+### Bug Fixes
+
+* **secrets:** remove enterprise guards from OSS secrets feature ([698cbaf](https://github.com/knodex/knodex/commit/698cbaf1a43c6aa96cec28d4d69c95ee3db6177e))
+
 ## [0.3.1](https://github.com/knodex/knodex/compare/v0.3.0...v0.3.1) (2026-03-19)
 
 
