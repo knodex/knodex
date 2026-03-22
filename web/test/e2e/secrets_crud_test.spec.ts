@@ -16,9 +16,6 @@ import { test, expect, TestUserRole } from '../fixture';
 const SCREENSHOT_DIR = '../test-results/e2e/screenshots';
 
 test.describe('Secrets CRUD Workflow', () => {
-  // Skip entire suite if not enterprise build - secrets is enterprise-only
-  test.skip(!process.env.ENTERPRISE_BUILD, 'Secrets features require ENTERPRISE_BUILD=true');
-
   test.use({ authenticateAs: TestUserRole.GLOBAL_ADMIN });
 
   const secretName = `e2e-test-secret-${Date.now()}`;

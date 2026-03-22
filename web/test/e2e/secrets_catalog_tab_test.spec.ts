@@ -17,9 +17,6 @@ import { test, expect, TestUserRole } from '../fixture';
 const SCREENSHOT_DIR = '../test-results/e2e/screenshots';
 
 test.describe('Secrets Catalog Tab', () => {
-  // Skip entire suite if not enterprise build - secrets is enterprise-only
-  test.skip(!process.env.ENTERPRISE_BUILD, 'Secrets features require ENTERPRISE_BUILD=true');
-
   test.use({ authenticateAs: TestUserRole.GLOBAL_ADMIN });
 
   test('AC-1: Catalog detail shows Secrets tab for RGDs with SecretRefs', async ({

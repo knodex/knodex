@@ -19,9 +19,6 @@ import { test, expect, TestUserRole } from '../fixture';
 const SCREENSHOT_DIR = '../test-results/e2e/screenshots';
 
 test.describe('Secrets RBAC Isolation', () => {
-  // Skip entire suite if not enterprise build - secrets is enterprise-only
-  test.skip(!process.env.ENTERPRISE_BUILD, 'Secrets features require ENTERPRISE_BUILD=true');
-
   test('AC-SEC-RBAC-01: Viewer cannot create secrets via API', async ({ page, auth }) => {
     await auth.setupAs(TestUserRole.ORG_VIEWER);
     await page.goto('/');
