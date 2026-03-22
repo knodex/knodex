@@ -1,6 +1,8 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import type { SecretRef } from "./secret";
+
 /**
  * RGD (ResourceGraphDefinition) types for the catalog
  */
@@ -18,6 +20,8 @@ export interface CatalogRGD {
   tags: string[];
   category: string;
   icon?: string;
+  /** Documentation URL from knodex.io/docs-url annotation */
+  docsUrl?: string;
   labels: Record<string, string>;
   instances: number;
   apiVersion?: string;
@@ -237,6 +241,8 @@ export interface FormSchema {
 export interface SchemaResponse {
   rgd: string;
   schema: FormSchema | null;
+  /** ExternalRef resources that reference Kubernetes Secrets */
+  secretRefs?: SecretRef[];
   error?: string;
   /** Non-fatal warnings encountered during schema generation */
   warnings?: string[];

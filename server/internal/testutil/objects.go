@@ -17,6 +17,7 @@ type rgdConfig struct {
 	annotations map[string]string
 	labels      map[string]string
 	status      string
+	pluralName  string
 }
 
 // RGDOption configures NewUnstructuredRGD.
@@ -35,6 +36,12 @@ func WithLabels(l map[string]string) RGDOption {
 // WithStatus sets the status state on the unstructured RGD.
 func WithStatus(state string) RGDOption {
 	return func(c *rgdConfig) { c.status = state }
+}
+
+// WithPluralName sets spec.schema.crd.spec.names.plural on the unstructured RGD.
+// Used to test PluralName extraction in unstructuredToRGD.
+func WithPluralName(p string) RGDOption {
+	return func(c *rgdConfig) { c.pluralName = p }
 }
 
 // NewUnstructuredRGD creates an *unstructured.Unstructured RGD for K8s-level tests.
@@ -57,6 +64,23 @@ func NewUnstructuredRGD(name, namespace string, opts ...RGDOption) *unstructured
 		labelsInterface[k] = v
 	}
 
+	schemaMap := map[string]interface{}{
+		"apiVersion": "example.com/v1",
+		"kind":       "TestResource",
+	}
+	if cfg.pluralName != "" {
+		schemaMap["crd"] = map[string]interface{}{
+			"spec": map[string]interface{}{
+				"names": map[string]interface{}{
+					"plural": cfg.pluralName,
+				},
+			},
+		}
+	}
+	spec := map[string]interface{}{
+		"schema": schemaMap,
+	}
+
 	obj := map[string]interface{}{
 		"apiVersion": "kro.run/v1alpha1",
 		"kind":       "ResourceGraphDefinition",
@@ -68,10 +92,7 @@ func NewUnstructuredRGD(name, namespace string, opts ...RGDOption) *unstructured
 			"resourceVersion":   "1",
 			"creationTimestamp": time.Now().Format(time.RFC3339),
 		},
-		"spec": map[string]interface{}{
-			"apiVersion": "example.com/v1",
-			"kind":       "TestResource",
-		},
+		"spec": spec,
 	}
 
 	if cfg.status != "" {

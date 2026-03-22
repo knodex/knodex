@@ -22,6 +22,7 @@ func TestToRGDResponse(t *testing.T) {
 		Tags:        []string{"database", "postgres"},
 		Category:    "Databases",
 		Icon:        "postgres-icon",
+		DocsURL:     "https://docs.example.com/postgres",
 		Labels: map[string]string{
 			"knodex.io/project": "my-project",
 		},
@@ -42,6 +43,7 @@ func TestToRGDResponse(t *testing.T) {
 	assert.Equal(t, []string{"database", "postgres"}, resp.Tags)
 	assert.Equal(t, "Databases", resp.Category)
 	assert.Equal(t, "postgres-icon", resp.Icon)
+	assert.Equal(t, "https://docs.example.com/postgres", resp.DocsURL)
 	assert.Equal(t, map[string]string{"knodex.io/project": "my-project"}, resp.Labels)
 	assert.Equal(t, 10, resp.Instances) // Uses provided count, not rgd.InstanceCount
 	assert.Equal(t, "kro.io/v1alpha1", resp.APIVersion)
@@ -183,6 +185,31 @@ func TestUserAuthContextGlobalAccess(t *testing.T) {
 
 	assert.Nil(t, authCtx.AccessibleNamespaces)
 	assert.True(t, authCtx.IsGlobalAccess)
+}
+
+func TestToRGDResponse_DocsURL(t *testing.T) {
+	t.Run("docs url is mapped", func(t *testing.T) {
+		rgd := &models.CatalogRGD{
+			Name:      "test-rgd",
+			Namespace: "default",
+			DocsURL:   "https://docs.example.com/test-rgd",
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}
+		resp := ToRGDResponse(rgd, 0)
+		assert.Equal(t, "https://docs.example.com/test-rgd", resp.DocsURL)
+	})
+
+	t.Run("missing docs url produces empty string", func(t *testing.T) {
+		rgd := &models.CatalogRGD{
+			Name:      "test-rgd",
+			Namespace: "default",
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}
+		resp := ToRGDResponse(rgd, 0)
+		assert.Equal(t, "", resp.DocsURL)
+	})
 }
 
 func TestToRGDResponse_AllowedDeploymentModes(t *testing.T) {

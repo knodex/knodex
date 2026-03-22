@@ -10,12 +10,13 @@ import (
 	"strings"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/restmapper"
 
 	"github.com/knodex/knodex/server/internal/deployment/vcs"
 )
@@ -23,8 +24,9 @@ import (
 // Controller orchestrates instance deployments across different modes
 type Controller struct {
 	// Kubernetes clients
-	dynamicClient dynamic.Interface
-	kubeClient    kubernetes.Interface
+	dynamicClient   dynamic.Interface
+	kubeClient      kubernetes.Interface
+	discoveryClient discovery.DiscoveryInterface
 
 	// Manifest generator
 	generator *Generator
@@ -38,12 +40,17 @@ func NewController(dynamicClient dynamic.Interface, kubeClient kubernetes.Interf
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Controller{
+	c := &Controller{
 		dynamicClient: dynamicClient,
 		kubeClient:    kubeClient,
 		generator:     NewGenerator(),
 		logger:        logger,
 	}
+	// Extract discovery client from kubeClient if available
+	if kubeClient != nil {
+		c.discoveryClient = kubeClient.Discovery()
+	}
+	return c
 }
 
 // Deploy executes a deployment based on the configured mode
@@ -280,7 +287,7 @@ func (c *Controller) applyToCluster(ctx context.Context, req *DeployRequest) err
 	}
 
 	// Get the GVR for the resource
-	gvr, err := getGVRFromUnstructured(obj)
+	gvr, err := c.getGVRFromUnstructured(obj)
 	if err != nil {
 		return fmt.Errorf("failed to determine GroupVersionResource: %w", err)
 	}
@@ -465,8 +472,9 @@ func (c *Controller) deleteFromGit(ctx context.Context, namespace, name, rgdName
 	return nil
 }
 
-// getGVRFromUnstructured extracts GroupVersionResource from an unstructured object
-func getGVRFromUnstructured(obj *unstructured.Unstructured) (schema.GroupVersionResource, error) {
+// getGVRFromUnstructured extracts GroupVersionResource from an unstructured object.
+// Uses discovery client when available for correct plural resolution; falls back to naive pluralization.
+func (c *Controller) getGVRFromUnstructured(obj *unstructured.Unstructured) (schema.GroupVersionResource, error) {
 	apiVersion := obj.GetAPIVersion()
 	kind := obj.GetKind()
 
@@ -482,21 +490,35 @@ func getGVRFromUnstructured(obj *unstructured.Unstructured) (schema.GroupVersion
 	var group, version string
 	parts := strings.Split(apiVersion, "/")
 	if len(parts) == 1 {
-		// Core API (e.g., "v1")
 		group = ""
 		version = parts[0]
 	} else if len(parts) == 2 {
-		// Group API (e.g., "apps/v1")
 		group = parts[0]
 		version = parts[1]
 	} else {
 		return schema.GroupVersionResource{}, fmt.Errorf("invalid apiVersion format: %s", apiVersion)
 	}
 
-	// Simple pluralization: lowercase kind + "s"
-	// This works for most CRDs (e.g., "Application" -> "applications")
-	resource := strings.ToLower(kind) + "s"
+	// Try discovery-based resolution first
+	if c.discoveryClient != nil {
+		gvk := schema.GroupVersionKind{Group: group, Version: version, Kind: kind}
+		groupResources, err := restmapper.GetAPIGroupResources(c.discoveryClient)
+		if err == nil {
+			mapper := restmapper.NewDiscoveryRESTMapper(groupResources)
+			mapping, err := mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
+			if err == nil {
+				return mapping.Resource, nil
+			}
+			c.logger.Warn("discovery REST mapping failed, falling back to naive pluralization",
+				"kind", kind, "error", err)
+		} else {
+			c.logger.Warn("discovery API group resources failed, falling back to naive pluralization",
+				"kind", kind, "error", err)
+		}
+	}
 
+	// Fallback: naive pluralization
+	resource := strings.ToLower(kind) + "s"
 	return schema.GroupVersionResource{
 		Group:    group,
 		Version:  version,
@@ -536,6 +558,3 @@ func (r *KubernetesSecretReader) GetSecret(ctx context.Context, namespace, name,
 
 // Ensure KubernetesSecretReader implements SecretReader
 var _ SecretReader = (*KubernetesSecretReader)(nil)
-
-// unused import guard
-var _ = corev1.Secret{}

@@ -3,6 +3,8 @@
 
 package models
 
+import kroparser "github.com/knodex/knodex/server/internal/kro/parser"
+
 // FormSchema represents a form-friendly JSON schema for generating dynamic forms
 type FormSchema struct {
 	// Name is the RGD name this schema belongs to
@@ -131,6 +133,8 @@ type SchemaResponse struct {
 	RGD string `json:"rgd"`
 	// Schema is the form schema
 	Schema *FormSchema `json:"schema"`
+	// SecretRefs lists all externalRef resources that reference Kubernetes Secrets
+	SecretRefs []kroparser.SecretRef `json:"secretRefs"`
 	// Error is set if schema extraction failed
 	Error string `json:"error,omitempty"`
 	// Warnings contains non-fatal issues encountered during schema enrichment

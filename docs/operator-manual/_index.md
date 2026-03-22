@@ -38,6 +38,7 @@ This manual covers production deployment, configuration, and operations for knod
 
 | Guide                                                              | Description                                                   |
 | ------------------------------------------------------------------ | ------------------------------------------------------------- |
+| [Secrets Management](secrets-management/)                          | Configure secrets support and RGD secret references            |
 | [Declarative Repositories](declarative-repositories/)              | Configure repository credentials via Kubernetes Secrets       |
 | [ConstraintTemplate Development](../enterprise/constraint-template-development/) | Create Gatekeeper policies for knodex compliance (Enterprise) |
 | [Troubleshooting](troubleshooting/)                                | Diagnostic procedures, common issues, and monitoring          |

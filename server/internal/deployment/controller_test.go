@@ -321,7 +321,8 @@ func TestGetGVRFromUnstructured(t *testing.T) {
 				},
 			}
 
-			gvr, err := getGVRFromUnstructured(obj)
+			ctrl := &Controller{}
+			gvr, err := ctrl.getGVRFromUnstructured(obj)
 			if tt.wantErr {
 				if err == nil {
 					t.Error("expected error, got nil")
@@ -1084,5 +1085,57 @@ func TestController_Deploy_HybridMode_SecretNotFound(t *testing.T) {
 	// GitError should mention secret/token issue
 	if result.GitError == "" {
 		t.Error("expected git error to be set")
+	}
+}
+
+// TestApplyToCluster_IrregularPlural_UsesDiscovery verifies that applyToCluster
+// uses the discovery-based GVR resolver and sends the correct plural resource name
+// to the dynamic client (e.g., "proxies" not "proxys" for kind Proxy).
+func TestApplyToCluster_IrregularPlural_UsesDiscovery(t *testing.T) {
+	// Set up fake discovery with Proxy -> proxies mapping
+	fakeKubeClient := fake.NewSimpleClientset()
+	fakeKubeClient.Resources = []*metav1.APIResourceList{
+		{
+			GroupVersion: "example.com/v1",
+			APIResources: []metav1.APIResource{
+				{Name: "proxies", Kind: "Proxy", Verbs: metav1.Verbs{"get", "list", "create"}},
+			},
+		},
+	}
+
+	scheme := runtime.NewScheme()
+	gvrToListKind := map[schema.GroupVersionResource]string{
+		{Group: "example.com", Version: "v1", Resource: "proxies"}: "ProxyList",
+	}
+	fakeDynClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, gvrToListKind)
+
+	ctrl := NewController(fakeDynClient, fakeKubeClient, nil)
+
+	req := &DeployRequest{
+		Name:           "my-proxy",
+		Namespace:      "default",
+		APIVersion:     "example.com/v1",
+		Kind:           "Proxy",
+		Spec:           map[string]interface{}{"port": float64(8080)},
+		DeploymentMode: ModeDirect,
+		CreatedBy:      "test@test.local",
+		CreatedAt:      time.Now(),
+	}
+
+	err := ctrl.applyToCluster(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify the dynamic client received "proxies" (not "proxys")
+	actions := fakeDynClient.Actions()
+	if len(actions) != 1 {
+		t.Fatalf("expected 1 action, got %d", len(actions))
+	}
+
+	createAction := actions[0]
+	expectedGVR := schema.GroupVersionResource{Group: "example.com", Version: "v1", Resource: "proxies"}
+	if createAction.GetResource() != expectedGVR {
+		t.Errorf("expected GVR %v, got %v", expectedGVR, createAction.GetResource())
 	}
 }

@@ -184,6 +184,36 @@ async function setupWebAppMocks(page: import('@playwright/test').Page) {
       body: JSON.stringify({ items: [], count: 0 }),
     })
   })
+
+  // Mock projects and namespaces (required by DeployPage's project selector)
+  await page.route('**/api/v1/projects**', async (route) => {
+    const url = route.request().url()
+    if (url.includes('/namespaces')) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ namespaces: ['default'] }),
+      })
+    } else {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          items: [{ name: 'default-project', destinations: [{ namespace: 'default' }] }],
+          totalCount: 1,
+        }),
+      })
+    }
+  })
+
+  // Mock repositories (required by DeployPage's deployment mode selector)
+  await page.route('**/api/v1/repositories**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ items: [], totalCount: 0 }),
+    })
+  })
 }
 
 /**

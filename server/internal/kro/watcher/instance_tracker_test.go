@@ -4,8 +4,16 @@
 package watcher
 
 import (
+	"context"
 	"testing"
 	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	fake "k8s.io/client-go/discovery/fake"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
+	faketesting "k8s.io/client-go/testing"
 
 	"github.com/knodex/knodex/server/internal/models"
 )
@@ -274,6 +282,20 @@ func TestInstanceTracker_GVRFromRGD(t *testing.T) {
 			expectedGrp: "apps",
 			expectedVer: "v1beta1",
 			expectedRes: "deployments",
+		},
+		{
+			// STORY-294 AC #5: PluralName is deliberately ignored by gvrFromRGD.
+			// Discovery-based resolution (ResolveGVR) is the correct path for irregular
+			// plurals. gvrFromRGD uses naive kind+"s" as a fast-path fallback only.
+			name: "PluralName field is intentionally ignored - naive pluralization still used",
+			rgd: &models.CatalogRGD{
+				APIVersion: "example.com/v1",
+				Kind:       "Proxy",
+				PluralName: "proxies", // set, but gvrFromRGD does not use it
+			},
+			expectedGrp: "example.com",
+			expectedVer: "v1",
+			expectedRes: "proxys", // naive kind+"s", NOT PluralName
 		},
 	}
 
@@ -772,5 +794,365 @@ func TestInstanceCondition_Fields(t *testing.T) {
 
 	if condition.Type != "Ready" {
 		t.Errorf("expected Type 'Ready', got '%s'", condition.Type)
+	}
+}
+
+// --- STORY-291: DeleteInstance GVR resolution via discovery ---
+
+func TestInstanceTracker_DeleteInstance_DiscoveryResolvesIrregularPlural(t *testing.T) {
+	// Set up fake discovery with Proxy -> proxies mapping
+	fakeDiscovery := &fake.FakeDiscovery{
+		Fake: &faketesting.Fake{},
+	}
+	fakeDiscovery.Resources = []*metav1.APIResourceList{
+		{
+			GroupVersion: "example.com/v1",
+			APIResources: []metav1.APIResource{
+				{Name: "proxies", Kind: "Proxy", Verbs: metav1.Verbs{"delete", "get", "list"}},
+			},
+		},
+	}
+
+	// Set up fake dynamic client that accepts any delete
+	scheme := runtime.NewScheme()
+	fakeDynamic := dynamicfake.NewSimpleDynamicClient(scheme)
+	fakeDynamic.PrependReactor("delete", "*", func(action faketesting.Action) (bool, runtime.Object, error) {
+		return true, nil, nil
+	})
+
+	// Create tracker with discovery and dynamic clients
+	cache := NewInstanceCache()
+	tracker := NewInstanceTrackerWithCache(cache)
+	tracker.dynamicClient = fakeDynamic
+	tracker.discoveryClient = fakeDiscovery
+
+	// Call DeleteInstance with irregular-plural kind "Proxy"
+	err := tracker.DeleteInstance(context.Background(), "default", "my-proxy", "example.com/v1", "Proxy")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify the dynamic client received "proxies" (not "proxys")
+	actions := fakeDynamic.Actions()
+	if len(actions) != 1 {
+		t.Fatalf("expected 1 action, got %d", len(actions))
+	}
+
+	deleteAction, ok := actions[0].(faketesting.DeleteAction)
+	if !ok {
+		t.Fatalf("expected DeleteAction, got %T", actions[0])
+	}
+
+	expectedGVR := schema.GroupVersionResource{Group: "example.com", Version: "v1", Resource: "proxies"}
+	if deleteAction.GetResource() != expectedGVR {
+		t.Errorf("expected GVR %v, got %v", expectedGVR, deleteAction.GetResource())
+	}
+}
+
+func TestInstanceTracker_DeleteInstance_DiscoveryFails_FallsBackToNaive(t *testing.T) {
+	// Set up fake discovery with NO resources — mapper will fail to find Proxy
+	fakeDiscovery := &fake.FakeDiscovery{
+		Fake: &faketesting.Fake{},
+	}
+	// No Resources set — discovery resolution will fail
+
+	// Set up fake dynamic client that accepts any delete
+	scheme := runtime.NewScheme()
+	fakeDynamic := dynamicfake.NewSimpleDynamicClient(scheme)
+	fakeDynamic.PrependReactor("delete", "*", func(action faketesting.Action) (bool, runtime.Object, error) {
+		return true, nil, nil
+	})
+
+	// Create tracker with discovery (that will fail) and dynamic clients
+	cache := NewInstanceCache()
+	tracker := NewInstanceTrackerWithCache(cache)
+	tracker.dynamicClient = fakeDynamic
+	tracker.discoveryClient = fakeDiscovery
+
+	// Call DeleteInstance — discovery will fail, should fall back to naive "proxys"
+	err := tracker.DeleteInstance(context.Background(), "default", "my-proxy", "example.com/v1", "Proxy")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify the dynamic client received naive "proxys" (fallback)
+	actions := fakeDynamic.Actions()
+	if len(actions) != 1 {
+		t.Fatalf("expected 1 action, got %d", len(actions))
+	}
+
+	deleteAction, ok := actions[0].(faketesting.DeleteAction)
+	if !ok {
+		t.Fatalf("expected DeleteAction, got %T", actions[0])
+	}
+
+	expectedGVR := schema.GroupVersionResource{Group: "example.com", Version: "v1", Resource: "proxys"}
+	if deleteAction.GetResource() != expectedGVR {
+		t.Errorf("expected fallback GVR %v, got %v", expectedGVR, deleteAction.GetResource())
+	}
+}
+
+func TestInstanceTracker_DeleteInstance_StandardPluralPassesNamespaceAndName(t *testing.T) {
+	// Set up fake discovery with App -> apps mapping (standard plural)
+	fakeDiscovery := &fake.FakeDiscovery{
+		Fake: &faketesting.Fake{},
+	}
+	fakeDiscovery.Resources = []*metav1.APIResourceList{
+		{
+			GroupVersion: "example.com/v1",
+			APIResources: []metav1.APIResource{
+				{Name: "apps", Kind: "App", Verbs: metav1.Verbs{"delete", "get", "list"}},
+			},
+		},
+	}
+
+	scheme := runtime.NewScheme()
+	fakeDynamic := dynamicfake.NewSimpleDynamicClient(scheme)
+	fakeDynamic.PrependReactor("delete", "*", func(action faketesting.Action) (bool, runtime.Object, error) {
+		return true, nil, nil
+	})
+
+	cache := NewInstanceCache()
+	tracker := NewInstanceTrackerWithCache(cache)
+	tracker.dynamicClient = fakeDynamic
+	tracker.discoveryClient = fakeDiscovery
+
+	// Pre-populate cache so we can verify cache cleanup
+	cache.Set(&models.Instance{
+		Name:      "my-app",
+		Namespace: "production",
+		Kind:      "App",
+		RGDName:   "test-rgd",
+	})
+
+	// Track delete notifications
+	var deletedKey string
+	tracker.SetOnUpdateCallback(func(action InstanceAction, namespace, kind, name string, instance *models.Instance) {
+		if action == InstanceActionDelete {
+			deletedKey = namespace + "/" + kind + "/" + name
+		}
+	})
+
+	err := tracker.DeleteInstance(context.Background(), "production", "my-app", "example.com/v1", "App")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	actions := fakeDynamic.Actions()
+	if len(actions) != 1 {
+		t.Fatalf("expected 1 action, got %d", len(actions))
+	}
+
+	deleteAction, ok := actions[0].(faketesting.DeleteAction)
+	if !ok {
+		t.Fatalf("expected DeleteAction, got %T", actions[0])
+	}
+
+	expectedGVR := schema.GroupVersionResource{Group: "example.com", Version: "v1", Resource: "apps"}
+	if deleteAction.GetResource() != expectedGVR {
+		t.Errorf("expected GVR %v, got %v", expectedGVR, deleteAction.GetResource())
+	}
+	if deleteAction.GetNamespace() != "production" {
+		t.Errorf("expected namespace %q, got %q", "production", deleteAction.GetNamespace())
+	}
+	if deleteAction.GetName() != "my-app" {
+		t.Errorf("expected name %q, got %q", "my-app", deleteAction.GetName())
+	}
+
+	// Verify cache cleanup (M1 fix: cache eviction was previously untested)
+	if _, found := cache.Get("production", "App", "my-app"); found {
+		t.Error("expected instance to be removed from cache after DeleteInstance")
+	}
+
+	// Verify delete notification was fired
+	if deletedKey != "production/App/my-app" {
+		t.Errorf("expected delete notification for 'production/App/my-app', got %q", deletedKey)
+	}
+}
+
+func TestInstanceTracker_DeleteInstance_NilDiscoveryFallsBackToNaive(t *testing.T) {
+	// Verify DeleteInstance is safe when discoveryClient is nil (e.g., NewInstanceTrackerForTest)
+	scheme := runtime.NewScheme()
+	fakeDynamic := dynamicfake.NewSimpleDynamicClient(scheme)
+	fakeDynamic.PrependReactor("delete", "*", func(action faketesting.Action) (bool, runtime.Object, error) {
+		return true, nil, nil
+	})
+
+	cache := NewInstanceCache()
+	tracker := NewInstanceTrackerForTest(cache, fakeDynamic)
+	// discoveryClient is nil — must not panic
+
+	err := tracker.DeleteInstance(context.Background(), "default", "my-proxy", "example.com/v1", "Proxy")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	actions := fakeDynamic.Actions()
+	if len(actions) != 1 {
+		t.Fatalf("expected 1 action, got %d", len(actions))
+	}
+
+	deleteAction, ok := actions[0].(faketesting.DeleteAction)
+	if !ok {
+		t.Fatalf("expected DeleteAction, got %T", actions[0])
+	}
+
+	// With nil discoveryClient, should fall back to naive pluralization
+	expectedGVR := schema.GroupVersionResource{Group: "example.com", Version: "v1", Resource: "proxys"}
+	if deleteAction.GetResource() != expectedGVR {
+		t.Errorf("expected naive fallback GVR %v, got %v", expectedGVR, deleteAction.GetResource())
+	}
+}
+
+// TestResolveGVR_IrregularPlural is a regression guard for STORY-294.
+// Regression guard: naive kind+"s" returns wrong plurals for English-irregular kinds.
+// This test ensures discovery is used, catching any reversion to naive pluralization.
+func TestResolveGVR_IrregularPlural(t *testing.T) {
+	tests := []struct {
+		kind        string
+		plural      string
+		naivePlural string // what kind+"s" would incorrectly return
+	}{
+		{kind: "Proxy", plural: "proxies", naivePlural: "proxys"},
+		{kind: "Policy", plural: "policies", naivePlural: "policys"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.kind, func(t *testing.T) {
+			fakeDiscovery := &fake.FakeDiscovery{
+				Fake: &faketesting.Fake{},
+			}
+			fakeDiscovery.Resources = []*metav1.APIResourceList{
+				{
+					GroupVersion: "example.com/v1",
+					APIResources: []metav1.APIResource{
+						{Name: tt.plural, Kind: tt.kind, Verbs: metav1.Verbs{"get", "list", "create", "delete"}},
+					},
+				},
+			}
+
+			cache := NewInstanceCache()
+			tracker := NewInstanceTrackerWithCache(cache)
+			tracker.discoveryClient = fakeDiscovery
+
+			gvr, err := tracker.ResolveGVR("example.com/v1", tt.kind)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			expected := schema.GroupVersionResource{Group: "example.com", Version: "v1", Resource: tt.plural}
+			if gvr != expected {
+				t.Errorf("ResolveGVR(%q) = %v, want %v -- naive kind+'s' would have returned %q",
+					tt.kind, gvr, expected, tt.naivePlural)
+			}
+		})
+	}
+}
+
+func TestInstanceTracker_ResolveGVR_DiscoverySuccess(t *testing.T) {
+	// Set up fake discovery with Proxy -> proxies mapping
+	fakeDiscovery := &fake.FakeDiscovery{
+		Fake: &faketesting.Fake{},
+	}
+	fakeDiscovery.Resources = []*metav1.APIResourceList{
+		{
+			GroupVersion: "example.com/v1",
+			APIResources: []metav1.APIResource{
+				{Name: "proxies", Kind: "Proxy", Verbs: metav1.Verbs{"get", "list", "create"}},
+			},
+		},
+	}
+
+	cache := NewInstanceCache()
+	tracker := NewInstanceTrackerWithCache(cache)
+	tracker.discoveryClient = fakeDiscovery
+
+	gvr, err := tracker.ResolveGVR("example.com/v1", "Proxy")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	expected := schema.GroupVersionResource{Group: "example.com", Version: "v1", Resource: "proxies"}
+	if gvr != expected {
+		t.Errorf("expected GVR %v, got %v", expected, gvr)
+	}
+}
+
+func TestInstanceTracker_ResolveGVR_DiscoveryFails_FallsBackToNaive(t *testing.T) {
+	// Set up fake discovery with NO resources — resolution will fail
+	fakeDiscovery := &fake.FakeDiscovery{
+		Fake: &faketesting.Fake{},
+	}
+
+	cache := NewInstanceCache()
+	tracker := NewInstanceTrackerWithCache(cache)
+	tracker.discoveryClient = fakeDiscovery
+
+	gvr, err := tracker.ResolveGVR("example.com/v1", "Proxy")
+	if err != nil {
+		t.Fatalf("unexpected error (should never return error): %v", err)
+	}
+
+	// Falls back to naive pluralization: "proxys" (wrong but best-effort)
+	expected := schema.GroupVersionResource{Group: "example.com", Version: "v1", Resource: "proxys"}
+	if gvr != expected {
+		t.Errorf("expected naive fallback GVR %v, got %v", expected, gvr)
+	}
+}
+
+func TestInstanceTracker_ResolveGVR_NilDiscovery_FallsBackToNaive(t *testing.T) {
+	cache := NewInstanceCache()
+	tracker := NewInstanceTrackerWithCache(cache)
+	// discoveryClient is nil
+
+	gvr, err := tracker.ResolveGVR("example.com/v1", "Proxy")
+	if err != nil {
+		t.Fatalf("unexpected error (should never return error): %v", err)
+	}
+
+	expected := schema.GroupVersionResource{Group: "example.com", Version: "v1", Resource: "proxys"}
+	if gvr != expected {
+		t.Errorf("expected naive fallback GVR %v, got %v", expected, gvr)
+	}
+}
+
+func TestInstanceTracker_ResolveGVR_VersionOnlyAPIVersion(t *testing.T) {
+	cache := NewInstanceCache()
+	tracker := NewInstanceTrackerWithCache(cache)
+
+	gvr, err := tracker.ResolveGVR("v1alpha1", "MyResource")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Version-only alpha → uses kro.run group
+	if gvr.Group != "kro.run" {
+		t.Errorf("expected group 'kro.run', got %q", gvr.Group)
+	}
+	if gvr.Version != "v1alpha1" {
+		t.Errorf("expected version 'v1alpha1', got %q", gvr.Version)
+	}
+}
+
+func TestInstanceTracker_ResolveGVR_StableVersionOnly_EmptyGroup(t *testing.T) {
+	// Regression guard: "v1" (no group) should produce group="" not "kro.run".
+	// Core K8s resources (Pod, Service, ConfigMap) use apiVersion "v1" with no group.
+	cache := NewInstanceCache()
+	tracker := NewInstanceTrackerWithCache(cache)
+	// discoveryClient is nil → falls back to naive pluralization
+
+	gvr, err := tracker.ResolveGVR("v1", "Pod")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if gvr.Group != "" {
+		t.Errorf("expected empty group for stable apiVersion 'v1', got %q", gvr.Group)
+	}
+	if gvr.Version != "v1" {
+		t.Errorf("expected version 'v1', got %q", gvr.Version)
+	}
+	if gvr.Resource != "pods" {
+		t.Errorf("expected naive resource 'pods', got %q", gvr.Resource)
 	}
 }

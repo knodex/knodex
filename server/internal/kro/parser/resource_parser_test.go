@@ -1554,6 +1554,352 @@ func TestResourceParser_EdgeCase_StringConcatenation(t *testing.T) {
 	}
 }
 
+// === SecretRef extraction tests ===
+
+func TestResourceParser_SecretRef_Dynamic(t *testing.T) {
+	p := NewResourceParser()
+
+	spec := map[string]interface{}{
+		"resources": []interface{}{
+			map[string]interface{}{
+				"externalRef": map[string]interface{}{
+					"apiVersion": "v1",
+					"kind":       "Secret",
+					"metadata": map[string]interface{}{
+						"name":      "${schema.spec.externalRef.asoCredentialSecret.name}",
+						"namespace": "${schema.spec.externalRef.asoCredentialSecret.namespace}",
+					},
+				},
+			},
+		},
+	}
+
+	graph, err := p.ParseRGDResources("test", "default", spec)
+	if err != nil {
+		t.Fatalf("ParseRGDResources() error = %v", err)
+	}
+
+	if len(graph.SecretRefs) != 1 {
+		t.Fatalf("expected 1 secret ref, got %d", len(graph.SecretRefs))
+	}
+
+	sr := graph.SecretRefs[0]
+	if sr.Type != "dynamic" {
+		t.Errorf("type = %q, want %q", sr.Type, "dynamic")
+	}
+	if sr.NameExpr != "${schema.spec.externalRef.asoCredentialSecret.name}" {
+		t.Errorf("nameExpr = %q", sr.NameExpr)
+	}
+	if sr.NamespaceExpr != "${schema.spec.externalRef.asoCredentialSecret.namespace}" {
+		t.Errorf("namespaceExpr = %q", sr.NamespaceExpr)
+	}
+	if sr.ID != "0-Secret" {
+		t.Errorf("id = %q, want %q", sr.ID, "0-Secret")
+	}
+}
+
+func TestResourceParser_SecretRef_Fixed(t *testing.T) {
+	p := NewResourceParser()
+
+	spec := map[string]interface{}{
+		"resources": []interface{}{
+			map[string]interface{}{
+				"externalRef": map[string]interface{}{
+					"apiVersion": "v1",
+					"kind":       "Secret",
+					"metadata": map[string]interface{}{
+						"name":      "my-static-secret",
+						"namespace": "platform-system",
+					},
+				},
+			},
+		},
+	}
+
+	graph, err := p.ParseRGDResources("test", "default", spec)
+	if err != nil {
+		t.Fatalf("ParseRGDResources() error = %v", err)
+	}
+
+	if len(graph.SecretRefs) != 1 {
+		t.Fatalf("expected 1 secret ref, got %d", len(graph.SecretRefs))
+	}
+
+	sr := graph.SecretRefs[0]
+	if sr.Type != "fixed" {
+		t.Errorf("type = %q, want %q", sr.Type, "fixed")
+	}
+	if sr.Name != "my-static-secret" {
+		t.Errorf("name = %q, want %q", sr.Name, "my-static-secret")
+	}
+	if sr.Namespace != "platform-system" {
+		t.Errorf("namespace = %q, want %q", sr.Namespace, "platform-system")
+	}
+}
+
+func TestResourceParser_SecretRef_MixedExternalRefs(t *testing.T) {
+	p := NewResourceParser()
+
+	spec := map[string]interface{}{
+		"resources": []interface{}{
+			// Secret externalRef (should be in SecretRefs)
+			map[string]interface{}{
+				"externalRef": map[string]interface{}{
+					"apiVersion": "v1",
+					"kind":       "Secret",
+					"metadata": map[string]interface{}{
+						"name":      "${schema.spec.secretName}",
+						"namespace": "${schema.spec.secretNamespace}",
+					},
+				},
+			},
+			// ConfigMap externalRef (should NOT be in SecretRefs)
+			map[string]interface{}{
+				"externalRef": map[string]interface{}{
+					"apiVersion": "v1",
+					"kind":       "ConfigMap",
+					"metadata": map[string]interface{}{
+						"name":      "${schema.spec.configMapName}",
+						"namespace": "${schema.spec.configMapNamespace}",
+					},
+				},
+			},
+			// Template resource (should NOT be in SecretRefs)
+			map[string]interface{}{
+				"template": map[string]interface{}{
+					"apiVersion": "apps/v1",
+					"kind":       "Deployment",
+				},
+			},
+		},
+	}
+
+	graph, err := p.ParseRGDResources("test", "default", spec)
+	if err != nil {
+		t.Fatalf("ParseRGDResources() error = %v", err)
+	}
+
+	if len(graph.SecretRefs) != 1 {
+		t.Fatalf("expected 1 secret ref, got %d: %+v", len(graph.SecretRefs), graph.SecretRefs)
+	}
+
+	if graph.SecretRefs[0].ID != "0-Secret" {
+		t.Errorf("secret ref ID = %q, want %q", graph.SecretRefs[0].ID, "0-Secret")
+	}
+}
+
+func TestResourceParser_SecretRef_NoExternalRefs(t *testing.T) {
+	p := NewResourceParser()
+
+	spec := map[string]interface{}{
+		"resources": []interface{}{
+			map[string]interface{}{
+				"template": map[string]interface{}{
+					"apiVersion": "apps/v1",
+					"kind":       "Deployment",
+				},
+			},
+		},
+	}
+
+	graph, err := p.ParseRGDResources("test", "default", spec)
+	if err != nil {
+		t.Fatalf("ParseRGDResources() error = %v", err)
+	}
+
+	if len(graph.SecretRefs) != 0 {
+		t.Errorf("expected empty SecretRefs, got %+v", graph.SecretRefs)
+	}
+}
+
+func TestResourceParser_SecretRef_MultipleSecrets(t *testing.T) {
+	p := NewResourceParser()
+
+	spec := map[string]interface{}{
+		"resources": []interface{}{
+			map[string]interface{}{
+				"externalRef": map[string]interface{}{
+					"apiVersion": "v1",
+					"kind":       "Secret",
+					"metadata": map[string]interface{}{
+						"name":      "${schema.spec.dbSecret.name}",
+						"namespace": "${schema.spec.dbSecret.namespace}",
+					},
+				},
+			},
+			map[string]interface{}{
+				"externalRef": map[string]interface{}{
+					"apiVersion": "v1",
+					"kind":       "Secret",
+					"metadata": map[string]interface{}{
+						"name":      "static-tls-secret",
+						"namespace": "cert-manager",
+					},
+				},
+			},
+			map[string]interface{}{
+				"externalRef": map[string]interface{}{
+					"apiVersion": "v1",
+					"kind":       "Secret",
+					"metadata": map[string]interface{}{
+						"name":      "${schema.spec.apiKeySecret.name}",
+						"namespace": "${schema.spec.apiKeySecret.namespace}",
+					},
+				},
+			},
+		},
+	}
+
+	graph, err := p.ParseRGDResources("test", "default", spec)
+	if err != nil {
+		t.Fatalf("ParseRGDResources() error = %v", err)
+	}
+
+	if len(graph.SecretRefs) != 3 {
+		t.Fatalf("expected 3 secret refs, got %d", len(graph.SecretRefs))
+	}
+
+	// First is dynamic
+	if graph.SecretRefs[0].Type != "dynamic" {
+		t.Errorf("ref[0] type = %q, want dynamic", graph.SecretRefs[0].Type)
+	}
+	// Second is fixed
+	if graph.SecretRefs[1].Type != "fixed" {
+		t.Errorf("ref[1] type = %q, want fixed", graph.SecretRefs[1].Type)
+	}
+	if graph.SecretRefs[1].Name != "static-tls-secret" {
+		t.Errorf("ref[1] name = %q, want static-tls-secret", graph.SecretRefs[1].Name)
+	}
+	// Third is dynamic
+	if graph.SecretRefs[2].Type != "dynamic" {
+		t.Errorf("ref[2] type = %q, want dynamic", graph.SecretRefs[2].Type)
+	}
+}
+
+func TestResourceParser_SecretRef_DynamicNamespaceFixedName(t *testing.T) {
+	p := NewResourceParser()
+
+	// Edge case: static name but dynamic namespace — should be typed "dynamic"
+	// because the frontend still needs schema.spec.* resolution for the namespace.
+	spec := map[string]interface{}{
+		"resources": []interface{}{
+			map[string]interface{}{
+				"externalRef": map[string]interface{}{
+					"apiVersion": "v1",
+					"kind":       "Secret",
+					"metadata": map[string]interface{}{
+						"name":      "well-known-secret",              // fixed literal
+						"namespace": "${schema.spec.targetNamespace}", // dynamic
+					},
+				},
+			},
+		},
+	}
+
+	graph, err := p.ParseRGDResources("test", "default", spec)
+	if err != nil {
+		t.Fatalf("ParseRGDResources() error = %v", err)
+	}
+
+	if len(graph.SecretRefs) != 1 {
+		t.Fatalf("expected 1 secret ref, got %d", len(graph.SecretRefs))
+	}
+
+	sr := graph.SecretRefs[0]
+	// Must be "dynamic" because namespace requires schema.spec resolution
+	if sr.Type != "dynamic" {
+		t.Errorf("type = %q, want %q (namespace is dynamic)", sr.Type, "dynamic")
+	}
+	if sr.NameExpr != "well-known-secret" {
+		t.Errorf("nameExpr = %q, want %q", sr.NameExpr, "well-known-secret")
+	}
+	if sr.NamespaceExpr != "${schema.spec.targetNamespace}" {
+		t.Errorf("namespaceExpr = %q, want ${schema.spec.targetNamespace}", sr.NamespaceExpr)
+	}
+}
+
+func TestResourceParser_SecretRef_MetadataNamespaceDynamic(t *testing.T) {
+	p := NewResourceParser()
+
+	// Edge case: literal name + ${schema.metadata.namespace} namespace.
+	// NamespaceSchemaField is empty (not a schema.spec.* pattern), but the namespace
+	// still contains a CEL expression — must be classified as "dynamic", not "fixed".
+	// Previously the old UsesSchemaSpec check would produce type="fixed" with a CEL
+	// expression in the Namespace field, violating the contract that fixed refs have literals.
+	spec := map[string]interface{}{
+		"resources": []interface{}{
+			map[string]interface{}{
+				"externalRef": map[string]interface{}{
+					"apiVersion": "v1",
+					"kind":       "Secret",
+					"metadata": map[string]interface{}{
+						"name":      "well-known-secret",            // fixed literal
+						"namespace": "${schema.metadata.namespace}", // CEL, not schema.spec.*
+					},
+				},
+			},
+		},
+	}
+
+	graph, err := p.ParseRGDResources("test", "default", spec)
+	if err != nil {
+		t.Fatalf("ParseRGDResources() error = %v", err)
+	}
+
+	if len(graph.SecretRefs) != 1 {
+		t.Fatalf("expected 1 secret ref, got %d", len(graph.SecretRefs))
+	}
+
+	sr := graph.SecretRefs[0]
+	// Must be "dynamic" because namespace contains a CEL expression.
+	// A "fixed" result here would leak "${schema.metadata.namespace}" into the Namespace field.
+	if sr.Type != "dynamic" {
+		t.Errorf("type = %q, want %q", sr.Type, "dynamic")
+	}
+	if sr.NameExpr != "well-known-secret" {
+		t.Errorf("nameExpr = %q, want %q", sr.NameExpr, "well-known-secret")
+	}
+	if sr.NamespaceExpr != "${schema.metadata.namespace}" {
+		t.Errorf("namespaceExpr = %q, want %q", sr.NamespaceExpr, "${schema.metadata.namespace}")
+	}
+	// Name/Namespace fields must be empty for dynamic refs
+	if sr.Name != "" {
+		t.Errorf("Name should be empty for dynamic ref, got %q", sr.Name)
+	}
+	if sr.Namespace != "" {
+		t.Errorf("Namespace should be empty for dynamic ref, got %q", sr.Namespace)
+	}
+}
+
+func TestResourceParser_SecretRef_CaseSensitiveKind(t *testing.T) {
+	p := NewResourceParser()
+
+	// "secret" (lowercase) must NOT be matched — Kubernetes kinds are PascalCase.
+	spec := map[string]interface{}{
+		"resources": []interface{}{
+			map[string]interface{}{
+				"externalRef": map[string]interface{}{
+					"apiVersion": "v1",
+					"kind":       "secret", // lowercase — not a valid k8s kind
+					"metadata": map[string]interface{}{
+						"name":      "my-secret",
+						"namespace": "default",
+					},
+				},
+			},
+		},
+	}
+
+	graph, err := p.ParseRGDResources("test", "default", spec)
+	if err != nil {
+		t.Fatalf("ParseRGDResources() error = %v", err)
+	}
+
+	if len(graph.SecretRefs) != 0 {
+		t.Errorf("expected 0 secretRefs for lowercase 'secret' kind, got %d", len(graph.SecretRefs))
+	}
+}
+
 // TestCollectSchemaRefs_DepthLimit tests depth limiting for schema ref collection
 func TestCollectSchemaRefs_DepthLimit(t *testing.T) {
 	deepNested := make(map[string]interface{})
@@ -1570,5 +1916,213 @@ func TestCollectSchemaRefs_DepthLimit(t *testing.T) {
 
 	if len(seen) != 0 {
 		t.Errorf("expected 0 fields due to depth limit, got %d", len(seen))
+	}
+}
+
+// TestExtractExternalRefDescription tests description extraction from schema externalRef fields
+func TestExtractExternalRefDescription(t *testing.T) {
+	tests := []struct {
+		name               string
+		schemaExternalRefs map[string]interface{}
+		fieldName          string
+		want               string
+	}{
+		{
+			name: "description present",
+			schemaExternalRefs: map[string]interface{}{
+				"dbSecret": map[string]interface{}{
+					"name":      `string | default="" description="Name of the Kubernetes Secret containing database credentials"`,
+					"namespace": `string | default="" description="Namespace of the Secret"`,
+				},
+			},
+			fieldName: "dbSecret",
+			want:      "Name of the Kubernetes Secret containing database credentials",
+		},
+		{
+			name: "description missing",
+			schemaExternalRefs: map[string]interface{}{
+				"dbSecret": map[string]interface{}{
+					"name":      `string | default=""`,
+					"namespace": `string | default=""`,
+				},
+			},
+			fieldName: "dbSecret",
+			want:      "",
+		},
+		{
+			name:               "nil schema",
+			schemaExternalRefs: nil,
+			fieldName:          "dbSecret",
+			want:               "",
+		},
+		{
+			name: "empty field name",
+			schemaExternalRefs: map[string]interface{}{
+				"dbSecret": map[string]interface{}{
+					"name": `string | default="" description="test"`,
+				},
+			},
+			fieldName: "",
+			want:      "",
+		},
+		{
+			name: "field not found",
+			schemaExternalRefs: map[string]interface{}{
+				"otherSecret": map[string]interface{}{
+					"name": `string | default="" description="test"`,
+				},
+			},
+			fieldName: "dbSecret",
+			want:      "",
+		},
+		{
+			name: "name field not a string",
+			schemaExternalRefs: map[string]interface{}{
+				"dbSecret": map[string]interface{}{
+					"name": 42,
+				},
+			},
+			fieldName: "dbSecret",
+			want:      "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractExternalRefDescription(tt.schemaExternalRefs, tt.fieldName)
+			if got != tt.want {
+				t.Errorf("extractExternalRefDescription() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestResourceParser_SecretRef_Description tests end-to-end description extraction
+func TestResourceParser_SecretRef_Description(t *testing.T) {
+	p := NewResourceParser()
+
+	spec := map[string]interface{}{
+		"schema": map[string]interface{}{
+			"apiVersion": "v1alpha1",
+			"kind":       "WebAppWithSecret",
+			"spec": map[string]interface{}{
+				"appName": `string | default="my-webapp" description="Application name"`,
+				"externalRef": map[string]interface{}{
+					"dbSecret": map[string]interface{}{
+						"name":      `string | default="" description="Name of the Kubernetes Secret containing database credentials"`,
+						"namespace": `string | default="" description="Namespace of the Secret"`,
+					},
+				},
+			},
+		},
+		"resources": []interface{}{
+			map[string]interface{}{
+				"id": "dbSecret",
+				"externalRef": map[string]interface{}{
+					"apiVersion": "v1",
+					"kind":       "Secret",
+					"metadata": map[string]interface{}{
+						"name":      "${schema.spec.externalRef.dbSecret.name}",
+						"namespace": "${schema.spec.externalRef.dbSecret.namespace}",
+					},
+				},
+			},
+		},
+	}
+
+	graph, err := p.ParseRGDResources("webapp-with-secret", "default", spec)
+	if err != nil {
+		t.Fatalf("ParseRGDResources() error = %v", err)
+	}
+
+	if len(graph.SecretRefs) != 1 {
+		t.Fatalf("expected 1 secretRef, got %d", len(graph.SecretRefs))
+	}
+
+	ref := graph.SecretRefs[0]
+	wantDesc := "Name of the Kubernetes Secret containing database credentials"
+	if ref.Description != wantDesc {
+		t.Errorf("Description = %q, want %q", ref.Description, wantDesc)
+	}
+	if ref.ExternalRefID != "dbSecret" {
+		t.Errorf("ExternalRefID = %q, want %q", ref.ExternalRefID, "dbSecret")
+	}
+}
+
+// TestResourceParser_SecretRef_DescriptionMissing tests that missing description doesn't break parsing
+func TestResourceParser_SecretRef_DescriptionMissing(t *testing.T) {
+	p := NewResourceParser()
+
+	spec := map[string]interface{}{
+		"schema": map[string]interface{}{
+			"spec": map[string]interface{}{
+				"externalRef": map[string]interface{}{
+					"dbSecret": map[string]interface{}{
+						"name":      `string | default=""`,
+						"namespace": `string | default=""`,
+					},
+				},
+			},
+		},
+		"resources": []interface{}{
+			map[string]interface{}{
+				"id": "dbSecret",
+				"externalRef": map[string]interface{}{
+					"apiVersion": "v1",
+					"kind":       "Secret",
+					"metadata": map[string]interface{}{
+						"name":      "${schema.spec.externalRef.dbSecret.name}",
+						"namespace": "${schema.spec.externalRef.dbSecret.namespace}",
+					},
+				},
+			},
+		},
+	}
+
+	graph, err := p.ParseRGDResources("test", "default", spec)
+	if err != nil {
+		t.Fatalf("ParseRGDResources() error = %v", err)
+	}
+
+	if len(graph.SecretRefs) != 1 {
+		t.Fatalf("expected 1 secretRef, got %d", len(graph.SecretRefs))
+	}
+
+	if graph.SecretRefs[0].Description != "" {
+		t.Errorf("Description = %q, want empty", graph.SecretRefs[0].Description)
+	}
+}
+
+// TestResourceParser_SecretRef_NoSchemaSection tests description extraction with no schema section
+func TestResourceParser_SecretRef_NoSchemaSection(t *testing.T) {
+	p := NewResourceParser()
+
+	spec := map[string]interface{}{
+		"resources": []interface{}{
+			map[string]interface{}{
+				"externalRef": map[string]interface{}{
+					"apiVersion": "v1",
+					"kind":       "Secret",
+					"metadata": map[string]interface{}{
+						"name":      "my-secret",
+						"namespace": "default",
+					},
+				},
+			},
+		},
+	}
+
+	graph, err := p.ParseRGDResources("test", "default", spec)
+	if err != nil {
+		t.Fatalf("ParseRGDResources() error = %v", err)
+	}
+
+	if len(graph.SecretRefs) != 1 {
+		t.Fatalf("expected 1 secretRef, got %d", len(graph.SecretRefs))
+	}
+
+	// No schema → no description, but parsing should still work
+	if graph.SecretRefs[0].Description != "" {
+		t.Errorf("Description = %q, want empty", graph.SecretRefs[0].Description)
 	}
 }

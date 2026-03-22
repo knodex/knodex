@@ -4,6 +4,7 @@
 package models
 
 import (
+	"encoding/json"
 	"testing"
 )
 
@@ -265,6 +266,42 @@ func TestAllInvalidModesResultsInUnrestricted(t *testing.T) {
 			t.Errorf("IsDeploymentModeAllowed(nil, %q) = false, want true (nil should allow all modes)", mode)
 		}
 	}
+}
+
+func TestCatalogRGD_PluralName_JSONOmitempty(t *testing.T) {
+	t.Run("empty PluralName omitted from JSON", func(t *testing.T) {
+		rgd := CatalogRGD{Name: "test", PluralName: ""}
+		data, err := json.Marshal(rgd)
+		if err != nil {
+			t.Fatalf("unexpected marshal error: %v", err)
+		}
+		var m map[string]interface{}
+		if err := json.Unmarshal(data, &m); err != nil {
+			t.Fatalf("unexpected unmarshal error: %v", err)
+		}
+		if _, ok := m["pluralName"]; ok {
+			t.Error("expected pluralName to be omitted when empty, but it was present")
+		}
+	})
+
+	t.Run("non-empty PluralName included in JSON", func(t *testing.T) {
+		rgd := CatalogRGD{Name: "test", PluralName: "proxies"}
+		data, err := json.Marshal(rgd)
+		if err != nil {
+			t.Fatalf("unexpected marshal error: %v", err)
+		}
+		var m map[string]interface{}
+		if err := json.Unmarshal(data, &m); err != nil {
+			t.Fatalf("unexpected unmarshal error: %v", err)
+		}
+		val, ok := m["pluralName"]
+		if !ok {
+			t.Fatal("expected pluralName to be present when non-empty")
+		}
+		if val != "proxies" {
+			t.Errorf("expected pluralName 'proxies', got %v", val)
+		}
+	})
 }
 
 // Helper function to compare string slices

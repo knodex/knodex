@@ -17,6 +17,7 @@ import (
 	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8sschema "k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
@@ -153,20 +154,36 @@ func (e *Extractor) extractSchemaFromCRD(ctx context.Context, rgd *models.Catalo
 		return nil, fmt.Errorf("failed to extract CRD info: %w", err)
 	}
 
-	// Construct CRD name: <plural>.<group>
-	plural := pluralize(strings.ToLower(kind))
-	crdName := fmt.Sprintf("%s.%s", plural, group)
-
 	e.logger.Debug("looking up CRD",
-		"crdName", crdName,
 		"group", group,
 		"kind", kind,
 		"version", version)
 
-	// Get the CRD
-	crd, err := e.apiextClient.ApiextensionsV1().CustomResourceDefinitions().Get(ctx, crdName, metav1.GetOptions{})
+	// List all CRDs and filter by group+kind instead of constructing the CRD
+	// name from a plural form. This avoids needing to know the plural upfront,
+	// which is fragile for irregular plurals (e.g., "Proxy" → "proxies", not "proxys").
+	// The overhead of listing is acceptable since schema extraction is infrequent
+	// and user-initiated (deploy form rendering).
+	crds, err := e.apiextClient.ApiextensionsV1().CustomResourceDefinitions().List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("CRD not found: %s: %w", crdName, err)
+		return nil, fmt.Errorf("failed to list CRDs: %w", err)
+	}
+
+	var crd *apiextensionsv1.CustomResourceDefinition
+	for i := range crds.Items {
+		if crds.Items[i].Spec.Group == group && crds.Items[i].Spec.Names.Kind == kind {
+			crd = &crds.Items[i]
+			break
+		}
+	}
+	if crd == nil {
+		e.logger.Warn("CRD not found for group+kind", "group", group, "kind", kind, "rgdName", rgd.Name, "rgdNamespace", rgd.Namespace)
+		// Wrap as a K8s NotFound error so the caller (ExtractSchema) uses the
+		// shorter degraded-cache TTL, matching the previous Get()-based behavior.
+		return nil, apierrors.NewNotFound(
+			k8sschema.GroupResource{Group: "apiextensions.k8s.io", Resource: "customresourcedefinitions"},
+			fmt.Sprintf("group=%s kind=%s", group, kind),
+		)
 	}
 
 	// Find the schema for the requested version
@@ -184,7 +201,7 @@ func (e *Extractor) extractSchemaFromCRD(ctx context.Context, rgd *models.Catalo
 	}
 
 	if openAPISchema == nil {
-		return nil, fmt.Errorf("no OpenAPI schema found in CRD %s", crdName)
+		return nil, fmt.Errorf("no OpenAPI schema found in CRD for group=%s kind=%s", group, kind)
 	}
 
 	// Convert OpenAPI schema to form schema
@@ -403,11 +420,4 @@ func schemaPropertyNames(schema *apiextensionsv1.JSONSchemaProps) []string {
 		names = append(names, name)
 	}
 	return names
-}
-
-// pluralize converts a kind to its plural form.
-// KRO always generates CRD plurals by appending "s" to the lowercased kind,
-// so we match that behavior exactly.
-func pluralize(kind string) string {
-	return kind + "s"
 }

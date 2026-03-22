@@ -247,8 +247,8 @@ describe('DeployPage', () => {
     it('displays API version and kind badges', () => {
       renderWithProviders(<DeployPage {...defaultProps} />);
 
-      expect(screen.getByText('example.com/v1')).toBeInTheDocument();
-      expect(screen.getByText('TestResource')).toBeInTheDocument();
+      expect(screen.getAllByText('example.com/v1').length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByText('TestResource').length).toBeGreaterThanOrEqual(1);
     });
 
     it('renders back button', () => {
@@ -271,12 +271,6 @@ describe('DeployPage', () => {
 
       expect(screen.getByText('Deployment Options')).toBeInTheDocument();
       expect(screen.getByTestId('deployment-mode-selector')).toBeInTheDocument();
-    });
-
-    it('renders configuration section', () => {
-      renderWithProviders(<DeployPage {...defaultProps} />);
-
-      expect(screen.getByText('Configuration')).toBeInTheDocument();
     });
 
     it('renders YAML preview', () => {

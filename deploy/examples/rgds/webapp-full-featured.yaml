@@ -24,6 +24,7 @@ metadata:
     knodex.io/description: "Full-featured web application with conditional database, cache, and advanced configuration"
     knodex.io/tags: "webapp,fullstack,conditions,test"
     knodex.io/category: "applications"
+    knodex.io/docs-url: "https://docs.example.com/webapp"
 spec:
   schema:
     apiVersion: v1alpha1

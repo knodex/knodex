@@ -496,15 +496,14 @@ gateway:
     - "knodex.staging.knodex.io"
 
 # Redis configuration (Bitnami Redis subchart)
-# NOTE: auth.enabled changed to true in v0.0.15 (production default).
-# Bitnami auto-generates a random password Secret when auth.enabled=true.
-# This causes credential mismatch on Redis restarts/upgrades because server
-# pods retain the old password in their immutable env vars.
+# Redis authentication is enabled by default. The chart creates a persistent
+# secret (helm.sh/resource-policy: keep) with a distinct name (<fullname>-redis-password)
+# that is owned by this chart. The existingSecret tpl expression tells Bitnami
+# to use this chart-managed secret instead of generating its own, ensuring all
+# components share the same password without naming collisions.
 #
-# RECOMMENDATION (production): Pin the Redis password using one of:
-#   1. redis.auth.existingSecret + redis.auth.existingSecretPasswordKey
-#      (best practice — manage the secret externally or via sealed-secrets)
-#   2. redis.auth.password (set an explicit password)
+# To use your own secret: replace redis.auth.existingSecret with your secret name
+# To set an explicit password: set redis.auth.password
 #
 # NOTE: Bitnami removed semver tags from Docker Hub. The image is pinned by digest
 # to ensure reproducible deployments. Update the digest when upgrading Redis.
@@ -514,11 +513,13 @@ redis:
   architecture: standalone
   auth:
     enabled: true
-    # -- Name of an existing Secret containing the Redis password.
-    # The secret must exist in the release namespace. When set, Bitnami
-    # will use this secret instead of auto-generating a random password.
-    # @default -- `""` (Bitnami auto-generates)
-    existingSecret: ""
+    # -- Tells the Bitnami subchart to use the chart-managed persistent secret
+    # instead of generating its own. The tpl expression is evaluated by Bitnami
+    # at render time. knodex.redisSecretName produces a consistent name in both
+    # the parent chart and subchart contexts.
+    # To use your own externally-managed secret, replace this with your secret name.
+    # @default -- `'{{ include "knodex.redisSecretName" . }}'`
+    existingSecret: '{{ include "knodex.redisSecretName" . }}'
     # -- Key within the existingSecret that holds the password.
     # @default -- `"redis-password"` (Bitnami default)
     existingSecretPasswordKey: ""

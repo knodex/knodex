@@ -18,8 +18,6 @@ import (
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 
-	"github.com/knodex/knodex/server/internal/kro"
-
 	"github.com/knodex/knodex/server/internal/api/helpers"
 	"github.com/knodex/knodex/server/internal/api/middleware"
 	"github.com/knodex/knodex/server/internal/api/response"
@@ -476,8 +474,13 @@ func (h *InstanceCRUDHandler) UpdateInstance(w http.ResponseWriter, r *http.Requ
 	// Determine deployment mode from instance labels
 	deployMode := deployment.ParseDeploymentMode(instance.Labels[models.DeploymentModeLabel])
 
-	// Resolve GVR from instance's API version and kind
-	gvr := gvrFromAPIVersionAndKind(instance.APIVersion, instance.Kind)
+	// Resolve GVR from instance's API version and kind using discovery
+	gvr, err := h.instanceTracker.ResolveGVR(instance.APIVersion, instance.Kind)
+	if err != nil {
+		h.logger.Error("failed to resolve GVR", "apiVersion", instance.APIVersion, "kind", instance.Kind, "error", err)
+		response.InternalError(w, "Failed to resolve resource type")
+		return
+	}
 
 	var gitInfo *deployment.GitInfo
 
@@ -903,29 +906,6 @@ func specValuesEqual(a, b interface{}) bool {
 		return false
 	}
 	return string(aJSON) == string(bJSON)
-}
-
-// gvrFromAPIVersionAndKind resolves a GroupVersionResource from an apiVersion string and kind.
-// Uses the same logic as InstanceTracker.DeleteInstance for consistency.
-func gvrFromAPIVersionAndKind(apiVersion, kind string) schema.GroupVersionResource {
-	parts := strings.Split(apiVersion, "/")
-	var group, version string
-	if len(parts) == 2 {
-		group = parts[0]
-		version = parts[1]
-	} else {
-		version = apiVersion
-		if strings.Contains(version, "alpha") || strings.Contains(version, "beta") {
-			group = kro.RGDGroup
-		}
-	}
-
-	resource := strings.ToLower(kind) + "s"
-	return schema.GroupVersionResource{
-		Group:    group,
-		Version:  version,
-		Resource: resource,
-	}
 }
 
 // handleDeleteError maps instance deletion errors to HTTP responses.

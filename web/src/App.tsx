@@ -10,7 +10,6 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Loader2 } from "lucide-react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "sonner";
-
 // Lazy load route components for code splitting
 const CatalogRoute = lazy(() => import("@/routes/CatalogRoutes").then(m => ({ default: m.CatalogRoute })));
 const RGDDetailRoute = lazy(() => import("@/routes/CatalogRoutes").then(m => ({ default: m.RGDDetailRoute })));
@@ -30,6 +29,8 @@ const ConstraintTemplateDetailPage = lazy(() => import("@/components/compliance/
 const ConstraintsPage = lazy(() => import("@/components/compliance/ConstraintsPage"));
 const ConstraintDetailPage = lazy(() => import("@/components/compliance/ConstraintDetailPage"));
 const ViolationsPage = lazy(() => import("@/components/compliance/ViolationsPage"));
+const SecretsRoute = lazy(() => import("@/routes/SecretsRoutes").then(m => ({ default: m.SecretsRoute })));
+const SecretDetailRoute = lazy(() => import("@/routes/SecretsRoutes").then(m => ({ default: m.SecretDetailRoute })));
 const ViewPage = lazy(() => import("@/components/views/ViewPage").then(m => ({ default: m.ViewPage })));
 const UserInfoPage = lazy(() => import("@/components/account/UserInfoPage").then(m => ({ default: m.UserInfoPage })));
 
@@ -76,6 +77,10 @@ function App() {
                 {/* Instance routes - lazy loaded */}
                 <Route path="instances" element={<Suspense fallback={<RouteLoader />}><InstancesRoute /></Suspense>} />
                 <Route path="instances/:namespace/:kind/:name" element={<Suspense fallback={<RouteLoader />}><InstanceDetailRoute /></Suspense>} />
+
+                {/* Secrets routes - lazy loaded */}
+                <Route path="secrets" element={<Suspense fallback={<RouteLoader />}><SecretsRoute /></Suspense>} />
+                <Route path="secrets/:namespace/:name" element={<Suspense fallback={<RouteLoader />}><SecretDetailRoute /></Suspense>} />
 
                 {/* Custom View routes - lazy loaded (Enterprise only) */}
                 <Route path="views/:slug" element={<Suspense fallback={<RouteLoader />}><ViewPage /></Suspense>} />

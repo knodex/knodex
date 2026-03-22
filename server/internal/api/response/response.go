@@ -32,6 +32,10 @@ const (
 	ErrCodeRateLimit ErrorCode = "RATE_LIMIT_EXCEEDED"
 	// ErrCodeMethodNotAllowed indicates the HTTP method is not allowed for this endpoint
 	ErrCodeMethodNotAllowed ErrorCode = "METHOD_NOT_ALLOWED"
+	// ErrCodeLicenseRequired indicates a valid enterprise license is required for the feature
+	ErrCodeLicenseRequired ErrorCode = "LICENSE_REQUIRED"
+	// ErrCodeConflict indicates a resource was modified concurrently and the request should be retried
+	ErrCodeConflict ErrorCode = "CONFLICT"
 )
 
 // ErrorResponse represents a standardized API error response

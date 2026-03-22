@@ -46,6 +46,7 @@ var resourceTypeMappings = map[string]string{
 	"instance":   "instances",
 	"project":    "projects",
 	"repository": "repositories",
+	"secret":     "secrets",
 	// Keep * as-is for wildcard
 	"*": "*",
 }
@@ -862,6 +863,7 @@ func (pe *policyEnforcer) LoadProjectPolicies(ctx context.Context, project *Proj
 //   - rgds/*, list, allow - List access to all RGDs (catalog browsing)
 //   - compliance/{project}/*, get, allow - Read access to compliance data (enterprise feature)
 //   - compliance/{project}/*, list, allow - List access to compliance data (enterprise feature)
+//   - secrets/{project}/*, *, allow - Full secrets management for project
 func getBuiltInAdminPolicies(projectName string) []string {
 	return []string{
 		// Repository management - scoped to project
@@ -882,6 +884,9 @@ func getBuiltInAdminPolicies(projectName string) []string {
 		// Compliance read access - scoped to project (enterprise feature)
 		fmt.Sprintf("compliance/%s/*, get, allow", projectName),
 		fmt.Sprintf("compliance/%s/*, list, allow", projectName),
+
+		// Secrets management - full CRUD scoped to project
+		fmt.Sprintf("secrets/%s/*, *, allow", projectName),
 	}
 }
 
@@ -899,6 +904,8 @@ func getBuiltInAdminPolicies(projectName string) []string {
 //   - repositories/{project}/*, list, allow - List repositories in project
 //   - applications/{project}/*, get, allow - View applications in project
 //   - applications/{project}/*, list, allow - List applications in project
+//   - secrets/{project}/*, get, allow - View secrets in project
+//   - secrets/{project}/*, list, allow - List secrets in project
 func getBuiltInReadonlyPolicies(projectName string) []string {
 	return []string{
 		// Project: view only
@@ -919,6 +926,10 @@ func getBuiltInReadonlyPolicies(projectName string) []string {
 		// Applications: view and list only
 		fmt.Sprintf("applications/%s/*, get, allow", projectName),
 		fmt.Sprintf("applications/%s/*, list, allow", projectName),
+
+		// Secrets: view and list only
+		fmt.Sprintf("secrets/%s/*, get, allow", projectName),
+		fmt.Sprintf("secrets/%s/*, list, allow", projectName),
 	}
 }
 
@@ -1294,10 +1305,11 @@ func (pe *policyEnforcer) addProjectScopedPolicyFromString(projectName, roleName
 // This is the core of multi-tenant access control.
 //
 // Examples:
-//   - "*" -> ["projects/{project}", "instances/{project}/*", "repositories/{project}/*", ...]
+//   - "*" -> ["projects/{project}", "instances/{project}/*", "repositories/{project}/*", "secrets/{project}/*", ...]
 //   - "{project}/*" -> same as "*" (from 6-part ArgoCD format with resourceType="*")
 //   - "instances/*" -> ["instances/{project}/*"]
 //   - "repositories/*" -> ["repositories/{project}/*"]
+//   - "secrets/*" -> ["secrets/{project}/*"]
 //   - "rgds/*" -> ["rgds/*"] (RGDs are global/shared, not project-scoped)
 //   - "projects/{other}" -> ["projects/{other}"] (explicit path not modified)
 func scopeObjectToProject(projectName, object string) []string {
@@ -1315,6 +1327,8 @@ func scopeObjectToProject(projectName, object string) []string {
 			fmt.Sprintf("repositories/%s/*", projectName),
 			// Application management within project
 			fmt.Sprintf("applications/%s/*", projectName),
+			// Secrets management within project
+			fmt.Sprintf("secrets/%s/*", projectName),
 			// RGD access is global (catalog browsing) - not scoped
 			"rgds/*",
 		}
@@ -1324,7 +1338,8 @@ func scopeObjectToProject(projectName, object string) []string {
 	// "instances/*" -> "instances/{project}/*"
 	// "repositories/*" -> "repositories/{project}/*"
 	// "applications/*" -> "applications/{project}/*"
-	resourcePrefixes := []string{"instances/", "repositories/", "applications/"}
+	// "secrets/*" -> "secrets/{project}/*"
+	resourcePrefixes := []string{"instances/", "repositories/", "applications/", "secrets/"}
 	for _, prefix := range resourcePrefixes {
 		if object == prefix+"*" {
 			return []string{fmt.Sprintf("%s%s/*", prefix, projectName)}

@@ -13,9 +13,11 @@ import (
 	"testing"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	fakediscovery "k8s.io/client-go/discovery/fake"
 	fakedynamic "k8s.io/client-go/dynamic/fake"
 	k8stesting "k8s.io/client-go/testing"
 
@@ -1159,69 +1161,6 @@ func TestHandleUpdateError_NoRawErrorLeakage(t *testing.T) {
 	}
 }
 
-// TestGVRFromAPIVersionAndKind tests the GVR resolution helper
-func TestGVRFromAPIVersionAndKind(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name       string
-		apiVersion string
-		kind       string
-		wantGroup  string
-		wantVer    string
-		wantRes    string
-	}{
-		{
-			name:       "kro.run alpha",
-			apiVersion: "kro.run/v1alpha1",
-			kind:       "WebApp",
-			wantGroup:  "kro.run",
-			wantVer:    "v1alpha1",
-			wantRes:    "webapps",
-		},
-		{
-			name:       "custom group",
-			apiVersion: "example.com/v1",
-			kind:       "Database",
-			wantGroup:  "example.com",
-			wantVer:    "v1",
-			wantRes:    "databases",
-		},
-		{
-			name:       "version only alpha",
-			apiVersion: "v1alpha1",
-			kind:       "Widget",
-			wantGroup:  "kro.run",
-			wantVer:    "v1alpha1",
-			wantRes:    "widgets",
-		},
-		{
-			name:       "version only stable",
-			apiVersion: "v1",
-			kind:       "Pod",
-			wantGroup:  "",
-			wantVer:    "v1",
-			wantRes:    "pods",
-		},
-	}
-
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			gvr := gvrFromAPIVersionAndKind(tt.apiVersion, tt.kind)
-			if gvr.Group != tt.wantGroup {
-				t.Errorf("group: expected %q, got %q", tt.wantGroup, gvr.Group)
-			}
-			if gvr.Version != tt.wantVer {
-				t.Errorf("version: expected %q, got %q", tt.wantVer, gvr.Version)
-			}
-			if gvr.Resource != tt.wantRes {
-				t.Errorf("resource: expected %q, got %q", tt.wantRes, gvr.Resource)
-			}
-		})
-	}
-}
-
 // --- Deployment mode update tests (Task 2) ---
 
 // newGitOpsUpdateTestSetup creates a test instance with gitops deployment mode label.
@@ -1815,5 +1754,172 @@ func TestCreateInstance_SpecInjection(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestUpdateInstance_IrregularPlural_UsesDiscovery verifies that UpdateInstance uses discovery-based
+// GVR resolution for kinds with irregular plurals (e.g., "Proxy" -> "proxies" not "proxys").
+func TestUpdateInstance_IrregularPlural_UsesDiscovery(t *testing.T) {
+	t.Parallel()
+
+	// Set up fake discovery with Proxy -> proxies mapping
+	disc := &fakediscovery.FakeDiscovery{
+		Fake: &k8stesting.Fake{},
+	}
+	disc.Resources = []*metav1.APIResourceList{
+		{
+			GroupVersion: "example.com/v1",
+			APIResources: []metav1.APIResource{
+				{Name: "proxies", Kind: "Proxy", Verbs: metav1.Verbs{"get", "list", "create", "update", "patch"}},
+			},
+		},
+	}
+
+	cache := watcher.NewInstanceCache()
+	cache.Set(&models.Instance{
+		Name:       "my-proxy",
+		Namespace:  "default",
+		Kind:       "Proxy",
+		APIVersion: "example.com/v1",
+		RGDName:    "proxy-rgd",
+		Health:     models.HealthHealthy,
+		Labels: map[string]string{
+			models.DeploymentModeLabel: string(deployment.ModeDirect),
+		},
+		Spec: map[string]interface{}{"port": float64(8080)},
+	})
+
+	scheme := runtime.NewScheme()
+	obj := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "example.com/v1",
+			"kind":       "Proxy",
+			"metadata": map[string]interface{}{
+				"name":            "my-proxy",
+				"namespace":       "default",
+				"resourceVersion": "100",
+			},
+			"spec": map[string]interface{}{"port": float64(8080)},
+		},
+	}
+	gvrToListKind := map[schema.GroupVersionResource]string{
+		{Group: "example.com", Version: "v1", Resource: "proxies"}: "ProxyList",
+	}
+	fakeDynClient := fakedynamic.NewSimpleDynamicClientWithCustomListKinds(scheme, gvrToListKind, obj)
+
+	tracker := watcher.NewInstanceTrackerForTest(cache, fakeDynClient)
+	tracker.SetDiscoveryClient(disc)
+
+	handler := NewInstanceCRUDHandler(InstanceCRUDHandlerConfig{
+		InstanceTracker: tracker,
+		DynamicClient:   fakeDynClient,
+	})
+
+	body := `{"spec": {"port": 9090}}`
+	userCtx := &middleware.UserContext{UserID: "dev-user", Email: "dev@test.local"}
+	req := newRequestWithUserContext(http.MethodPatch, "/api/v1/instances/default/Proxy/my-proxy",
+		[]byte(body), userCtx)
+	req.SetPathValue("namespace", "default")
+	req.SetPathValue("kind", "Proxy")
+	req.SetPathValue("name", "my-proxy")
+	rec := httptest.NewRecorder()
+
+	handler.UpdateInstance(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", rec.Code, rec.Body.String())
+	}
+
+	// Verify the dynamic client received "proxies" (not "proxys")
+	actions := fakeDynClient.Actions()
+	var patchAction k8stesting.PatchAction
+	for _, a := range actions {
+		if pa, ok := a.(k8stesting.PatchAction); ok {
+			patchAction = pa
+			break
+		}
+	}
+
+	expectedGVR := schema.GroupVersionResource{Group: "example.com", Version: "v1", Resource: "proxies"}
+	if patchAction.GetResource() != expectedGVR {
+		t.Errorf("expected GVR %v, got %v", expectedGVR, patchAction.GetResource())
+	}
+}
+
+// TestDirectDeploy_IrregularPlural_UsesDiscovery verifies that directDeploy uses discovery-based
+// GVR resolution for kinds with irregular plurals.
+func TestDirectDeploy_IrregularPlural_UsesDiscovery(t *testing.T) {
+	t.Parallel()
+
+	// Set up fake discovery with Proxy -> proxies mapping
+	disc := &fakediscovery.FakeDiscovery{
+		Fake: &k8stesting.Fake{},
+	}
+	disc.Resources = []*metav1.APIResourceList{
+		{
+			GroupVersion: "example.com/v1",
+			APIResources: []metav1.APIResource{
+				{Name: "proxies", Kind: "Proxy", Verbs: metav1.Verbs{"get", "list", "create"}},
+			},
+		},
+	}
+
+	cache := watcher.NewInstanceCache()
+	tracker := watcher.NewInstanceTrackerForTest(cache, nil)
+	tracker.SetDiscoveryClient(disc)
+
+	scheme := runtime.NewScheme()
+	gvrToListKind := map[schema.GroupVersionResource]string{
+		{Group: "example.com", Version: "v1", Resource: "proxies"}: "ProxyList",
+	}
+	fakeDynClient := fakedynamic.NewSimpleDynamicClientWithCustomListKinds(scheme, gvrToListKind)
+
+	// Set up RGD watcher with a Proxy RGD
+	rgdCache := watcher.NewRGDCache()
+	rgdCache.Set(&models.CatalogRGD{
+		Name:       "proxy-rgd",
+		APIVersion: "example.com/v1",
+		Kind:       "Proxy",
+	})
+
+	rgdWatcher := watcher.NewRGDWatcherWithCache(rgdCache)
+
+	handler := NewInstanceDeploymentHandler(InstanceDeploymentHandlerConfig{
+		RGDWatcher:      rgdWatcher,
+		InstanceTracker: tracker,
+		DynamicClient:   fakeDynClient,
+	})
+
+	deployReq := &deployment.DeployRequest{
+		Name:           "my-proxy",
+		Namespace:      "default",
+		APIVersion:     "example.com/v1",
+		Kind:           "Proxy",
+		Spec:           map[string]interface{}{"port": float64(8080)},
+		DeploymentMode: deployment.ModeDirect,
+	}
+
+	result, err := handler.directDeploy(context.Background(), deployReq, "example.com", "v1", "Proxy", "default")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Name != "my-proxy" {
+		t.Errorf("expected name 'my-proxy', got %q", result.Name)
+	}
+
+	// Verify the dynamic client received "proxies" (not "proxys")
+	actions := fakeDynClient.Actions()
+	if len(actions) != 1 {
+		t.Fatalf("expected 1 action, got %d", len(actions))
+	}
+
+	createAction, ok := actions[0].(k8stesting.CreateAction)
+	if !ok {
+		t.Fatalf("expected CreateAction, got %T", actions[0])
+	}
+
+	expectedGVR := schema.GroupVersionResource{Group: "example.com", Version: "v1", Resource: "proxies"}
+	if createAction.GetResource() != expectedGVR {
+		t.Errorf("expected GVR %v, got %v", expectedGVR, createAction.GetResource())
 	}
 }

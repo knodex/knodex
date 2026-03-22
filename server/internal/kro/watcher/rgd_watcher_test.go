@@ -210,6 +210,93 @@ func TestRGDWatcher_UnstructuredToRGD(t *testing.T) {
 	if rgd.Kind != "TestResource" {
 		t.Errorf("expected kind 'TestResource', got %q", rgd.Kind)
 	}
+
+	// Check DocsURL (no docs-url annotation in this test, should be empty)
+	if rgd.DocsURL != "" {
+		t.Errorf("expected empty DocsURL when annotation absent, got %q", rgd.DocsURL)
+	}
+
+	// Check PluralName (no spec.schema.crd.spec.names.plural set → should be empty)
+	if rgd.PluralName != "" {
+		t.Errorf("expected empty PluralName for RGD without spec.schema.crd.spec.names.plural, got %q", rgd.PluralName)
+	}
+}
+
+func TestRGDWatcher_UnstructuredToRGD_DocsURL(t *testing.T) {
+	fakeClient := testutil.NewFakeDynamicClient(t)
+	watcher := NewRGDWatcherWithClient(fakeClient)
+
+	t.Run("docs-url annotation is extracted", func(t *testing.T) {
+		annotations := map[string]string{
+			kro.CatalogAnnotation: "true",
+			kro.DocsURLAnnotation: "https://docs.example.com/my-rgd",
+		}
+		u := createTestRGD("my-rgd", "default", annotations, nil)
+		rgd := watcher.unstructuredToRGD(u)
+		if rgd.DocsURL != "https://docs.example.com/my-rgd" {
+			t.Errorf("expected docsUrl 'https://docs.example.com/my-rgd', got %q", rgd.DocsURL)
+		}
+	})
+
+	t.Run("missing docs-url annotation produces empty string", func(t *testing.T) {
+		annotations := map[string]string{
+			kro.CatalogAnnotation: "true",
+		}
+		u := createTestRGD("my-rgd", "default", annotations, nil)
+		rgd := watcher.unstructuredToRGD(u)
+		if rgd.DocsURL != "" {
+			t.Errorf("expected empty docsUrl for RGD without annotation, got %q", rgd.DocsURL)
+		}
+	})
+}
+
+func TestRGDWatcher_UnstructuredToRGD_PluralName(t *testing.T) {
+	fakeClient := testutil.NewFakeDynamicClient(t)
+	watcher := NewRGDWatcherWithClient(fakeClient)
+
+	t.Run("plural name extracted from spec.schema.crd.spec.names.plural", func(t *testing.T) {
+		u := testutil.NewUnstructuredRGD("proxy-rgd", "default",
+			testutil.WithAnnotations(map[string]string{kro.CatalogAnnotation: "true"}),
+			testutil.WithPluralName("proxies"),
+		)
+		rgd := watcher.unstructuredToRGD(u)
+		if rgd.PluralName != "proxies" {
+			t.Errorf("expected PluralName 'proxies', got %q — check parser path: spec.schema.crd.spec.names.plural", rgd.PluralName)
+		}
+	})
+
+	t.Run("missing plural name produces empty string", func(t *testing.T) {
+		u := testutil.NewUnstructuredRGD("webapp-rgd", "default",
+			testutil.WithAnnotations(map[string]string{kro.CatalogAnnotation: "true"}),
+		)
+		rgd := watcher.unstructuredToRGD(u)
+		if rgd.PluralName != "" {
+			t.Errorf("expected empty PluralName when spec.schema.crd.spec.names.plural absent, got %q", rgd.PluralName)
+		}
+	})
+
+	t.Run("crd.spec.names exists but plural key absent produces empty string", func(t *testing.T) {
+		// Simulate an RGD where spec.schema.crd.spec.names exists with only singular/kind
+		// but no "plural" key — the most realistic scenario for KRO auto-pluralized RGDs.
+		u := testutil.NewUnstructuredRGD("partial-names-rgd", "default",
+			testutil.WithAnnotations(map[string]string{kro.CatalogAnnotation: "true"}),
+		)
+		// Manually inject partial names block without plural
+		spec := u.Object["spec"].(map[string]interface{})
+		schemaMap := spec["schema"].(map[string]interface{})
+		schemaMap["crd"] = map[string]interface{}{
+			"spec": map[string]interface{}{
+				"names": map[string]interface{}{
+					"singular": "webapp",
+					"kind":     "WebApp",
+				},
+			},
+		}
+		rgd := watcher.unstructuredToRGD(u)
+		if rgd.PluralName != "" {
+			t.Errorf("expected empty PluralName when plural key absent from names block, got %q", rgd.PluralName)
+		}
+	})
 }
 
 func TestRGDWatcher_UnstructuredToRGD_TitleAnnotation(t *testing.T) {
@@ -1448,6 +1535,242 @@ func TestRGDWatcher_GetRGDByKind(t *testing.T) {
 	}
 }
 
+// TestExtractDependsOnKindsAndSecretRefs validates both return values of
+// extractDependsOnKindsAndSecretRefs. The sibling TestExtractDependsOnKinds
+// only validated kinds; this test covers the secretRefs output (Task 4.2).
+func TestExtractDependsOnKindsAndSecretRefs(t *testing.T) {
+	tests := []struct {
+		name                string
+		rawSpec             map[string]interface{}
+		expectedSecretCount int
+		expectedType        string // type of first secretRef when count > 0
+		expectedName        string // Name (fixed) or NameExpr (dynamic) of first secretRef
+		expectedNamespace   string // Namespace (fixed) or NamespaceExpr (dynamic) of first secretRef
+	}{
+		{
+			name:                "nil spec returns no secretRefs",
+			rawSpec:             nil,
+			expectedSecretCount: 0,
+		},
+		{
+			name: "dynamic secret externalRef",
+			rawSpec: map[string]interface{}{
+				"resources": []interface{}{
+					map[string]interface{}{
+						"externalRef": map[string]interface{}{
+							"apiVersion": "v1",
+							"kind":       "Secret",
+							"metadata": map[string]interface{}{
+								"name":      "${schema.spec.secretName}",
+								"namespace": "${schema.spec.secretNamespace}",
+							},
+						},
+					},
+				},
+			},
+			expectedSecretCount: 1,
+			expectedType:        "dynamic",
+			expectedName:        "${schema.spec.secretName}",
+			expectedNamespace:   "${schema.spec.secretNamespace}",
+		},
+		{
+			name: "fixed secret externalRef",
+			rawSpec: map[string]interface{}{
+				"resources": []interface{}{
+					map[string]interface{}{
+						"externalRef": map[string]interface{}{
+							"apiVersion": "v1",
+							"kind":       "Secret",
+							"metadata": map[string]interface{}{
+								"name":      "my-static-secret",
+								"namespace": "kube-system",
+							},
+						},
+					},
+				},
+			},
+			expectedSecretCount: 1,
+			expectedType:        "fixed",
+			expectedName:        "my-static-secret",
+			expectedNamespace:   "kube-system",
+		},
+		{
+			name: "mixed externalRefs: only Secret counted in secretRefs",
+			rawSpec: map[string]interface{}{
+				"resources": []interface{}{
+					map[string]interface{}{
+						"externalRef": map[string]interface{}{
+							"apiVersion": "v1",
+							"kind":       "Secret",
+							"metadata": map[string]interface{}{
+								"name":      "${schema.spec.dbSecret}",
+								"namespace": "${schema.spec.dbNamespace}",
+							},
+						},
+					},
+					map[string]interface{}{
+						"externalRef": map[string]interface{}{
+							"apiVersion": "v1",
+							"kind":       "ConfigMap",
+							"metadata": map[string]interface{}{
+								"name":      "${schema.spec.configMap}",
+								"namespace": "default",
+							},
+						},
+					},
+				},
+			},
+			expectedSecretCount: 1,
+			expectedType:        "dynamic",
+			expectedName:        "${schema.spec.dbSecret}",
+			expectedNamespace:   "${schema.spec.dbNamespace}",
+		},
+		{
+			name: "no secret externalRefs returns empty secretRefs",
+			rawSpec: map[string]interface{}{
+				"resources": []interface{}{
+					map[string]interface{}{
+						"externalRef": map[string]interface{}{
+							"apiVersion": "v1",
+							"kind":       "ConfigMap",
+							"metadata": map[string]interface{}{
+								"name": "${schema.spec.configMapName}",
+							},
+						},
+					},
+				},
+			},
+			expectedSecretCount: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, secretRefs := extractDependsOnKindsAndSecretRefs(tt.rawSpec, "test-rgd")
+
+			if len(secretRefs) != tt.expectedSecretCount {
+				t.Fatalf("expected %d secretRefs, got %d: %+v", tt.expectedSecretCount, len(secretRefs), secretRefs)
+			}
+
+			if tt.expectedSecretCount > 0 {
+				sr := secretRefs[0]
+				if sr.Type != tt.expectedType {
+					t.Errorf("secretRef[0].Type = %q, want %q", sr.Type, tt.expectedType)
+				}
+				if tt.expectedType == "dynamic" {
+					if sr.NameExpr != tt.expectedName {
+						t.Errorf("secretRef[0].NameExpr = %q, want %q", sr.NameExpr, tt.expectedName)
+					}
+					if sr.NamespaceExpr != tt.expectedNamespace {
+						t.Errorf("secretRef[0].NamespaceExpr = %q, want %q", sr.NamespaceExpr, tt.expectedNamespace)
+					}
+				} else {
+					if sr.Name != tt.expectedName {
+						t.Errorf("secretRef[0].Name = %q, want %q", sr.Name, tt.expectedName)
+					}
+					if sr.Namespace != tt.expectedNamespace {
+						t.Errorf("secretRef[0].Namespace = %q, want %q", sr.Namespace, tt.expectedNamespace)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestRGDWatcher_UnstructuredToRGD_SecretRefs is an integration test verifying
+// that unstructuredToRGD correctly populates CatalogRGD.SecretRefs when the RGD
+// spec contains Secret externalRef resources. This exercises the full path from
+// Kubernetes object → model, catching any accidental drops of the SecretRefs
+// assignment in unstructuredToRGD.
+func TestRGDWatcher_UnstructuredToRGD_SecretRefs(t *testing.T) {
+	fakeClient := testutil.NewFakeDynamicClient(t)
+	w := NewRGDWatcherWithClient(fakeClient)
+
+	// Construct an unstructured RGD with a Secret externalRef and a ConfigMap externalRef
+	u := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "kro.run/v1alpha1",
+		"kind":       "ResourceGraphDefinition",
+		"metadata": map[string]interface{}{
+			"name":              "app-with-secret",
+			"namespace":         "default",
+			"resourceVersion":   "1",
+			"creationTimestamp": "2026-01-01T00:00:00Z",
+			"annotations": map[string]interface{}{
+				kro.CatalogAnnotation: "true",
+			},
+			"labels": map[string]interface{}{},
+		},
+		"spec": map[string]interface{}{
+			"schema": map[string]interface{}{
+				"apiVersion": "example.com/v1alpha1",
+				"kind":       "AppWithSecret",
+			},
+			"resources": []interface{}{
+				map[string]interface{}{
+					"externalRef": map[string]interface{}{
+						"apiVersion": "v1",
+						"kind":       "Secret",
+						"metadata": map[string]interface{}{
+							"name":      "${schema.spec.secretName}",
+							"namespace": "${schema.spec.secretNamespace}",
+						},
+					},
+				},
+				map[string]interface{}{
+					"externalRef": map[string]interface{}{
+						"apiVersion": "v1",
+						"kind":       "ConfigMap",
+						"metadata": map[string]interface{}{
+							"name":      "${schema.spec.configMapName}",
+							"namespace": "default",
+						},
+					},
+				},
+			},
+		},
+		"status": map[string]interface{}{
+			"state": "Active",
+		},
+	}}
+
+	rgd := w.unstructuredToRGD(u)
+
+	if rgd == nil {
+		t.Fatal("expected non-nil CatalogRGD")
+	}
+
+	// Only the Secret externalRef should appear in SecretRefs, not the ConfigMap.
+	if len(rgd.SecretRefs) != 1 {
+		t.Fatalf("expected 1 SecretRef, got %d: %+v", len(rgd.SecretRefs), rgd.SecretRefs)
+	}
+
+	sr := rgd.SecretRefs[0]
+	if sr.Type != "dynamic" {
+		t.Errorf("SecretRef.Type = %q, want %q", sr.Type, "dynamic")
+	}
+	if sr.NameExpr != "${schema.spec.secretName}" {
+		t.Errorf("SecretRef.NameExpr = %q, want %q", sr.NameExpr, "${schema.spec.secretName}")
+	}
+	if sr.NamespaceExpr != "${schema.spec.secretNamespace}" {
+		t.Errorf("SecretRef.NamespaceExpr = %q, want %q", sr.NamespaceExpr, "${schema.spec.secretNamespace}")
+	}
+	if sr.ID != "0-Secret" {
+		t.Errorf("SecretRef.ID = %q, want %q", sr.ID, "0-Secret")
+	}
+
+	// Both Secret and ConfigMap should be in DependsOnKinds.
+	kindSet := make(map[string]bool)
+	for _, k := range rgd.DependsOnKinds {
+		kindSet[k] = true
+	}
+	if !kindSet["Secret"] {
+		t.Errorf("expected Secret in DependsOnKinds, got %v", rgd.DependsOnKinds)
+	}
+	if !kindSet["ConfigMap"] {
+		t.Errorf("expected ConfigMap in DependsOnKinds, got %v", rgd.DependsOnKinds)
+	}
+}
+
 func TestExtractDependsOnKinds(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -1558,7 +1881,7 @@ func TestExtractDependsOnKinds(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := extractDependsOnKinds(tt.rawSpec, "test-rgd")
+			result, _ := extractDependsOnKindsAndSecretRefs(tt.rawSpec, "test-rgd")
 
 			if len(result) != len(tt.expected) {
 				t.Fatalf("expected %d kinds, got %d: %v", len(tt.expected), len(result), result)

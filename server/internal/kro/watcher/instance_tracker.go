@@ -120,6 +120,16 @@ func NewInstanceTrackerForTest(cache *InstanceCache, dynamicClient dynamic.Inter
 	return t
 }
 
+// SetDiscoveryClient sets the discovery client on the tracker.
+// Primarily used for testing to inject a fake discovery client.
+//
+// NOT safe for concurrent use: must be called before Start() or any goroutine
+// that reads t.discoveryClient. Production code sets this once at construction
+// via NewInstanceTracker; tests should call it before any handler invocations.
+func (t *InstanceTracker) SetDiscoveryClient(client discovery.DiscoveryInterface) {
+	t.discoveryClient = client
+}
+
 // Start begins watching for instances of all known RGD types
 func (t *InstanceTracker) Start(ctx context.Context) error {
 	if t.running.Load() {
@@ -332,29 +342,30 @@ func (t *InstanceTracker) ensureInformerForRGD(rgd *models.CatalogRGD) {
 	go t.runInformer(gvr, rgd.Name, rgd.Namespace, stopCh)
 }
 
+// parseAPIVersion splits an apiVersion string into group and version.
+// For "group/version" format (e.g., "example.com/v1"), returns (group, version).
+// For version-only format (e.g., "v1alpha1"), defaults group to kro.RGDGroup
+// for alpha/beta versions, or "" for stable core K8s versions (e.g., "v1").
+func parseAPIVersion(apiVersion string) (group, version string) {
+	parts := strings.Split(apiVersion, "/")
+	if len(parts) == 2 {
+		return parts[0], parts[1]
+	}
+	// Version-only apiVersion (e.g., "v1" or "v1alpha1")
+	version = apiVersion
+	// Kro-created RGDs often only specify version (e.g., "v1alpha1")
+	// and Kro adds the KRO domain as the group when creating the CRD.
+	// Core Kubernetes resources use stable versions (e.g., "v1", "v2") with empty group.
+	// So we default to the KRO group only for alpha/beta versions.
+	if strings.Contains(version, "alpha") || strings.Contains(version, "beta") {
+		group = kro.RGDGroup
+	}
+	return group, version
+}
+
 // gvrFromRGD extracts the GVR from an RGD using discovery client
 func (t *InstanceTracker) gvrFromRGD(rgd *models.CatalogRGD) schema.GroupVersionResource {
-	// Parse apiVersion (e.g., "example.com/v1" or "kro.run/v1alpha1")
-	parts := strings.Split(rgd.APIVersion, "/")
-	var group, version string
-	if len(parts) == 2 {
-		group = parts[0]
-		version = parts[1]
-	} else {
-		// Version-only apiVersion (e.g., "v1" or "v1alpha1")
-		version = rgd.APIVersion
-
-		// Kro-created RGDs often only specify version (e.g., "v1alpha1")
-		// and Kro adds the KRO domain as the group when creating the CRD.
-		// Core Kubernetes resources use stable versions (e.g., "v1", "v2") with empty group.
-		// So we default to the KRO group only for alpha/beta versions.
-		if strings.Contains(version, "alpha") || strings.Contains(version, "beta") {
-			group = kro.RGDGroup
-		} else {
-			// Core Kubernetes resource with stable version (e.g., "v1")
-			group = ""
-		}
-	}
+	group, version := parseAPIVersion(rgd.APIVersion)
 
 	// Try to use discovery client to resolve GVR properly
 	if t.discoveryClient != nil {
@@ -409,6 +420,32 @@ func (t *InstanceTracker) resolveGVRFromGVK(gvk schema.GroupVersionKind) (schema
 	}
 
 	return mapping.Resource, nil
+}
+
+// ResolveGVR resolves a GroupVersionResource from an apiVersion string and kind
+// using the discovery client. Falls back to naive pluralization if discovery fails.
+// The returned error is nil even on discovery failure — callers always get a best-effort GVR.
+func (t *InstanceTracker) ResolveGVR(apiVersion, kind string) (schema.GroupVersionResource, error) {
+	group, version := parseAPIVersion(apiVersion)
+
+	if t.discoveryClient != nil {
+		gvk := schema.GroupVersionKind{Group: group, Version: version, Kind: kind}
+		gvr, err := t.resolveGVRFromGVK(gvk)
+		if err == nil {
+			return gvr, nil
+		}
+		t.logger.Warn("GVR resolution via discovery failed, falling back to naive pluralization",
+			"kind", kind, "error", err)
+	} else {
+		t.logger.Warn("discovery client unavailable, falling back to naive pluralization",
+			"kind", kind)
+	}
+
+	return schema.GroupVersionResource{
+		Group:    group,
+		Version:  version,
+		Resource: strings.ToLower(kind) + "s",
+	}, nil
 }
 
 // runInformer runs an informer for a specific GVR
@@ -789,29 +826,9 @@ func (t *InstanceTracker) CountInstancesByRGDAndNamespaces(rgdNamespace, rgdName
 
 // DeleteInstance deletes an instance from the cluster
 func (t *InstanceTracker) DeleteInstance(ctx context.Context, namespace, name, apiVersion, kind string) error {
-	// Parse apiVersion to get GVR
-	parts := strings.Split(apiVersion, "/")
-	var group, version string
-	if len(parts) == 2 {
-		group = parts[0]
-		version = parts[1]
-	} else {
-		// Version-only apiVersion
-		version = apiVersion
-		// Default to KRO group for alpha/beta versions, empty for stable versions
-		if strings.Contains(version, "alpha") || strings.Contains(version, "beta") {
-			group = kro.RGDGroup
-		} else {
-			group = ""
-		}
-	}
-
-	resource := strings.ToLower(kind) + "s"
-	gvr := schema.GroupVersionResource{
-		Group:    group,
-		Version:  version,
-		Resource: resource,
-	}
+	// Resolve GVR via discovery with naive-pluralization fallback.
+	// ResolveGVR handles apiVersion parsing, discovery, fallback, and warning logs internally.
+	gvr, _ := t.ResolveGVR(apiVersion, kind)
 
 	err := t.dynamicClient.Resource(gvr).Namespace(namespace).Delete(ctx, name, metav1.DeleteOptions{})
 	if err != nil {

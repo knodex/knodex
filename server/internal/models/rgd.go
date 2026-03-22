@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/knodex/knodex/server/internal/kro"
+	kroparser "github.com/knodex/knodex/server/internal/kro/parser"
 )
 
 // Re-export KRO constants from the centralized kro package for backward compatibility.
@@ -24,6 +25,8 @@ const (
 	VersionAnnotation         = kro.VersionAnnotation
 	TitleAnnotation           = kro.TitleAnnotation
 	DeploymentModesAnnotation = kro.DeploymentModesAnnotation
+	ExtendsKindAnnotation     = kro.ExtendsKindAnnotation
+	DocsURLAnnotation         = kro.DocsURLAnnotation
 
 	RGDProjectLabel      = kro.RGDProjectLabel
 	RGDOrganizationLabel = kro.RGDOrganizationLabel
@@ -53,6 +56,8 @@ type CatalogRGD struct {
 	Category string `json:"category"`
 	// Icon is the UI icon hint from annotations
 	Icon string `json:"icon"`
+	// DocsURL is the documentation URL from the knodex.io/docs-url annotation
+	DocsURL string `json:"docsUrl,omitempty"`
 	// Organization is the org scope from labels (empty = shared/public RGD)
 	Organization string `json:"organization,omitempty"`
 	// Labels from the RGD metadata
@@ -66,6 +71,8 @@ type CatalogRGD struct {
 	APIVersion string `json:"apiVersion,omitempty"`
 	// Kind is the Kind of CRs created by this RGD
 	Kind string `json:"kind,omitempty"`
+	// PluralName is the declared plural from spec.schema.crd.spec.names.plural. Empty means not declared.
+	PluralName string `json:"pluralName,omitempty"`
 	// Status is the KRO processing state (e.g., "Active", "Inactive")
 	// Empty/missing status means KRO has not yet processed the RGD
 	Status string `json:"status"`
@@ -76,6 +83,9 @@ type CatalogRGD struct {
 	// DependsOnKinds lists the unique Kinds from externalRef resources in the RGD.
 	// Populated at watcher time from parsing spec.resources externalRef entries.
 	DependsOnKinds []string `json:"dependsOnKinds,omitempty"`
+	// SecretRefs lists externalRef resources that reference Kubernetes Secrets.
+	// Populated at watcher time from parsing spec.resources externalRef entries.
+	SecretRefs []kroparser.SecretRef `json:"secretRefs,omitempty"`
 	// AllowedDeploymentModes restricts which deployment modes can be used
 	// Valid values: "direct", "gitops", "hybrid" (case-insensitive)
 	// Empty slice means all modes are allowed (default, backward compatible)

@@ -12,6 +12,7 @@ import (
 	k8sparser "github.com/knodex/knodex/server/internal/k8s/parser"
 
 	kroparser "github.com/kubernetes-sigs/kro/pkg/graph/parser"
+	"github.com/kubernetes-sigs/kro/pkg/simpleschema"
 )
 
 // maxRecursionDepth prevents stack overflow from deeply nested objects
@@ -82,6 +83,18 @@ func (p *ResourceParser) ParseRGDResources(rgdName, rgdNamespace string, rgdSpec
 		res := &graph.Resources[entry.graphIdx]
 		p.resolveDependencies(res, entry.originalMap, idByInternalID, graph)
 	}
+
+	// Build reverse map: graph resource ID → internal ID (e.g., "0-Secret" → "dbSecret")
+	resIDToInternalID := make(map[string]string, len(idByInternalID))
+	for internalID, resID := range idByInternalID {
+		resIDToInternalID[resID] = internalID
+	}
+
+	// Extract schema.spec.externalRef map for description lookup
+	schemaExternalRefs := extractSchemaExternalRefMap(rgdSpec)
+
+	// Extract secret references from externalRef resources
+	graph.SecretRefs = extractSecretRefs(graph, schemaExternalRefs, resIDToInternalID)
 
 	return graph, nil
 }
@@ -301,6 +314,116 @@ func extractBareSchemaFields(s string) []string {
 	}
 
 	return fields
+}
+
+// extractSecretRefs filters externalRef resources for Secret kind and classifies them.
+// schemaExternalRefs is the parsed schema.spec.externalRef map for description lookup.
+// resIDToInternalID maps resource graph IDs (e.g., "0-Secret") to their internal IDs (e.g., "dbSecret").
+func extractSecretRefs(graph *ResourceGraph, schemaExternalRefs map[string]interface{}, resIDToInternalID map[string]string) []SecretRef {
+	refs := make([]SecretRef, 0)
+	for _, res := range graph.Resources {
+		if res.IsTemplate || res.ExternalRef == nil {
+			continue
+		}
+		// Kubernetes kinds are case-sensitive PascalCase — exact match required.
+		if res.ExternalRef.Kind != "Secret" {
+			continue
+		}
+
+		ref := SecretRef{ID: res.ID}
+
+		// Extract semantic name and description first — we need internalID for passthrough detection.
+		internalID := ""
+		if id, ok := resIDToInternalID[res.ID]; ok {
+			internalID = id
+			ref.ExternalRefID = id
+			ref.Description = extractExternalRefDescription(schemaExternalRefs, id)
+		}
+
+		// Classify the secret ref type:
+		//
+		// "provided" — passthrough input pattern: both name and namespace reference
+		//   ${schema.spec.externalRef.<id>.name} / ${schema.spec.externalRef.<id>.namespace}.
+		//   The user supplies the secret name/namespace at deploy time; showing the CEL
+		//   expression is meaningless in the catalog detail view.
+		//
+		// "dynamic"  — computed from other resources (non-passthrough CEL expression).
+		//   e.g., ${schema.metadata.namespace} or ${someResource.metadata.name}.
+		//
+		// "fixed"    — literal string, no expressions.
+		nameExpr := res.ExternalRef.NameExpr
+		nsExpr := res.ExternalRef.NamespaceExpr
+		isPassthrough := internalID != "" &&
+			nameExpr == fmt.Sprintf("${schema.spec.externalRef.%s.name}", internalID) &&
+			(nsExpr == "" || nsExpr == fmt.Sprintf("${schema.spec.externalRef.%s.namespace}", internalID))
+		isDynamic := !isPassthrough && (strings.Contains(nameExpr, "${") || strings.Contains(nsExpr, "${"))
+
+		switch {
+		case isPassthrough:
+			ref.Type = "provided"
+		case isDynamic:
+			ref.Type = "dynamic"
+			ref.NameExpr = nameExpr
+			ref.NamespaceExpr = nsExpr
+		default:
+			ref.Type = "fixed"
+			ref.Name = nameExpr
+			ref.Namespace = nsExpr
+		}
+
+		refs = append(refs, ref)
+	}
+	return refs
+}
+
+// extractSchemaExternalRefMap extracts the schema.spec.externalRef map from an RGD spec.
+func extractSchemaExternalRefMap(rgdSpec map[string]interface{}) map[string]interface{} {
+	schemaMap, err := k8sparser.GetMap(rgdSpec, "schema")
+	if err != nil {
+		return nil
+	}
+	specMap, err := k8sparser.GetMap(schemaMap, "spec")
+	if err != nil {
+		return nil
+	}
+	extRefMap, err := k8sparser.GetMap(specMap, "externalRef")
+	if err != nil {
+		return nil
+	}
+	return extRefMap
+}
+
+// extractExternalRefDescription extracts the description from a schema externalRef field.
+// It looks up the "name" sub-field's description marker in the SimpleSchema definition.
+//
+// Why the "name" sub-field? In KRO SimpleSchema, the parent object (e.g., "dbSecret: {...}")
+// has no description slot of its own — descriptions live on leaf fields. The "name" sub-field
+// describes what the secret is (e.g., "Name of the K8s Secret containing DB credentials"),
+// which best characterizes the secret's purpose. The "namespace" sub-field describes where it
+// lives, which is secondary. This convention matches the webapp-with-secret RGD example.
+func extractExternalRefDescription(schemaExternalRefs map[string]interface{}, fieldName string) string {
+	if schemaExternalRefs == nil || fieldName == "" {
+		return ""
+	}
+	fieldMap, ok := schemaExternalRefs[fieldName].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	nameValue, ok := fieldMap["name"].(string)
+	if !ok {
+		return ""
+	}
+	// Parse simpleschema field definition to extract description marker
+	_, markers, err := simpleschema.ParseField(nameValue)
+	if err != nil {
+		return ""
+	}
+	for _, m := range markers {
+		if m.MarkerType == simpleschema.MarkerTypeDescription {
+			return m.Value
+		}
+	}
+	return ""
 }
 
 // resolveDependencies finds internal dependencies between resources within the RGD.

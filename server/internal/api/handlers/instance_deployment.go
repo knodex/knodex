@@ -13,7 +13,6 @@ import (
 	"github.com/google/uuid"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 
@@ -79,6 +78,7 @@ type CreateInstanceResponse struct {
 // InstanceDeploymentHandler handles instance deployment and creation
 type InstanceDeploymentHandler struct {
 	rgdWatcher           *watcher.RGDWatcher
+	instanceTracker      *watcher.InstanceTracker
 	dynamicClient        dynamic.Interface
 	kubeClient           kubernetes.Interface
 	deploymentController *deployment.Controller
@@ -89,12 +89,13 @@ type InstanceDeploymentHandler struct {
 
 // InstanceDeploymentHandlerConfig holds configuration for creating an InstanceDeploymentHandler.
 type InstanceDeploymentHandlerConfig struct {
-	RGDWatcher    *watcher.RGDWatcher
-	DynamicClient dynamic.Interface
-	KubeClient    kubernetes.Interface
-	RepoService   *repository.Service
-	AuditRecorder audit.Recorder
-	Logger        *slog.Logger
+	RGDWatcher      *watcher.RGDWatcher
+	InstanceTracker *watcher.InstanceTracker
+	DynamicClient   dynamic.Interface
+	KubeClient      kubernetes.Interface
+	RepoService     *repository.Service
+	AuditRecorder   audit.Recorder
+	Logger          *slog.Logger
 }
 
 // NewInstanceDeploymentHandler creates a new instance deployment handler.
@@ -111,6 +112,7 @@ func NewInstanceDeploymentHandler(config InstanceDeploymentHandlerConfig) *Insta
 
 	return &InstanceDeploymentHandler{
 		rgdWatcher:           config.RGDWatcher,
+		instanceTracker:      config.InstanceTracker,
 		dynamicClient:        config.DynamicClient,
 		kubeClient:           config.KubeClient,
 		deploymentController: deployCtrl,
@@ -483,11 +485,14 @@ func (h *InstanceDeploymentHandler) directDeploy(ctx context.Context, req *deplo
 		},
 	}
 
-	// Create the resource
-	gvr := schema.GroupVersionResource{
-		Group:    apiGroup,
-		Version:  version,
-		Resource: strings.ToLower(kind) + "s",
+	// Resolve GVR using discovery (falls back to naive pluralization).
+	// ResolveGVR always returns nil error (fallback is built-in); the check guards
+	// against future contract changes.
+	gvr, err := h.instanceTracker.ResolveGVR(req.APIVersion, kind)
+	if err != nil {
+		slog.Error("Failed to resolve GVR for direct deploy",
+			"apiVersion", req.APIVersion, "kind", kind, "error", err)
+		return nil, err
 	}
 
 	created, err := h.dynamicClient.Resource(gvr).Namespace(namespace).Create(ctx, obj, metav1.CreateOptions{})

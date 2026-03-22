@@ -10,6 +10,7 @@ import (
 	"errors"
 
 	"github.com/knodex/knodex/server/internal/api/middleware"
+	kroparser "github.com/knodex/knodex/server/internal/kro/parser"
 	"github.com/knodex/knodex/server/internal/models"
 )
 
@@ -129,24 +130,26 @@ type ListRGDsResult struct {
 // RGDResponse represents an RGD in the API response.
 // This matches the existing handler response format for backward compatibility.
 type RGDResponse struct {
-	Name                   string            `json:"name"`
-	Title                  string            `json:"title"`
-	Namespace              string            `json:"namespace"`
-	Description            string            `json:"description"`
-	Version                string            `json:"version"`
-	Tags                   []string          `json:"tags"`
-	Category               string            `json:"category"`
-	Icon                   string            `json:"icon,omitempty"`
-	Labels                 map[string]string `json:"labels"`
-	Instances              int               `json:"instances"`
-	APIVersion             string            `json:"apiVersion,omitempty"`
-	Kind                   string            `json:"kind,omitempty"`
-	ExtendsKinds           []string          `json:"extendsKinds,omitempty"`
-	Status                 string            `json:"status,omitempty"`
-	DependsOnKinds         []string          `json:"dependsOnKinds,omitempty"`
-	AllowedDeploymentModes []string          `json:"allowedDeploymentModes,omitempty"`
-	CreatedAt              string            `json:"createdAt"`
-	UpdatedAt              string            `json:"updatedAt"`
+	Name                   string                `json:"name"`
+	Title                  string                `json:"title"`
+	Namespace              string                `json:"namespace"`
+	Description            string                `json:"description"`
+	Version                string                `json:"version"`
+	Tags                   []string              `json:"tags"`
+	Category               string                `json:"category"`
+	Icon                   string                `json:"icon,omitempty"`
+	DocsURL                string                `json:"docsUrl,omitempty"`
+	Labels                 map[string]string     `json:"labels"`
+	Instances              int                   `json:"instances"`
+	APIVersion             string                `json:"apiVersion,omitempty"`
+	Kind                   string                `json:"kind,omitempty"`
+	ExtendsKinds           []string              `json:"extendsKinds,omitempty"`
+	Status                 string                `json:"status,omitempty"`
+	DependsOnKinds         []string              `json:"dependsOnKinds,omitempty"`
+	SecretRefs             []kroparser.SecretRef `json:"secretRefs,omitempty"`
+	AllowedDeploymentModes []string              `json:"allowedDeploymentModes,omitempty"`
+	CreatedAt              string                `json:"createdAt"`
+	UpdatedAt              string                `json:"updatedAt"`
 }
 
 // RGDFilterOptions represents available filter values for the catalog UI.
@@ -191,6 +194,7 @@ func ToRGDResponse(rgd *models.CatalogRGD, instanceCount int) RGDResponse {
 		Tags:                   tags,
 		Category:               rgd.Category,
 		Icon:                   rgd.Icon,
+		DocsURL:                rgd.DocsURL,
 		Labels:                 labels,
 		Instances:              instanceCount,
 		APIVersion:             rgd.APIVersion,
@@ -198,6 +202,7 @@ func ToRGDResponse(rgd *models.CatalogRGD, instanceCount int) RGDResponse {
 		ExtendsKinds:           rgd.ExtendsKinds,
 		Status:                 rgd.Status,
 		DependsOnKinds:         rgd.DependsOnKinds,
+		SecretRefs:             rgd.SecretRefs,
 		AllowedDeploymentModes: rgd.AllowedDeploymentModes,
 		CreatedAt:              rgd.CreatedAt.Format("2006-01-02T15:04:05Z"),
 		UpdatedAt:              rgd.UpdatedAt.Format("2006-01-02T15:04:05Z"),

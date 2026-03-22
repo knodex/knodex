@@ -13,6 +13,7 @@ import {
   ScrollText,
   ChevronDown,
   FolderKanban,
+  KeyRound,
 } from "lucide-react";
 import type { LucideProps } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -20,6 +21,7 @@ import { getLucideIcon } from "@/lib/icons";
 import { useRGDCount, useInstanceCount } from "@/hooks";
 import { useViolationCount, isEnterprise } from "@/hooks/useCompliance";
 import { useViewsEnabled } from "@/hooks/useViews";
+import { useCanI } from "@/hooks/useCanI";
 import {
   Tooltip,
   TooltipContent,
@@ -82,6 +84,7 @@ export function Sidebar({
     location.pathname.startsWith('/settings') ? 'settings' :
     location.pathname.startsWith('/audit') ? 'audit' :
     location.pathname.startsWith('/compliance') ? 'compliance' :
+    location.pathname.startsWith('/secrets') ? 'secrets' :
     location.pathname.startsWith('/instances') ? 'instances' :
     viewSlugMatch ? `view-${viewSlugMatch[1]}` :
     'catalog';
@@ -131,6 +134,9 @@ export function Sidebar({
   const { data: instanceCountData } = useInstanceCount();
   const { data: violationCount } = useViolationCount();
 
+  // Secrets nav visibility: only shown when user has any secrets permission (AC #5)
+  const { allowed: canViewSecrets } = useCanI("secrets", "get", "-");
+
   const rgdCount = rgdCountData?.count ?? 0;
   const instanceCount = instanceCountData?.count ?? 0;
 
@@ -152,6 +158,9 @@ export function Sidebar({
   const coreNavItems: NavItem[] = [
     { id: "catalog", label: "Catalog", icon: LayoutGrid, badge: rgdCount, to: "/catalog" },
     { id: "instances", label: "Instances", icon: Box, badge: instanceCount, to: "/instances" },
+    // Secrets: only shown when user has secrets:get permission
+    // Use === true to avoid flashing the nav item while permission is loading (undefined)
+    ...(canViewSecrets === true ? [{ id: "secrets" as NavTab, label: "Secrets", icon: KeyRound, to: "/secrets" }] : []),
   ];
 
   // Enterprise-only items after views
