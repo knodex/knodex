@@ -1,0 +1,84 @@
+name: Version Docs on Release PR
+
+# Runs when Release Please creates or updates its PR.
+# Adds a versioned docs snapshot to the PR branch so that
+# merging the release PR also publishes the docs version.
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize]
+
+jobs:
+  version-docs:
+    name: Cut Documentation Version
+    # Only run on Release Please PRs
+    if: startsWith(github.head_ref, 'release-please--')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+
+      - name: Extract version from PR title
+        id: version
+        run: |
+          # Release Please PR title format: "chore(main): release X.Y.Z"
+          VERSION=$(echo "${{ github.event.pull_request.title }}" | grep -oP '\d+\.\d+\.\d+')
+          if [ -z "$VERSION" ]; then
+            echo "Could not extract version from PR title: ${{ github.event.pull_request.title }}"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Detected version: $VERSION"
+
+      - name: Check if already versioned
+        id: check
+        working-directory: ./website
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if [ -d "versioned_docs/version-${VERSION}" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Version ${VERSION} already exists, skipping"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node.js
+        if: steps.check.outputs.skip == 'false'
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        if: steps.check.outputs.skip == 'false'
+        working-directory: ./website
+        run: npm ci
+
+      - name: Cut docs version
+        if: steps.check.outputs.skip == 'false'
+        working-directory: ./website
+        run: npx docusaurus docs:version ${{ steps.version.outputs.version }}
+
+      - name: Update lastVersion in config
+        if: steps.check.outputs.skip == 'false'
+        working-directory: ./website
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          sed -i "s/lastVersion: 'current'/lastVersion: '${VERSION}'/" docusaurus.config.ts
+          sed -i "s/lastVersion: '[0-9]*\.[0-9]*\.[0-9]*'/lastVersion: '${VERSION}'/" docusaurus.config.ts
+
+      - name: Commit versioned docs to PR branch
+        if: steps.check.outputs.skip == 'false'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add website/versioned_docs website/versioned_sidebars website/versions.json website/docusaurus.config.ts
+          git commit -m "docs: version ${{ steps.version.outputs.version }} documentation"
+          git push
