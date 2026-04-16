@@ -6,7 +6,7 @@
  * Uses shadcn AlertDialog for accessible destructive action confirmation
  */
 import { useState, useEffect } from "react";
-import { AlertTriangle, Loader2 } from "lucide-react";
+import { AlertTriangle, Loader2 } from "@/lib/icons";
 import {
   AlertDialog,
   AlertDialogContent,

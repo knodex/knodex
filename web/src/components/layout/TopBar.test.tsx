@@ -4,6 +4,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { TopBar } from './TopBar';
 
 // Mock useAuth hook
@@ -12,6 +13,7 @@ vi.mock('@/hooks/useAuth', () => ({
     logout: vi.fn(),
     user: { email: 'test@example.com' },
   })),
+  useCurrentProject: vi.fn(() => null),
 }));
 
 // Mock useTheme hook
@@ -28,11 +30,23 @@ vi.mock('@/hooks/useSettings', () => ({
   useSettings: (...args: unknown[]) => mockUseSettings(...args),
 }));
 
+// Mock useProjects (used by ProjectSelector)
+vi.mock('@/hooks/useProjects', () => ({
+  useProjects: vi.fn(() => ({
+    data: { items: [] },
+    isLoading: false,
+  })),
+}));
+
+const createQueryClient = () => new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
 function renderTopBar() {
   return render(
-    <MemoryRouter>
-      <TopBar />
-    </MemoryRouter>
+    <QueryClientProvider client={createQueryClient()}>
+      <MemoryRouter>
+        <TopBar />
+      </MemoryRouter>
+    </QueryClientProvider>
   );
 }
 
@@ -77,7 +91,7 @@ describe('TopBar - Organization Name', () => {
     renderTopBar();
 
     // Header renders without org name - no error shown
-    expect(screen.getByLabelText('Toggle menu')).toBeInTheDocument();
+    expect(screen.getByLabelText('Open navigation menu')).toBeInTheDocument();
     expect(screen.queryByTestId('org-name')).not.toBeInTheDocument();
   });
 
@@ -90,7 +104,7 @@ describe('TopBar - Organization Name', () => {
 
     renderTopBar();
 
-    expect(screen.getByLabelText('Toggle menu')).toBeInTheDocument();
+    expect(screen.getByLabelText('Open navigation menu')).toBeInTheDocument();
     expect(screen.queryByTestId('org-name')).not.toBeInTheDocument();
   });
 

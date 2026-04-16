@@ -13,22 +13,27 @@
 export function sanitizeUrlParam(value: string): string {
   // Whitelist: alphanumeric, spaces, and common punctuation used in
   // search queries, tag names, project names, and RGD identifiers.
-  return value.replace(/[^a-zA-Z0-9\s\-_.,:/()@+]/g, '').trim().slice(0, 200);
+  const sanitized = value.replace(/[^a-zA-Z0-9\s\-_.,:/()@+]/g, '').trim().slice(0, 200);
+  // Reject javascript: protocol to prevent XSS if value is ever used in href contexts
+  if (/^\s*javascript\s*:/i.test(sanitized)) {
+    return '';
+  }
+  return sanitized;
 }
 
 /**
  * Safely parse catalog filter state from URL
  */
-export function getCatalogFiltersFromURL(): { search: string; tags: string[]; project: string } {
+export function getCatalogFiltersFromURL(): { search: string; tags: string[]; category: string; projectScoped: boolean; producesKind: string } {
   if (typeof window === "undefined") {
-    return { search: "", tags: [], project: "" };
+    return { search: "", tags: [], category: "", projectScoped: false, producesKind: "" };
   }
 
   const params = new URLSearchParams(window.location.search);
 
   // Validate and sanitize each parameter
   const search = sanitizeUrlParam(params.get("q") || "");
-  const project = sanitizeUrlParam(params.get("project") || "");
+  const category = sanitizeUrlParam(params.get("category") || "").toLowerCase();
   const tagsParam = params.get("tags") || "";
   const tags = tagsParam
     .split(",")
@@ -36,13 +41,16 @@ export function getCatalogFiltersFromURL(): { search: string; tags: string[]; pr
     .filter(Boolean)
     .slice(0, 20); // Limit number of tags to prevent DoS
 
-  return { search, tags, project };
+  const projectScoped = params.get("projectScoped") === "true";
+  const producesKind = sanitizeUrlParam(params.get("producesKind") || "");
+
+  return { search, tags, category, projectScoped, producesKind };
 }
 
 /**
  * Safely construct URL with catalog filters
  */
-export function setCatalogFiltersToURL(filters: { search: string; tags: string[]; project: string }): void {
+export function setCatalogFiltersToURL(filters: { search: string; tags: string[]; category: string; projectScoped: boolean; producesKind: string }): void {
   if (typeof window === "undefined") return;
 
   const params = new URLSearchParams();
@@ -50,12 +58,18 @@ export function setCatalogFiltersToURL(filters: { search: string; tags: string[]
   if (filters.search) {
     params.set("q", sanitizeUrlParam(filters.search));
   }
+  if (filters.category) {
+    params.set("category", sanitizeUrlParam(filters.category));
+  }
   if (filters.tags.length > 0) {
     const safeTags = filters.tags.map(tag => sanitizeUrlParam(tag));
     params.set("tags", safeTags.join(","));
   }
-  if (filters.project) {
-    params.set("project", sanitizeUrlParam(filters.project));
+  if (filters.projectScoped) {
+    params.set("projectScoped", "true");
+  }
+  if (filters.producesKind) {
+    params.set("producesKind", sanitizeUrlParam(filters.producesKind));
   }
 
   const newURL = params.toString()
@@ -72,10 +86,10 @@ export function getInstanceFiltersFromURL(): {
   search: string;
   rgd: string;
   health: string;
-  project: string;
+  scope: string;
 } {
   if (typeof window === "undefined") {
-    return { search: "", rgd: "", health: "", project: "" };
+    return { search: "", rgd: "", health: "", scope: "" };
   }
 
   const params = new URLSearchParams(window.location.search);
@@ -84,9 +98,9 @@ export function getInstanceFiltersFromURL(): {
   const search = sanitizeUrlParam(params.get("q") || "");
   const rgd = sanitizeUrlParam(params.get("rgd") || "");
   const health = sanitizeUrlParam(params.get("health") || "");
-  const project = sanitizeUrlParam(params.get("project") || "");
+  const scope = sanitizeUrlParam(params.get("scope") || "");
 
-  return { search, rgd, health, project };
+  return { search, rgd, health, scope };
 }
 
 /**
@@ -96,7 +110,7 @@ export function setInstanceFiltersToURL(filters: {
   search: string;
   rgd: string;
   health: string;
-  project: string;
+  scope: string;
 }): void {
   if (typeof window === "undefined") return;
 
@@ -105,7 +119,7 @@ export function setInstanceFiltersToURL(filters: {
   if (filters.search) params.set("q", sanitizeUrlParam(filters.search));
   if (filters.rgd) params.set("rgd", sanitizeUrlParam(filters.rgd));
   if (filters.health) params.set("health", sanitizeUrlParam(filters.health));
-  if (filters.project) params.set("project", sanitizeUrlParam(filters.project));
+  if (filters.scope) params.set("scope", sanitizeUrlParam(filters.scope));
 
   const newURL = params.toString()
     ? `${window.location.pathname}?${params.toString()}`

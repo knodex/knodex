@@ -3,6 +3,40 @@
 
 package parser
 
+// SourceType identifies the origin of a forEach iterator expression.
+type SourceType string
+
+const (
+	// SchemaSource means the iterator expression references RGD schema fields (e.g., schema.spec.workers).
+	SchemaSource SourceType = "schema"
+	// ResourceSource means the iterator expression references another resource's fields (e.g., cluster.status.brokers).
+	ResourceSource SourceType = "resource"
+	// LiteralSource means the iterator expression is a static CEL literal (e.g., ["us-east", "eu-west"]).
+	LiteralSource SourceType = "literal"
+)
+
+// Iterator represents a single expansion dimension in a forEach collection resource.
+// KRO's ForEachDimension is a map[string]string (variable name → CEL expression);
+// this struct normalizes it with pre-analyzed source metadata.
+type Iterator struct {
+	// Name is the iterator variable name bound in template expressions (e.g., "worker", "region").
+	Name string `json:"name"`
+
+	// Expression is the original CEL expression from the RGD spec (e.g., "${schema.spec.workers}").
+	Expression string `json:"expression"`
+
+	// Source identifies where the iterable array originates.
+	Source SourceType `json:"source"`
+
+	// SourcePath is the field path within the source (e.g., "spec.workers" for SchemaSource,
+	// "status.brokers" for ResourceSource). Empty for LiteralSource.
+	SourcePath string `json:"sourcePath,omitempty"`
+
+	// DimensionIndex is the zero-based position of this iterator in the forEach array.
+	// Used to order dimensions for cartesian product display.
+	DimensionIndex int `json:"dimensionIndex"`
+}
+
 // ResourceDefinition represents a Kubernetes resource defined in an RGD's spec.resources array.
 type ResourceDefinition struct {
 	// ID is a unique identifier for this resource within the RGD.
@@ -17,6 +51,18 @@ type ResourceDefinition struct {
 
 	// IsTemplate indicates whether this is a template resource (true) or an externalRef (false)
 	IsTemplate bool `json:"isTemplate"`
+
+	// IsCollection indicates whether this resource uses forEach expansion to produce N instances.
+	IsCollection bool `json:"isCollection"`
+
+	// ForEach contains the iterator definitions when IsCollection is true.
+	// Each Iterator corresponds to one ForEachDimension in the KRO spec.
+	ForEach []Iterator `json:"forEach,omitempty"`
+
+	// ReadyWhen contains CEL expressions that determine when this resource is considered ready.
+	// For collection resources, entries may reference the "each" variable
+	// (e.g., "each.status.phase == 'Running'").
+	ReadyWhen []string `json:"readyWhen,omitempty"`
 
 	// IncludeWhen contains the conditional creation expression, if any
 	IncludeWhen *ConditionExpr `json:"includeWhen,omitempty"`
@@ -116,6 +162,10 @@ type ResourceGraph struct {
 
 	// SecretRefs are externalRef resources that reference Kubernetes Secrets
 	SecretRefs []SecretRef `json:"secretRefs,omitempty"`
+
+	// ParseErrors contains non-fatal errors encountered during parsing (e.g., invalid forEach+externalRef combinations).
+	// These are surfaced for informational purposes; the graph is still returned with the remaining valid resources.
+	ParseErrors []ParseError `json:"parseErrors,omitempty"`
 }
 
 // ResourceEdge represents a dependency edge between two resources.
@@ -196,4 +246,15 @@ func (g *ResourceGraph) GetConditionalResources() []ResourceDefinition {
 		}
 	}
 	return conditional
+}
+
+// GetCollectionResources returns all resources that use forEach expansion (IsCollection == true).
+func (g *ResourceGraph) GetCollectionResources() []ResourceDefinition {
+	var collections []ResourceDefinition
+	for _, res := range g.Resources {
+		if res.IsCollection {
+			collections = append(collections, res)
+		}
+	}
+	return collections
 }

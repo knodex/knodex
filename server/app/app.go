@@ -17,7 +17,7 @@
 //	a := app.New(cfg)
 //	a.SetLicenseService(license.NewService(...))
 //	a.SetComplianceService(compliance.NewService(...))
-//	a.SetViewsService(views.NewService(...))
+//	a.SetCategoryInitFunc(categories.InitCategoryService)
 //	a.Run(context.Background())
 package app
 
@@ -35,11 +35,13 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/knodex/knodex/server/internal/api"
 	"github.com/knodex/knodex/server/internal/api/cookie"
 	"github.com/knodex/knodex/server/internal/api/handlers"
+	"github.com/knodex/knodex/server/internal/api/middleware"
 	"github.com/knodex/knodex/server/internal/audit"
 	"github.com/knodex/knodex/server/internal/auth"
 	"github.com/knodex/knodex/server/internal/bootstrap"
@@ -49,6 +51,8 @@ import (
 	"github.com/knodex/knodex/server/internal/drift"
 	"github.com/knodex/knodex/server/internal/health"
 	"github.com/knodex/knodex/server/internal/history"
+	"github.com/knodex/knodex/server/internal/kro"
+	krodiff "github.com/knodex/knodex/server/internal/kro/diff"
 	kroschema "github.com/knodex/knodex/server/internal/kro/schema"
 	"github.com/knodex/knodex/server/internal/kro/watcher"
 	"github.com/knodex/knodex/server/internal/models"
@@ -67,7 +71,8 @@ const (
 	adminPasswordBootstrapTimeout = 30 * time.Second
 	historyRecordTimeout          = 5 * time.Second
 	watcherStopTimeout            = 5 * time.Second
-	watcherInitialSyncDelay       = 3 * time.Second
+	watcherSyncTimeout            = 30 * time.Second
+	watcherSyncPollInterval       = 100 * time.Millisecond
 	initialPolicySyncTimeout      = 30 * time.Second
 	gracefulShutdownTimeout       = 30 * time.Second
 	httpServerReadTimeout         = 15 * time.Second
@@ -83,8 +88,9 @@ type ComplianceInitFunc func(ctx context.Context, k8sCfg *config.Kubernetes, wsH
 // ViolationHistoryInitFunc is the signature for enterprise violation history service initialization.
 type ViolationHistoryInitFunc func() services.ViolationHistoryService
 
-// ViewsInitFunc is the signature for enterprise views service initialization.
-type ViewsInitFunc func(rgdWatcher *watcher.RGDWatcher, configPath string) services.ViewsService
+// CategoryInitFunc is the signature for OSS category service initialization.
+// Categories are auto-discovered from knodex.io/category RGD annotations — no configPath needed.
+type CategoryInitFunc func(rgdWatcher *watcher.RGDWatcher) services.CategoryService
 
 // AuditRecorderInitFunc is the signature for enterprise audit recorder initialization.
 // Used during the monorepo period to bridge build-tag dispatch files with the app package.
@@ -94,6 +100,11 @@ type AuditRecorderInitFunc func(ctx context.Context, redisClient *redis.Client, 
 // In EE builds, this creates an AuditService + AuditConfigWatcher and returns the login middleware.
 // Returns nil in OSS builds (login routes are not wrapped with audit middleware).
 type AuditLoginMiddlewareInitFunc func(ctx context.Context, redisClient *redis.Client, k8sClient kubernetes.Interface, namespace string) func(http.Handler) http.Handler
+
+// AuditMiddlewareInitFunc is the signature for enterprise audit middleware initialization.
+// This middleware captures 401/403 responses and records audit events for authentication
+// failures and authorization denials.
+type AuditMiddlewareInitFunc func(ctx context.Context, redisClient *redis.Client, k8sClient kubernetes.Interface, namespace string) func(http.Handler) http.Handler
 
 // AuditAPIServiceInitFunc is the signature for enterprise audit API service initialization.
 // Used during the monorepo period to bridge build-tag dispatch files with the app package.
@@ -110,17 +121,18 @@ type App struct {
 	licenseService          services.LicenseService
 	complianceService       services.ComplianceService
 	violationHistoryService services.ViolationHistoryService
-	viewsService            services.ViewsService
+	categoryService         services.CategoryService
 
 	// Organization filter for enterprise catalog filtering (empty = no filtering)
 	organizationFilter string
 
-	// Enterprise init functions (monorepo build-tag dispatch bridge)
+	// Init functions (monorepo build-tag dispatch bridge)
 	complianceInitFunc           ComplianceInitFunc
 	violationHistoryInitFunc     ViolationHistoryInitFunc
-	viewsInitFunc                ViewsInitFunc
+	categoryInitFunc             CategoryInitFunc
 	auditRecorderInitFunc        AuditRecorderInitFunc
 	auditLoginMiddlewareInitFunc AuditLoginMiddlewareInitFunc
+	auditMiddlewareInitFunc      AuditMiddlewareInitFunc
 	auditAPIServiceInitFunc      AuditAPIServiceInitFunc
 }
 
@@ -152,9 +164,9 @@ func (a *App) SetViolationHistoryInitFunc(fn ViolationHistoryInitFunc) {
 	a.violationHistoryInitFunc = fn
 }
 
-// SetViewsInitFunc registers a factory function for creating the views service.
-func (a *App) SetViewsInitFunc(fn ViewsInitFunc) {
-	a.viewsInitFunc = fn
+// SetCategoryInitFunc registers a factory function for creating the category service.
+func (a *App) SetCategoryInitFunc(fn CategoryInitFunc) {
+	a.categoryInitFunc = fn
 }
 
 // SetAuditRecorderInitFunc registers a factory function for creating the audit recorder.
@@ -169,6 +181,13 @@ func (a *App) SetAuditRecorderInitFunc(fn AuditRecorderInitFunc) {
 // In OSS builds, the factory returns nil (login routes are not wrapped).
 func (a *App) SetAuditLoginMiddlewareInitFunc(fn AuditLoginMiddlewareInitFunc) {
 	a.auditLoginMiddlewareInitFunc = fn
+}
+
+// SetAuditMiddlewareInitFunc registers a factory function for creating the audit middleware.
+// In EE builds, this wraps protected routes to record 401/403 audit events.
+// In OSS builds, the factory returns nil (no audit middleware applied).
+func (a *App) SetAuditMiddlewareInitFunc(fn AuditMiddlewareInitFunc) {
+	a.auditMiddlewareInitFunc = fn
 }
 
 // SetAuditAPIServiceInitFunc registers a factory function for creating the audit API service.
@@ -186,7 +205,7 @@ func (a *App) SetOrganizationFilter(org string) {
 
 // Run initializes all services, starts the HTTP server, and blocks until shutdown.
 // It handles graceful shutdown on SIGINT/SIGTERM.
-func (a *App) Run(ctx context.Context) error {
+func (a *App) Run(ctx context.Context) error { //nolint:gocyclo // orchestration function inherently complex
 	cfg := a.cfg
 
 	orgSource := "default"
@@ -197,12 +216,15 @@ func (a *App) Run(ctx context.Context) error {
 	slog.Info("organization catalog filter", "active", a.organizationFilter != "", "organization", a.organizationFilter)
 
 	// Initialize clients
-	redisClient := clients.NewRedisClient(&cfg.Redis)
-	k8sClient := clients.NewKubernetesClient(&cfg.Kubernetes)
+	logger := slog.Default()
+	redisClient := clients.NewRedisClient(&cfg.Redis, logger)
+	k8sClient := clients.NewKubernetesClient(&cfg.Kubernetes, logger)
 
-	// Get dynamic client for RBAC services
+	// Get Kubernetes REST config and dynamic client
 	var dynamicClient dynamic.Interface
-	if k8sConfig, err := clients.GetKubernetesConfig(&cfg.Kubernetes); err == nil {
+	k8sConfig, k8sConfigErr := clients.GetKubernetesConfig(&cfg.Kubernetes)
+	if k8sConfigErr == nil {
+		var err error
 		dynamicClient, err = dynamic.NewForConfig(k8sConfig)
 		if err != nil {
 			slog.Warn("failed to create dynamic client", "error", err)
@@ -225,9 +247,9 @@ func (a *App) Run(ctx context.Context) error {
 		// Create audit logger for RBAC operations
 		auditLogger := rbac.NewAuditLogger(slog.Default())
 
-		// Create project service
-		projectService = rbac.NewProjectService(k8sClient, dynamicClient)
-		slog.Info("project service initialized")
+		// Create project service scoped to Knodex namespace
+		projectService = rbac.NewProjectService(k8sClient, dynamicClient, cfg.KnodexNamespace)
+		slog.Info("project service initialized", "namespace", cfg.KnodexNamespace)
 
 		// Create namespace service for listing cluster namespaces matching project policies
 		namespaceService = rbac.NewNamespaceService(k8sClient, projectService)
@@ -321,7 +343,7 @@ func (a *App) Run(ctx context.Context) error {
 					enforcer:       policyEnforcer,
 					projectService: projectService,
 				}
-				projectWatcher = rbac.NewProjectWatcher(dynamicClient, policyHandler, rbac.ProjectWatcherConfig{
+				projectWatcher = rbac.NewProjectWatcher(dynamicClient, policyHandler, cfg.KnodexNamespace, rbac.ProjectWatcherConfig{
 					ResyncPeriod: rbac.DefaultProjectWatcherResyncPeriod,
 					Logger:       slog.Default(),
 				})
@@ -470,17 +492,62 @@ func (a *App) Run(ctx context.Context) error {
 		})
 	}
 
-	// Create RGD watcher
-	var rgdWatcher *watcher.RGDWatcher
-	rgdWatcher, err := watcher.NewRGDWatcher(&cfg.Kubernetes)
-	if err != nil {
-		slog.Warn("failed to create RGD watcher, continuing without watcher", "error", err)
+	// Create shared informer factory for all watchers.
+	// The factory deduplicates informers: multiple RGDs producing the same GVR
+	// share a single watch stream, reducing API server pressure.
+	// Resync period is 10m — watch streams deliver real-time events;
+	// resync is periodic cache-consistency reconciliation only.
+	var instanceFactory dynamicinformer.DynamicSharedInformerFactory
+	if dynamicClient != nil {
+		instanceFactory = dynamicinformer.NewDynamicSharedInformerFactory(dynamicClient, 10*time.Minute)
 	}
 
-	// Create instance tracker
+	// Create RGD watcher using the shared dynamic client (QPS=50/Burst=100) and shared factory.
+	// Pass restConfig so the watcher can create a KRO graph builder for richer graph data.
+	var rgdWatcher *watcher.RGDWatcher
+	if dynamicClient != nil && instanceFactory != nil {
+		rgdWatcher = watcher.NewRGDWatcher(dynamicClient, instanceFactory, k8sConfig)
+		if len(cfg.CatalogPackageFilter) > 0 {
+			rgdWatcher.SetPackageFilter(cfg.CatalogPackageFilter)
+			slog.Info("catalog package filter active", "packages", cfg.CatalogPackageFilter)
+		}
+	}
+
+	// Create instance tracker with shared factory
 	var instanceTracker *watcher.InstanceTracker
-	if rgdWatcher != nil && k8sClient != nil {
-		instanceTracker = watcher.NewInstanceTracker(rgdWatcher.DynamicClient(), k8sClient.Discovery(), rgdWatcher)
+	if rgdWatcher != nil && k8sClient != nil && instanceFactory != nil {
+		instanceTracker = watcher.NewInstanceTracker(dynamicClient, k8sClient.Discovery(), instanceFactory, rgdWatcher)
+	}
+
+	// Create GraphRevision watcher (feature-gated: only if internal.kro.run API group is available)
+	var graphRevisionWatcher *watcher.GraphRevisionWatcher
+	if instanceFactory != nil && k8sClient != nil {
+		if hasGraphRevisionAPI(k8sClient) {
+			graphRevisionWatcher = watcher.NewGraphRevisionWatcher(instanceFactory)
+			slog.Info("GraphRevision watcher created (internal.kro.run/v1alpha1 API available)")
+		} else {
+			slog.Info("GraphRevision watcher skipped (internal.kro.run/v1alpha1 API not available)")
+		}
+	}
+
+	// Create remote watcher for child cluster resource visibility (STORY-418)
+	var remoteWatcher *watcher.RemoteWatcher
+	if dynamicClient != nil && k8sClient != nil {
+		remoteWatcher = watcher.NewRemoteWatcher(k8sClient, projectService)
+		slog.Info("remote watcher created")
+	}
+
+	// Create revision diff service (only if GraphRevision watcher is available)
+	var diffService *krodiff.DiffService
+	if graphRevisionWatcher != nil {
+		var diffErr error
+		diffService, diffErr = krodiff.NewDiffService()
+		if diffErr != nil {
+			slog.Warn("failed to create diff service, revision diff API will be unavailable", "error", diffErr)
+			diffService = nil
+		} else {
+			slog.Info("revision diff service initialized")
+		}
 	}
 
 	// Create health checker
@@ -491,9 +558,10 @@ func (a *App) Run(ctx context.Context) error {
 
 	// Create schema extractor for CRD schema extraction
 	var schemaExtractor *kroschema.Extractor
-	schemaExtractor, err = kroschema.NewExtractor(&cfg.Kubernetes)
-	if err != nil {
+	if schemaExt, err := kroschema.NewExtractor(&cfg.Kubernetes); err != nil {
 		slog.Warn("failed to create schema extractor, schema endpoint will be unavailable", "error", err)
+	} else {
+		schemaExtractor = schemaExt
 	}
 
 	// Create history service for deployment history tracking
@@ -501,9 +569,9 @@ func (a *App) Run(ctx context.Context) error {
 	slog.Info("history service initialized")
 
 	// Create WebSocket hub for real-time updates
-	wsHub := websocket.NewHub()
-	go wsHub.Run()
-	slog.Info("WebSocket hub started")
+	wsHub := websocket.NewHub(nil)
+	wsHubCtx, wsHubCancel := context.WithCancel(context.Background())
+	go wsHub.Run(wsHubCtx)
 
 	// Create WebSocket handler with lifecycle management (pass Redis for ticket-based WS auth)
 	wsHandler := handlers.NewWebSocketHandler(wsHub, authService, redisClient)
@@ -544,6 +612,20 @@ func (a *App) Run(ctx context.Context) error {
 		slog.Info("audit login middleware initialized (enterprise feature)")
 	}
 
+	// Audit middleware: captures 401/403 responses on protected routes for audit trail.
+	// Uses runCtx so the config watcher stops during graceful shutdown.
+	var auditMiddleware func(http.Handler) http.Handler
+	if a.auditMiddlewareInitFunc != nil {
+		namespace := cfg.Log.Namespace
+		if namespace == "" {
+			namespace = "default"
+		}
+		auditMiddleware = a.auditMiddlewareInitFunc(runCtx, redisClient, k8sClient, namespace)
+	}
+	if auditMiddleware != nil {
+		slog.Info("audit middleware initialized (enterprise feature)")
+	}
+
 	// Audit API service: call init func to create enterprise audit API handler
 	// Uses runCtx so the config watcher stops during graceful shutdown.
 	var auditAPIService services.AuditAPIService
@@ -559,10 +641,10 @@ func (a *App) Run(ctx context.Context) error {
 	}
 
 	// Create shared drift detection service (used by both CRUD handler and InstanceTracker callback)
-	driftSvc := drift.NewService(redisClient, slog.Default())
+	driftSvc := drift.NewService(redisClient, slog.Default(), cfg.Organization)
 
 	// Create API server
-	router := api.NewRouterWithConfig(healthChecker, rgdWatcher, instanceTracker, schemaExtractor, api.RouterConfig{
+	routerResult := api.NewRouterWithConfig(healthChecker, rgdWatcher, instanceTracker, schemaExtractor, api.RouterConfig{
 		SPAHandler:              static.SPAHandler(),
 		RateLimitRequestsPerMin: cfg.RateLimit.UserRequestsPerMinute,
 		RateLimitBurstSize:      cfg.RateLimit.UserBurstSize,
@@ -582,7 +664,7 @@ func (a *App) Run(ctx context.Context) error {
 		LicenseService:          a.licenseService,
 		ComplianceService:       a.complianceService,
 		ViolationHistoryService: a.violationHistoryService,
-		ViewsService:            a.viewsService,
+		CategoryService:         a.categoryService,
 		SSOStore:                ssoStore,
 		AllowedRedirectOrigins:  cfg.Auth.AllowedRedirectOrigins,
 		CookieConfig:            cookie.Config{Secure: cfg.Cookie.Secure, Domain: cfg.Cookie.Domain},
@@ -591,13 +673,18 @@ func (a *App) Run(ctx context.Context) error {
 		SwaggerEnabled:          cfg.SwaggerEnabled,   // Serve Swagger UI at /swagger/ (SWAGGER_UI_ENABLED)
 		AuditRecorder:           auditRecorder,
 		AuditLoginMiddleware:    auditLoginMiddleware,
+		AuditMiddleware:         auditMiddleware,
 		AuditAPIService:         auditAPIService,
 		DriftService:            driftSvc,
+		GraphRevisionWatcher:    graphRevisionProvider(graphRevisionWatcher),
+		DiffService:             diffService,
+		RemoteWatcher:           remoteWatcher,
+		DynamicClient:           dynamicClient,
 	})
 
 	server := &http.Server{
 		Addr:              cfg.Server.Address,
-		Handler:           router,
+		Handler:           routerResult.Handler,
 		ReadTimeout:       httpServerReadTimeout,
 		ReadHeaderTimeout: httpServerReadHeaderTimeout,
 		WriteTimeout:      httpServerWriteTimeout,
@@ -689,6 +776,58 @@ func (a *App) Run(ctx context.Context) error {
 		}
 	}
 
+	// Start GraphRevision watcher (register WebSocket callback before Start)
+	if graphRevisionWatcher != nil {
+		// Register diff pre-compute callback BEFORE Start() so it catches all new revisions.
+		if diffService != nil {
+			localDiffSvc := diffService
+			graphRevisionWatcher.SetOnAddCallback(func(rgdName string, revision int) {
+				if revision > 1 {
+					localDiffSvc.PreComputeConsecutiveDiff(graphRevisionWatcher, rgdName, revision)
+				}
+			})
+		}
+
+		graphRevisionWatcher.SetOnUpdateCallback(func(action string, rgdName string, revision int) {
+			var wsAction websocket.Action
+			switch action {
+			case "add":
+				wsAction = websocket.ActionAdd
+			case "update":
+				wsAction = websocket.ActionUpdate
+			case "delete":
+				wsAction = websocket.ActionDelete
+			default:
+				wsAction = websocket.ActionUpdate
+			}
+
+			// Resolve project namespace from the RGD watcher
+			var projectNamespace string
+			if rgdWatcher != nil {
+				if rgd, found := rgdWatcher.GetRGDByName(rgdName); found {
+					projectNamespace = getProjectIDFromNamespace(k8sClient, rgd.Namespace, projectService)
+				}
+			}
+
+			wsHub.BroadcastRevisionUpdate(wsAction, rgdName, revision, projectNamespace)
+		})
+
+		if err := graphRevisionWatcher.Start(runCtx); err != nil {
+			slog.Error("failed to start GraphRevision watcher", "error", err)
+		} else {
+			slog.Info("GraphRevision watcher started")
+		}
+	}
+
+	// Start remote watcher for child cluster resources (STORY-418)
+	if remoteWatcher != nil {
+		if err := remoteWatcher.Start(runCtx); err != nil {
+			slog.Error("failed to start remote watcher", "error", err)
+		} else {
+			slog.Info("remote watcher started")
+		}
+	}
+
 	// Start repository secret watcher
 	if repoWatcher != nil {
 		if err := repoWatcher.Start(runCtx); err != nil {
@@ -715,7 +854,17 @@ func (a *App) Run(ctx context.Context) error {
 			if deployMode != deployment.ModeGitOps && deployMode != deployment.ModeHybrid {
 				return
 			}
-			driftSvc.CheckAndClearIfReconciled(context.Background(), namespace, kind, name, instance.Spec)
+			cleared := driftSvc.CheckAndClearIfReconciled(context.Background(), namespace, kind, name, instance.Spec)
+			if cleared {
+				projectNamespace := ""
+				if instance.Labels != nil {
+					projectNamespace = instance.Labels["knodex.io/project"]
+				}
+				if projectNamespace == "" {
+					projectNamespace = getProjectIDFromNamespace(k8sClient, namespace, projectService)
+				}
+				wsHub.BroadcastDriftUpdate(namespace, kind, name, false, projectNamespace)
+			}
 		})
 
 		if err := instanceTracker.Start(runCtx); err != nil {
@@ -724,12 +873,26 @@ func (a *App) Run(ctx context.Context) error {
 			slog.Info("instance tracker started")
 		}
 
-		// Initial sync of instance counts
+		// Wait for both watchers to sync, then update instance counts.
+		// Polls IsSynced() instead of a fixed sleep — accurate on fast and slow clusters.
 		go func() {
-			time.Sleep(watcherInitialSyncDelay)
-			if instanceTracker.IsSynced() && rgdWatcher.IsSynced() {
-				updateAllRGDInstanceCounts(rgdWatcher, instanceTracker)
-				slog.Info("initial RGD instance counts synchronized")
+			ticker := time.NewTicker(watcherSyncPollInterval)
+			defer ticker.Stop()
+			timeout := time.After(watcherSyncTimeout)
+			for {
+				select {
+				case <-ticker.C:
+					if instanceTracker.IsSynced() && rgdWatcher.IsSynced() {
+						updateAllRGDInstanceCounts(rgdWatcher, instanceTracker)
+						slog.Info("initial RGD instance counts synchronized")
+						return
+					}
+				case <-timeout:
+					slog.Warn("timed out waiting for watchers to sync, skipping initial count sync")
+					return
+				case <-runCtx.Done():
+					return
+				}
 			}
 		}()
 	}
@@ -737,7 +900,7 @@ func (a *App) Run(ctx context.Context) error {
 	// Wire WebSocket count push for sidebar badge updates (AC: #2, #3, #4)
 	// Uses in-memory caches only - no Redis/HTTP/K8s API calls
 	if rgdWatcher != nil && instanceTracker != nil {
-		countPushFn := func(_ context.Context, _ string, projects []string, _ []string) (int, int) {
+		countPushFn := func(ctx context.Context, _ string, projects []string, _ []string) (int, int) {
 			// RGD count via watcher cache (in-memory)
 			rgdOpts := models.ListOptions{Page: 1, PageSize: 1, IncludePublic: true}
 			rgdOpts.Organization = a.organizationFilter // Enterprise org filter for consistent counts
@@ -746,14 +909,12 @@ func (a *App) Run(ctx context.Context) error {
 			}
 			rgdResult := rgdWatcher.ListRGDs(rgdOpts)
 
-			// Instance count via tracker cache (in-memory)
+			// Instance count via tracker cache (in-memory).
+			// Resolve project names to their destination namespaces — instances live in
+			// destination namespaces, not namespaces named after the project.
 			var instanceCount int
-			if projects == nil { // global admin sees all
-				instanceCount = instanceTracker.CountInstancesByNamespaces(nil, rbac.MatchNamespaceInList)
-			} else {
-				// In Knodex, project names = namespace names
-				instanceCount = instanceTracker.CountInstancesByNamespaces(projects, rbac.MatchNamespaceInList)
-			}
+			namespaces := resolveProjectDestinationNamespaces(ctx, projectService, projects)
+			instanceCount = instanceTracker.CountInstancesByNamespaces(namespaces, rbac.MatchNamespaceInList)
 			return rgdResult.TotalCount, instanceCount
 		}
 
@@ -798,8 +959,8 @@ func (a *App) Run(ctx context.Context) error {
 		redisAuthzCache.Stop()
 	}
 
-	shutdownServices(server, wsHub, wsHandler, policyCacheManager, auditRecorder,
-		ssoWatcher, repoWatcher, instanceTracker, rgdWatcher, redisClient)
+	shutdownServices(server, wsHubCancel, wsHandler, policyCacheManager, auditRecorder,
+		ssoWatcher, repoWatcher, graphRevisionWatcher, remoteWatcher, instanceTracker, rgdWatcher, routerResult.UserRateLimiters, redisClient, logger)
 
 	slog.Info("server stopped gracefully")
 	return nil
@@ -839,7 +1000,7 @@ func newInstanceUpdateCallback(
 			projectNamespace = getProjectIDFromNamespace(k8sClient, namespace, projectService)
 		}
 
-		wsHub.BroadcastInstanceUpdate(wsAction, namespace, name, instance, projectNamespace)
+		wsHub.BroadcastInstanceUpdate(wsAction, namespace, kind, name, instance, projectNamespace)
 
 		// Record history events
 		historyCtx, historyCancel := context.WithTimeout(context.Background(), historyRecordTimeout)
@@ -920,12 +1081,12 @@ func (a *App) initEnterpriseServices(
 		a.violationHistoryService = a.violationHistoryInitFunc()
 	}
 
-	// Views service: use direct setter if set, else call init func
-	if a.viewsService == nil && a.viewsInitFunc != nil {
-		a.viewsService = a.viewsInitFunc(rgdWatcher, cfg.Views.ConfigPath)
+	// Category service: always initialized in OSS builds (auto-discovers from watcher)
+	if a.categoryService == nil && a.categoryInitFunc != nil {
+		a.categoryService = a.categoryInitFunc(rgdWatcher)
 	}
-	if a.viewsService != nil {
-		slog.Info("views service initialized (enterprise feature)")
+	if a.categoryService != nil {
+		slog.Info("category service initialized (OSS feature)")
 	}
 
 	// Audit recorder: call init func to create enterprise audit recorder
@@ -947,15 +1108,19 @@ func (a *App) initEnterpriseServices(
 // shutdownServices performs graceful shutdown of all server components in the correct order.
 func shutdownServices(
 	server *http.Server,
-	wsHub *websocket.Hub,
+	wsHubCancel context.CancelFunc,
 	wsHandler *handlers.WebSocketHandler,
 	policyCacheManager *rbac.PolicyCacheManager,
 	auditRecorder audit.Recorder,
 	ssoWatcher *sso.SSOWatcher,
 	repoWatcher *oldwatcher.RepositoryWatcher,
+	graphRevisionWatcher *watcher.GraphRevisionWatcher,
+	remoteWatcher *watcher.RemoteWatcher,
 	instanceTracker *watcher.InstanceTracker,
 	rgdWatcher *watcher.RGDWatcher,
+	userRateLimiters []*middleware.UserRateLimiter,
 	redisClient *redis.Client,
+	logger *slog.Logger,
 ) {
 	// Create shutdown context with timeout
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), gracefulShutdownTimeout)
@@ -966,9 +1131,9 @@ func shutdownServices(
 		slog.Error("server forced to shutdown", "error", err)
 	}
 
-	// Stop WebSocket hub
-	if wsHub != nil {
-		wsHub.Stop()
+	// Stop WebSocket hub by canceling its context
+	if wsHubCancel != nil {
+		wsHubCancel()
 		slog.Info("WebSocket hub stopped")
 	}
 
@@ -1009,6 +1174,20 @@ func shutdownServices(
 		slog.Info("SSO watcher stopped")
 	}
 
+	// Stop GraphRevision watcher
+	if graphRevisionWatcher != nil {
+		if !graphRevisionWatcher.StopAndWait(watcherStopTimeout) {
+			slog.Warn("GraphRevision watcher did not stop within timeout")
+		}
+	}
+
+	// Stop remote watcher (before instance tracker, since it depends on remote cluster access)
+	if remoteWatcher != nil {
+		if !remoteWatcher.StopAndWait(watcherStopTimeout) {
+			slog.Warn("remote watcher did not stop within timeout")
+		}
+	}
+
 	// Stop instance tracker first (it depends on RGD watcher)
 	if instanceTracker != nil {
 		instanceTracker.Stop()
@@ -1021,8 +1200,16 @@ func shutdownServices(
 		}
 	}
 
+	// Stop user rate limiter cleanup goroutines
+	for _, rl := range userRateLimiters {
+		rl.Stop()
+	}
+	if len(userRateLimiters) > 0 {
+		slog.Info("user rate limiters stopped", "count", len(userRateLimiters))
+	}
+
 	// Close clients
-	clients.CloseRedisClient(redisClient)
+	clients.CloseRedisClient(redisClient, logger)
 }
 
 // projectServiceAdapter adapts ProjectService to implement ProjectReader interface.
@@ -1107,6 +1294,76 @@ func updateRGDInstanceCount(rgdWatcher *watcher.RGDWatcher, instanceTracker *wat
 		rgd.InstanceCount = count
 		rgdWatcher.Cache().Set(rgd)
 	}
+}
+
+// graphRevisionProvider converts a *GraphRevisionWatcher to services.GraphRevisionProvider,
+// returning nil (not a non-nil interface wrapping a nil pointer) when the watcher is nil.
+// This avoids the Go "nil interface" gotcha where a typed nil assigned to an interface is != nil.
+func graphRevisionProvider(w *watcher.GraphRevisionWatcher) services.GraphRevisionProvider {
+	if w == nil {
+		return nil
+	}
+	return w
+}
+
+// hasGraphRevisionAPI checks whether the internal.kro.run/v1alpha1 API group is available in the cluster.
+// Returns false if discovery fails or the API group is not found, allowing graceful degradation.
+func hasGraphRevisionAPI(k8sClient kubernetes.Interface) bool {
+	resources, err := k8sClient.Discovery().ServerResourcesForGroupVersion(kro.GraphRevisionGroup + "/" + kro.GraphRevisionVersion)
+	if err != nil {
+		return false
+	}
+	for _, r := range resources.APIResources {
+		if r.Name == kro.GraphRevisionResource {
+			return true
+		}
+	}
+	return false
+}
+
+// resolveProjectDestinationNamespaces collects all destination namespace patterns
+// from the given projects. For admin (projects == nil), returns all destinations
+// from all projects. This is used for sidebar count filtering — instances only
+// appear in counts if they belong to a project's destination namespace.
+func resolveProjectDestinationNamespaces(ctx context.Context, ps *rbac.ProjectService, projects []string) []string {
+	if ps == nil {
+		return []string{"*"}
+	}
+
+	allProjects, err := ps.ListProjects(ctx)
+	if err != nil {
+		slog.Warn("failed to list projects for namespace resolution, falling back to wildcard", "error", err)
+		return []string{"*"}
+	}
+
+	seen := make(map[string]bool)
+	var namespaces []string
+	for _, p := range allProjects.Items {
+		// If projects list is non-nil, only include matching projects
+		if projects != nil {
+			found := false
+			for _, name := range projects {
+				if p.Name == name {
+					found = true
+					break
+				}
+			}
+			if !found {
+				continue
+			}
+		}
+		for _, dest := range p.Spec.Destinations {
+			if dest.Namespace != "" && !seen[dest.Namespace] {
+				seen[dest.Namespace] = true
+				namespaces = append(namespaces, dest.Namespace)
+			}
+		}
+	}
+
+	if len(namespaces) == 0 {
+		return []string{} // No projects or no destinations — count will be 0
+	}
+	return namespaces
 }
 
 // updateAllRGDInstanceCounts updates instance counts for all RGDs.

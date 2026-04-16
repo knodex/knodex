@@ -62,6 +62,14 @@ func (m *MockProjectService) Exists(ctx context.Context, name string) (bool, err
 	return args.Bool(0), args.Error(1)
 }
 
+func (m *MockProjectService) UpdateProjectStatus(ctx context.Context, project *Project) (*Project, error) {
+	args := m.Called(ctx, project)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*Project), args.Error(1)
+}
+
 // TestNamespaceMatchesPattern tests the glob pattern matching function
 func TestNamespaceMatchesPattern(t *testing.T) {
 	tests := []struct {
@@ -583,29 +591,5 @@ func TestNamespaceService_ListNamespacesForUser(t *testing.T) {
 		require.Error(t, err)
 
 		mockAuth.AssertExpectations(t)
-	})
-}
-
-// TestNamespaceService_NamespaceExists tests namespace existence check
-func TestNamespaceService_NamespaceExists(t *testing.T) {
-	ctx := context.Background()
-
-	fakeClient := fake.NewSimpleClientset(
-		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "existing"}},
-	)
-
-	mockProjectService := new(MockProjectService)
-	service := NewNamespaceService(fakeClient, mockProjectService)
-
-	t.Run("existing namespace returns true", func(t *testing.T) {
-		exists, err := service.NamespaceExists(ctx, "existing")
-		require.NoError(t, err)
-		assert.True(t, exists)
-	})
-
-	t.Run("non-existing namespace returns false", func(t *testing.T) {
-		exists, err := service.NamespaceExists(ctx, "nonexistent")
-		require.NoError(t, err)
-		assert.False(t, exists)
 	})
 }

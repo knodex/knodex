@@ -1,6 +1,7 @@
 # Platform Project - Cluster-wide access for platform team
 # This project allows platform administrators to deploy to any namespace
 # and manage cluster-scoped resources
+# Apply with: kubectl apply -f <this-file> -n <knodex-namespace>
 apiVersion: knodex.io/v1alpha1
 kind: Project
 metadata:

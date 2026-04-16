@@ -49,7 +49,7 @@ export interface UserState {
   restoreSession: (info: AccountInfoResponse) => void;
   setSessionStatus: (status: SessionStatus, error?: string) => void;
   logout: () => void;
-  setCurrentProject: (projectId: string) => void;
+  setCurrentProject: (projectId: string | null) => void;
 }
 
 function _setUserState(
@@ -58,14 +58,14 @@ function _setUserState(
   get: () => UserState
 ) {
   const currentProject = get().currentProject;
-  const projectStillValid = currentProject && payload.projects.includes(currentProject);
-  const resolvedProject = projectStillValid
-    ? currentProject
-    : payload.projects[0] || null;
+  // If user had a specific project selected, verify it's still accessible.
+  // If null (All Projects), keep it null — don't auto-select.
+  const projectStillValid = currentProject === null || payload.projects.includes(currentProject);
+  const resolvedProject = projectStillValid ? currentProject : null;
 
   if (currentProject && !projectStillValid) {
     logger.warn(
-      `[UserStore] Project context changed: '${currentProject}' is no longer accessible. Switching to '${resolvedProject}'.`
+      `[UserStore] Project context changed: '${currentProject}' is no longer accessible. Switching to All Projects.`
     );
   }
 
@@ -153,13 +153,7 @@ export const useUserStore = create<UserState>()(
         });
       },
 
-      setCurrentProject: (projectId: string) => {
-        const { projects } = get();
-        if (!projects.includes(projectId)) {
-          logger.error(`[UserStore] Project ${projectId} not found in user's projects`);
-          return;
-        }
-
+      setCurrentProject: (projectId: string | null) => {
         set({ currentProject: projectId });
       },
     }),

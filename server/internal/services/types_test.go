@@ -18,7 +18,6 @@ func TestToRGDResponse(t *testing.T) {
 		Title:       "Test RGD Display Title",
 		Namespace:   "default",
 		Description: "Test RGD description",
-		Version:     "v1.0.0",
 		Tags:        []string{"database", "postgres"},
 		Category:    "Databases",
 		Icon:        "postgres-icon",
@@ -39,7 +38,6 @@ func TestToRGDResponse(t *testing.T) {
 	assert.Equal(t, "Test RGD Display Title", resp.Title)
 	assert.Equal(t, "default", resp.Namespace)
 	assert.Equal(t, "Test RGD description", resp.Description)
-	assert.Equal(t, "v1.0.0", resp.Version)
 	assert.Equal(t, []string{"database", "postgres"}, resp.Tags)
 	assert.Equal(t, "Databases", resp.Category)
 	assert.Equal(t, "postgres-icon", resp.Icon)
@@ -165,7 +163,6 @@ func TestUserAuthContextStruct(t *testing.T) {
 		Roles:                []string{"role:serveradmin"},
 		AccessibleProjects:   []string{"project-a", "project-b"},
 		AccessibleNamespaces: []string{"ns-a", "ns-b"},
-		IsGlobalAccess:       false,
 	}
 
 	assert.Equal(t, "user-123", authCtx.UserID)
@@ -173,18 +170,15 @@ func TestUserAuthContextStruct(t *testing.T) {
 	assert.Len(t, authCtx.Roles, 1, "should have exactly one role assigned")
 	assert.Equal(t, []string{"project-a", "project-b"}, authCtx.AccessibleProjects)
 	assert.Equal(t, []string{"ns-a", "ns-b"}, authCtx.AccessibleNamespaces)
-	assert.False(t, authCtx.IsGlobalAccess)
 }
 
 func TestUserAuthContextGlobalAccess(t *testing.T) {
 	authCtx := UserAuthContext{
 		UserID:               "admin",
-		AccessibleNamespaces: nil, // nil = global access
-		IsGlobalAccess:       true,
+		AccessibleNamespaces: []string{"*"}, // ["*"] = global access
 	}
 
-	assert.Nil(t, authCtx.AccessibleNamespaces)
-	assert.True(t, authCtx.IsGlobalAccess)
+	assert.Equal(t, []string{"*"}, authCtx.AccessibleNamespaces)
 }
 
 func TestToRGDResponse_DocsURL(t *testing.T) {

@@ -22,7 +22,6 @@ const (
 	TagsAnnotation            = kro.TagsAnnotation
 	CategoryAnnotation        = kro.CategoryAnnotation
 	IconAnnotation            = kro.IconAnnotation
-	VersionAnnotation         = kro.VersionAnnotation
 	TitleAnnotation           = kro.TitleAnnotation
 	DeploymentModesAnnotation = kro.DeploymentModesAnnotation
 	ExtendsKindAnnotation     = kro.ExtendsKindAnnotation
@@ -30,12 +29,20 @@ const (
 
 	RGDProjectLabel      = kro.RGDProjectLabel
 	RGDOrganizationLabel = kro.RGDOrganizationLabel
+	RGDPackageLabel      = kro.RGDPackageLabel
 
 	RGDGroup    = kro.RGDGroup
 	RGDVersion  = kro.RGDVersion
 	RGDResource = kro.RGDResource
 	RGDKind     = kro.RGDKind
 )
+
+// GVKRef identifies a Kubernetes resource by Group, Version, and Kind.
+type GVKRef struct {
+	Group   string `json:"group"`
+	Version string `json:"version"`
+	Kind    string `json:"kind"`
+}
 
 // CatalogRGD represents a ResourceGraphDefinition in the catalog
 // This is the internal model used by the watcher and cache
@@ -48,8 +55,6 @@ type CatalogRGD struct {
 	Namespace string `json:"namespace"`
 	// Description is extracted from annotations
 	Description string `json:"description"`
-	// Version is extracted from annotations or spec
-	Version string `json:"version"`
 	// Tags are extracted from annotations (comma-separated)
 	Tags []string `json:"tags"`
 	// Category is extracted from annotations
@@ -58,8 +63,15 @@ type CatalogRGD struct {
 	Icon string `json:"icon"`
 	// DocsURL is the documentation URL from the knodex.io/docs-url annotation
 	DocsURL string `json:"docsUrl,omitempty"`
+	// CatalogTier indicates which project types can see this RGD.
+	// Valid values: "app", "infrastructure", "both" (default).
+	// Parsed from the knodex.io/catalog-tier annotation.
+	CatalogTier string `json:"catalogTier"`
 	// Organization is the org scope from labels (empty = shared/public RGD)
 	Organization string `json:"organization,omitempty"`
+	// Package is the package name from the knodex.io/package label.
+	// Used with CATALOG_PACKAGE_FILTER to control which RGDs are ingested.
+	Package string `json:"package,omitempty"`
 	// Labels from the RGD metadata
 	Labels map[string]string `json:"labels"`
 	// Annotations from the RGD metadata
@@ -73,9 +85,15 @@ type CatalogRGD struct {
 	Kind string `json:"kind,omitempty"`
 	// PluralName is the declared plural from spec.schema.crd.spec.names.plural. Empty means not declared.
 	PluralName string `json:"pluralName,omitempty"`
+	// IsClusterScoped indicates the RGD produces cluster-scoped (not namespaced) instance CRDs.
+	// Detected from spec.schema.crd.spec.names.scope == "Cluster".
+	IsClusterScoped bool `json:"isClusterScoped"`
 	// Status is the KRO processing state (e.g., "Active", "Inactive")
 	// Empty/missing status means KRO has not yet processed the RGD
 	Status string `json:"status"`
+	// LastIssuedRevision is the most recently issued GraphRevision number from KRO status.
+	// Zero means no revisions have been issued (feature may be disabled or RGD not yet processed).
+	LastIssuedRevision int `json:"lastIssuedRevision,omitempty"`
 	// ExtendsKinds lists the parent RGD Kinds that this RGD extends.
 	// Parsed from the knodex.io/extends-kind annotation (comma-separated).
 	// Empty slice means this RGD does not extend any other RGD.
@@ -83,6 +101,9 @@ type CatalogRGD struct {
 	// DependsOnKinds lists the unique Kinds from externalRef resources in the RGD.
 	// Populated at watcher time from parsing spec.resources externalRef entries.
 	DependsOnKinds []string `json:"dependsOnKinds,omitempty"`
+	// ProducesKinds lists the GVK of every non-external resource in the RGD.
+	// Populated at watcher time from spec.resources[] (excluding externalRef entries).
+	ProducesKinds []GVKRef `json:"producesKinds,omitempty"`
 	// SecretRefs lists externalRef resources that reference Kubernetes Secrets.
 	// Populated at watcher time from parsing spec.resources externalRef entries.
 	SecretRefs []kroparser.SecretRef `json:"secretRefs,omitempty"`
@@ -136,8 +157,19 @@ type ListOptions struct {
 	Category string
 	// Search filters by name/title/description (case-insensitive contains)
 	Search string
+	// Status filters by RGD status (e.g., "Active", "Inactive"). Empty = all statuses.
+	Status string
+	// CatalogTiers filters RGDs by catalog tier (e.g., ["app", "both"]).
+	// nil means no filtering (all tiers visible — admin or backward compat).
+	// Non-nil filters RGDs where CatalogTier is in the allowed set.
+	CatalogTiers []string
 	// DependsOnKind filters RGDs that have this Kind in their DependsOnKinds
 	DependsOnKind string
+	// ProducesKind filters RGDs that produce this Kind as a non-external resource
+	ProducesKind string
+	// ProducesGroup narrows ProducesKind filtering to a specific API group (optional)
+	// Only consulted when ProducesKind is also set.
+	ProducesGroup string
 	// Page is the page number (1-indexed)
 	Page int
 	// PageSize is the number of items per page
@@ -171,15 +203,6 @@ type ParseDeploymentModesResult struct {
 	ValidModes []string
 	// InvalidModes contains any modes that were not recognized
 	InvalidModes []string
-}
-
-// ParseDeploymentModes parses a comma-separated deployment modes annotation value
-// Returns a slice of valid, lowercase mode strings
-// Invalid values are ignored (with warning logged by caller)
-// Empty or whitespace-only input returns nil (all modes allowed)
-func ParseDeploymentModes(annotation string) []string {
-	result := ParseDeploymentModesWithInvalid(annotation)
-	return result.ValidModes
 }
 
 // ParseDeploymentModesWithInvalid parses deployment modes and also returns invalid modes

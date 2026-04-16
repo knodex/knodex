@@ -1,74 +1,93 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useState, useMemo, lazy, Suspense } from "react";
-import { Link } from "react-router-dom";
+import { useState, useMemo, useEffect, useRef, Suspense } from "react";
 import {
-  ArrowLeft,
   Package,
-  Clock,
-  Layers,
   Box,
   Link2,
   Loader2,
   AlertCircle,
   ExternalLink,
   FolderKanban,
-  AlertTriangle,
   Puzzle,
   KeyRound,
-} from "lucide-react";
-import { useRGD, useRGDResourceGraph, useRGDList } from "@/hooks/useRGDs";
+  GitBranch,
+} from "@/lib/icons";
+import { useRGD, useRGDDefinitionGraph, useRGDInstances, useRGDList, useRGDRevisions } from "@/hooks/useRGDs";
+import { useKindToRGDMap } from "@/hooks/useKindToRGDMap";
+import { StatusCard } from "@/components/instances/StatusCard";
 import type { CatalogRGD } from "@/types/rgd";
-import { cn } from "@/lib/utils";
-import { formatDateTime } from "@/lib/date";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { AddOnsTab } from "./AddOnsTab";
 import { DependsOnTab } from "./DependsOnTab";
-import { useKindToRGDMap } from "@/hooks/useKindToRGDMap";
+import { ScopeIndicator } from "@/components/shared/ScopeIndicator";
 import { useDynamicTabs } from "@/hooks/useDynamicTabs";
 import type { Tab, ConditionalTab } from "@/hooks/useDynamicTabs";
 import { TabBar } from "@/components/shared/TabBar";
+import { RGDIcon } from "@/components/ui/rgd-icon";
+import { lazyWithPreload } from "@/lib/lazy-preload";
 
 // Lazy load ResourceGraphView to code-split @xyflow/react (~200KB)
 // This ensures ReactFlow is only loaded when user views the Resources tab
-const ResourceGraphView = lazy(() =>
+const ResourceGraphView = lazyWithPreload(() =>
   import("@/components/graph").then((m) => ({ default: m.ResourceGraphView }))
 );
 
 // Lazy load CatalogSecretsTab to code-split it from the main bundle.
-const CatalogSecretsTab = lazy(() =>
+const CatalogSecretsTab = lazyWithPreload(() =>
   import("./CatalogSecretsTab").then(m => ({ default: m.CatalogSecretsTab }))
 );
 
-type TabId = "overview" | "resources" | "addons" | "depends-on" | "secrets";
+// Lazy load RevisionsTab
+const RevisionsTab = lazyWithPreload(() =>
+  import("./RevisionsTab").then(m => ({ default: m.RevisionsTab }))
+);
+
+type TabId = "instances" | "resources" | "addons" | "depends-on" | "secrets" | "revisions";
 
 const BASE_TABS: Tab<TabId>[] = [
-  { id: "overview", label: "Overview", icon: <Layers className="h-4 w-4" /> },
+  { id: "instances", label: "Instances", icon: <Package className="h-4 w-4" /> },
   { id: "resources", label: "Resources", icon: <Box className="h-4 w-4" /> },
 ];
 
 interface RGDDetailViewProps {
   rgd: CatalogRGD;
-  onBack: () => void;
+  /** @deprecated Breadcrumbs handle navigation — this prop is unused */
+  onBack?: () => void;
   onDeploy?: () => void;
+  /** Optional tab to activate on mount (e.g., "revisions" from revision badge link) */
+  initialTab?: TabId;
 }
 
-export function RGDDetailView({ rgd, onBack, onDeploy }: RGDDetailViewProps) {
+export function RGDDetailView({ rgd, onDeploy, initialTab }: RGDDetailViewProps) {
   // Fetch full RGD details
   const { data: fullRGD } = useRGD(rgd.name, rgd.namespace);
   const displayRGD = fullRGD || rgd;
-  const isInactive = displayRGD.status !== "Active";
-
   // Fetch add-ons (RGDs that extend this RGD's Kind)
   const { data: addOnsData } = useRGDList(
     displayRGD.kind ? { extendsKind: displayRGD.kind, pageSize: 100 } : undefined
   );
   const addOnsCount = addOnsData?.totalCount ?? 0;
 
-  const dependsOnCount = displayRGD.dependsOnKinds?.length || 0;
+  // Only count dependencies that exist in the catalog (hides tab when all deps are external)
+  const { kindToRGD, isLoading: kindMapLoading } = useKindToRGDMap();
+  const dependsOnCount = kindMapLoading
+    ? (displayRGD.dependsOnKinds?.length || 0)
+    : (displayRGD.dependsOnKinds?.filter((k) => kindToRGD.has(k)).length || 0);
   const secretRefsCount = displayRGD.secretRefs?.length ?? 0;
+
+  // Fetch revision count (React Query deduplicates with RevisionsTab)
+  const { data: revisionsData } = useRGDRevisions(displayRGD.name);
+  const revisionsCount = revisionsData?.totalCount ?? 0;
+  // Use lastIssuedRevision from the catalog API (populated from KRO RGD status).
+  // Falls back to max revision number if field not yet available.
+  const currentRevision = useMemo(() => {
+    if (displayRGD?.lastIssuedRevision) return displayRGD.lastIssuedRevision;
+    const items = revisionsData?.items;
+    if (!items || items.length === 0) return undefined;
+    return Math.max(...items.map(r => r.revisionNumber));
+  }, [displayRGD?.lastIssuedRevision, revisionsData]);
 
   // Build conditional tabs
   const conditionalTabs = useMemo<ConditionalTab<TabId>[]>(() => [
@@ -84,15 +103,29 @@ export function RGDDetailView({ rgd, onBack, onDeploy }: RGDDetailViewProps) {
       condition: addOnsCount > 0,
       tab: { id: "addons", label: `Add-ons (${addOnsCount})`, icon: <Puzzle className="h-4 w-4" /> },
     },
-  ], [addOnsCount, dependsOnCount, secretRefsCount]);
+    {
+      condition: revisionsCount > 0,
+      tab: { id: "revisions", label: `Revisions (${revisionsCount})`, icon: <GitBranch className="h-4 w-4" /> },
+    },
+  ], [addOnsCount, dependsOnCount, secretRefsCount, revisionsCount]);
 
-  const { tabs, activeTab, setActiveTab } = useDynamicTabs(BASE_TABS, conditionalTabs, "overview" as TabId);
+  const { tabs, activeTab, setActiveTab } = useDynamicTabs(BASE_TABS, conditionalTabs, "instances" as TabId);
 
-  // Reset to overview when navigating between RGDs
+  // Switch to initialTab once the target tab appears in the dynamic list (e.g., after data loads)
+  const appliedInitialTab = useRef(false);
+  useEffect(() => {
+    if (initialTab && !appliedInitialTab.current && tabs.some(t => t.id === initialTab)) {
+      setActiveTab(initialTab);
+      appliedInitialTab.current = true;
+    }
+  }, [initialTab, tabs, setActiveTab]);
+
+  // Reset to instances when navigating between RGDs; leave appliedInitialTab guard
+  // unchanged so initialTab can still activate on the new RGD via the useEffect above.
   const [prevRGDName, setPrevRGDName] = useState(rgd.name);
   if (prevRGDName !== rgd.name) {
     setPrevRGDName(rgd.name);
-    setActiveTab("overview");
+    setActiveTab("instances");
   }
 
   const normalizedTags = useMemo(() => {
@@ -103,32 +136,20 @@ export function RGDDetailView({ rgd, onBack, onDeploy }: RGDDetailViewProps) {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      {/* Back button */}
-      <button
-        onClick={onBack}
-        className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
-      >
-        <ArrowLeft className="h-4 w-4" />
-        Back to catalog
-      </button>
-
       {/* Header */}
       <div className="rounded-lg border border-border bg-card p-6">
         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
           <div className="flex items-start gap-4">
-            <div className="h-12 w-12 rounded-lg bg-secondary flex items-center justify-center shrink-0">
-              <Box className="h-6 w-6 text-muted-foreground" />
+            <div className="h-12 w-12 rounded-lg bg-secondary text-muted-foreground flex items-center justify-center shrink-0">
+              <RGDIcon icon={displayRGD.icon} category={displayRGD.category || "uncategorized"} className="h-6 w-6" />
             </div>
             <div>
               <div className="flex items-center gap-3">
                 <h1 className="text-2xl font-bold tracking-tight text-foreground">
                   {displayRGD.title || displayRGD.name}
                 </h1>
-                {isInactive && (
-                  <Badge variant="destructive" className="gap-1">
-                    <AlertTriangle className="h-3 w-3" />
-                    Inactive
-                  </Badge>
+                {displayRGD.isClusterScoped && (
+                  <ScopeIndicator isClusterScoped variant="badge" />
                 )}
               </div>
               {displayRGD.title && displayRGD.title !== displayRGD.name && (
@@ -139,11 +160,6 @@ export function RGDDetailView({ rgd, onBack, onDeploy }: RGDDetailViewProps) {
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-primary/10 text-primary border border-primary/20">
                     <FolderKanban className="h-3.5 w-3.5" />
                     {displayRGD.labels["knodex.io/project"]}
-                  </span>
-                )}
-                {displayRGD.version && (
-                  <span className="px-2.5 py-1 rounded-md text-xs font-mono font-medium text-muted-foreground bg-secondary border border-border">
-                    {displayRGD.version}
                   </span>
                 )}
               </div>
@@ -183,20 +199,6 @@ export function RGDDetailView({ rgd, onBack, onDeploy }: RGDDetailViewProps) {
           ))}
         </div>
 
-        {/* Meta */}
-        <div className="flex flex-wrap gap-6 mt-4 pt-4 border-t border-border text-xs text-muted-foreground">
-          <Link
-            to={`/instances?rgd=${encodeURIComponent(displayRGD.name)}`}
-            className="flex items-center gap-1.5 hover:text-primary hover:underline transition-colors cursor-pointer"
-          >
-            <Package className="h-3.5 w-3.5" />
-            {displayRGD.instances} instance{displayRGD.instances !== 1 ? "s" : ""}
-          </Link>
-          <span className="flex items-center gap-1.5">
-            <Clock className="h-3.5 w-3.5" />
-            Updated {formatDateTime(displayRGD.updatedAt)}
-          </span>
-        </div>
       </div>
 
       {/* Tabs */}
@@ -204,8 +206,8 @@ export function RGDDetailView({ rgd, onBack, onDeploy }: RGDDetailViewProps) {
 
       {/* Tab content */}
       <div id={`panel-${activeTab}`} className="min-h-[300px]" role="tabpanel" aria-labelledby={`tab-${activeTab}`}>
-        {activeTab === "overview" && (
-          <OverviewTab rgd={displayRGD} />
+        {activeTab === "instances" && (
+          <InstancesTab rgd={displayRGD} onDeploy={onDeploy} />
         )}
         {activeTab === "resources" && (
           <ResourcesTab rgd={displayRGD} />
@@ -221,163 +223,67 @@ export function RGDDetailView({ rgd, onBack, onDeploy }: RGDDetailViewProps) {
         {activeTab === "addons" && displayRGD.kind && (
           <AddOnsTab kind={displayRGD.kind} />
         )}
+        {activeTab === "revisions" && (
+          <Suspense fallback={<div className="flex items-center justify-center min-h-[300px]"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>}>
+            <RevisionsTab rgdName={displayRGD.name} currentRevision={currentRevision} />
+          </Suspense>
+        )}
       </div>
     </div>
   );
 }
 
-function OverviewTab({ rgd }: { rgd: CatalogRGD }) {
-  const { kindToRGD } = useKindToRGDMap();
 
-  return (
-    <div className="grid gap-6 md:grid-cols-2">
-      <div className="rounded-lg border border-border bg-card p-4">
-        <h3 className="text-sm font-medium text-foreground mb-3">Details</h3>
-        <dl className="space-y-2 text-sm">
-          <div className="flex justify-between">
-            <dt className="text-muted-foreground">Name</dt>
-            <dd className="text-foreground font-mono">{rgd.name}</dd>
-          </div>
-          <div className="flex justify-between">
-            <dt className="text-muted-foreground">Status</dt>
-            <dd className={cn(
-              "text-foreground font-medium",
-              rgd.status !== "Active" && "text-destructive"
-            )}>
-              {rgd.status || "Unknown"}
-            </dd>
-          </div>
-          {rgd.labels?.["knodex.io/project"] && (
-            <div className="flex justify-between">
-              <dt className="text-muted-foreground">Project</dt>
-              <dd className="text-foreground font-mono">{rgd.labels["knodex.io/project"]}</dd>
-            </div>
-          )}
-          <div className="flex justify-between">
-            <dt className="text-muted-foreground">Category</dt>
-            <dd className="text-foreground">{rgd.category || "Uncategorized"}</dd>
-          </div>
-          {rgd.docsUrl && /^https?:\/\/\S+$/.test(rgd.docsUrl) && (
-            <div className="flex justify-between">
-              <dt className="text-muted-foreground">Documentation</dt>
-              <dd>
-                <a
-                  href={rgd.docsUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-primary hover:underline flex items-center gap-1 text-sm"
-                >
-                  View docs <ExternalLink className="h-3.5 w-3.5" />
-                </a>
-              </dd>
-            </div>
-          )}
-          <div className="flex justify-between">
-            <dt className="text-muted-foreground">Version</dt>
-            <dd className="text-foreground font-mono">{rgd.version || "N/A"}</dd>
-          </div>
-          <div className="flex justify-between">
-            <dt className="text-muted-foreground">API Version</dt>
-            <dd className="text-foreground font-mono">{rgd.apiVersion || "N/A"}</dd>
-          </div>
-          <div className="flex justify-between">
-            <dt className="text-muted-foreground">Kind</dt>
-            <dd className="text-foreground font-mono">{rgd.kind || "N/A"}</dd>
-          </div>
-          {rgd.extendsKinds && rgd.extendsKinds.length > 0 && (
-            <div className="flex justify-between">
-              <dt className="text-muted-foreground">Extends</dt>
-              <dd className="text-foreground flex flex-wrap gap-1.5 justify-end">
-                {rgd.extendsKinds.map((kind) => (
-                  <ExtendsKindLink key={kind} kind={kind} rgd={kindToRGD.get(kind)} />
-                ))}
-              </dd>
-            </div>
-          )}
-          {rgd.dependsOnKinds && rgd.dependsOnKinds.length > 0 && (
-            <div className="flex justify-between">
-              <dt className="text-muted-foreground">Depends On</dt>
-              <dd className="flex flex-wrap gap-1.5 justify-end">
-                {rgd.dependsOnKinds.map((kind) => (
-                  <DependsOnKindLink key={kind} kind={kind} />
-                ))}
-              </dd>
-            </div>
-          )}
-        </dl>
-      </div>
 
-      <div className="rounded-lg border border-border bg-card p-4">
-        <h3 className="text-sm font-medium text-foreground mb-3">Timestamps</h3>
-        <dl className="space-y-2 text-sm">
-          <div className="flex justify-between">
-            <dt className="text-muted-foreground">Created</dt>
-            <dd className="text-foreground">{formatDateTime(rgd.createdAt)}</dd>
-          </div>
-          <div className="flex justify-between">
-            <dt className="text-muted-foreground">Updated</dt>
-            <dd className="text-foreground">{formatDateTime(rgd.updatedAt)}</dd>
-          </div>
-        </dl>
-      </div>
+function InstancesTab({ rgd, onDeploy }: { rgd: CatalogRGD; onDeploy?: () => void }) {
+  const { data, isLoading } = useRGDInstances(rgd.name, rgd.namespace);
+  const instances = data?.items ?? [];
 
-      {Object.keys(rgd.labels || {}).length > 0 && (
-        <div className="rounded-lg border border-border bg-card p-4 md:col-span-2">
-          <h3 className="text-sm font-medium text-foreground mb-3">Labels</h3>
-          <div className="flex flex-wrap gap-2">
-            {Object.entries(rgd.labels).map(([key, value]) => (
-              <span
-                key={key}
-                className="px-2 py-1 rounded text-xs font-mono bg-secondary text-muted-foreground"
-              >
-                {key}: {value}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Renders a single extends-kind as a link to the parent RGD detail page.
-// Pure display component — Kind resolution is done by the parent via useKindToRGDMap.
-// Falls back to plain text when the parent RGD is not in the catalog.
-function ExtendsKindLink({ kind, rgd: parentRGD }: { kind: string; rgd?: CatalogRGD }) {
-  if (!parentRGD) {
-    return <span className="font-mono text-muted-foreground">{kind}</span>;
-  }
-
-  return (
-    <Link
-      to={`/catalog/${encodeURIComponent(parentRGD.name)}`}
-      className="font-mono text-primary hover:underline"
-    >
-      {kind}
-    </Link>
-  );
-}
-
-function DependsOnKindLink({ kind }: { kind: string }) {
-  const { kindToRGD } = useKindToRGDMap();
-  const parentRGD = kindToRGD.get(kind);
-
-  if (parentRGD) {
+  if (isLoading) {
     return (
-      <Link
-        to={`/catalog/${encodeURIComponent(parentRGD.name)}`}
-        className="text-primary hover:underline font-mono text-xs"
-      >
-        {kind}
-      </Link>
+      <div className="flex items-center justify-center min-h-[300px]">
+        <div className="flex items-center gap-2 text-muted-foreground">
+          <Loader2 className="h-5 w-5 animate-spin" />
+          <span className="text-sm">Loading instances...</span>
+        </div>
+      </div>
     );
   }
 
-  return <span className="text-foreground font-mono text-xs">{kind}</span>;
+  if (instances.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[300px] text-center gap-3">
+        <Package className="h-10 w-10 text-muted-foreground/40" />
+        <p className="text-sm font-medium text-muted-foreground">No instances deployed yet</p>
+        <p className="text-xs text-muted-foreground/70">Deploy an instance to see it here.</p>
+        {onDeploy && (
+          <Button onClick={onDeploy} className="gap-2 mt-2" data-testid="empty-state-deploy">
+            <ExternalLink className="h-4 w-4" />
+            Deploy
+          </Button>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))" }}>
+      {instances.map((inst, index) => (
+        <div
+          key={inst.uid || `${inst.namespace}/${inst.name}`}
+          className="animate-card-enter"
+          style={{ animationDelay: `${Math.min(index * 40, 400)}ms` }}
+        >
+          <StatusCard instance={inst} hideKind />
+        </div>
+      ))}
+    </div>
+  );
 }
 
+
 function ResourcesTab({ rgd }: { rgd: CatalogRGD }) {
-  const { data: resourceGraph, isLoading, error } = useRGDResourceGraph(rgd.name, rgd.namespace);
+  const { data: resourceGraph, isLoading, error } = useRGDDefinitionGraph(rgd.name, rgd.namespace);
 
   if (isLoading) {
     return (

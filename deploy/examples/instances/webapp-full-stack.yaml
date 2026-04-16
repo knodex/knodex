@@ -5,6 +5,9 @@ metadata:
   namespace: default
 spec:
   name: fullstack-app
-  replicas: 3
-  enableDatabase: true
-  enableCache: true
+  database:
+    enabled: true
+    name: fullstack-db
+  cache:
+    enabled: true
+    maxMemory: 512mb

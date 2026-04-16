@@ -3,9 +3,8 @@
 
 import { useState, useCallback, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Download, ScrollText, ShieldAlert } from "lucide-react";
+import { Download, ShieldAlert } from "@/lib/icons";
 import { AxiosError } from "axios";
-import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { isEnterprise } from "@/hooks/useCompliance";
 import { EnterpriseRequired } from "@/components/compliance";
@@ -15,6 +14,7 @@ import { AuditStats } from "@/components/settings/audit/AuditStats";
 import { AuditFilters } from "@/components/settings/audit/AuditFilters";
 import { AuditEventsTable } from "@/components/settings/audit/AuditEventsTable";
 import { AuditEventDetail } from "@/components/settings/audit/AuditEventDetail";
+import { PageHeader } from "@/components/layout/PageHeader";
 import type { AuditEvent, AuditEventFilter, AuditSortField } from "@/types/audit";
 
 /** Escape a CSV field value, quoting if it contains commas, quotes, or newlines. */
@@ -61,7 +61,9 @@ function downloadCSV(csv: string, filename: string) {
   const a = document.createElement("a");
   a.href = url;
   a.download = filename;
+  document.body.appendChild(a);
   a.click();
+  document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
 
@@ -226,70 +228,27 @@ export default function AuditPage() {
 
   if (is403Error) {
     return (
-      <div className="py-6">
-        <div className="mb-8">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
-              <ScrollText className="h-5 w-5" />
-            </div>
-            <div>
-              <h2 className="text-sm font-medium text-foreground">Audit Trail</h2>
-              <p className="text-muted-foreground">Browse audit events</p>
-            </div>
-          </div>
-        </div>
-
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-center py-12 text-muted-foreground">
-              <ShieldAlert className="h-12 w-12 mx-auto mb-3 opacity-50" />
-              <p className="text-sm font-medium">Access Denied</p>
-              <p className="text-xs mt-2">
-                You do not have permission to view audit events.
-                <br />
-                Contact your administrator if you believe this is an error.
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      <section className="flex flex-col items-center justify-center py-16 text-center">
+        <ShieldAlert className="h-12 w-12 text-muted-foreground mb-4" />
+        <h2 className="text-lg font-semibold">Access Denied</h2>
+        <p className="text-sm text-muted-foreground mt-1">
+          You do not have permission to view audit events.
+        </p>
+      </section>
     );
   }
 
   return (
-    <div className="py-6">
+    <section className="space-y-6">
       {/* Header */}
-      <div className="mb-8 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
-            <ScrollText className="h-5 w-5" />
-          </div>
-          <div>
-            <h2 className="text-sm font-medium text-foreground">Audit Trail</h2>
-            <p className="text-muted-foreground">
-              Browse and filter audit events for user actions and security events
-            </p>
-          </div>
-        </div>
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={exporting || isLoading}
-          onClick={handleExportCSV}
-        >
-          <Download className="h-4 w-4 mr-2" />
-          {exporting ? "Exporting..." : "Export CSV"}
-        </Button>
-      </div>
+      <PageHeader title="Audit Trail" />
 
       {/* Stats cards */}
-      <div className="mb-6">
-        <AuditStats stats={stats} isLoading={statsLoading} error={statsError} />
-      </div>
+      <AuditStats stats={stats} isLoading={statsLoading} error={statsError} />
 
-      {/* Filters */}
-      <Card className="mb-6">
-        <CardContent className="pt-6">
+      {/* Filters + Export on same row */}
+      <div className="flex items-center gap-2">
+        <div className="flex-1 min-w-0">
           <AuditFilters
             userId={userId}
             action={action}
@@ -301,41 +260,43 @@ export default function AuditPage() {
             onFilterChange={handleFilterChange}
             onClearFilters={handleClearFilters}
           />
-        </CardContent>
-      </Card>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={exporting || isLoading}
+          onClick={handleExportCSV}
+          className="h-8 shrink-0 text-xs"
+        >
+          <Download className="h-3.5 w-3.5 mr-1.5" />
+          {exporting ? "Exporting..." : "Export CSV"}
+        </Button>
+      </div>
 
       {/* Error state (non-403) */}
       {error && !is403Error && (
-        <Card className="mb-6">
-          <CardContent className="pt-6">
-            <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-md">
-              <p className="text-sm text-destructive">
-                Failed to load audit events:{" "}
-                {error instanceof Error ? error.message : "Unknown error"}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
+        <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-md">
+          <p className="text-sm text-destructive">
+            Failed to load audit events:{" "}
+            {error instanceof Error ? error.message : "Unknown error"}
+          </p>
+        </div>
       )}
 
       {/* Events table */}
-      <Card>
-        <CardContent className="pt-6">
-          <AuditEventsTable
-            events={data?.events ?? []}
-            total={data?.total ?? 0}
-            page={filters.page ?? 1}
-            pageSize={filters.pageSize ?? 50}
-            sortBy={sortBy}
-            sortOrder={sortOrder}
-            isLoading={isLoading}
-            onPageChange={handlePageChange}
-            onPageSizeChange={handlePageSizeChange}
-            onSortChange={handleSortChange}
-            onRowClick={handleRowClick}
-          />
-        </CardContent>
-      </Card>
+      <AuditEventsTable
+        events={data?.events ?? []}
+        total={data?.total ?? 0}
+        page={filters.page ?? 1}
+        pageSize={filters.pageSize ?? 50}
+        sortBy={sortBy}
+        sortOrder={sortOrder}
+        isLoading={isLoading}
+        onPageChange={handlePageChange}
+        onPageSizeChange={handlePageSizeChange}
+        onSortChange={handleSortChange}
+        onRowClick={handleRowClick}
+      />
 
       {/* Event detail slide-over */}
       <AuditEventDetail
@@ -343,6 +304,6 @@ export default function AuditPage() {
         open={detailOpen}
         onOpenChange={setDetailOpen}
       />
-    </div>
+    </section>
   );
 }

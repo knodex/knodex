@@ -3,7 +3,7 @@
 
 import { useWebSocketContext, type ConnectionStatus as Status } from "@/context/WebSocketContext";
 import { cn } from "@/lib/utils";
-import { Wifi, WifiOff, Loader2, AlertCircle } from "lucide-react";
+import { Wifi, WifiOff, Loader2, AlertCircle } from "@/lib/icons";
 import {
   Tooltip,
   TooltipContent,

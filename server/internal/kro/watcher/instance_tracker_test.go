@@ -8,10 +8,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	fake "k8s.io/client-go/discovery/fake"
+	"k8s.io/client-go/dynamic/dynamicinformer"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	faketesting "k8s.io/client-go/testing"
 
@@ -315,6 +318,100 @@ func TestInstanceTracker_GVRFromRGD(t *testing.T) {
 	}
 }
 
+// --- STORY-298: Dual-prefix label migration compatibility ---
+
+func TestBelongsToRGD_LegacyPrefix(t *testing.T) {
+	tracker := NewInstanceTrackerWithCache(NewInstanceCache())
+	u := newUnstructuredWithLabels(map[string]string{
+		"kro.run/resource-graph-definition-name": "my-rgd",
+	})
+
+	if !tracker.belongsToRGD(u, "my-rgd", "") {
+		t.Error("expected belongsToRGD=true for legacy kro.run/ prefix")
+	}
+}
+
+func TestBelongsToRGD_InternalPrefix(t *testing.T) {
+	tracker := NewInstanceTrackerWithCache(NewInstanceCache())
+	u := newUnstructuredWithLabels(map[string]string{
+		"internal.kro.run/resource-graph-definition-name": "my-rgd",
+	})
+
+	if !tracker.belongsToRGD(u, "my-rgd", "") {
+		t.Error("expected belongsToRGD=true for internal.kro.run/ prefix")
+	}
+}
+
+func TestBelongsToRGD_BothPrefixes_NewWins(t *testing.T) {
+	tracker := NewInstanceTrackerWithCache(NewInstanceCache())
+	u := newUnstructuredWithLabels(map[string]string{
+		"internal.kro.run/resource-graph-definition-name": "new-rgd",
+		"kro.run/resource-graph-definition-name":          "old-rgd",
+	})
+
+	// New prefix takes priority — should match "new-rgd", not "old-rgd"
+	if !tracker.belongsToRGD(u, "new-rgd", "") {
+		t.Error("expected belongsToRGD=true: new prefix should take priority")
+	}
+	if tracker.belongsToRGD(u, "old-rgd", "") {
+		t.Error("expected belongsToRGD=false for old-rgd when new prefix is present")
+	}
+}
+
+func TestBelongsToRGD_NeitherPrefix(t *testing.T) {
+	tracker := NewInstanceTrackerWithCache(NewInstanceCache())
+	u := newUnstructuredWithLabels(map[string]string{
+		"unrelated-label": "value",
+	})
+
+	if tracker.belongsToRGD(u, "my-rgd", "") {
+		t.Error("expected belongsToRGD=false when no RGD label is present")
+	}
+}
+
+func TestBelongsToRGD_MixedCluster(t *testing.T) {
+	// Simulates a mixed-version cluster: some instances with old prefix, some with new
+	tracker := NewInstanceTrackerWithCache(NewInstanceCache())
+
+	oldInstance := newUnstructuredWithLabels(map[string]string{
+		"kro.run/resource-graph-definition-name": "shared-rgd",
+	})
+	newInstance := newUnstructuredWithLabels(map[string]string{
+		"internal.kro.run/resource-graph-definition-name": "shared-rgd",
+	})
+
+	if !tracker.belongsToRGD(oldInstance, "shared-rgd", "") {
+		t.Error("old-prefix instance should belong to shared-rgd")
+	}
+	if !tracker.belongsToRGD(newInstance, "shared-rgd", "") {
+		t.Error("new-prefix instance should belong to shared-rgd")
+	}
+}
+
+// newUnstructuredWithLabels creates an Unstructured object with the given labels.
+func newUnstructuredWithLabels(labels map[string]string) *unstructured.Unstructured {
+	return &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "example.com/v1",
+			"kind":       "TestResource",
+			"metadata": map[string]interface{}{
+				"name":      "test-instance",
+				"namespace": "default",
+				"labels":    toInterfaceMap(labels),
+			},
+		},
+	}
+}
+
+// toInterfaceMap converts map[string]string to map[string]interface{} for unstructured objects.
+func toInterfaceMap(m map[string]string) map[string]interface{} {
+	result := make(map[string]interface{}, len(m))
+	for k, v := range m {
+		result[k] = v
+	}
+	return result
+}
+
 func TestInstanceTracker_IsSyncedAndRunning(t *testing.T) {
 	cache := NewInstanceCache()
 	tracker := NewInstanceTrackerWithCache(cache)
@@ -515,12 +612,12 @@ func TestInstanceTracker_HandleRGDChange_PurgesCache(t *testing.T) {
 	cache.Set(&models.Instance{Name: "inst2", Namespace: "prod", Kind: "WebApp", RGDName: "rgd-a", RGDNamespace: ""})
 	cache.Set(&models.Instance{Name: "inst3", Namespace: "prod", Kind: "Database", RGDName: "rgd-b", RGDNamespace: ""})
 
-	// Simulate that there's an informer for rgd-a that will be removed
+	// Simulate that there's an informer handler registered for rgd-a that will be removed
 	fakeKey := "cluster/rgd-a@kro.run/v1alpha1/webapps"
-	fakeStopCh := make(chan struct{})
 	tracker.informersMu.Lock()
-	tracker.informers[fakeKey] = fakeStopCh
-	tracker.informerRGDs[fakeKey] = rgdRef{namespace: "", name: "rgd-a"}
+	tracker.informers[fakeKey] = informerEntry{
+		rgd: rgdRef{namespace: "", name: "rgd-a"},
+	}
 	tracker.informersMu.Unlock()
 
 	// Track delete notifications
@@ -531,18 +628,14 @@ func TestInstanceTracker_HandleRGDChange_PurgesCache(t *testing.T) {
 		}
 	})
 
-	// Simulate handleRGDChange where rgd-a is removed (currentKeys won't contain fakeKey)
-	// We manually replicate the removal logic since handleRGDChange requires rgdWatcher
+	// Simulate handleRGDChange where rgd-a is removed (currentKeys won't contain fakeKey).
+	// We manually replicate the removal logic since handleRGDChange requires rgdWatcher and factory.
 	tracker.informersMu.Lock()
-	for key, stopCh := range tracker.informers {
+	for key, entry := range tracker.informers {
 		// Simulate: rgd-a is no longer in currentKeys
-		close(stopCh)
-		if ref, ok := tracker.informerRGDs[key]; ok {
-			removed := cache.DeleteByRGD(ref.namespace, ref.name)
-			for _, inst := range removed {
-				tracker.notifyUpdate(InstanceActionDelete, inst.Namespace, inst.Kind, inst.Name, nil)
-			}
-			delete(tracker.informerRGDs, key)
+		removed := cache.DeleteByRGD(entry.rgd.namespace, entry.rgd.name)
+		for _, inst := range removed {
+			tracker.notifyUpdate(InstanceActionDelete, inst.Namespace, inst.Kind, inst.Name, nil)
 		}
 		delete(tracker.informers, key)
 	}
@@ -565,16 +658,86 @@ func TestInstanceTracker_HandleRGDChange_PurgesCache(t *testing.T) {
 	}
 }
 
-func TestInstanceTracker_InformerRGDs_Tracked(t *testing.T) {
+func TestInstanceTracker_Informers_Tracked(t *testing.T) {
 	tracker := NewInstanceTrackerWithCache(NewInstanceCache())
 
-	// Verify informerRGDs is initialized
-	if tracker.informerRGDs == nil {
-		t.Fatal("expected informerRGDs to be initialized")
+	// Verify informers map is initialized
+	if tracker.informers == nil {
+		t.Fatal("expected informers to be initialized")
 	}
-	if len(tracker.informerRGDs) != 0 {
-		t.Errorf("expected empty informerRGDs, got %d entries", len(tracker.informerRGDs))
+	if len(tracker.informers) != 0 {
+		t.Errorf("expected empty informers, got %d entries", len(tracker.informers))
 	}
+}
+
+func TestInstanceTracker_SharedFactory_DeduplicatesInformers(t *testing.T) {
+	// Two RGDs that produce the same GVR should share one informer
+	// but get separate event handler registrations.
+	gvr := schema.GroupVersionResource{Group: "kro.run", Version: "v1alpha1", Resource: "webapps"}
+	scheme := runtime.NewScheme()
+	fakeDynClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme,
+		map[schema.GroupVersionResource]string{
+			gvr: "WebAppList",
+		},
+	)
+	factory := dynamicinformer.NewDynamicSharedInformerFactory(fakeDynClient, 0)
+
+	rgdCache := NewRGDCache()
+	rgdWatcher := NewRGDWatcherWithCache(rgdCache)
+
+	tracker := NewInstanceTracker(fakeDynClient, nil, factory, rgdWatcher)
+	t.Cleanup(tracker.Stop)
+
+	// Two different RGDs that produce the same GVR (kro.run/v1alpha1/webapps)
+	rgdA := &models.CatalogRGD{
+		Name:       "rgd-a",
+		Namespace:  "",
+		APIVersion: "kro.run/v1alpha1",
+		Kind:       "WebApp",
+	}
+	rgdB := &models.CatalogRGD{
+		Name:       "rgd-b",
+		Namespace:  "",
+		APIVersion: "kro.run/v1alpha1",
+		Kind:       "WebApp",
+	}
+
+	// Register both RGDs
+	tracker.ensureInformerForRGD(rgdA)
+	tracker.ensureInformerForRGD(rgdB)
+
+	// Should have two separate handler registrations (one per RGD)
+	tracker.informersMu.RLock()
+	if len(tracker.informers) != 2 {
+		t.Fatalf("expected 2 informer entries (one per RGD), got %d", len(tracker.informers))
+	}
+
+	// Both entries should reference the same GVR
+	var gvrs []schema.GroupVersionResource
+	for _, entry := range tracker.informers {
+		gvrs = append(gvrs, entry.gvr)
+	}
+	tracker.informersMu.RUnlock()
+
+	if gvrs[0] != gvrs[1] {
+		t.Errorf("expected both entries to have same GVR, got %s and %s", gvrs[0], gvrs[1])
+	}
+
+	// The factory should return the same informer instance for the same GVR
+	informerA := factory.ForResource(gvrs[0]).Informer()
+	informerB := factory.ForResource(gvrs[1]).Informer()
+	if informerA != informerB {
+		t.Error("expected factory to return the same informer for the same GVR (deduplication)")
+	}
+}
+
+func TestInstanceTracker_StopOnce_PreventsPanic(t *testing.T) {
+	tracker := NewInstanceTrackerWithCache(NewInstanceCache())
+	// running is already true from NewInstanceTrackerWithCache
+
+	// Calling Stop() twice must not panic (double-close on stopCh)
+	tracker.Stop()
+	tracker.Stop() // second call should be a no-op
 }
 
 func TestInstanceAction_Values(t *testing.T) {
@@ -650,8 +813,10 @@ func TestInstanceTracker_InactiveRGD_InstancesPreserved(t *testing.T) {
 	rgd := rgdCache.All()[0]
 	gvr := tracker.gvrFromRGD(rgd)
 	key := tracker.informerKey(rgd, gvr)
-	tracker.informers[key] = make(chan struct{})
-	tracker.informerRGDs[key] = rgdRef{namespace: "default", name: "my-rgd"}
+	tracker.informers[key] = informerEntry{
+		gvr: gvr,
+		rgd: rgdRef{namespace: "default", name: "my-rgd"},
+	}
 
 	// Simulate RGD going inactive — it stays in the catalog cache
 	rgdCache.Set(&models.CatalogRGD{
@@ -711,8 +876,10 @@ func TestInstanceTracker_DeletedRGD_InstancesPurged(t *testing.T) {
 	rgd := rgdCache.All()[0]
 	gvr := tracker.gvrFromRGD(rgd)
 	key := tracker.informerKey(rgd, gvr)
-	tracker.informers[key] = make(chan struct{})
-	tracker.informerRGDs[key] = rgdRef{namespace: "default", name: "my-rgd"}
+	tracker.informers[key] = informerEntry{
+		gvr: gvr,
+		rgd: rgdRef{namespace: "default", name: "my-rgd"},
+	}
 
 	// Now truly delete the RGD from cache
 	rgdCache.Delete("default", "my-rgd")
@@ -1134,6 +1301,420 @@ func TestInstanceTracker_ResolveGVR_VersionOnlyAPIVersion(t *testing.T) {
 	}
 }
 
+// --- STORY-300: Cluster-scoped instance tracking ---
+
+func TestInstanceTracker_DeleteInstance_ClusterScoped_NoNamespace(t *testing.T) {
+	// Cluster-scoped delete should NOT call .Namespace() — verifies scope-aware logic
+	fakeDiscovery := &fake.FakeDiscovery{
+		Fake: &faketesting.Fake{},
+	}
+	fakeDiscovery.Resources = []*metav1.APIResourceList{
+		{
+			GroupVersion: "example.com/v1",
+			APIResources: []metav1.APIResource{
+				{Name: "clusterconfigs", Kind: "ClusterConfig", Verbs: metav1.Verbs{"delete", "get", "list"}},
+			},
+		},
+	}
+
+	scheme := runtime.NewScheme()
+	fakeDynamic := dynamicfake.NewSimpleDynamicClient(scheme)
+	fakeDynamic.PrependReactor("delete", "*", func(action faketesting.Action) (bool, runtime.Object, error) {
+		return true, nil, nil
+	})
+
+	cache := NewInstanceCache()
+	cache.Set(&models.Instance{
+		Name:      "my-config",
+		Namespace: "",
+		Kind:      "ClusterConfig",
+		RGDName:   "cluster-config-rgd",
+	})
+
+	tracker := NewInstanceTrackerWithCache(cache)
+	tracker.dynamicClient = fakeDynamic
+	tracker.discoveryClient = fakeDiscovery
+
+	var deletedKey string
+	tracker.SetOnUpdateCallback(func(action InstanceAction, namespace, kind, name string, instance *models.Instance) {
+		if action == InstanceActionDelete {
+			deletedKey = namespace + "/" + kind + "/" + name
+		}
+	})
+
+	// Delete with empty namespace (cluster-scoped)
+	err := tracker.DeleteInstance(context.Background(), "", "my-config", "example.com/v1", "ClusterConfig")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify the dynamic client received cluster-scoped delete (empty namespace)
+	actions := fakeDynamic.Actions()
+	if len(actions) != 1 {
+		t.Fatalf("expected 1 action, got %d", len(actions))
+	}
+
+	deleteAction, ok := actions[0].(faketesting.DeleteAction)
+	if !ok {
+		t.Fatalf("expected DeleteAction, got %T", actions[0])
+	}
+
+	// Cluster-scoped delete should have empty namespace
+	if deleteAction.GetNamespace() != "" {
+		t.Errorf("expected empty namespace for cluster-scoped delete, got %q", deleteAction.GetNamespace())
+	}
+	if deleteAction.GetName() != "my-config" {
+		t.Errorf("expected name 'my-config', got %q", deleteAction.GetName())
+	}
+
+	// Verify cache cleanup
+	if _, found := cache.Get("", "ClusterConfig", "my-config"); found {
+		t.Error("expected instance to be removed from cache")
+	}
+
+	// Verify delete notification
+	if deletedKey != "/ClusterConfig/my-config" {
+		t.Errorf("expected delete notification for '/ClusterConfig/my-config', got %q", deletedKey)
+	}
+}
+
+func TestInstanceTracker_DeleteInstance_NamespaceScoped_StillWorks(t *testing.T) {
+	// L2: Regression guard — namespace-scoped delete must pass namespace, correct GVR, and name
+	scheme := runtime.NewScheme()
+	fakeDynamic := dynamicfake.NewSimpleDynamicClient(scheme)
+	fakeDynamic.PrependReactor("delete", "*", func(action faketesting.Action) (bool, runtime.Object, error) {
+		return true, nil, nil
+	})
+
+	cache := NewInstanceCache()
+	tracker := NewInstanceTrackerForTest(cache, fakeDynamic)
+
+	err := tracker.DeleteInstance(context.Background(), "prod", "my-app", "example.com/v1", "App")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	actions := fakeDynamic.Actions()
+	if len(actions) != 1 {
+		t.Fatalf("expected 1 action, got %d", len(actions))
+	}
+
+	deleteAction, ok := actions[0].(faketesting.DeleteAction)
+	if !ok {
+		t.Fatalf("expected DeleteAction, got %T", actions[0])
+	}
+
+	if deleteAction.GetNamespace() != "prod" {
+		t.Errorf("expected namespace 'prod', got %q", deleteAction.GetNamespace())
+	}
+	if deleteAction.GetName() != "my-app" {
+		t.Errorf("expected name 'my-app', got %q", deleteAction.GetName())
+	}
+	if deleteAction.GetResource().Group != "example.com" {
+		t.Errorf("expected group 'example.com', got %q", deleteAction.GetResource().Group)
+	}
+}
+
+func TestInstanceTracker_UnstructuredToInstance_ClusterScoped(t *testing.T) {
+	// When parent RGD is cluster-scoped, instance should have IsClusterScoped=true and empty namespace
+	rgdCache := NewRGDCache()
+	rgdCache.Set(&models.CatalogRGD{
+		Name:            "cluster-config-rgd",
+		Namespace:       "",
+		Status:          "Active",
+		Kind:            "ClusterConfig",
+		APIVersion:      "example.com/v1",
+		IsClusterScoped: true,
+	})
+	rgdWatcher := NewRGDWatcherWithCache(rgdCache)
+
+	tracker := NewInstanceTrackerWithCache(NewInstanceCache())
+	tracker.rgdWatcher = rgdWatcher
+
+	u := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "example.com/v1",
+			"kind":       "ClusterConfig",
+			"metadata": map[string]interface{}{
+				"name":              "my-cluster-config",
+				"resourceVersion":   "12345",
+				"uid":               "test-uid",
+				"creationTimestamp": "2026-03-24T10:00:00Z",
+			},
+			"spec":   map[string]interface{}{"key": "value"},
+			"status": map[string]interface{}{},
+		},
+	}
+
+	instance := tracker.unstructuredToInstance(u, "cluster-config-rgd", "")
+
+	if !instance.IsClusterScoped {
+		t.Error("expected IsClusterScoped=true for cluster-scoped RGD instance")
+	}
+	if instance.Namespace != "" {
+		t.Errorf("expected empty namespace for cluster-scoped instance, got %q", instance.Namespace)
+	}
+	if instance.Name != "my-cluster-config" {
+		t.Errorf("expected name 'my-cluster-config', got %q", instance.Name)
+	}
+}
+
+func TestInstanceTracker_UnstructuredToInstance_NamespaceScoped(t *testing.T) {
+	// When parent RGD is namespace-scoped, instance should have IsClusterScoped=false
+	rgdCache := NewRGDCache()
+	rgdCache.Set(&models.CatalogRGD{
+		Name:            "app-rgd",
+		Namespace:       "",
+		Status:          "Active",
+		Kind:            "App",
+		APIVersion:      "example.com/v1",
+		IsClusterScoped: false,
+	})
+	rgdWatcher := NewRGDWatcherWithCache(rgdCache)
+
+	tracker := NewInstanceTrackerWithCache(NewInstanceCache())
+	tracker.rgdWatcher = rgdWatcher
+
+	u := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "example.com/v1",
+			"kind":       "App",
+			"metadata": map[string]interface{}{
+				"name":              "my-app",
+				"namespace":         "prod",
+				"resourceVersion":   "67890",
+				"uid":               "test-uid-2",
+				"creationTimestamp": "2026-03-24T10:00:00Z",
+			},
+			"spec":   map[string]interface{}{"replicas": float64(3)},
+			"status": map[string]interface{}{},
+		},
+	}
+
+	instance := tracker.unstructuredToInstance(u, "app-rgd", "")
+
+	if instance.IsClusterScoped {
+		t.Error("expected IsClusterScoped=false for namespace-scoped RGD instance")
+	}
+	if instance.Namespace != "prod" {
+		t.Errorf("expected namespace 'prod', got %q", instance.Namespace)
+	}
+}
+
+func TestInstanceTracker_UnstructuredToInstance_NilRGDWatcher(t *testing.T) {
+	// M2: When rgdWatcher is nil, IsClusterScoped must default to false (not incoherent empty-ns + false).
+	// This confirms the safe default — a cluster-scoped instance with nil watcher is stored as
+	// {Namespace: "", IsClusterScoped: false} which is incorrect but stable; the watcher being nil
+	// is a transient startup condition and is documented here as a known edge case.
+	tracker := NewInstanceTrackerWithCache(NewInstanceCache())
+	// rgdWatcher is nil by default in NewInstanceTrackerWithCache
+
+	u := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "example.com/v1",
+			"kind":       "ClusterConfig",
+			"metadata": map[string]interface{}{
+				"name":              "orphan-config",
+				"resourceVersion":   "1",
+				"uid":               "uid-orphan",
+				"creationTimestamp": "2026-03-24T10:00:00Z",
+			},
+			"spec":   map[string]interface{}{},
+			"status": map[string]interface{}{},
+		},
+	}
+
+	instance := tracker.unstructuredToInstance(u, "missing-rgd", "")
+
+	// With nil rgdWatcher, IsClusterScoped defaults to false (safe default — no panic)
+	if instance == nil {
+		t.Fatal("expected non-nil instance even with nil rgdWatcher")
+	}
+	if instance.IsClusterScoped {
+		t.Error("expected IsClusterScoped=false when rgdWatcher is nil (safe default)")
+	}
+	if instance.Name != "orphan-config" {
+		t.Errorf("expected name 'orphan-config', got %q", instance.Name)
+	}
+}
+
+func TestInstanceTracker_UnstructuredToInstance_TargetCluster(t *testing.T) {
+	tracker := NewInstanceTrackerWithCache(NewInstanceCache())
+
+	t.Run("annotation present", func(t *testing.T) {
+		u := &unstructured.Unstructured{
+			Object: map[string]interface{}{
+				"apiVersion": "example.com/v1",
+				"kind":       "App",
+				"metadata": map[string]interface{}{
+					"name":              "my-app",
+					"namespace":         "team-alpha",
+					"resourceVersion":   "100",
+					"uid":               "uid-target",
+					"creationTimestamp": "2026-03-31T10:00:00Z",
+					"annotations": map[string]interface{}{
+						"knodex.io/target-cluster": "prod-eu-west",
+					},
+				},
+				"spec":   map[string]interface{}{},
+				"status": map[string]interface{}{},
+			},
+		}
+		instance := tracker.unstructuredToInstance(u, "test-rgd", "default")
+		if instance.TargetCluster != "prod-eu-west" {
+			t.Errorf("TargetCluster = %q, want %q", instance.TargetCluster, "prod-eu-west")
+		}
+	})
+
+	t.Run("annotation absent", func(t *testing.T) {
+		u := &unstructured.Unstructured{
+			Object: map[string]interface{}{
+				"apiVersion": "example.com/v1",
+				"kind":       "App",
+				"metadata": map[string]interface{}{
+					"name":              "my-app",
+					"namespace":         "default",
+					"resourceVersion":   "101",
+					"uid":               "uid-no-target",
+					"creationTimestamp": "2026-03-31T10:00:00Z",
+				},
+				"spec":   map[string]interface{}{},
+				"status": map[string]interface{}{},
+			},
+		}
+		instance := tracker.unstructuredToInstance(u, "test-rgd", "default")
+		if instance.TargetCluster != "" {
+			t.Errorf("TargetCluster = %q, want empty string", instance.TargetCluster)
+		}
+	})
+}
+
+func TestInstanceTracker_HandleInstanceAdd_ClusterScoped(t *testing.T) {
+	rgdCache := NewRGDCache()
+	rgdCache.Set(&models.CatalogRGD{
+		Name:            "cluster-rgd",
+		Namespace:       "",
+		Status:          "Active",
+		Kind:            "ClusterConfig",
+		APIVersion:      "example.com/v1",
+		IsClusterScoped: true,
+	})
+	rgdWatcher := NewRGDWatcherWithCache(rgdCache)
+
+	cache := NewInstanceCache()
+	tracker := NewInstanceTrackerWithCache(cache)
+	tracker.rgdWatcher = rgdWatcher
+
+	var notifiedNamespace string
+	tracker.SetOnUpdateCallback(func(action InstanceAction, namespace, kind, name string, instance *models.Instance) {
+		if action == InstanceActionAdd {
+			notifiedNamespace = namespace
+		}
+	})
+
+	u := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "example.com/v1",
+			"kind":       "ClusterConfig",
+			"metadata": map[string]interface{}{
+				"name":              "my-config",
+				"resourceVersion":   "1",
+				"uid":               "uid-1",
+				"creationTimestamp": "2026-03-24T10:00:00Z",
+				"labels": map[string]interface{}{
+					"kro.run/resource-graph-definition-name": "cluster-rgd",
+				},
+			},
+			"spec":   map[string]interface{}{},
+			"status": map[string]interface{}{},
+		},
+	}
+
+	tracker.handleInstanceAdd(u, "cluster-rgd", "")
+
+	// Verify instance in cache with empty namespace
+	inst, ok := cache.Get("", "ClusterConfig", "my-config")
+	if !ok {
+		t.Fatal("expected cluster-scoped instance in cache")
+	}
+	if inst.Namespace != "" {
+		t.Errorf("expected empty namespace, got %q", inst.Namespace)
+	}
+	if !inst.IsClusterScoped {
+		t.Error("expected IsClusterScoped=true")
+	}
+
+	// Verify notification had empty namespace
+	if notifiedNamespace != "" {
+		t.Errorf("expected empty namespace in notification, got %q", notifiedNamespace)
+	}
+}
+
+func TestInstanceTracker_MixedScope_Coexistence(t *testing.T) {
+	// AC#2: Both namespace-scoped and cluster-scoped instances coexist
+	rgdCache := NewRGDCache()
+	rgdCache.Set(&models.CatalogRGD{
+		Name:            "cluster-rgd",
+		Namespace:       "",
+		IsClusterScoped: true,
+		Kind:            "ClusterConfig",
+		APIVersion:      "example.com/v1",
+	})
+	rgdCache.Set(&models.CatalogRGD{
+		Name:            "ns-rgd",
+		Namespace:       "",
+		IsClusterScoped: false,
+		Kind:            "App",
+		APIVersion:      "example.com/v1",
+	})
+	rgdWatcher := NewRGDWatcherWithCache(rgdCache)
+
+	cache := NewInstanceCache()
+	tracker := NewInstanceTrackerWithCache(cache)
+	tracker.rgdWatcher = rgdWatcher
+
+	// Add cluster-scoped instance
+	cache.Set(&models.Instance{
+		Name:            "global-config",
+		Namespace:       "",
+		Kind:            "ClusterConfig",
+		RGDName:         "cluster-rgd",
+		RGDNamespace:    "",
+		IsClusterScoped: true,
+	})
+
+	// Add namespace-scoped instance
+	cache.Set(&models.Instance{
+		Name:            "my-app",
+		Namespace:       "prod",
+		Kind:            "App",
+		RGDName:         "ns-rgd",
+		RGDNamespace:    "",
+		IsClusterScoped: false,
+	})
+
+	// Both should be retrievable
+	if cache.Count() != 2 {
+		t.Errorf("expected 2 instances, got %d", cache.Count())
+	}
+
+	clusterInst, ok := tracker.GetInstance("", "ClusterConfig", "global-config")
+	if !ok {
+		t.Fatal("expected to find cluster-scoped instance")
+	}
+	if !clusterInst.IsClusterScoped {
+		t.Error("expected cluster-scoped instance to have IsClusterScoped=true")
+	}
+
+	nsInst, ok := tracker.GetInstance("prod", "App", "my-app")
+	if !ok {
+		t.Fatal("expected to find namespace-scoped instance")
+	}
+	if nsInst.IsClusterScoped {
+		t.Error("expected namespace-scoped instance to have IsClusterScoped=false")
+	}
+}
+
 func TestInstanceTracker_ResolveGVR_StableVersionOnly_EmptyGroup(t *testing.T) {
 	// Regression guard: "v1" (no group) should produce group="" not "kro.run".
 	// Core K8s resources (Pod, Service, ConfigMap) use apiVersion "v1" with no group.
@@ -1155,4 +1736,111 @@ func TestInstanceTracker_ResolveGVR_StableVersionOnly_EmptyGroup(t *testing.T) {
 	if gvr.Resource != "pods" {
 		t.Errorf("expected naive resource 'pods', got %q", gvr.Resource)
 	}
+}
+
+func TestInstanceTracker_SyncDetection_NotSyncedBeforeStart(t *testing.T) {
+	// A tracker created with NewInstanceTracker (not the test constructor)
+	// should not be synced before Start() is called.
+	gvr := schema.GroupVersionResource{Group: "example.com", Version: "v1", Resource: "widgets"}
+	scheme := runtime.NewScheme()
+	scheme.AddKnownTypeWithName(
+		schema.GroupVersionKind{Group: gvr.Group, Version: gvr.Version, Kind: "WidgetList"},
+		&unstructured.UnstructuredList{},
+	)
+	dynClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme,
+		map[schema.GroupVersionResource]string{gvr: "WidgetList"})
+	factory := dynamicinformer.NewDynamicSharedInformerFactory(dynClient, 0)
+
+	tracker := NewInstanceTracker(dynClient, nil, factory, nil)
+	t.Cleanup(tracker.Stop)
+
+	require.False(t, tracker.IsSynced(), "expected IsSynced() == false before Start()")
+}
+
+func TestInstanceTracker_SyncDetection_SyncedAfterStart(t *testing.T) {
+	// After Start() with a fake client (instant sync), IsSynced should become true.
+	gvr := schema.GroupVersionResource{Group: "example.com", Version: "v1", Resource: "widgets"}
+	scheme := runtime.NewScheme()
+	scheme.AddKnownTypeWithName(
+		schema.GroupVersionKind{Group: gvr.Group, Version: gvr.Version, Kind: "WidgetList"},
+		&unstructured.UnstructuredList{},
+	)
+	dynClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme,
+		map[schema.GroupVersionResource]string{gvr: "WidgetList"})
+	factory := dynamicinformer.NewDynamicSharedInformerFactory(dynClient, 0)
+
+	rgdWatcher := NewRGDWatcher(dynClient, factory, nil)
+	rgdWatcher.cache.Set(&models.CatalogRGD{
+		Name:       "test-rgd",
+		Namespace:  "default",
+		APIVersion: "example.com/v1",
+		Kind:       "Widget",
+	})
+
+	tracker := NewInstanceTracker(dynClient, nil, factory, rgdWatcher)
+	t.Cleanup(tracker.Stop)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	require.NoError(t, tracker.Start(ctx))
+	require.Eventually(t, tracker.IsSynced, 5*time.Second, 10*time.Millisecond,
+		"IsSynced() did not become true after Start()")
+}
+
+func TestInstanceTracker_SyncDetection_TestConstructorPresetsSynced(t *testing.T) {
+	// NewInstanceTrackerWithCache (test constructor) pre-sets synced=true for test convenience
+	tracker := NewInstanceTrackerWithCache(NewInstanceCache())
+	require.True(t, tracker.IsSynced(), "expected NewInstanceTrackerWithCache to pre-set synced=true")
+}
+
+func TestInstanceTracker_SyncDetection_NilFactory(t *testing.T) {
+	// When factory is nil (test path), Start() should still mark synced=true
+	tracker := NewInstanceTracker(nil, nil, nil, nil)
+	t.Cleanup(tracker.Stop)
+
+	require.NoError(t, tracker.Start(context.Background()))
+	require.Eventually(t, tracker.IsSynced, 2*time.Second, 10*time.Millisecond,
+		"IsSynced() did not become true with nil factory")
+}
+
+func TestInstanceTracker_SyncDetection_TimeoutKeepsSyncedFalse(t *testing.T) {
+	// When WaitForCacheSync times out (context expires), synced must stay false.
+	gvr := schema.GroupVersionResource{Group: "example.com", Version: "v1", Resource: "widgets"}
+	scheme := runtime.NewScheme()
+	scheme.AddKnownTypeWithName(
+		schema.GroupVersionKind{Group: gvr.Group, Version: gvr.Version, Kind: "WidgetList"},
+		&unstructured.UnstructuredList{},
+	)
+	dynClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme,
+		map[schema.GroupVersionResource]string{gvr: "WidgetList"})
+
+	// Block all List calls so informers can never sync
+	dynClient.PrependReactor("list", "*", func(action faketesting.Action) (bool, runtime.Object, error) {
+		<-time.After(10 * time.Minute) // effectively block forever
+		return false, nil, nil
+	})
+
+	factory := dynamicinformer.NewDynamicSharedInformerFactory(dynClient, 0)
+
+	rgdWatcher := NewRGDWatcher(dynClient, factory, nil)
+	rgdWatcher.cache.Set(&models.CatalogRGD{
+		Name:       "test-rgd",
+		Namespace:  "default",
+		APIVersion: "example.com/v1",
+		Kind:       "Widget",
+	})
+
+	tracker := NewInstanceTracker(dynClient, nil, factory, rgdWatcher)
+	t.Cleanup(tracker.Stop)
+
+	// Use a very short context so the 30s internal timeout is capped to 200ms
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	require.NoError(t, tracker.Start(ctx))
+
+	// Wait for the context to expire plus some margin
+	time.Sleep(500 * time.Millisecond)
+	require.False(t, tracker.IsSynced(), "expected IsSynced() == false after sync timeout")
 }

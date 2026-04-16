@@ -28,6 +28,12 @@ func InitAuditLoginMiddleware(_ context.Context, _ *redis.Client, _ kubernetes.I
 	return nil
 }
 
+// InitAuditMiddleware returns nil for OSS builds.
+// Protected routes are not wrapped with audit middleware for 401/403 events.
+func InitAuditMiddleware(_ context.Context, _ *redis.Client, _ kubernetes.Interface, _ string) func(http.Handler) http.Handler {
+	return nil
+}
+
 // InitAuditAPIService returns nil for OSS builds.
 // Routes are not registered (404 returned for audit API endpoints).
 func InitAuditAPIService(_ context.Context, _ *redis.Client, _ kubernetes.Interface, _ string, _ rbac.PolicyEnforcer, _ audit.Recorder) services.AuditAPIService {

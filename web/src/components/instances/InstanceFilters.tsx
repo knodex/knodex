@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import React, { useState, useCallback, useEffect, useMemo } from "react";
-import { Search, X } from "lucide-react";
+import { Search, X } from "@/lib/icons";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -12,27 +12,31 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { InstanceHealth } from "@/types/rgd";
-import type { Project } from "@/types/project";
+import { ScopeIndicator } from "@/components/shared/ScopeIndicator";
 import { cn } from "@/lib/utils";
+import {
+  filterSearchClasses,
+  filterSearchIconClasses,
+  filterClearButtonClasses,
+  filterSelectClasses,
+} from "@/components/ui/filter-bar";
 
 export interface InstanceFilterState {
   search: string;
   rgd: string;
   health: InstanceHealth | "";
-  project: string;
+  scope: string; // "" = all, "namespaced" = namespace-scoped only, "cluster" = cluster-scoped only
 }
 
 interface InstanceFiltersProps {
   filters: InstanceFilterState;
   onFiltersChange: (filters: InstanceFilterState) => void;
   availableRgds: string[];
-  projects: Project[];
-  projectsLoading?: boolean;
 }
 
 // Special value for "All" options since Select requires non-empty values
 const ALL_VALUE = "__all__";
-const ALL_PROJECTS_VALUE = "__all_projects__";
+const ALL_SCOPE_VALUE = "__all_scope__";
 
 const HEALTH_OPTIONS: { value: InstanceHealth | ""; label: string }[] = [
   { value: "", label: "All health" },
@@ -47,8 +51,6 @@ export function InstanceFilters({
   filters,
   onFiltersChange,
   availableRgds,
-  projects,
-  projectsLoading,
 }: InstanceFiltersProps) {
   const [searchValue, setSearchValue] = useState(filters.search);
 
@@ -91,43 +93,36 @@ export function InstanceFilters({
     [filters, onFiltersChange]
   );
 
-  const handleProjectChange = useCallback(
+  const handleScopeChange = useCallback(
     (value: string) => {
-      const project = value === ALL_PROJECTS_VALUE ? "" : value;
-      onFiltersChange({ ...filters, project });
+      const scope = value === ALL_SCOPE_VALUE ? "" : value;
+      onFiltersChange({ ...filters, scope });
     },
     [filters, onFiltersChange]
   );
 
   const handleClearFilters = useCallback(() => {
     setSearchValue("");
-    onFiltersChange({ search: "", rgd: "", health: "", project: "" });
+    onFiltersChange({ search: "", rgd: "", health: "", scope: "" });
   }, [onFiltersChange]);
 
   const hasActiveFilters = useMemo(
-    () => filters.search || filters.rgd || filters.health || filters.project,
+    () => filters.search || filters.rgd || filters.health || filters.scope,
     [filters]
   );
 
   return (
     <div className="space-y-3">
-      {/* Modern Filter Bar - Vercel-inspired */}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-2">
         {/* Search Input */}
         <div className="relative flex-[2] min-w-[280px]">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+          <Search className={filterSearchIconClasses} />
           <Input
             type="text"
-            placeholder="Search by name..."
+            placeholder="Filter instances..."
             value={searchValue}
             onChange={handleSearchChange}
-            className={cn(
-              "pl-9 pr-10 h-9 text-sm",
-              "bg-background border border-border",
-              "hover:border-primary/30 transition-colors duration-200",
-              "focus-visible:ring-2 focus-visible:ring-ring/40",
-              "placeholder:text-muted-foreground shadow-sm"
-            )}
+            className={filterSearchClasses}
             aria-label="Search instances"
           />
           {searchValue && (
@@ -137,7 +132,7 @@ export function InstanceFilters({
                 setSearchValue("");
                 onFiltersChange({ ...filters, search: "" });
               }}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground/60 hover:text-foreground transition-colors"
+              className={filterClearButtonClasses}
               aria-label="Clear search"
             >
               <X className="h-3.5 w-3.5" />
@@ -147,49 +142,13 @@ export function InstanceFilters({
 
         {/* Compact Filters */}
         <div className="flex flex-wrap gap-2 sm:flex-nowrap">
-          {/* Project Selector - Only show if user has projects */}
-          {projects.length > 0 && (
-            <Select
-              value={filters.project || ALL_PROJECTS_VALUE}
-              onValueChange={handleProjectChange}
-              disabled={projectsLoading}
-            >
-              <SelectTrigger
-                className={cn(
-                  "h-9 text-sm min-w-[140px]",
-                  "bg-background border border-border shadow-sm",
-                  "hover:border-primary/30 hover:bg-muted/30 transition-all duration-200",
-                  "focus:ring-2 focus:ring-ring/40",
-                  filters.project ? "text-foreground font-medium" : "text-muted-foreground"
-                )}
-                aria-label="Filter by project"
-              >
-                <SelectValue placeholder={projectsLoading ? "Loading..." : "All projects"} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={ALL_PROJECTS_VALUE}>All projects</SelectItem>
-                {projects.map((project) => (
-                  <SelectItem key={project.name} value={project.name}>
-                    {project.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-
           {/* RGD Selector */}
           <Select
             value={filters.rgd || ALL_VALUE}
             onValueChange={handleRgdChange}
           >
             <SelectTrigger
-              className={cn(
-                "h-9 text-sm min-w-[140px]",
-                "bg-background border border-border shadow-sm",
-                "hover:border-primary/30 hover:bg-muted/30 transition-all duration-200",
-                "focus:ring-2 focus:ring-ring/40",
-                filters.rgd ? "text-foreground font-medium" : "text-muted-foreground"
-              )}
+              className={cn(filterSelectClasses(!!filters.rgd), "min-w-[140px]")}
               aria-label="Filter by RGD"
             >
               <SelectValue placeholder="All RGDs" />
@@ -210,13 +169,7 @@ export function InstanceFilters({
             onValueChange={handleHealthChange}
           >
             <SelectTrigger
-              className={cn(
-                "h-9 text-sm min-w-[120px]",
-                "bg-background border border-border shadow-sm",
-                "hover:border-primary/30 hover:bg-muted/30 transition-all duration-200",
-                "focus:ring-2 focus:ring-ring/40",
-                filters.health ? "text-foreground font-medium" : "text-muted-foreground"
-              )}
+              className={cn(filterSelectClasses(!!filters.health), "min-w-[120px]")}
               aria-label="Filter by health"
             >
               <SelectValue placeholder="All health" />
@@ -233,6 +186,24 @@ export function InstanceFilters({
               ))}
             </SelectContent>
           </Select>
+
+          {/* Scope Selector */}
+          <Select
+            value={filters.scope || ALL_SCOPE_VALUE}
+            onValueChange={handleScopeChange}
+          >
+            <SelectTrigger
+              className={cn(filterSelectClasses(!!filters.scope), "min-w-[140px]")}
+              aria-label="Filter by scope"
+            >
+              <SelectValue placeholder="All scopes" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL_SCOPE_VALUE}>All scopes</SelectItem>
+              <SelectItem value="namespaced" className="text-xs">Namespaced</SelectItem>
+              <SelectItem value="cluster" className="text-xs">Cluster-Scoped</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
       </div>
 
@@ -242,24 +213,63 @@ export function InstanceFilters({
           <div className="flex items-center gap-2 text-muted-foreground/70">
             <span>Filters:</span>
             <div className="flex flex-wrap gap-1.5">
-              {filters.project && (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-muted/40 text-foreground/80">
-                  {filters.project}
-                </span>
-              )}
               {filters.search && (
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-muted/40 text-foreground/80">
                   {filters.search}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchValue("");
+                      onFiltersChange({ ...filters, search: "" });
+                    }}
+                    className="ml-0.5 text-muted-foreground/50 hover:text-foreground transition-colors duration-150"
+                    aria-label={`Remove ${filters.search} filter`}
+                    data-testid="remove-search-filter"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
                 </span>
               )}
               {filters.rgd && (
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-muted/40 text-foreground/80">
                   {filters.rgd}
+                  <button
+                    type="button"
+                    onClick={() => onFiltersChange({ ...filters, rgd: "" })}
+                    className="ml-0.5 text-muted-foreground/50 hover:text-foreground transition-colors duration-150"
+                    aria-label={`Remove ${filters.rgd} filter`}
+                    data-testid="remove-rgd-filter"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
                 </span>
               )}
               {filters.health && (
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-muted/40 text-foreground/80">
                   {filters.health}
+                  <button
+                    type="button"
+                    onClick={() => onFiltersChange({ ...filters, health: "" })}
+                    className="ml-0.5 text-muted-foreground/50 hover:text-foreground transition-colors duration-150"
+                    aria-label={`Remove ${filters.health} filter`}
+                    data-testid="remove-health-filter"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              )}
+              {filters.scope && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-muted/40 text-foreground/80">
+                  <ScopeIndicator isClusterScoped={filters.scope === "cluster"} variant="text" />
+                  <button
+                    type="button"
+                    onClick={() => onFiltersChange({ ...filters, scope: "" })}
+                    className="ml-0.5 text-muted-foreground/50 hover:text-foreground transition-colors duration-150"
+                    aria-label="Remove scope filter"
+                    data-testid="remove-scope-filter"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
                 </span>
               )}
             </div>

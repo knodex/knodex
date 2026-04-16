@@ -105,6 +105,7 @@ jobs:
           helm install kro oci://registry.k8s.io/kro/charts/kro \
             --version "$KRO_CHART_VERSION" \
             --namespace kro --create-namespace \
+            --set config.featureGates.InstanceConditionEvents=true \
             --wait --timeout 300s
 
           echo "KRO installed successfully"

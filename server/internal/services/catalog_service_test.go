@@ -6,6 +6,8 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -357,6 +359,95 @@ func TestCatalogService_GetRGD_ProjectRGDForbidden(t *testing.T) {
 	assert.Nil(t, result)
 }
 
+// --- GetRGD tier filtering tests (STORY-416 review fix H1) ---
+
+func TestCatalogService_GetRGD_TierFiltering_AppUserBlockedFromInfraRGD(t *testing.T) {
+	t.Parallel()
+
+	infraRGD := testutil.NewCatalogRGD("aks-cluster", "default", testutil.WithCatalogTier("infrastructure"))
+	provider := &mockRGDProvider{
+		getFn: func(namespace, name string) (*models.CatalogRGD, bool) {
+			return &infraRGD, true
+		},
+	}
+
+	svc := NewCatalogService(CatalogServiceConfig{
+		RGDProvider: provider,
+		ProjectTypeResolver: &mockProjectTypeResolver{
+			types: map[string]string{"my-app": "app"},
+		},
+	})
+
+	authCtx := &UserAuthContext{
+		UserID:               "dev",
+		AccessibleProjects:   []string{"my-app"},
+		AccessibleNamespaces: []string{"ns-1"},
+	}
+
+	result, err := svc.GetRGD(context.Background(), authCtx, "aks-cluster", "default")
+	assert.Error(t, err)
+	assert.Equal(t, ErrNotFound, err, "app user should not see infrastructure-tier RGD")
+	assert.Nil(t, result)
+}
+
+func TestCatalogService_GetRGD_TierFiltering_AppUserAllowedBothTier(t *testing.T) {
+	t.Parallel()
+
+	bothRGD := testutil.NewCatalogRGD("shared-db", "default", testutil.WithCatalogTier("both"))
+	provider := &mockRGDProvider{
+		getFn: func(namespace, name string) (*models.CatalogRGD, bool) {
+			return &bothRGD, true
+		},
+	}
+
+	svc := NewCatalogService(CatalogServiceConfig{
+		RGDProvider: provider,
+		ProjectTypeResolver: &mockProjectTypeResolver{
+			types: map[string]string{"my-app": "app"},
+		},
+	})
+
+	authCtx := &UserAuthContext{
+		UserID:               "dev",
+		AccessibleProjects:   []string{"my-app"},
+		AccessibleNamespaces: []string{"ns-1"},
+	}
+
+	result, err := svc.GetRGD(context.Background(), authCtx, "shared-db", "default")
+	require.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, "shared-db", result.Name)
+}
+
+func TestCatalogService_GetRGD_TierFiltering_GlobalAdminSeesAllTiers(t *testing.T) {
+	t.Parallel()
+
+	infraRGD := testutil.NewCatalogRGD("aks-cluster", "default", testutil.WithCatalogTier("infrastructure"))
+	provider := &mockRGDProvider{
+		getFn: func(namespace, name string) (*models.CatalogRGD, bool) {
+			return &infraRGD, true
+		},
+	}
+
+	svc := NewCatalogService(CatalogServiceConfig{
+		RGDProvider: provider,
+		ProjectTypeResolver: &mockProjectTypeResolver{
+			types: map[string]string{"my-app": "app"},
+		},
+	})
+
+	authCtx := &UserAuthContext{
+		UserID:               "admin",
+		AccessibleProjects:   []string{"my-app"},
+		AccessibleNamespaces: []string{"*"}, // global admin
+	}
+
+	result, err := svc.GetRGD(context.Background(), authCtx, "aks-cluster", "default")
+	require.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, "aks-cluster", result.Name, "global admin should see infrastructure-tier RGD")
+}
+
 func TestCatalogService_GetCount_NilProvider(t *testing.T) {
 	svc := NewCatalogService(CatalogServiceConfig{})
 
@@ -620,7 +711,7 @@ func TestCatalogService_canAccessRGD(t *testing.T) {
 				Name:   "test-rgd",
 				Labels: tt.rgdLabels,
 			}
-			got := svc.canAccessRGD(rgd, tt.authCtx)
+			got := svc.canAccessRGD(context.Background(), rgd, tt.authCtx)
 			assert.Equal(t, tt.wantAccess, got)
 		})
 	}
@@ -733,12 +824,12 @@ func TestCatalogService_filtersCacheKey(t *testing.T) {
 	svc := NewCatalogService(CatalogServiceConfig{})
 
 	// Keys should be identical regardless of project order
-	key1 := svc.filtersCacheKey([]string{"b", "a"}, true)
-	key2 := svc.filtersCacheKey([]string{"a", "b"}, true)
+	key1 := svc.filtersCacheKey([]string{"b", "a"}, true, nil)
+	key2 := svc.filtersCacheKey([]string{"a", "b"}, true, nil)
 	assert.Equal(t, key1, key2)
 
 	// Keys should differ with different includePublic
-	key3 := svc.filtersCacheKey([]string{"a", "b"}, false)
+	key3 := svc.filtersCacheKey([]string{"a", "b"}, false, nil)
 	assert.NotEqual(t, key2, key3)
 }
 
@@ -864,7 +955,7 @@ func TestCatalogService_GetFilters_CacheCorruptedData(t *testing.T) {
 	})
 
 	// Inject corrupted data into cache
-	cacheKey := svc.filtersCacheKey(nil, true)
+	cacheKey := svc.filtersCacheKey(nil, true, nil)
 	err = redisClient.Set(context.Background(), cacheKey, "corrupted", time.Hour).Err()
 	require.NoError(t, err)
 
@@ -1005,7 +1096,7 @@ func TestCatalogService_OrgFilter_CanAccessRGDMatchingOrg(t *testing.T) {
 		Organization: "orgA",
 		Annotations:  map[string]string{models.CatalogAnnotation: "true"},
 	}
-	assert.True(t, svc.canAccessRGD(rgd, authCtx), "matching org should be accessible")
+	assert.True(t, svc.canAccessRGD(context.Background(), rgd, authCtx), "matching org should be accessible")
 }
 
 func TestCatalogService_OrgFilter_CanAccessRGDIgnoresOrg(t *testing.T) {
@@ -1025,7 +1116,7 @@ func TestCatalogService_OrgFilter_CanAccessRGDIgnoresOrg(t *testing.T) {
 		Organization: "orgB",
 		Annotations:  map[string]string{models.CatalogAnnotation: "true"},
 	}
-	assert.True(t, svc.canAccessRGD(rgd, authCtx), "canAccessRGD should not check org (handled by GetRGD)")
+	assert.True(t, svc.canAccessRGD(context.Background(), rgd, authCtx), "canAccessRGD should not check org (handled by GetRGD)")
 }
 
 func TestCatalogService_OrgFilter_CanAccessRGDShared(t *testing.T) {
@@ -1041,7 +1132,7 @@ func TestCatalogService_OrgFilter_CanAccessRGDShared(t *testing.T) {
 		Name:        "shared-rgd",
 		Annotations: map[string]string{models.CatalogAnnotation: "true"},
 	}
-	assert.True(t, svc.canAccessRGD(rgd, authCtx), "shared RGD should be accessible")
+	assert.True(t, svc.canAccessRGD(context.Background(), rgd, authCtx), "shared RGD should be accessible")
 }
 
 func TestCatalogService_OrgFilter_CanAccessRGDNoFilter(t *testing.T) {
@@ -1058,7 +1149,7 @@ func TestCatalogService_OrgFilter_CanAccessRGDNoFilter(t *testing.T) {
 		Organization: "orgB",
 		Annotations:  map[string]string{models.CatalogAnnotation: "true"},
 	}
-	assert.True(t, svc.canAccessRGD(rgd, authCtx), "all RGDs accessible when no org filter")
+	assert.True(t, svc.canAccessRGD(context.Background(), rgd, authCtx), "all RGDs accessible when no org filter")
 }
 
 func TestCatalogService_OrgFilter_GetFiltersReturnsOrgScopedResults(t *testing.T) {
@@ -1279,7 +1370,7 @@ func TestCatalogService_GetFilters_CacheHitWithValidData(t *testing.T) {
 		RedisClient: redisClient,
 	})
 
-	cacheKey := svc.filtersCacheKey(nil, true)
+	cacheKey := svc.filtersCacheKey(nil, true, nil)
 	err = redisClient.Set(context.Background(), cacheKey, data, time.Hour).Err()
 	require.NoError(t, err)
 
@@ -1289,4 +1380,624 @@ func TestCatalogService_GetFilters_CacheHitWithValidData(t *testing.T) {
 	assert.Equal(t, cachedOpts.Projects, result.Projects)
 	assert.Equal(t, cachedOpts.Tags, result.Tags)
 	assert.Equal(t, cachedOpts.Categories, result.Categories)
+}
+
+// categoryPolicyEnforcer implements PolicyEnforcer with object-aware authorization.
+// It allows access based on a set of allowed object patterns using Casbin's keyMatch logic.
+type categoryPolicyEnforcer struct {
+	allowedObjects     []string // Objects/patterns that are allowed (e.g., "rgds/infrastructure/*")
+	accessibleProjects []string
+}
+
+func (m *categoryPolicyEnforcer) GetAccessibleProjects(_ context.Context, _ string, _ []string) ([]string, error) {
+	return m.accessibleProjects, nil
+}
+
+func (m *categoryPolicyEnforcer) CanAccessWithGroups(_ context.Context, _ string, _ []string, object, _ string) (bool, error) {
+	for _, allowed := range m.allowedObjects {
+		if casbinKeyMatch(object, allowed) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// casbinKeyMatch replicates Casbin v2 KeyMatch: checks the prefix of object up to (but not
+// including) the FIRST '*' in pattern. A '*' matches any sequence of characters including '/'.
+// This matches the exact implementation in github.com/casbin/casbin/v2/util.KeyMatch.
+func casbinKeyMatch(object, pattern string) bool {
+	if pattern == "*" {
+		return true
+	}
+	i := strings.Index(pattern, "*")
+	if i == -1 {
+		return object == pattern
+	}
+	if len(object) > i {
+		return object[:i] == pattern[:i]
+	}
+	return object == pattern[:i]
+}
+
+func TestListRGDs_CategoryScopedAuthorization(t *testing.T) {
+	infraRGD := testutil.NewCatalogRGD("simple-aks-cluster", "default", testutil.WithCategory("infrastructure"))
+	appRGD := testutil.NewCatalogRGD("web-app", "default", testutil.WithCategory("applications"))
+	uncatRGD := testutil.NewCatalogRGD("misc-tool", "default", testutil.WithCategory(""))
+
+	provider := &mockRGDProvider{
+		listFn: func(opts models.ListOptions) models.CatalogRGDList {
+			return models.CatalogRGDList{
+				Items:      []models.CatalogRGD{infraRGD, appRGD, uncatRGD},
+				TotalCount: 3,
+				Page:       1,
+				PageSize:   50,
+			}
+		},
+	}
+
+	t.Run("user with rgds/infrastructure/* sees only infrastructure RGDs", func(t *testing.T) {
+		svc := NewCatalogService(CatalogServiceConfig{
+			RGDProvider: provider,
+			PolicyEnforcer: &categoryPolicyEnforcer{
+				allowedObjects: []string{"rgds/infrastructure/*"},
+			},
+		})
+
+		authCtx := &UserAuthContext{UserID: "user:infra-dev", Groups: []string{}}
+		result, err := svc.ListRGDs(context.Background(), authCtx, DefaultRGDFilters())
+		require.NoError(t, err)
+
+		assert.Equal(t, 1, result.TotalCount)
+		assert.Equal(t, "simple-aks-cluster", result.Items[0].Name)
+	})
+
+	t.Run("user with rgds/* sees all RGDs", func(t *testing.T) {
+		svc := NewCatalogService(CatalogServiceConfig{
+			RGDProvider: provider,
+			PolicyEnforcer: &categoryPolicyEnforcer{
+				allowedObjects: []string{"rgds/*"},
+			},
+		})
+
+		authCtx := &UserAuthContext{UserID: "user:admin", Groups: []string{}}
+		result, err := svc.ListRGDs(context.Background(), authCtx, DefaultRGDFilters())
+		require.NoError(t, err)
+
+		assert.Equal(t, 3, result.TotalCount)
+	})
+
+	t.Run("user with no RGD policy sees no RGDs", func(t *testing.T) {
+		svc := NewCatalogService(CatalogServiceConfig{
+			RGDProvider: provider,
+			PolicyEnforcer: &categoryPolicyEnforcer{
+				allowedObjects: []string{}, // No RGD access
+			},
+		})
+
+		authCtx := &UserAuthContext{UserID: "user:no-access", Groups: []string{}}
+		result, err := svc.ListRGDs(context.Background(), authCtx, DefaultRGDFilters())
+		require.NoError(t, err)
+
+		assert.Equal(t, 0, result.TotalCount)
+		assert.Empty(t, result.Items)
+	})
+
+	t.Run("user with multiple category policies sees only those categories", func(t *testing.T) {
+		svc := NewCatalogService(CatalogServiceConfig{
+			RGDProvider: provider,
+			PolicyEnforcer: &categoryPolicyEnforcer{
+				allowedObjects: []string{"rgds/applications/*", "rgds/uncategorized/*"},
+			},
+		})
+
+		authCtx := &UserAuthContext{UserID: "user:multi-cat", Groups: []string{}}
+		result, err := svc.ListRGDs(context.Background(), authCtx, DefaultRGDFilters())
+		require.NoError(t, err)
+
+		assert.Equal(t, 2, result.TotalCount)
+		names := make([]string, len(result.Items))
+		for i, item := range result.Items {
+			names[i] = item.Name
+		}
+		assert.Contains(t, names, "web-app")
+		assert.Contains(t, names, "misc-tool")
+	})
+}
+
+func TestGetRGD_CategoryScopedAuthorization(t *testing.T) {
+	infraRGD := testutil.NewCatalogRGD("simple-aks-cluster", "default", testutil.WithCategory("infrastructure"))
+
+	provider := &mockRGDProvider{
+		getByNameFn: func(name string) (*models.CatalogRGD, bool) {
+			if name == "simple-aks-cluster" {
+				return &infraRGD, true
+			}
+			return nil, false
+		},
+	}
+
+	t.Run("returns 403 when user lacks category access", func(t *testing.T) {
+		svc := NewCatalogService(CatalogServiceConfig{
+			RGDProvider: provider,
+			PolicyEnforcer: &categoryPolicyEnforcer{
+				allowedObjects: []string{"rgds/applications/*"}, // Has app access, not infra
+			},
+		})
+
+		authCtx := &UserAuthContext{UserID: "user:app-dev", Groups: []string{}}
+		_, err := svc.GetRGD(context.Background(), authCtx, "simple-aks-cluster", "")
+
+		assert.ErrorIs(t, err, ErrForbidden)
+	})
+
+	t.Run("returns RGD when user has category access", func(t *testing.T) {
+		svc := NewCatalogService(CatalogServiceConfig{
+			RGDProvider: provider,
+			PolicyEnforcer: &categoryPolicyEnforcer{
+				allowedObjects: []string{"rgds/infrastructure/*"},
+			},
+		})
+
+		authCtx := &UserAuthContext{UserID: "user:infra-dev", Groups: []string{}}
+		result, err := svc.GetRGD(context.Background(), authCtx, "simple-aks-cluster", "")
+
+		require.NoError(t, err)
+		assert.Equal(t, "simple-aks-cluster", result.Name)
+	})
+}
+
+func TestGetCount_CategoryScopedAuthorization(t *testing.T) {
+	infraRGD := testutil.NewCatalogRGD("aks-cluster", "default", testutil.WithCategory("infrastructure"))
+	appRGD := testutil.NewCatalogRGD("web-app", "default", testutil.WithCategory("applications"))
+
+	provider := &mockRGDProvider{
+		listFn: func(opts models.ListOptions) models.CatalogRGDList {
+			return models.CatalogRGDList{
+				Items:      []models.CatalogRGD{infraRGD, appRGD},
+				TotalCount: 2,
+				Page:       1,
+				PageSize:   opts.PageSize,
+			}
+		},
+	}
+
+	svc := NewCatalogService(CatalogServiceConfig{
+		RGDProvider: provider,
+		PolicyEnforcer: &categoryPolicyEnforcer{
+			allowedObjects: []string{"rgds/infrastructure/*"},
+		},
+	})
+
+	authCtx := &UserAuthContext{UserID: "user:infra-dev", Groups: []string{}}
+	count, err := svc.GetCount(context.Background(), authCtx)
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, count)
+}
+
+func TestGetFilters_CategoryScopedAuthorization(t *testing.T) {
+	infraRGD := testutil.NewCatalogRGD("aks-cluster", "default", testutil.WithCategory("infrastructure"))
+	appRGD := testutil.NewCatalogRGD("web-app", "default", testutil.WithCategory("applications"))
+
+	provider := &mockRGDProvider{
+		listFn: func(opts models.ListOptions) models.CatalogRGDList {
+			return models.CatalogRGDList{
+				Items:      []models.CatalogRGD{infraRGD, appRGD},
+				TotalCount: 2,
+				Page:       1,
+				PageSize:   opts.PageSize,
+			}
+		},
+	}
+
+	svc := NewCatalogService(CatalogServiceConfig{
+		RGDProvider: provider,
+		PolicyEnforcer: &categoryPolicyEnforcer{
+			allowedObjects: []string{"rgds/infrastructure/*"},
+		},
+	})
+
+	authCtx := &UserAuthContext{UserID: "user:infra-dev", Groups: []string{}}
+	result, err := svc.GetFilters(context.Background(), authCtx)
+
+	require.NoError(t, err)
+	// Only infrastructure category should be in filters
+	assert.Equal(t, []string{"infrastructure"}, result.Categories)
+}
+
+func TestGetFilters_CacheBypassedWhenPolicyEnforcerActive(t *testing.T) {
+	// When policyEnforcer is configured, filter results are per-user and must not be
+	// shared via Redis cache. Verify that two users with different Casbin scopes receive
+	// independent filter results even under the same project membership.
+	mr, err := miniredis.Run()
+	require.NoError(t, err)
+	defer mr.Close()
+	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+
+	infraRGD := testutil.NewCatalogRGD("aks-cluster", "default", testutil.WithCategory("infrastructure"))
+	appRGD := testutil.NewCatalogRGD("web-app", "default", testutil.WithCategory("applications"))
+
+	provider := &mockRGDProvider{
+		listFn: func(opts models.ListOptions) models.CatalogRGDList {
+			return models.CatalogRGDList{Items: []models.CatalogRGD{infraRGD, appRGD}, TotalCount: 2}
+		},
+	}
+
+	// User A: restricted to infrastructure only
+	infraOnly := NewCatalogService(CatalogServiceConfig{
+		RGDProvider:    provider,
+		RedisClient:    rc,
+		PolicyEnforcer: &categoryPolicyEnforcer{allowedObjects: []string{"rgds/infrastructure/*"}},
+	})
+	// User B: access to all RGDs
+	allAccess := NewCatalogService(CatalogServiceConfig{
+		RGDProvider:    provider,
+		RedisClient:    rc,
+		PolicyEnforcer: &categoryPolicyEnforcer{allowedObjects: []string{"rgds/*"}},
+	})
+
+	ctxA := &UserAuthContext{UserID: "user:infra-dev", Groups: []string{}}
+	ctxB := &UserAuthContext{UserID: "user:admin", Groups: []string{}}
+
+	// User A requests filters first — must NOT poison cache for user B
+	resultA, err := infraOnly.GetFilters(context.Background(), ctxA)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"infrastructure"}, resultA.Categories)
+
+	// User B must get their own full set, not the cached subset from user A
+	resultB, err := allAccess.GetFilters(context.Background(), ctxB)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"applications", "infrastructure"}, resultB.Categories)
+}
+
+func TestListRGDs_CategoryScopedAuthorization_UncategorizedAccess(t *testing.T) {
+	uncatRGD := testutil.NewCatalogRGD("misc-tool", "default", testutil.WithCategory(""))
+	infraRGD := testutil.NewCatalogRGD("aks-cluster", "default", testutil.WithCategory("infrastructure"))
+
+	provider := &mockRGDProvider{
+		listFn: func(opts models.ListOptions) models.CatalogRGDList {
+			return models.CatalogRGDList{
+				Items:      []models.CatalogRGD{uncatRGD, infraRGD},
+				TotalCount: 2,
+				Page:       1,
+				PageSize:   50,
+			}
+		},
+	}
+
+	svc := NewCatalogService(CatalogServiceConfig{
+		RGDProvider: provider,
+		PolicyEnforcer: &categoryPolicyEnforcer{
+			allowedObjects: []string{"rgds/uncategorized/*"},
+		},
+	})
+
+	authCtx := &UserAuthContext{UserID: "user:misc", Groups: []string{}}
+	result, err := svc.ListRGDs(context.Background(), authCtx, DefaultRGDFilters())
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, result.TotalCount)
+	assert.Equal(t, "misc-tool", result.Items[0].Name)
+}
+
+func TestListRGDs_CategoryScopedAuthorization_Pagination(t *testing.T) {
+	// Create 5 RGDs: 3 infrastructure, 2 applications
+	rgds := []models.CatalogRGD{
+		testutil.NewCatalogRGD("infra-1", "default", testutil.WithCategory("infrastructure")),
+		testutil.NewCatalogRGD("app-1", "default", testutil.WithCategory("applications")),
+		testutil.NewCatalogRGD("infra-2", "default", testutil.WithCategory("infrastructure")),
+		testutil.NewCatalogRGD("app-2", "default", testutil.WithCategory("applications")),
+		testutil.NewCatalogRGD("infra-3", "default", testutil.WithCategory("infrastructure")),
+	}
+
+	provider := &mockRGDProvider{
+		listFn: func(opts models.ListOptions) models.CatalogRGDList {
+			return models.CatalogRGDList{
+				Items:      rgds,
+				TotalCount: len(rgds),
+				Page:       1,
+				PageSize:   opts.PageSize,
+			}
+		},
+	}
+
+	svc := NewCatalogService(CatalogServiceConfig{
+		RGDProvider: provider,
+		PolicyEnforcer: &categoryPolicyEnforcer{
+			allowedObjects: []string{"rgds/infrastructure/*"},
+		},
+	})
+
+	authCtx := &UserAuthContext{UserID: "user:infra-dev", Groups: []string{}}
+
+	// Page 1, size 2: should get first 2 infrastructure RGDs
+	result, err := svc.ListRGDs(context.Background(), authCtx, RGDFilters{Page: 1, PageSize: 2})
+	require.NoError(t, err)
+	assert.Equal(t, 3, result.TotalCount, "TotalCount should reflect all authorized RGDs")
+	assert.Len(t, result.Items, 2, "Page 1 should have 2 items")
+	assert.Equal(t, 1, result.Page)
+	assert.Equal(t, 2, result.PageSize)
+
+	// Page 2, size 2: should get remaining 1 infrastructure RGD
+	result2, err := svc.ListRGDs(context.Background(), authCtx, RGDFilters{Page: 2, PageSize: 2})
+	require.NoError(t, err)
+	assert.Equal(t, 3, result2.TotalCount, "TotalCount consistent across pages")
+	assert.Len(t, result2.Items, 1, "Page 2 should have 1 item")
+
+	// Page 3, size 2: should be empty
+	result3, err := svc.ListRGDs(context.Background(), authCtx, RGDFilters{Page: 3, PageSize: 2})
+	require.NoError(t, err)
+	assert.Equal(t, 3, result3.TotalCount)
+	assert.Empty(t, result3.Items, "Page 3 should be empty")
+}
+
+// --- CatalogTier filtering tests (STORY-416) ---
+
+// mockProjectTypeResolver implements ProjectTypeResolver for testing.
+type mockProjectTypeResolver struct {
+	types map[string]string
+	err   error
+}
+
+func (m *mockProjectTypeResolver) GetProjectTypes(_ context.Context, projectNames []string) (map[string]string, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	result := make(map[string]string)
+	for _, name := range projectNames {
+		if t, ok := m.types[name]; ok {
+			result[name] = t
+		} else {
+			result[name] = "app" // default
+		}
+	}
+	return result, nil
+}
+
+func TestComputeVisibleCatalogTiers_NilResolver(t *testing.T) {
+	t.Parallel()
+	svc := NewCatalogService(CatalogServiceConfig{
+		ProjectTypeResolver: nil,
+	})
+	tiers, err := svc.computeVisibleCatalogTiers(context.Background(), &UserAuthContext{UserID: "user"})
+	require.NoError(t, err)
+	assert.Nil(t, tiers, "nil resolver should return nil (all tiers)")
+}
+
+func TestComputeVisibleCatalogTiers_NilAuthCtx(t *testing.T) {
+	t.Parallel()
+	svc := NewCatalogService(CatalogServiceConfig{
+		ProjectTypeResolver: &mockProjectTypeResolver{},
+	})
+	tiers, err := svc.computeVisibleCatalogTiers(context.Background(), nil)
+	require.NoError(t, err)
+	assert.Nil(t, tiers, "nil authCtx should return nil (all tiers)")
+}
+
+func TestComputeVisibleCatalogTiers_GlobalAdmin(t *testing.T) {
+	t.Parallel()
+	svc := NewCatalogService(CatalogServiceConfig{
+		ProjectTypeResolver: &mockProjectTypeResolver{},
+	})
+	authCtx := &UserAuthContext{
+		UserID:               "admin",
+		AccessibleNamespaces: []string{"*"},
+		AccessibleProjects:   []string{"proj-a"},
+	}
+	tiers, err := svc.computeVisibleCatalogTiers(context.Background(), authCtx)
+	require.NoError(t, err)
+	assert.Nil(t, tiers, "global admin should see all tiers")
+}
+
+func TestComputeVisibleCatalogTiers_NoProjects(t *testing.T) {
+	t.Parallel()
+	svc := NewCatalogService(CatalogServiceConfig{
+		ProjectTypeResolver: &mockProjectTypeResolver{},
+	})
+	authCtx := &UserAuthContext{
+		UserID:               "user",
+		AccessibleProjects:   []string{},
+		AccessibleNamespaces: []string{},
+	}
+	tiers, err := svc.computeVisibleCatalogTiers(context.Background(), authCtx)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"both"}, tiers, "no projects = only universal RGDs")
+}
+
+func TestComputeVisibleCatalogTiers_AppOnlyProjects(t *testing.T) {
+	t.Parallel()
+	svc := NewCatalogService(CatalogServiceConfig{
+		ProjectTypeResolver: &mockProjectTypeResolver{
+			types: map[string]string{"app-1": "app", "app-2": "app"},
+		},
+	})
+	authCtx := &UserAuthContext{
+		UserID:               "dev",
+		AccessibleProjects:   []string{"app-1", "app-2"},
+		AccessibleNamespaces: []string{"ns-1"},
+	}
+	tiers, err := svc.computeVisibleCatalogTiers(context.Background(), authCtx)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"app", "both"}, tiers)
+}
+
+func TestComputeVisibleCatalogTiers_PlatformOnlyProjects(t *testing.T) {
+	t.Parallel()
+	svc := NewCatalogService(CatalogServiceConfig{
+		ProjectTypeResolver: &mockProjectTypeResolver{
+			types: map[string]string{"infra-1": "platform"},
+		},
+	})
+	authCtx := &UserAuthContext{
+		UserID:               "platform-admin",
+		AccessibleProjects:   []string{"infra-1"},
+		AccessibleNamespaces: []string{"ns-1"},
+	}
+	tiers, err := svc.computeVisibleCatalogTiers(context.Background(), authCtx)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"infrastructure", "both"}, tiers)
+}
+
+func TestComputeVisibleCatalogTiers_MixedProjects(t *testing.T) {
+	t.Parallel()
+	svc := NewCatalogService(CatalogServiceConfig{
+		ProjectTypeResolver: &mockProjectTypeResolver{
+			types: map[string]string{"app-1": "app", "infra-1": "platform"},
+		},
+	})
+	authCtx := &UserAuthContext{
+		UserID:               "multi-user",
+		AccessibleProjects:   []string{"app-1", "infra-1"},
+		AccessibleNamespaces: []string{"ns-1", "ns-2"},
+	}
+	tiers, err := svc.computeVisibleCatalogTiers(context.Background(), authCtx)
+	require.NoError(t, err)
+	assert.Nil(t, tiers, "mixed projects = all tiers visible")
+}
+
+func TestComputeVisibleCatalogTiers_ResolverError(t *testing.T) {
+	t.Parallel()
+	svc := NewCatalogService(CatalogServiceConfig{
+		ProjectTypeResolver: &mockProjectTypeResolver{
+			err: errors.New("resolver error"),
+		},
+	})
+	authCtx := &UserAuthContext{
+		UserID:               "user",
+		AccessibleProjects:   []string{"proj-a"},
+		AccessibleNamespaces: []string{"ns-1"},
+	}
+	tiers, err := svc.computeVisibleCatalogTiers(context.Background(), authCtx)
+	assert.Error(t, err)
+	assert.Nil(t, tiers)
+}
+
+func TestListRGDs_CatalogTierFiltering(t *testing.T) {
+	appRGD := testutil.NewCatalogRGD("web-app", "default", testutil.WithCatalogTier("app"))
+	infraRGD := testutil.NewCatalogRGD("aks-cluster", "default", testutil.WithCatalogTier("infrastructure"))
+	bothRGD := testutil.NewCatalogRGD("shared-db", "default", testutil.WithCatalogTier("both"))
+
+	provider := &mockRGDProvider{
+		listFn: func(opts models.ListOptions) models.CatalogRGDList {
+			// Simulate cache matchesFilter behavior
+			all := []models.CatalogRGD{appRGD, infraRGD, bothRGD}
+			if opts.CatalogTiers == nil {
+				return models.CatalogRGDList{Items: all, TotalCount: len(all), Page: 1, PageSize: 50}
+			}
+			var filtered []models.CatalogRGD
+			for _, rgd := range all {
+				for _, tier := range opts.CatalogTiers {
+					if rgd.CatalogTier == tier {
+						filtered = append(filtered, rgd)
+						break
+					}
+				}
+			}
+			return models.CatalogRGDList{Items: filtered, TotalCount: len(filtered), Page: 1, PageSize: 50}
+		},
+	}
+
+	t.Run("app project user sees app + both RGDs", func(t *testing.T) {
+		svc := NewCatalogService(CatalogServiceConfig{
+			RGDProvider: provider,
+			ProjectTypeResolver: &mockProjectTypeResolver{
+				types: map[string]string{"my-app": "app"},
+			},
+		})
+		authCtx := &UserAuthContext{
+			UserID:               "dev",
+			AccessibleProjects:   []string{"my-app"},
+			AccessibleNamespaces: []string{"ns-1"},
+		}
+		result, err := svc.ListRGDs(context.Background(), authCtx, DefaultRGDFilters())
+		require.NoError(t, err)
+		assert.Equal(t, 2, result.TotalCount)
+		names := []string{result.Items[0].Name, result.Items[1].Name}
+		assert.Contains(t, names, "web-app")
+		assert.Contains(t, names, "shared-db")
+	})
+
+	t.Run("platform project user sees infrastructure + both RGDs", func(t *testing.T) {
+		svc := NewCatalogService(CatalogServiceConfig{
+			RGDProvider: provider,
+			ProjectTypeResolver: &mockProjectTypeResolver{
+				types: map[string]string{"infra": "platform"},
+			},
+		})
+		authCtx := &UserAuthContext{
+			UserID:               "platform-admin",
+			AccessibleProjects:   []string{"infra"},
+			AccessibleNamespaces: []string{"ns-1"},
+		}
+		result, err := svc.ListRGDs(context.Background(), authCtx, DefaultRGDFilters())
+		require.NoError(t, err)
+		assert.Equal(t, 2, result.TotalCount)
+		names := []string{result.Items[0].Name, result.Items[1].Name}
+		assert.Contains(t, names, "aks-cluster")
+		assert.Contains(t, names, "shared-db")
+	})
+
+	t.Run("global admin sees all RGDs", func(t *testing.T) {
+		svc := NewCatalogService(CatalogServiceConfig{
+			RGDProvider: provider,
+			ProjectTypeResolver: &mockProjectTypeResolver{
+				types: map[string]string{"my-app": "app"},
+			},
+		})
+		authCtx := &UserAuthContext{
+			UserID:               "admin",
+			AccessibleProjects:   []string{"my-app"},
+			AccessibleNamespaces: []string{"*"},
+		}
+		result, err := svc.ListRGDs(context.Background(), authCtx, DefaultRGDFilters())
+		require.NoError(t, err)
+		assert.Equal(t, 3, result.TotalCount, "global admin sees all tiers")
+	})
+
+	t.Run("resolver error fails open (all tiers)", func(t *testing.T) {
+		svc := NewCatalogService(CatalogServiceConfig{
+			RGDProvider: provider,
+			ProjectTypeResolver: &mockProjectTypeResolver{
+				err: errors.New("resolver error"),
+			},
+		})
+		authCtx := &UserAuthContext{
+			UserID:               "user",
+			AccessibleProjects:   []string{"proj-a"},
+			AccessibleNamespaces: []string{"ns-1"},
+		}
+		result, err := svc.ListRGDs(context.Background(), authCtx, DefaultRGDFilters())
+		require.NoError(t, err)
+		assert.Equal(t, 3, result.TotalCount, "resolver error should show all tiers")
+	})
+}
+
+func TestCatalogService_CacheKeyIncludesTiers(t *testing.T) {
+	svc := NewCatalogService(CatalogServiceConfig{})
+
+	// Cache keys with different tiers should differ
+	opts1 := models.ListOptions{CatalogTiers: []string{"app", "both"}}
+	opts2 := models.ListOptions{CatalogTiers: []string{"infrastructure", "both"}}
+	opts3 := models.ListOptions{CatalogTiers: nil}
+
+	key1 := svc.listCacheKey(opts1)
+	key2 := svc.listCacheKey(opts2)
+	key3 := svc.listCacheKey(opts3)
+
+	assert.NotEqual(t, key1, key2, "different tiers should produce different keys")
+	assert.NotEqual(t, key1, key3, "tiers vs nil should produce different keys")
+	assert.Contains(t, key1, "tiers=app,both")
+	assert.Contains(t, key3, "tiers=")
+}
+
+func TestCatalogService_FiltersCacheKeyIncludesTiers(t *testing.T) {
+	svc := NewCatalogService(CatalogServiceConfig{})
+
+	key1 := svc.filtersCacheKey(nil, true, []string{"app", "both"})
+	key2 := svc.filtersCacheKey(nil, true, []string{"infrastructure", "both"})
+	key3 := svc.filtersCacheKey(nil, true, nil)
+
+	assert.NotEqual(t, key1, key2)
+	assert.NotEqual(t, key1, key3)
+	assert.Contains(t, key1, "tiers=app,both")
 }

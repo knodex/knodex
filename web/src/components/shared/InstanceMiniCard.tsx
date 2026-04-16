@@ -1,10 +1,11 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import type { ReactNode } from "react";
-import { AlertCircle, Loader2 } from "lucide-react";
+import { memo, type ReactNode } from "react";
+import { ExternalLink, Loader2 } from "@/lib/icons";
 import type { Instance } from "@/types/rgd";
 import { HealthBadge } from "@/components/instances/HealthBadge";
+import { ScopeIndicator } from "./ScopeIndicator";
 
 interface InstanceMiniCardProps {
   /** Resolved instance (undefined when loading or not found) */
@@ -20,9 +21,11 @@ interface InstanceMiniCardProps {
   kindLabel?: string;
   /** Namespace badge text for the not-found state */
   namespaceLabel?: string;
+  /** Optional badge rendered next to the name (e.g. Secret indicator) */
+  badge?: ReactNode;
 }
 
-export function InstanceMiniCard({
+export const InstanceMiniCard = memo(function InstanceMiniCard({
   instance,
   isLoading,
   notFound,
@@ -30,6 +33,7 @@ export function InstanceMiniCard({
   label,
   kindLabel,
   namespaceLabel,
+  badge,
 }: InstanceMiniCardProps) {
   if (isLoading) {
     return (
@@ -44,8 +48,9 @@ export function InstanceMiniCard({
     return (
       <div className="rounded-lg border border-border bg-secondary/30 p-4">
         <div className="flex items-center gap-2 mb-1">
-          <AlertCircle className="h-4 w-4 text-amber-500" />
+          <ExternalLink className="h-4 w-4 text-muted-foreground" />
           <span className="text-sm font-medium text-foreground">{label}</span>
+          {badge}
         </div>
         <div className="flex flex-wrap gap-1.5 mt-1">
           {kindLabel && (
@@ -59,7 +64,7 @@ export function InstanceMiniCard({
             </span>
           )}
         </div>
-        <p className="text-xs text-amber-600 mt-2">Not deployed</p>
+        <p className="text-xs text-muted-foreground mt-2">External resource</p>
       </div>
     );
   }
@@ -72,17 +77,20 @@ export function InstanceMiniCard({
             {instance.name}
           </span>
           <HealthBadge health={instance.health} />
+          {badge}
         </div>
       </div>
       <div className="flex flex-wrap gap-1.5">
         <span className="px-2 py-0.5 rounded text-xs font-mono bg-secondary text-muted-foreground">
           {instance.kind}
         </span>
-        <span className="px-2 py-0.5 rounded text-xs font-mono bg-secondary text-muted-foreground">
-          {instance.namespace}
-        </span>
+        <ScopeIndicator
+          isClusterScoped={instance.isClusterScoped}
+          namespace={instance.namespace}
+          variant="badge"
+        />
       </div>
       <div className="mt-auto">{action}</div>
     </div>
   );
-}
+});

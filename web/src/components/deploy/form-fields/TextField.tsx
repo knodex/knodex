@@ -1,6 +1,7 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { memo } from "react";
 import { cn } from "@/lib/utils";
 import type { TextFieldProps } from "./types";
 import { inputBaseClasses, getInputBorderClass } from "./utils";
@@ -8,7 +9,7 @@ import { inputBaseClasses, getInputBorderClass } from "./utils";
 /**
  * Text input field supporting various formats (text, email, password, textarea)
  */
-export function TextField({
+export const TextField = memo(function TextField({
   name,
   label,
   description,
@@ -40,6 +41,8 @@ export function TextField({
           id={name}
           {...register(name)}
           data-testid={`input-${name}`}
+          aria-invalid={!!error}
+          aria-describedby={error ? `error-${name}` : undefined}
           className={cn(inputBaseClasses, getInputBorderClass(!!error))}
           rows={4}
         />
@@ -49,10 +52,12 @@ export function TextField({
           type={inputType}
           {...register(name)}
           data-testid={`input-${name}`}
+          aria-invalid={!!error}
+          aria-describedby={error ? `error-${name}` : undefined}
           className={cn(inputBaseClasses, getInputBorderClass(!!error))}
         />
       )}
-      {error && <p className="text-xs text-destructive">{error}</p>}
+      {error && <p id={`error-${name}`} className="text-xs text-destructive" role="alert">{error}</p>}
     </div>
   );
-}
+});

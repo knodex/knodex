@@ -155,7 +155,7 @@ export async function loginAs(page: Page, user: TestUser, targetPath: string = "
   if (targetPath === "/catalog" || targetPath === "/") {
     actualTarget = "/catalog";
   } else if (targetPath === "/projects") {
-    actualTarget = "/settings/projects";
+    actualTarget = "/projects";
   }
 
   // Convert to AuthTestUser format and use setupAuthAndNavigate

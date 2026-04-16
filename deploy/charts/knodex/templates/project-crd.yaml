@@ -17,7 +17,7 @@ spec:
     singular: project
     shortNames:
       - proj
-  scope: Cluster
+  scope: Namespaced
   versions:
     - name: v1alpha1
       served: true

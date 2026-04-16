@@ -92,103 +92,46 @@ const mockRepositories = {
   ],
 }
 
-test.describe('Deployment Mode Restrictions', () => {
+test.describe('Deploy Wizard Flow', () => {
   // Authenticate as Global Admin to access all features
   test.use({ authenticateAs: TestUserRole.GLOBAL_ADMIN })
 
   // Helper to set up common mocks
   const setupCommonMocks = async (page: import('@playwright/test').Page, rgd: CatalogRGD) => {
-    // Mock the RGD list endpoint
     await page.route(`**${API_PATHS.rgds}**`, async (route) => {
       const url = route.request().url()
-
       if (url.includes(`/${rgd.name}`)) {
         if (url.includes('/schema')) {
-          await route.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify(mockSchemaResponse),
-          })
+          await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(mockSchemaResponse) })
         } else if (url.includes('/validate-deployment')) {
-          await route.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify({ valid: true, errors: [] }),
-          })
+          await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ valid: true, errors: [] }) })
         } else {
-          await route.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify(rgd),
-          })
+          await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(rgd) })
         }
       } else {
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify({
-            items: [rgd],
-            totalCount: 1,
-            page: 1,
-            pageSize: 10,
-          }),
-        })
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [rgd], totalCount: 1, page: 1, pageSize: 10 }) })
       }
     })
-
-    // Mock permission endpoint
     await page.route('**/api/v1/account/can-i/**', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ value: 'yes' }),
-      })
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ value: 'yes' }) })
     })
-
-    // Mock projects endpoint
     await page.route('**/api/v1/projects**', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify(mockProjects),
-      })
+      const url = route.request().url()
+      if (url.includes('/namespaces')) {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ namespaces: ['default', 'production', 'staging'] }) })
+      } else {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(mockProjects) })
+      }
     })
-
-    // Mock namespaces endpoint
-    await page.route('**/api/v1/namespaces**', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify(mockNamespaces),
-      })
-    })
-
-    // Mock repositories endpoint
     await page.route('**/api/v1/repositories**', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify(mockRepositories),
-      })
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(mockRepositories) })
     })
-
-    // Mock dependency endpoint
     await page.route('**/api/v1/dependencies/**', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          node: null,
-          upstream: [],
-          downstream: [],
-          deploymentOrder: [rgd.name],
-          hasCycle: false,
-        }),
-      })
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ node: null, upstream: [], downstream: [], deploymentOrder: [rgd.name], hasCycle: false }) })
     })
   }
 
-  test('shows all deployment modes when no restrictions', async ({ page }) => {
+  test('deploy wizard opens with Target step', async ({ page }) => {
     const rgd = createMockRGD('unrestricted-rgd', undefined)
     await setupCommonMocks(page, rgd)
 
@@ -199,23 +142,18 @@ test.describe('Deployment Mode Restrictions', () => {
     await card.click()
     await page.waitForURL(/\/catalog\//, { timeout: 10000 })
     await page.waitForLoadState('networkidle')
-    const deployBtn = page.getByRole('button', { name: /deploy/i })
+    const deployBtn = page.getByRole('button', { name: /deploy/i }).first()
     await expect(deployBtn).toBeVisible({ timeout: 15000 })
     await deployBtn.click()
-    await page.waitForLoadState('networkidle')
 
-    // All three modes should be visible
-    await expect(page.getByRole('button', { name: /Direct/i })).toBeVisible()
-    await expect(page.getByRole('button', { name: /GitOps/i })).toBeVisible()
-    await expect(page.getByRole('button', { name: /Hybrid/i })).toBeVisible()
-
-    // No restriction banner should appear
-    await expect(page.getByText(/This RGD only allows/i)).not.toBeVisible()
-    await expect(page.getByText(/This RGD is restricted/i)).not.toBeVisible()
+    // Wizard should open with Target step
+    await expect(page.getByTestId('target-step')).toBeVisible({ timeout: 15000 })
+    await expect(page.getByPlaceholder('my-instance')).toBeVisible()
+    await expect(page.getByTestId('project-select')).toBeVisible()
   })
 
-  test('shows only gitops mode when RGD is gitops-only', async ({ page }) => {
-    const rgd = createMockRGD('gitops-only-rgd', ['gitops'])
+  test('deploy wizard advances from Target to Configure step', async ({ page }) => {
+    const rgd = createMockRGD('unrestricted-rgd', undefined)
     await setupCommonMocks(page, rgd)
 
     await page.goto('/catalog')
@@ -225,24 +163,25 @@ test.describe('Deployment Mode Restrictions', () => {
     await card.click()
     await page.waitForURL(/\/catalog\//, { timeout: 10000 })
     await page.waitForLoadState('networkidle')
-    const deployBtn = page.getByRole('button', { name: /deploy/i })
+    const deployBtn = page.getByRole('button', { name: /deploy/i }).first()
     await expect(deployBtn).toBeVisible({ timeout: 15000 })
     await deployBtn.click()
-    await page.waitForLoadState('networkidle')
 
-    // Only GitOps should be visible
-    await expect(page.getByRole('button', { name: /GitOps/i })).toBeVisible()
-    await expect(page.getByRole('button', { name: /Direct/i })).not.toBeVisible()
-    await expect(page.getByRole('button', { name: /Hybrid/i })).not.toBeVisible()
+    // Fill Target step
+    await expect(page.getByTestId('target-step')).toBeVisible({ timeout: 15000 })
+    await page.getByPlaceholder('my-instance').fill('test-instance')
+    const nsSelect = page.getByTestId('namespace-select')
+    await expect(nsSelect).toBeEnabled({ timeout: 5000 })
+    await nsSelect.click()
+    await page.getByRole('option', { name: 'default' }).click()
 
-    // Restriction banner should show single mode
-    await expect(page.getByText(/This RGD only allows/i)).toBeVisible()
-    // Verify GitOps button is visible (use role to be more specific)
-    await expect(page.getByRole('button', { name: /GitOps/i })).toBeVisible()
+    // Advance to Configure step
+    await page.getByRole('button', { name: /continue/i }).click()
+    await expect(page.getByTestId('configure-step')).toBeVisible({ timeout: 15000 })
   })
 
-  test('shows only direct and hybrid modes when gitops is not allowed', async ({ page }) => {
-    const rgd = createMockRGD('no-gitops-rgd', ['direct', 'hybrid'])
+  test('Continue button disabled when Target step is incomplete', async ({ page }) => {
+    const rgd = createMockRGD('unrestricted-rgd', undefined)
     await setupCommonMocks(page, rgd)
 
     await page.goto('/catalog')
@@ -252,22 +191,18 @@ test.describe('Deployment Mode Restrictions', () => {
     await card.click()
     await page.waitForURL(/\/catalog\//, { timeout: 10000 })
     await page.waitForLoadState('networkidle')
-    const deployBtn = page.getByRole('button', { name: /deploy/i })
+    const deployBtn = page.getByRole('button', { name: /deploy/i }).first()
     await expect(deployBtn).toBeVisible({ timeout: 15000 })
     await deployBtn.click()
-    await page.waitForLoadState('networkidle')
 
-    // Direct and Hybrid should be visible, GitOps hidden
-    await expect(page.getByRole('button', { name: /Direct/i })).toBeVisible()
-    await expect(page.getByRole('button', { name: /Hybrid/i })).toBeVisible()
-    await expect(page.getByRole('button', { name: /GitOps/i })).not.toBeVisible()
-
-    // Restriction banner should list allowed modes
-    await expect(page.getByText(/This RGD is restricted to the following deployment modes/i)).toBeVisible()
+    // Target step with empty fields - Continue should be disabled
+    await expect(page.getByTestId('target-step')).toBeVisible({ timeout: 15000 })
+    const continueBtn = page.getByRole('button', { name: /continue/i })
+    await expect(continueBtn).toBeDisabled()
   })
 
-  test('auto-selects single allowed mode', async ({ page }) => {
-    const rgd = createMockRGD('gitops-only-rgd', ['gitops'])
+  test('deploy wizard Cancel button closes modal', async ({ page }) => {
+    const rgd = createMockRGD('unrestricted-rgd', undefined)
     await setupCommonMocks(page, rgd)
 
     await page.goto('/catalog')
@@ -277,24 +212,21 @@ test.describe('Deployment Mode Restrictions', () => {
     await card.click()
     await page.waitForURL(/\/catalog\//, { timeout: 10000 })
     await page.waitForLoadState('networkidle')
-    const deployBtn = page.getByRole('button', { name: /deploy/i })
+    const deployBtn = page.getByRole('button', { name: /deploy/i }).first()
     await expect(deployBtn).toBeVisible({ timeout: 15000 })
     await deployBtn.click()
-    await page.waitForLoadState('networkidle')
 
-    // GitOps button should be selected (have primary styling) and disabled
-    const gitopsButton = page.getByRole('button', { name: /GitOps/i })
-    await expect(gitopsButton).toBeDisabled()
-    await expect(gitopsButton).toHaveClass(/border-primary/)
+    await expect(page.getByTestId('target-step')).toBeVisible({ timeout: 15000 })
+
+    // Click Cancel
+    await page.getByRole('button', { name: /cancel/i }).click()
+
+    // Modal should close - target step should no longer be visible
+    await expect(page.getByTestId('target-step')).not.toBeVisible({ timeout: 5000 })
   })
 
-  // Note: This test is similar to 'shows all deployment modes when no restrictions'
-  // The key difference is:
-  // - no restrictions: allowedDeploymentModes is undefined/missing
-  // - all explicitly allowed: allowedDeploymentModes is ['direct', 'gitops', 'hybrid']
-  // Both should result in the same UI behavior (backward compatibility)
-  test('shows three modes when all are explicitly allowed', async ({ page }) => {
-    const rgd = createMockRGD('all-modes-rgd', ['direct', 'gitops', 'hybrid'])
+  test('deploy wizard shows namespace select after project selection', async ({ page }) => {
+    const rgd = createMockRGD('unrestricted-rgd', undefined)
     await setupCommonMocks(page, rgd)
 
     await page.goto('/catalog')
@@ -304,97 +236,18 @@ test.describe('Deployment Mode Restrictions', () => {
     await card.click()
     await page.waitForURL(/\/catalog\//, { timeout: 10000 })
     await page.waitForLoadState('networkidle')
-    const deployBtn = page.getByRole('button', { name: /deploy/i })
+    const deployBtn = page.getByRole('button', { name: /deploy/i }).first()
     await expect(deployBtn).toBeVisible({ timeout: 15000 })
     await deployBtn.click()
-    await page.waitForLoadState('networkidle')
 
-    // All three modes should be visible and clickable (not disabled)
-    const directButton = page.getByRole('button', { name: /Direct/i })
-    const gitopsButton = page.getByRole('button', { name: /GitOps/i })
-    const hybridButton = page.getByRole('button', { name: /Hybrid/i })
+    await expect(page.getByTestId('target-step')).toBeVisible({ timeout: 15000 })
 
-    await expect(directButton).toBeVisible()
-    await expect(gitopsButton).toBeVisible()
-    await expect(hybridButton).toBeVisible()
-
-    // Verify buttons are enabled (clickable)
-    await expect(directButton).not.toBeDisabled()
-    await expect(gitopsButton).not.toBeDisabled()
-    await expect(hybridButton).not.toBeDisabled()
-
-    // No restriction banner (all modes explicitly allowed)
-    await expect(page.getByText(/This RGD only allows/i)).not.toBeVisible()
-    await expect(page.getByText(/This RGD is restricted/i)).not.toBeVisible()
+    // Project auto-selects when single project. Namespace select should be available.
+    await expect(page.getByTestId('namespace-select')).toBeVisible()
   })
 
-  test('UI prevents selection of disallowed modes (backend 422 is safety net)', async ({ page }) => {
-    // This test verifies that the UI enforces restrictions by hiding disallowed modes
-    // The backend 422 error is a safety net for API-level enforcement (tested via unit tests)
-    // Since UI filters modes, users cannot normally trigger the 422 - it protects against direct API calls
-    const rgd = createMockRGD('gitops-only-rgd', ['gitops'])
-    await setupCommonMocks(page, rgd)
-
-    // Mock the instance creation to return 422 for direct mode
-    await page.route('**/api/v1/instances', async (route) => {
-      if (route.request().method() === 'POST') {
-        const body = JSON.parse(route.request().postData() || '{}')
-        if (body.deploymentMode === 'direct') {
-          await route.fulfill({
-            status: 422,
-            contentType: 'application/json',
-            body: JSON.stringify({
-              code: 'DEPLOYMENT_MODE_NOT_ALLOWED',
-              message: "Deployment mode 'direct' is not allowed for RGD 'gitops-only-rgd'. Allowed modes: gitops",
-              details: {
-                allowedModes: 'gitops',
-                requestedMode: 'direct',
-              },
-            }),
-          })
-        } else {
-          await route.fulfill({
-            status: 201,
-            contentType: 'application/json',
-            body: JSON.stringify({
-              name: 'test-instance',
-              namespace: 'default',
-              rgdName: rgd.name,
-              status: 'created',
-            }),
-          })
-        }
-      } else {
-        await route.continue()
-      }
-    })
-
-    await page.goto('/catalog')
-    await page.waitForLoadState('networkidle')
-    const card = page.getByRole('button', { name: /view details for/i }).first()
-    await expect(card).toBeVisible({ timeout: 15000 })
-    await card.click()
-    await page.waitForURL(/\/catalog\//, { timeout: 10000 })
-    await page.waitForLoadState('networkidle')
-    const deployBtn = page.getByRole('button', { name: /deploy/i })
-    await expect(deployBtn).toBeVisible({ timeout: 15000 })
-    await deployBtn.click()
-    await page.waitForLoadState('networkidle')
-
-    // GitOps should be the only option and auto-selected
-    // This is the UI-level protection that makes the 422 error path unreachable via normal UI
-    await expect(page.getByRole('button', { name: /GitOps/i })).toBeVisible()
-    await expect(page.getByRole('button', { name: /GitOps/i })).toBeDisabled()
-
-    // Direct mode button should NOT exist (hidden, not just disabled)
-    await expect(page.getByRole('button', { name: /^Direct$/i })).not.toBeVisible()
-
-    // Verify restriction banner is shown
-    await expect(page.getByText(/This RGD only allows/i)).toBeVisible()
-  })
-
-  test('can select between two allowed modes', async ({ page }) => {
-    const rgd = createMockRGD('direct-hybrid-rgd', ['direct', 'hybrid'])
+  test('deploy wizard validates instance name format', async ({ page }) => {
+    const rgd = createMockRGD('unrestricted-rgd', undefined)
     await setupCommonMocks(page, rgd)
 
     await page.goto('/catalog')
@@ -404,24 +257,15 @@ test.describe('Deployment Mode Restrictions', () => {
     await card.click()
     await page.waitForURL(/\/catalog\//, { timeout: 10000 })
     await page.waitForLoadState('networkidle')
-    const deployBtn = page.getByRole('button', { name: /deploy/i })
+    const deployBtn = page.getByRole('button', { name: /deploy/i }).first()
     await expect(deployBtn).toBeVisible({ timeout: 15000 })
     await deployBtn.click()
-    await page.waitForLoadState('networkidle')
 
-    // Both modes should be clickable
-    const directButton = page.getByRole('button', { name: /Direct/i })
-    const hybridButton = page.getByRole('button', { name: /Hybrid/i })
+    await expect(page.getByTestId('target-step')).toBeVisible({ timeout: 15000 })
 
-    await expect(directButton).toBeVisible()
-    await expect(directButton).not.toBeDisabled()
-    await expect(hybridButton).toBeVisible()
-    await expect(hybridButton).not.toBeDisabled()
-
-    // Click on Hybrid mode
-    await hybridButton.click()
-
-    // Hybrid should now be selected
-    await expect(hybridButton).toHaveClass(/border-primary/)
+    // Fill instance name with valid value
+    await page.getByPlaceholder('my-instance').fill('valid-name')
+    // Should not show validation error
+    await expect(page.getByText(/must start and end with alphanumeric/i)).not.toBeVisible()
   })
 })

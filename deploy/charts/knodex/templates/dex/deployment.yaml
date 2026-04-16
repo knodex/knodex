@@ -1,0 +1,155 @@
+{{- if .Values.dex.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "knodex.fullname" . }}-dex-server
+  labels:
+    {{- include "knodex.dex.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.dex.replicaCount | default 1 }}
+  selector:
+    matchLabels:
+      {{- include "knodex.dex.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "knodex.dex.selectorLabels" . | nindent 8 }}
+        {{- with .Values.dex.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.dex.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "knodex.fullname" . }}-dex-server
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      initContainers:
+        # Copy the knodex-dex binary from the Knodex server image into a shared volume.
+        # This follows the ArgoCD pattern: the init container provides the config generator,
+        # and the main Dex container runs it to produce a valid dex.yaml at startup.
+        - name: copyutil
+          image: "{{ .Values.server.image.repository }}:{{ .Values.server.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.server.image.pullPolicy }}
+          command:
+            - /bin/cp
+            - -n
+            - /usr/local/bin/knodex-dex
+            - /shared/knodex-dex
+          volumeMounts:
+            - mountPath: /shared
+              name: static-files
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+      containers:
+        - name: dex
+          image: "{{ .Values.dex.image.repository }}:{{ .Values.dex.image.tag }}"
+          imagePullPolicy: {{ .Values.dex.image.pullPolicy | default "IfNotPresent" }}
+          command:
+            - /shared/knodex-dex
+            - rundex
+          env:
+            - name: KNODEX_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: DEX_ISSUER_URL
+              value: {{ .Values.dex.config.issuerURL | quote }}
+            - name: DEX_KNODEX_REDIRECT_URL
+              value: {{ .Values.dex.config.knodexRedirectURL | quote }}
+            - name: DEX_DISABLE_TLS
+              value: {{ .Values.dex.config.disableTLS | default true | quote }}
+            - name: DEX_LOG_LEVEL
+              value: {{ .Values.dex.config.logLevel | default "info" | quote }}
+            {{- if .Values.dex.config.knodexClientSecret }}
+            - name: DEX_KNODEX_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "knodex.fullname" . }}-dex
+                  key: knodex-client-secret
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 5556
+              protocol: TCP
+            - name: grpc
+              containerPort: 5557
+              protocol: TCP
+            - name: metrics
+              containerPort: 5558
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz/live
+              port: http
+              {{- if not .Values.dex.config.disableTLS }}
+              scheme: HTTPS
+              {{- end }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz/ready
+              port: http
+              {{- if not .Values.dex.config.disableTLS }}
+              scheme: HTTPS
+              {{- end }}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          {{- with .Values.dex.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - mountPath: /shared
+              name: static-files
+            - mountPath: /tmp
+              name: dex-tmp
+            {{- if not .Values.dex.config.disableTLS }}
+            - mountPath: /etc/dex/tls
+              name: dex-tls
+              readOnly: true
+            {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1001
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        - name: static-files
+          emptyDir: {}
+        - name: dex-tmp
+          emptyDir: {}
+        {{- if not .Values.dex.config.disableTLS }}
+        - name: dex-tls
+          secret:
+            secretName: {{ .Values.dex.config.tlsSecretName | default (printf "%s-dex-tls" (include "knodex.fullname" .)) }}
+            optional: true
+        {{- end }}
+      {{- with (coalesce .Values.dex.nodeSelector .Values.global.nodeSelector) }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with (coalesce .Values.dex.tolerations .Values.global.tolerations) }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with (coalesce .Values.dex.affinity .Values.global.affinity) }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

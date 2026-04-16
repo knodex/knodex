@@ -884,3 +884,208 @@ func TestLoad_WithInvalidJSON(t *testing.T) {
 		t.Errorf("Error should mention loading failure, got: %v", err)
 	}
 }
+
+// =============================================================================
+// KnodexNamespace Config Tests
+// =============================================================================
+
+func TestLoad_KnodexNamespace_DefaultFallback(t *testing.T) {
+	// Clear both env vars to test the fallback default
+	origNS := os.Getenv("KNODEX_NAMESPACE")
+	origPod := os.Getenv("POD_NAMESPACE")
+	os.Unsetenv("KNODEX_NAMESPACE")
+	os.Unsetenv("POD_NAMESPACE")
+	defer func() {
+		if origNS != "" {
+			os.Setenv("KNODEX_NAMESPACE", origNS)
+		}
+		if origPod != "" {
+			os.Setenv("POD_NAMESPACE", origPod)
+		}
+	}()
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+
+	if cfg.KnodexNamespace != "knodex-system" {
+		t.Errorf("expected KnodexNamespace to be 'knodex-system' when no env vars set, got %q", cfg.KnodexNamespace)
+	}
+}
+
+func TestLoad_KnodexNamespace_FromPodNamespace(t *testing.T) {
+	origNS := os.Getenv("KNODEX_NAMESPACE")
+	origPod := os.Getenv("POD_NAMESPACE")
+	os.Unsetenv("KNODEX_NAMESPACE")
+	os.Setenv("POD_NAMESPACE", "my-deploy-ns")
+	defer func() {
+		if origNS != "" {
+			os.Setenv("KNODEX_NAMESPACE", origNS)
+		} else {
+			os.Unsetenv("KNODEX_NAMESPACE")
+		}
+		if origPod != "" {
+			os.Setenv("POD_NAMESPACE", origPod)
+		} else {
+			os.Unsetenv("POD_NAMESPACE")
+		}
+	}()
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+
+	if cfg.KnodexNamespace != "my-deploy-ns" {
+		t.Errorf("expected KnodexNamespace to be 'my-deploy-ns' from POD_NAMESPACE, got %q", cfg.KnodexNamespace)
+	}
+}
+
+func TestLoad_KnodexNamespace_ExplicitOverride(t *testing.T) {
+	origNS := os.Getenv("KNODEX_NAMESPACE")
+	origPod := os.Getenv("POD_NAMESPACE")
+	os.Setenv("KNODEX_NAMESPACE", "custom-ns")
+	os.Setenv("POD_NAMESPACE", "pod-ns")
+	defer func() {
+		if origNS != "" {
+			os.Setenv("KNODEX_NAMESPACE", origNS)
+		} else {
+			os.Unsetenv("KNODEX_NAMESPACE")
+		}
+		if origPod != "" {
+			os.Setenv("POD_NAMESPACE", origPod)
+		} else {
+			os.Unsetenv("POD_NAMESPACE")
+		}
+	}()
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+
+	if cfg.KnodexNamespace != "custom-ns" {
+		t.Errorf("expected KnodexNamespace to be 'custom-ns' from KNODEX_NAMESPACE, got %q", cfg.KnodexNamespace)
+	}
+}
+
+func TestLoad_CatalogPackageFilter_Unset(t *testing.T) {
+	t.Setenv("CATALOG_PACKAGE_FILTER", "")
+	os.Unsetenv("CATALOG_PACKAGE_FILTER")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+
+	if len(cfg.CatalogPackageFilter) != 0 {
+		t.Errorf("expected empty CatalogPackageFilter when unset, got %v", cfg.CatalogPackageFilter)
+	}
+}
+
+func TestLoad_CatalogPackageFilter_SingleValue(t *testing.T) {
+	t.Setenv("CATALOG_PACKAGE_FILTER", "networking")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+
+	if len(cfg.CatalogPackageFilter) != 1 || cfg.CatalogPackageFilter[0] != "networking" {
+		t.Errorf("expected [networking], got %v", cfg.CatalogPackageFilter)
+	}
+}
+
+func TestLoad_CatalogPackageFilter_MultipleValues(t *testing.T) {
+	t.Setenv("CATALOG_PACKAGE_FILTER", "networking,database,platform-core")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+
+	expected := []string{"networking", "database", "platform-core"}
+	if len(cfg.CatalogPackageFilter) != len(expected) {
+		t.Fatalf("expected %d values, got %d: %v", len(expected), len(cfg.CatalogPackageFilter), cfg.CatalogPackageFilter)
+	}
+	for i, v := range expected {
+		if cfg.CatalogPackageFilter[i] != v {
+			t.Errorf("expected %q at index %d, got %q", v, i, cfg.CatalogPackageFilter[i])
+		}
+	}
+}
+
+func TestLoad_CatalogPackageFilter_NormalizedLowercase(t *testing.T) {
+	t.Setenv("CATALOG_PACKAGE_FILTER", "Networking, DATABASE , Platform-Core ")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+
+	expected := []string{"networking", "database", "platform-core"}
+	if len(cfg.CatalogPackageFilter) != len(expected) {
+		t.Fatalf("expected %d values, got %d: %v", len(expected), len(cfg.CatalogPackageFilter), cfg.CatalogPackageFilter)
+	}
+	for i, v := range expected {
+		if cfg.CatalogPackageFilter[i] != v {
+			t.Errorf("expected %q at index %d, got %q", v, i, cfg.CatalogPackageFilter[i])
+		}
+	}
+}
+
+func TestLoad_CatalogPackageFilter_EmptyString(t *testing.T) {
+	t.Setenv("CATALOG_PACKAGE_FILTER", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+
+	if len(cfg.CatalogPackageFilter) != 0 {
+		t.Errorf("expected empty CatalogPackageFilter for empty string, got %v", cfg.CatalogPackageFilter)
+	}
+}
+
+func TestLoad_CatalogPackageFilter_Deduplicated(t *testing.T) {
+	t.Setenv("CATALOG_PACKAGE_FILTER", "networking,database,networking,DATABASE")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+
+	expected := []string{"networking", "database"}
+	if len(cfg.CatalogPackageFilter) != len(expected) {
+		t.Fatalf("expected %d deduplicated values, got %d: %v", len(expected), len(cfg.CatalogPackageFilter), cfg.CatalogPackageFilter)
+	}
+}
+
+func TestLoad_KnodexNamespace_EmptyNormalized(t *testing.T) {
+	origNS := os.Getenv("KNODEX_NAMESPACE")
+	origPod := os.Getenv("POD_NAMESPACE")
+	os.Setenv("KNODEX_NAMESPACE", "  ")
+	os.Unsetenv("POD_NAMESPACE")
+	defer func() {
+		if origNS != "" {
+			os.Setenv("KNODEX_NAMESPACE", origNS)
+		} else {
+			os.Unsetenv("KNODEX_NAMESPACE")
+		}
+		if origPod != "" {
+			os.Setenv("POD_NAMESPACE", origPod)
+		} else {
+			os.Unsetenv("POD_NAMESPACE")
+		}
+	}()
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+
+	if cfg.KnodexNamespace != "knodex-system" {
+		t.Errorf("expected KnodexNamespace to be 'knodex-system' when set to whitespace, got %q", cfg.KnodexNamespace)
+	}
+}

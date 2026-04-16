@@ -41,6 +41,10 @@ var (
 	branchNameRegex = regexp.MustCompile(`^[a-zA-Z0-9/_.-]+$`)
 )
 
+// maxGitLabResponseSize limits response body reads to prevent memory exhaustion.
+// Matches the VCS client limit defined in the vcs package.
+const maxGitLabResponseSize = 10 << 20 // 10 MB
+
 // AuditLogger interface for audit logging
 type AuditLogger interface {
 	LogEvent(ctx context.Context, event string, attrs ...slog.Attr)
@@ -390,13 +394,17 @@ func (s *Service) ListRepositoryConfigs(ctx context.Context, projectID string) (
 
 	for _, secret := range secrets.Items {
 		repoConfig := secretToRepositoryConfig(&secret)
+		if repoConfig == nil {
+			continue // skip malformed secrets (missing required fields)
+		}
 		result.Items = append(result.Items, *repoConfig)
 	}
 
 	return result, nil
 }
 
-// secretToRepositoryConfig converts an ArgoCD-style repository secret to RepositoryConfig
+// secretToRepositoryConfig converts an ArgoCD-style repository secret to RepositoryConfig.
+// Returns nil if required fields (RepoURL, AuthType) are missing — callers must skip nil entries.
 func secretToRepositoryConfig(secret *corev1.Secret) *RepositoryConfig {
 	// Extract metadata from secret data
 	repoURL := string(secret.Data[SecretKeyURL])
@@ -404,6 +412,16 @@ func secretToRepositoryConfig(secret *corev1.Secret) *RepositoryConfig {
 	name := string(secret.Data[SecretKeyRepoName])
 	authType := string(secret.Data[SecretKeyType])
 	defaultBranch := string(secret.Data[SecretKeyDefaultBranch])
+
+	// Validate required fields; malformed secrets are excluded from list results
+	if repoURL == "" || authType == "" {
+		slog.Warn("skipping malformed repository secret: missing required fields",
+			"secret", secret.Name,
+			"hasRepoURL", repoURL != "",
+			"hasAuthType", authType != "",
+		)
+		return nil
+	}
 
 	// Get audit metadata from annotations
 	createdBy := ""
@@ -812,8 +830,8 @@ func (s *Service) testGitLabAPIConnection(ctx context.Context, owner, repo, toke
 		resp.Body.Close()
 	}()
 
-	// Read body for error parsing
-	body, _ := io.ReadAll(resp.Body)
+	// Read body for error parsing (limited to prevent memory exhaustion)
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxGitLabResponseSize))
 
 	switch resp.StatusCode {
 	case 200:

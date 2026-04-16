@@ -163,7 +163,7 @@ describe("ConfirmEnforcementDialog", () => {
       render(<ConfirmEnforcementDialog {...defaultProps} currentAction="dryrun" newAction="warn" />);
 
       const confirmButton = screen.getByRole("button", { name: /confirm change/i });
-      expect(confirmButton.className).toMatch(/yellow/i);
+      expect(confirmButton.className).toMatch(/amber/i);
     });
   });
 

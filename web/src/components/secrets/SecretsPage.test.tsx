@@ -26,6 +26,10 @@ vi.mock("@/hooks/useCanI", () => ({
   useCanI: vi.fn(),
 }));
 
+vi.mock("@/hooks/useAuth", () => ({
+  useCurrentProject: vi.fn(() => "alpha"),
+}));
+
 const mockNavigate = vi.fn();
 vi.mock("react-router-dom", async () => {
   const actual = await vi.importActual("react-router-dom");
@@ -72,7 +76,7 @@ const mockSecrets = {
       createdAt: "2026-03-16T12:00:00Z",
     },
   ],
-  totalCount: 2,
+  pageCount: 2,
 };
 
 describe("SecretsPage", () => {
@@ -136,7 +140,7 @@ describe("SecretsPage", () => {
 
     renderPage();
 
-    expect(document.querySelectorAll(".animate-pulse").length).toBeGreaterThan(0);
+    expect(document.querySelectorAll(".animate-token-shimmer").length).toBeGreaterThan(0);
   });
 
   it("shows empty state when no secrets", async () => {
@@ -150,7 +154,7 @@ describe("SecretsPage", () => {
       isLoading: false,
     } as ReturnType<typeof useProjectsModule.useProjects>);
     vi.mocked(useSecretsModule.useSecretList).mockReturnValue({
-      data: { items: [], totalCount: 0 },
+      data: { items: [], pageCount: 0 },
       isLoading: false,
       isError: false,
       error: null,
@@ -164,7 +168,7 @@ describe("SecretsPage", () => {
     renderPage();
 
     await waitFor(() => {
-      expect(screen.getByText("No secrets found in this project.")).toBeInTheDocument();
+      expect(screen.getByText("No secrets yet")).toBeInTheDocument();
     });
   });
 
@@ -318,7 +322,7 @@ describe("SecretsPage", () => {
     expect(screen.getByLabelText("Delete api-key")).toBeInTheDocument();
   });
 
-  it("auto-selects project from URL query parameter", async () => {
+  it("uses global project from useCurrentProject hook", async () => {
     vi.mocked(useCanIModule.useCanI).mockReturnValue({
       allowed: true,
       isLoading: false,
@@ -346,13 +350,13 @@ describe("SecretsPage", () => {
       isPending: false,
     } as unknown as ReturnType<typeof useSecretsModule.useCreateSecret>);
 
-    renderPage("/secrets?project=beta");
+    renderPage();
 
     await waitFor(() => {
       expect(screen.getByText("db-credentials")).toBeInTheDocument();
     });
-    // useSecretList should have been called with "beta" project
-    expect(useSecretsModule.useSecretList).toHaveBeenCalledWith("beta");
+    // useSecretList should have been called with "alpha" (from useCurrentProject mock)
+    expect(useSecretsModule.useSecretList).toHaveBeenCalledWith("alpha");
   });
 
   it("navigates to detail view with correct URL on row click", async () => {
@@ -389,7 +393,7 @@ describe("SecretsPage", () => {
     await user.click(screen.getByText("db-credentials"));
 
     expect(mockNavigate).toHaveBeenCalledWith(
-      "/secrets/alpha-ns/db-credentials?project=alpha"
+      "/secrets/alpha-ns/db-credentials"
     );
   });
 });

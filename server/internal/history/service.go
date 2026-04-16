@@ -143,27 +143,6 @@ func (s *Service) RecordCreation(ctx context.Context, namespace, kind, name, rgd
 	return s.saveHistory(ctx, namespace, kind, name, history)
 }
 
-// RecordGitPush records a Git push event
-func (s *Service) RecordGitPush(ctx context.Context, namespace, kind, name, commitSHA, repository, branch, user string) error {
-	event := models.DeploymentEvent{
-		Timestamp:     time.Now().UTC(),
-		EventType:     models.EventTypePushedToGit,
-		Status:        "PushedToGit",
-		User:          user,
-		GitCommitSHA:  commitSHA,
-		GitRepository: repository,
-		GitBranch:     branch,
-		Message:       fmt.Sprintf("Manifest pushed to %s", repository),
-		Details: map[string]interface{}{
-			"commit":     commitSHA,
-			"repository": repository,
-			"branch":     branch,
-		},
-	}
-
-	return s.RecordEvent(ctx, namespace, kind, name, event)
-}
-
 // RecordStatusChange records a status change event
 func (s *Service) RecordStatusChange(ctx context.Context, namespace, kind, name, oldStatus, newStatus string) error {
 	// Determine event type based on new status
@@ -339,6 +318,43 @@ func (s *Service) GetTimeline(ctx context.Context, namespace, kind, name string)
 	return history.GetTimeline(), nil
 }
 
+// GetFilteredTimeline returns a timeline filtered by source for an instance.
+// source can be "kubernetes" (only K8s Events), "deployment" (only deployment events),
+// or empty (all events, same as GetTimeline).
+func (s *Service) GetFilteredTimeline(ctx context.Context, namespace, kind, name, source string) ([]models.TimelineEntry, error) {
+	history, err := s.GetHistory(ctx, namespace, kind, name)
+	if err != nil {
+		return nil, err
+	}
+
+	timeline := history.GetTimeline()
+
+	// When source is empty, return all events (backward-compatible)
+	if source == "" {
+		return timeline, nil
+	}
+
+	// Filter by source
+	var filtered []models.TimelineEntry
+	for _, entry := range timeline {
+		switch source {
+		case "kubernetes":
+			if entry.EventType == models.EventTypeKubernetesEvent {
+				filtered = append(filtered, entry)
+			}
+		case "deployment":
+			if entry.EventType != models.EventTypeKubernetesEvent {
+				filtered = append(filtered, entry)
+			}
+		default:
+			// Unknown source filter — return empty (backward-safe)
+			return nil, nil
+		}
+	}
+
+	return filtered, nil
+}
+
 // saveHistory saves the deployment history to storage
 func (s *Service) saveHistory(ctx context.Context, namespace, kind, name string, history *models.DeploymentHistory) error {
 	key := historyKey(namespace, kind, name)
@@ -368,54 +384,6 @@ func (s *Service) saveHistory(ctx context.Context, namespace, kind, name string,
 	s.inMemoryCache[key] = history
 
 	return nil
-}
-
-// ListAllHistories lists all deployment histories (for admin purposes)
-func (s *Service) ListAllHistories(ctx context.Context) ([]*models.DeploymentHistory, error) {
-	var histories []*models.DeploymentHistory
-
-	if s.redisClient != nil {
-		// Scan for all history keys
-		pattern := historyKeyPrefix + "*"
-		iter := s.redisClient.Scan(ctx, 0, pattern, 0).Iterator()
-
-		for iter.Next(ctx) {
-			key := iter.Val()
-			data, err := s.redisClient.Get(ctx, key).Bytes()
-			if err != nil {
-				continue
-			}
-
-			var history models.DeploymentHistory
-			if err := json.Unmarshal(data, &history); err != nil {
-				continue
-			}
-
-			histories = append(histories, &history)
-		}
-
-		if err := iter.Err(); err != nil {
-			return nil, fmt.Errorf("failed to scan histories: %w", err)
-		}
-
-		return histories, nil
-	}
-
-	// Fall back to in-memory cache
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	for key, history := range s.inMemoryCache {
-		// Only include active histories, not deleted ones
-		if len(key) > len(historyKeyPrefix) && key[:len(historyKeyPrefix)] == historyKeyPrefix {
-			if len(key) > len(deletedHistoryKeyPrefix) && key[:len(deletedHistoryKeyPrefix)] == deletedHistoryKeyPrefix {
-				continue
-			}
-			histories = append(histories, history)
-		}
-	}
-
-	return histories, nil
 }
 
 // CreateHistoryFromInstance creates or updates history from an existing instance

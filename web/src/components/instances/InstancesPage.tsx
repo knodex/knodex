@@ -2,38 +2,62 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { useState, useCallback, useEffect, useMemo } from "react";
-import { RefreshCw } from "lucide-react";
+import { Link } from "react-router-dom";
+import { RefreshCw, LayoutGrid, List, Plus } from "@/lib/icons";
 import { useInstanceList } from "@/hooks/useInstances";
 import { useProjects } from "@/hooks/useProjects";
+import { useCurrentProject } from "@/hooks/useAuth";
 import type { Instance, InstanceListParams, InstanceHealth } from "@/types/rgd";
-import { InstanceCard } from "./InstanceCard";
-import { InstanceCardSkeleton } from "./InstanceCardSkeleton";
+import { StatusCard } from "./StatusCard";
+import { InstancesListView } from "./InstancesListView";
 import { EmptyState } from "./EmptyState";
 import { Pagination } from "@/components/catalog/Pagination";
 import { InstanceFilters, type InstanceFilterState } from "./InstanceFilters";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
+import { StatusCardSkeleton } from "./StatusCardSkeleton";
 import { getInstanceFiltersFromURL, setInstanceFiltersToURL } from "@/lib/url-utils";
 import { getSafeErrorMessage } from "@/lib/errors";
 import { filterByProjectNamespaces } from "@/lib/project-utils";
+import { cn } from "@/lib/utils";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { useIsMobile } from "@/hooks/useIsMobile";
+import { MobileInstanceCard } from "./MobileInstanceCard";
 
-const PAGE_SIZE = 20; // Increased from 20 to handle more instances (Global Admin can see many instances across orgs)
+const PAGE_SIZE = 20;
+const INSTANCES_VIEW_KEY = "instances-view-mode";
+type ViewMode = "grid" | "list";
 
 interface InstancesPageProps {
   onInstanceClick?: (instance: Instance) => void;
 }
 
 export function InstancesPage({ onInstanceClick }: InstancesPageProps) {
+  const isMobile = useIsMobile();
+  const currentProject = useCurrentProject();
   const [filters, setFilters] = useState<InstanceFilterState>(() => {
     const urlFilters = getInstanceFiltersFromURL();
     return {
-      ...urlFilters,
+      search: urlFilters.search,
+      rgd: urlFilters.rgd,
       health: urlFilters.health as InstanceHealth,
+      scope: urlFilters.scope,
     };
   });
   const [page, setPage] = useState(1);
 
-  // Fetch user's accessible projects (RBAC-aware)
-  const { data: projectsData, isLoading: projectsLoading } = useProjects();
+  // View mode: grid or list, persisted to localStorage
+  const [viewMode, setViewMode] = useState<ViewMode>(() => {
+    const stored = localStorage.getItem(INSTANCES_VIEW_KEY);
+    return stored === "list" ? "list" : "grid";
+  });
+
+  const handleViewModeChange = useCallback((mode: ViewMode) => {
+    setViewMode(mode);
+    localStorage.setItem(INSTANCES_VIEW_KEY, mode);
+  }, []);
+
+  // Fetch user's accessible projects (RBAC-aware) — needed for namespace filtering
+  const { data: projectsData } = useProjects();
 
   // Build query params from filters - use rgdName for backend filtering
   const params: InstanceListParams = useMemo(
@@ -82,39 +106,49 @@ export function InstancesPage({ onInstanceClick }: InstancesPageProps) {
   // Memoize data items for stable reference
   const dataItems = useMemo(() => data?.items ?? [], [data?.items]);
 
-  // Filter instances by selected project's allowed namespaces (client-side filtering)
+  // Filter instances by selected project's allowed namespaces and scope (client-side filtering)
   const filteredItems = useMemo(() => {
     if (dataItems.length === 0) return [];
 
-    // If no project selected, return all items
-    if (!filters.project) return dataItems;
-
-    // Find the selected project
-    const selectedProject = projects.find((p) => p.name === filters.project);
-    if (!selectedProject) return dataItems;
+    let items = dataItems;
 
     // Filter by project's allowed namespaces
-    return filterByProjectNamespaces(dataItems, selectedProject);
-  }, [dataItems, filters.project, projects]);
+    if (currentProject) {
+      const selectedProject = projects.find((p) => p.name === currentProject);
+      if (selectedProject) {
+        items = filterByProjectNamespaces(items, selectedProject);
+      }
+    }
 
-  // Extract available RGDs from filtered instances
+    // Filter by scope (cluster-scoped vs namespaced)
+    if (filters.scope === "cluster") {
+      items = items.filter((instance) => instance.isClusterScoped === true);
+    } else if (filters.scope === "namespaced") {
+      items = items.filter((instance) => !instance.isClusterScoped);
+    }
+
+    return items;
+  }, [dataItems, currentProject, filters.scope, projects]);
+
+  // Extract available RGDs from all data items (not filtered), so the RGD dropdown
+  // doesn't change when scope/project filters are applied.
   const availableRgds = useMemo(() => {
     const rgds = new Set<string>();
 
-    filteredItems.forEach((instance) => {
+    dataItems.forEach((instance) => {
       if (instance.rgdName) {
         rgds.add(instance.rgdName);
       }
     });
 
     return Array.from(rgds).sort();
-  }, [filteredItems]);
+  }, [dataItems]);
 
   const hasActiveFilters =
     !!filters.search ||
     !!filters.rgd ||
     !!filters.health ||
-    !!filters.project;
+    !!filters.scope;
 
   if (isError) {
     return (
@@ -134,47 +168,121 @@ export function InstancesPage({ onInstanceClick }: InstancesPageProps) {
 
   return (
     <section className="space-y-6">
-      {/* Summary bar */}
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">
-          {filteredItems.length} available
-          {hasActiveFilters && data && ` (filtered from ${data.totalCount})`}
-        </p>
-        {isFetching && !isLoading && (
-          <span className="flex items-center gap-2 text-xs text-muted-foreground">
-            <RefreshCw className="h-3 w-3 animate-spin" />
-            Syncing
-          </span>
+      {/* Page header (sr-only title) */}
+      <PageHeader title="Instances" />
+
+      {/* Filters + View Toggle + Deploy (same row) */}
+      <div className="flex items-start gap-3">
+        <div className="flex-1 min-w-0">
+          <InstanceFilters
+            filters={filters}
+            onFiltersChange={handleFiltersChange}
+            availableRgds={availableRgds}
+          />
+        </div>
+        {!isMobile && (
+          <div className="flex items-center gap-2 shrink-0 pt-[1px]">
+            {isFetching && !isLoading && (
+              <span className="flex items-center gap-2 text-xs text-muted-foreground">
+                <RefreshCw className="h-3 w-3 animate-spin" />
+              </span>
+            )}
+            <div className="flex items-center h-9 border border-[var(--border-default)] rounded-[var(--radius-token-md)] p-0.5" role="group" aria-label="View mode">
+              <button
+                onClick={() => handleViewModeChange("grid")}
+                className={cn(
+                  "h-full px-2 rounded-[var(--radius-token-sm)] transition-colors",
+                  viewMode === "grid"
+                    ? "bg-[var(--brand-primary)] text-black"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+                aria-label="Grid view"
+                aria-pressed={viewMode === "grid"}
+              >
+                <LayoutGrid className="h-3.5 w-3.5" />
+              </button>
+              <button
+                onClick={() => handleViewModeChange("list")}
+                className={cn(
+                  "h-full px-2 rounded-[var(--radius-token-sm)] transition-colors",
+                  viewMode === "list"
+                    ? "bg-[var(--brand-primary)] text-black"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+                aria-label="List view"
+                aria-pressed={viewMode === "list"}
+              >
+                <List className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            <Link
+              to="/catalog"
+              className="inline-flex items-center h-8 gap-1.5 rounded-[var(--radius-token-md)] px-2.5 text-xs font-medium text-black transition-all duration-150 bg-[var(--brand-primary)] hover:bg-[var(--brand-hover)] active:scale-[0.97]"
+              data-testid="deploy-new-button"
+            >
+              <Plus className="h-3 w-3" />
+              Deploy
+            </Link>
+          </div>
         )}
       </div>
 
-      {/* Filters */}
-      <InstanceFilters
-        filters={filters}
-        onFiltersChange={handleFiltersChange}
-        availableRgds={availableRgds}
-        projects={projects}
-        projectsLoading={projectsLoading}
-      />
-
-      {/* Grid */}
+      {/* Grid or List view */}
       {isLoading ? (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {Array.from({ length: 8 }).map((_, i) => (
-            <InstanceCardSkeleton key={i} />
+        <div className="grid gap-3" style={{ gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill, minmax(300px, 1fr))" }}>
+          {Array.from({ length: isMobile ? 4 : 8 }).map((_, i) => (
+            <StatusCardSkeleton key={i} />
           ))}
         </div>
       ) : filteredItems.length === 0 ? (
-        <EmptyState hasFilters={hasActiveFilters} />
+        <EmptyState
+          hasFilters={hasActiveFilters}
+          onClearFilters={() => handleFiltersChange({ search: "", rgd: "", health: "", scope: "" })}
+        />
+      ) : isMobile ? (
+        <div className="flex flex-col gap-2">
+          {filteredItems.map((instance) => (
+            <MobileInstanceCard
+              key={`${instance.namespace || "_cluster"}/${instance.kind}/${instance.name}`}
+              instance={instance}
+              onClick={handleInstanceClick}
+            />
+          ))}
+          {data && (
+            <Pagination
+              page={data.page}
+              pageSize={data.pageSize}
+              totalCount={filteredItems.length}
+              onPageChange={handlePageChange}
+            />
+          )}
+        </div>
+      ) : viewMode === "list" ? (
+        <>
+          <InstancesListView items={filteredItems} onInstanceClick={handleInstanceClick} />
+          {data && (
+            <Pagination
+              page={data.page}
+              pageSize={data.pageSize}
+              totalCount={filteredItems.length}
+              onPageChange={handlePageChange}
+            />
+          )}
+        </>
       ) : (
         <>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 animate-fade-in-up">
-            {filteredItems.map((instance) => (
-              <InstanceCard
-                key={`${instance.namespace}/${instance.kind}/${instance.name}`}
-                instance={instance}
-                onClick={handleInstanceClick}
-              />
+          <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))" }}>
+            {filteredItems.map((instance, index) => (
+              <div
+                key={`${instance.namespace || "_cluster"}/${instance.kind}/${instance.name}`}
+                className="animate-card-enter"
+                style={{ animationDelay: `${Math.min(index * 40, 400)}ms` }}
+              >
+                <StatusCard
+                  instance={instance}
+                  onClick={onInstanceClick ? handleInstanceClick : undefined}
+                />
+              </div>
             ))}
           </div>
           {data && (

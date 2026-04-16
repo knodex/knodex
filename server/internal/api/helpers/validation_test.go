@@ -27,24 +27,15 @@ func TestValidationErrors(t *testing.T) {
 		assert.Equal(t, "name is required", errs["name"])
 	})
 
-	t.Run("AddIndexed adds indexed field error", func(t *testing.T) {
-		errs := NewValidationErrors()
-		errs.AddIndexed("items", 0, "item is invalid")
-		assert.True(t, errs.HasErrors())
-		assert.Equal(t, "item is invalid", errs["items[0]"])
-	})
-
 	t.Run("multiple errors", func(t *testing.T) {
 		errs := NewValidationErrors()
 		errs.Add("name", "name is required")
 		errs.Add("email", "invalid email format")
-		errs.AddIndexed("tags", 2, "tag too long")
 
 		assert.True(t, errs.HasErrors())
-		assert.Len(t, errs, 3)
+		assert.Len(t, errs, 2)
 		assert.Equal(t, "name is required", errs["name"])
 		assert.Equal(t, "invalid email format", errs["email"])
-		assert.Equal(t, "tag too long", errs["tags[2]"])
 	})
 }
 

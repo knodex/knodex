@@ -71,7 +71,7 @@ describe('Input', () => {
     const input = screen.getByTestId('input')
     expect(input).toHaveClass(
       'flex',
-      'h-10',
+      'h-9',
       'w-full',
       'rounded-md',
       'border'

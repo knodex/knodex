@@ -32,7 +32,7 @@ test.describe("Settings Access RBAC", () => {
       auth,
     }) => {
       await auth.setupAs(TestUserRole.GLOBAL_ADMIN);
-      await page.goto("/catalog");
+      await page.goto("/instances");
       await page.waitForLoadState("domcontentloaded");
 
       // Hover over sidebar to expand it and show labels
@@ -40,7 +40,7 @@ test.describe("Settings Access RBAC", () => {
       await sidebar.hover();
 
       // Global Admin should see Settings in sidebar
-      const settingsLink = page.getByRole("link", { name: /settings/i });
+      const settingsLink = sidebar.getByRole("link", { name: /settings/i });
       await expect(settingsLink).toBeVisible();
 
       await page.screenshot({
@@ -54,7 +54,7 @@ test.describe("Settings Access RBAC", () => {
       auth,
     }) => {
       await auth.setupAs(TestUserRole.ORG_ADMIN);
-      await page.goto("/catalog");
+      await page.goto("/instances");
       await page.waitForLoadState("domcontentloaded");
 
       // Hover over sidebar to expand it and show labels
@@ -62,7 +62,7 @@ test.describe("Settings Access RBAC", () => {
       await sidebar.hover();
 
       // Project Admin should also see Settings (authorization happens at API layer)
-      const settingsLink = page.getByRole("link", { name: /settings/i });
+      const settingsLink = sidebar.getByRole("link", { name: /settings/i });
       await expect(settingsLink).toBeVisible();
 
       await page.screenshot({
@@ -73,7 +73,7 @@ test.describe("Settings Access RBAC", () => {
 
     test("Developer sees Settings link in sidebar ", async ({ page, auth }) => {
       await auth.setupAs(TestUserRole.ORG_DEVELOPER);
-      await page.goto("/catalog");
+      await page.goto("/instances");
       await page.waitForLoadState("domcontentloaded");
 
       // Hover over sidebar to expand it and show labels
@@ -81,7 +81,7 @@ test.describe("Settings Access RBAC", () => {
       await sidebar.hover();
 
       // Developer should also see Settings (authorization happens at API layer)
-      const settingsLink = page.getByRole("link", { name: /settings/i });
+      const settingsLink = sidebar.getByRole("link", { name: /settings/i });
       await expect(settingsLink).toBeVisible();
 
       await page.screenshot({
@@ -92,7 +92,7 @@ test.describe("Settings Access RBAC", () => {
 
     test("Viewer sees Settings link in sidebar ", async ({ page, auth }) => {
       await auth.setupAs(TestUserRole.ORG_VIEWER);
-      await page.goto("/catalog");
+      await page.goto("/instances");
       await page.waitForLoadState("domcontentloaded");
 
       // Hover over sidebar to expand it and show labels
@@ -100,7 +100,7 @@ test.describe("Settings Access RBAC", () => {
       await sidebar.hover();
 
       // Viewer should also see Settings (authorization happens at API layer)
-      const settingsLink = page.getByRole("link", { name: /settings/i });
+      const settingsLink = sidebar.getByRole("link", { name: /settings/i });
       await expect(settingsLink).toBeVisible();
 
       await page.screenshot({
@@ -111,17 +111,17 @@ test.describe("Settings Access RBAC", () => {
   });
 
   test.describe("Settings Page Access - Global Admin", () => {
-    test("Global Admin can access /settings/projects and see project list", async ({
+    test("Global Admin can access /projects and see project list", async ({
       page,
       auth,
     }) => {
       await auth.setupAs(TestUserRole.GLOBAL_ADMIN);
-      await page.goto("/settings/projects");
+      await page.goto("/projects");
       await page.waitForLoadState("networkidle");
 
       // Should stay on settings page and see Projects header
-      expect(page.url()).toContain("/settings/projects");
-      await expect(page.locator('h2:has-text("Projects")')).toBeVisible({
+      expect(page.url()).toContain("/projects");
+      await expect(page.locator('h1:has-text("Projects")')).toBeVisible({
         timeout: 10000,
       });
 
@@ -135,17 +135,17 @@ test.describe("Settings Access RBAC", () => {
       });
     });
 
-    test("Global Admin can access /settings/repositories", async ({
+    test("Global Admin can access /repositories", async ({
       page,
       auth,
     }) => {
       await auth.setupAs(TestUserRole.GLOBAL_ADMIN);
-      await page.goto("/settings/repositories");
+      await page.goto("/repositories");
       await page.waitForLoadState("networkidle");
 
       // Should stay on settings page and see Repositories header
-      expect(page.url()).toContain("/settings/repositories");
-      await expect(page.locator('h2:has-text("Repositories")')).toBeVisible({
+      expect(page.url()).toContain("/repositories");
+      await expect(page.locator('h1:has-text("Repositories")')).toBeVisible({
         timeout: 10000,
       });
 
@@ -161,21 +161,21 @@ test.describe("Settings Access RBAC", () => {
   });
 
   test.describe("Settings Page Access - Non-Admin (API returns 403)", () => {
-    test("Project Admin stays on /settings/projects and may see Access Denied", async ({
+    test("Project Admin stays on /projects and may see Access Denied", async ({
       page,
       auth,
     }) => {
       await auth.setupAs(TestUserRole.ORG_ADMIN);
-      await page.goto("/settings/projects");
+      await page.goto("/projects");
       await page.waitForLoadState("networkidle");
 
       // Should stay on settings page (no redirect)
-      expect(page.url()).toContain("/settings/projects");
+      expect(page.url()).toContain("/projects");
 
       // If API returns 403, should see Access Denied message
       // Otherwise may see project list (depends on actual permissions)
       const accessDenied = page.locator("text=Access Denied");
-      const projectsHeader = page.locator('h2:has-text("Projects")');
+      const projectsHeader = page.locator('h1:has-text("Projects")');
 
       // Either Access Denied is shown OR projects are visible (based on actual API response)
       const hasAccessDenied = await accessDenied.isVisible();
@@ -189,16 +189,16 @@ test.describe("Settings Access RBAC", () => {
       });
     });
 
-    test("Developer stays on /settings/projects and may see Access Denied", async ({
+    test("Developer stays on /projects and may see Access Denied", async ({
       page,
       auth,
     }) => {
       await auth.setupAs(TestUserRole.ORG_DEVELOPER);
-      await page.goto("/settings/projects");
+      await page.goto("/projects");
       await page.waitForLoadState("networkidle");
 
       // Should stay on settings page (no redirect)
-      expect(page.url()).toContain("/settings/projects");
+      expect(page.url()).toContain("/projects");
 
       await page.screenshot({
         path: "../test-results/e2e/screenshots/rbac/settings-page-developer.png",
@@ -206,16 +206,16 @@ test.describe("Settings Access RBAC", () => {
       });
     });
 
-    test("Viewer stays on /settings/projects and may see Access Denied", async ({
+    test("Viewer stays on /projects and may see Access Denied", async ({
       page,
       auth,
     }) => {
       await auth.setupAs(TestUserRole.ORG_VIEWER);
-      await page.goto("/settings/projects");
+      await page.goto("/projects");
       await page.waitForLoadState("networkidle");
 
       // Should stay on settings page (no redirect)
-      expect(page.url()).toContain("/settings/projects");
+      expect(page.url()).toContain("/projects");
 
       await page.screenshot({
         path: "../test-results/e2e/screenshots/rbac/settings-page-viewer.png",
@@ -230,7 +230,7 @@ test.describe("Settings Access RBAC", () => {
       auth,
     }) => {
       await auth.setupAs(TestUserRole.GLOBAL_ADMIN);
-      await page.goto("/settings/projects");
+      await page.goto("/projects");
       await page.waitForLoadState("networkidle");
 
       // Click on a project to view details
@@ -270,12 +270,12 @@ test.describe("Settings Access RBAC", () => {
     }) => {
       await auth.setupAs(TestUserRole.ORG_ADMIN);
       // Navigate to a project detail page
-      await page.goto("/settings/projects/proj-alpha-team");
+      await page.goto("/projects/proj-alpha-team");
       await page.waitForLoadState("networkidle");
 
       // Should stay on project detail page (no redirect)
       // Page will show content or Access Denied based on API response
-      expect(page.url()).toContain("/settings/projects");
+      expect(page.url()).toContain("/projects");
 
       await page.screenshot({
         path: "../test-results/e2e/screenshots/rbac/project-detail-non-admin.png",
@@ -290,7 +290,7 @@ test.describe("Settings Access RBAC", () => {
       auth,
     }) => {
       await auth.setupAs(TestUserRole.GLOBAL_ADMIN);
-      await page.goto("/settings/projects");
+      await page.goto("/projects");
       await page.waitForLoadState("networkidle");
 
       // Click on a project
@@ -324,7 +324,7 @@ test.describe("Settings Access RBAC", () => {
     }) => {
       // FIXME: Repositories tab not yet implemented in ProjectDetail (only Overview and Roles tabs exist)
       await auth.setupAs(TestUserRole.GLOBAL_ADMIN);
-      await page.goto("/settings/projects");
+      await page.goto("/projects");
       await page.waitForLoadState("networkidle");
 
       // Click on a project
@@ -367,7 +367,7 @@ test.describe("Repository Section 403 Handling", () => {
     auth,
   }) => {
     await auth.setupAs(TestUserRole.GLOBAL_ADMIN);
-    await page.goto("/settings/repositories");
+    await page.goto("/repositories");
     await page.waitForLoadState("networkidle");
 
     // Global Admin should see repositories section
@@ -389,14 +389,14 @@ test.describe("Repository Section 403 Handling", () => {
     auth,
   }) => {
     await auth.setupAs(TestUserRole.ORG_ADMIN);
-    await page.goto("/settings/repositories");
+    await page.goto("/repositories");
     await page.waitForLoadState("networkidle");
 
     // Should stay on repositories page (no redirect)
-    expect(page.url()).toContain("/settings/repositories");
+    expect(page.url()).toContain("/repositories");
 
     // Page should show either repositories or Access Denied based on API response
-    const reposHeader = page.locator('h2:has-text("Repositories")');
+    const reposHeader = page.locator('h1:has-text("Repositories")');
     await expect(reposHeader).toBeVisible({ timeout: 10000 });
 
     await page.screenshot({
@@ -434,11 +434,11 @@ test.describe("Repository Section 403 Handling", () => {
       });
     });
 
-    await page.goto("/settings/repositories");
+    await page.goto("/repositories");
     await page.waitForLoadState("networkidle");
 
     // Page should stay on repositories route (not redirect to login)
-    expect(page.url()).toContain("/settings/repositories");
+    expect(page.url()).toContain("/repositories");
 
     // When API returns 403, the UI should show some form of error or empty state
     // Check for various error indicators
@@ -484,7 +484,7 @@ test.describe("Authorization State Persistence", () => {
     auth,
   }) => {
     await auth.setupAs(TestUserRole.GLOBAL_ADMIN);
-    await page.goto("/catalog");
+    await page.goto("/instances");
     await page.waitForLoadState("networkidle");
 
     // Reload the page
@@ -497,13 +497,13 @@ test.describe("Authorization State Persistence", () => {
 
     // Settings link should still be visible after reload
     // Permission is checked via useCanI() hook, not isGlobalAdmin boolean
-    const settingsLink = page.getByRole("link", { name: /settings/i });
+    const settingsLink = sidebar.getByRole("link", { name: /settings/i });
     await expect(settingsLink).toBeVisible();
   });
 
   test("Auth token persists across reload", async ({ page, auth }) => {
     await auth.setupAs(TestUserRole.GLOBAL_ADMIN);
-    await page.goto("/catalog");
+    await page.goto("/instances");
     await page.waitForLoadState("networkidle");
 
     // Reload the page
@@ -524,7 +524,7 @@ test.describe("Create Project Button RBAC", () => {
     // Mock permissions for Global Admin
     await setupPermissionMocking(page, { '*:*': true });
     await auth.setupAs(TestUserRole.GLOBAL_ADMIN);
-    await page.goto("/settings/projects");
+    await page.goto("/projects");
     await page.waitForLoadState("networkidle");
 
     // Wait for projects to load
@@ -534,8 +534,8 @@ test.describe("Create Project Button RBAC", () => {
         console.log("No project cards found, checking for empty state");
       });
 
-    // Should see Create Project button
-    const createButton = page.getByRole("button", { name: /create project/i });
+    // Should see Create button (exact match to avoid matching "Create" modal submit button)
+    const createButton = page.getByRole("button", { name: "Create", exact: true });
     await expect(createButton).toBeVisible();
 
     await page.screenshot({
@@ -555,14 +555,14 @@ test.describe("Create Project Button RBAC", () => {
       'projects:delete': false,
     });
     await auth.setupAs(TestUserRole.ORG_ADMIN);
-    await page.goto("/settings/projects");
+    await page.goto("/projects");
     await page.waitForLoadState("networkidle");
 
     // Should stay on projects page (no redirect)
-    expect(page.url()).toContain("/settings/projects");
+    expect(page.url()).toContain("/projects");
 
-    // Create Project button should NOT be visible for non-admin
-    const createButton = page.getByRole("button", { name: /create project/i });
+    // Create button should NOT be visible for non-admin
+    const createButton = page.getByRole("button", { name: "Create", exact: true });
     await expect(createButton).not.toBeVisible();
 
     await page.screenshot({
@@ -580,7 +580,7 @@ test.describe("Delete Project Button RBAC", () => {
     // Mock permissions for Global Admin
     await setupPermissionMocking(page, { '*:*': true });
     await auth.setupAs(TestUserRole.GLOBAL_ADMIN);
-    await page.goto("/settings/projects");
+    await page.goto("/projects");
     await page.waitForLoadState("networkidle");
 
     // Wait for projects to load (with fallback)
@@ -611,7 +611,7 @@ test.describe("Delete Project Button RBAC", () => {
 test.describe("Add Repository Button RBAC", () => {
   test("Global Admin sees Add Repository button", async ({ page, auth }) => {
     await auth.setupAs(TestUserRole.GLOBAL_ADMIN);
-    await page.goto("/settings/repositories");
+    await page.goto("/repositories");
     await page.waitForLoadState("networkidle");
 
     // Should see Add Repository button

@@ -17,7 +17,7 @@ maintainers:
     email: maintainers@knodex.io
 dependencies:
   - name: kro
-    version: 0.8.5
+    version: 0.9.1
     repository: oci://registry.k8s.io/kro/charts
     condition: kro.enabled
   - name: redis

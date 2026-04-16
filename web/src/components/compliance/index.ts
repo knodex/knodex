@@ -3,7 +3,6 @@
 
 // Dashboard components
 export { ComplianceSummaryCards } from "./ComplianceSummaryCards";
-export { ViolationsByEnforcement } from "./ViolationsByEnforcement";
 export { RecentViolations } from "./RecentViolations";
 export { EnterpriseRequired } from "./EnterpriseRequired";
 export { GatekeeperUnavailable } from "./GatekeeperUnavailable";
@@ -16,8 +15,6 @@ export { ErrorState } from "./ErrorState";
 export { EnforcementBadge } from "./EnforcementBadge";
 export { RegoCodeViewer } from "./RegoCodeViewer";
 export { MatchRulesDisplay } from "./MatchRulesDisplay";
-export { PageHeader } from "./PageHeader";
-
 // Page components
 export { ConstraintTemplatesPage } from "./ConstraintTemplatesPage";
 export { ConstraintTemplateDetailPage } from "./ConstraintTemplateDetailPage";

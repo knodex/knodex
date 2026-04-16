@@ -17,8 +17,12 @@ describe("sanitizeUrlParam", () => {
     );
   });
 
-  it("preserves javascript: text since colon and letters are whitelisted", () => {
-    expect(sanitizeUrlParam("javascript:alert(1)")).toBe("javascript:alert(1)");
+  it("rejects javascript: protocol prefix to prevent XSS in href contexts", () => {
+    expect(sanitizeUrlParam("javascript:alert(1)")).toBe("");
+  });
+
+  it("rejects javascript: with mixed case", () => {
+    expect(sanitizeUrlParam("JavaScript:alert(1)")).toBe("");
   });
 
   it("strips equals sign from event handler patterns", () => {
@@ -74,7 +78,9 @@ describe("getCatalogFiltersFromURL", () => {
     expect(result).toEqual({
       search: "",
       tags: [],
-      project: "",
+      category: "",
+      projectScoped: false,
+      producesKind: "",
     });
   });
 
@@ -84,12 +90,6 @@ describe("getCatalogFiltersFromURL", () => {
     expect(result.search).toBe("my-search");
   });
 
-  it("parses project parameter", () => {
-    window.location.search = "?project=my-project";
-    const result = getCatalogFiltersFromURL();
-    expect(result.project).toBe("my-project");
-  });
-
   it("parses tags parameter", () => {
     window.location.search = "?tags=tag1,tag2,tag3";
     const result = getCatalogFiltersFromURL();
@@ -97,20 +97,35 @@ describe("getCatalogFiltersFromURL", () => {
   });
 
   it("parses all parameters together", () => {
-    window.location.search = "?q=search&tags=a,b&project=proj1";
+    window.location.search = "?q=search&tags=a,b&category=database";
     const result = getCatalogFiltersFromURL();
     expect(result).toEqual({
       search: "search",
       tags: ["a", "b"],
-      project: "proj1",
+      category: "database",
+      projectScoped: false,
+      producesKind: "",
     });
   });
 
-  it("sanitizes malicious input", () => {
-    window.location.search = "?project=<script>alert(1)</script>";
+  it("parses producesKind parameter", () => {
+    window.location.search = "?producesKind=ManagedCluster";
     const result = getCatalogFiltersFromURL();
-    expect(result.project).not.toContain("<");
-    expect(result.project).not.toContain(">");
+    expect(result.producesKind).toBe("ManagedCluster");
+  });
+
+  it("sanitizes producesKind parameter", () => {
+    window.location.search = "?producesKind=<script>alert(1)</script>";
+    const result = getCatalogFiltersFromURL();
+    expect(result.producesKind).not.toContain("<");
+    expect(result.producesKind).not.toContain(">");
+  });
+
+  it("sanitizes malicious input", () => {
+    window.location.search = "?q=<script>alert(1)</script>";
+    const result = getCatalogFiltersFromURL();
+    expect(result.search).not.toContain("<");
+    expect(result.search).not.toContain(">");
   });
 
   it("limits tags to 20", () => {
@@ -129,7 +144,9 @@ describe("getCatalogFiltersFromURL", () => {
     expect(result).toEqual({
       search: "",
       tags: [],
-      project: "",
+      category: "",
+      projectScoped: false,
+      producesKind: "",
     });
   });
 });
@@ -164,29 +181,24 @@ describe("setCatalogFiltersToURL", () => {
     setCatalogFiltersToURL({
       search: "test",
       tags: ["a", "b"],
-      project: "proj1",
+      category: "database",
+      projectScoped: false,
+      producesKind: "",
     });
     expect(replaceStateMock).toHaveBeenCalledWith(
       {},
       "",
-      "/catalog?q=test&tags=a%2Cb&project=proj1"
+      "/catalog?q=test&category=database&tags=a%2Cb"
     );
-  });
-
-  it("omits empty parameters", () => {
-    setCatalogFiltersToURL({
-      search: "",
-      tags: [],
-      project: "proj1",
-    });
-    expect(replaceStateMock).toHaveBeenCalledWith({}, "", "/catalog?project=proj1");
   });
 
   it("sets only pathname when all filters empty", () => {
     setCatalogFiltersToURL({
       search: "",
       tags: [],
-      project: "",
+      category: "",
+      projectScoped: false,
+      producesKind: "",
     });
     expect(replaceStateMock).toHaveBeenCalledWith({}, "", "/catalog");
   });
@@ -195,12 +207,29 @@ describe("setCatalogFiltersToURL", () => {
     setCatalogFiltersToURL({
       search: "<script>",
       tags: [],
-      project: "",
+      category: "",
+      projectScoped: false,
+      producesKind: "",
     });
     expect(replaceStateMock).toHaveBeenCalled();
     const url = replaceStateMock.mock.calls[0][2];
     expect(url).not.toContain("<");
     expect(url).not.toContain(">");
+  });
+
+  it("sets producesKind parameter", () => {
+    setCatalogFiltersToURL({
+      search: "",
+      tags: [],
+      category: "",
+      projectScoped: false,
+      producesKind: "ManagedCluster",
+    });
+    expect(replaceStateMock).toHaveBeenCalledWith(
+      {},
+      "",
+      "/catalog?producesKind=ManagedCluster"
+    );
   });
 
   it("does nothing when window is undefined", () => {
@@ -212,7 +241,9 @@ describe("setCatalogFiltersToURL", () => {
     setCatalogFiltersToURL({
       search: "test",
       tags: [],
-      project: "",
+      category: "",
+      projectScoped: false,
+      producesKind: "",
     });
   });
 });
@@ -245,7 +276,7 @@ describe("getInstanceFiltersFromURL", () => {
       search: "",
       rgd: "",
       health: "",
-      project: "",
+      scope: "",
     });
   });
 
@@ -267,20 +298,14 @@ describe("getInstanceFiltersFromURL", () => {
     expect(result.health).toBe("Healthy");
   });
 
-  it("parses project parameter", () => {
-    window.location.search = "?project=my-project";
-    const result = getInstanceFiltersFromURL();
-    expect(result.project).toBe("my-project");
-  });
-
   it("parses all parameters together", () => {
-    window.location.search = "?q=test&rgd=my-database&health=Degraded&project=proj1";
+    window.location.search = "?q=test&rgd=my-database&health=Degraded&scope=cluster";
     const result = getInstanceFiltersFromURL();
     expect(result).toEqual({
       search: "test",
       rgd: "my-database",
       health: "Degraded",
-      project: "proj1",
+      scope: "cluster",
     });
   });
 
@@ -294,7 +319,7 @@ describe("getInstanceFiltersFromURL", () => {
       search: "",
       rgd: "",
       health: "",
-      project: "",
+      scope: "",
     });
   });
 });
@@ -330,12 +355,12 @@ describe("setInstanceFiltersToURL", () => {
       search: "test",
       rgd: "my-database",
       health: "Healthy",
-      project: "proj1",
+      scope: "namespaced",
     });
     expect(replaceStateMock).toHaveBeenCalledWith(
       {},
       "",
-      "/instances?q=test&rgd=my-database&health=Healthy&project=proj1"
+      "/instances?q=test&rgd=my-database&health=Healthy&scope=namespaced"
     );
   });
 
@@ -343,13 +368,13 @@ describe("setInstanceFiltersToURL", () => {
     setInstanceFiltersToURL({
       search: "",
       rgd: "",
-      health: "",
-      project: "proj1",
+      health: "Healthy",
+      scope: "",
     });
     expect(replaceStateMock).toHaveBeenCalledWith(
       {},
       "",
-      "/instances?project=proj1"
+      "/instances?health=Healthy"
     );
   });
 
@@ -358,7 +383,7 @@ describe("setInstanceFiltersToURL", () => {
       search: "",
       rgd: "",
       health: "",
-      project: "",
+      scope: "",
     });
     expect(replaceStateMock).toHaveBeenCalledWith({}, "", "/instances");
   });
@@ -373,7 +398,7 @@ describe("setInstanceFiltersToURL", () => {
       search: "test",
       rgd: "",
       health: "",
-      project: "",
+      scope: "",
     });
   });
 });

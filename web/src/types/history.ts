@@ -20,7 +20,9 @@ export type DeploymentEventType =
   | "Failed"
   | "Deleted"
   | "Updated"
-  | "StatusChanged";
+  | "StatusChanged"
+  | "RevisionChanged"
+  | "KubernetesEvent";
 
 /**
  * DeploymentMode represents how the instance was deployed
@@ -71,6 +73,14 @@ export interface TimelineEntry {
   gitCommitUrl?: string;
   isCompleted: boolean;
   isCurrent: boolean;
+  /** Revision number for RevisionChanged events */
+  revisionNumber?: number;
+  /** Previous revision number (0 or absent for initial revision) */
+  previousRevision?: number;
+  /** Source indicates the event source: "kubernetes" for K8s Events, empty for deployment events */
+  source?: string;
+  /** Additional event details (populated for KubernetesEvent entries) */
+  details?: Record<string, unknown>;
 }
 
 /**
@@ -78,6 +88,7 @@ export interface TimelineEntry {
  */
 export interface TimelineResponse {
   namespace: string;
+  kind: string;
   name: string;
   timeline: TimelineEntry[];
 }
@@ -86,6 +97,28 @@ export interface TimelineResponse {
  * HistoryExportFormat for export requests
  */
 export type HistoryExportFormat = "csv" | "json";
+
+/**
+ * KubernetesEvent matches kubectl get events columns.
+ * Returned by the on-demand /events endpoint (not stored in Redis).
+ */
+export interface KubernetesEvent {
+  lastSeen: string;
+  type: string; // "Normal" or "Warning"
+  reason: string;
+  object: string; // "Kind/Name" format
+  message: string;
+  count: number;
+  firstSeen: string;
+  source: string;
+}
+
+/**
+ * InstanceEventsResponse from the /events API
+ */
+export interface InstanceEventsResponse {
+  events: KubernetesEvent[];
+}
 
 /**
  * Event type display information
@@ -114,6 +147,16 @@ export const EVENT_TYPE_INFO: Record<
   Deleted: { label: "Deleted", color: "gray", icon: "trash-2" },
   Updated: { label: "Updated", color: "blue", icon: "edit" },
   StatusChanged: { label: "Status Changed", color: "purple", icon: "activity" },
+  RevisionChanged: {
+    label: "Revision Changed",
+    color: "blue",
+    icon: "git-branch",
+  },
+  KubernetesEvent: {
+    label: "Kubernetes Event",
+    color: "purple",
+    icon: "zap",
+  },
 };
 
 /**

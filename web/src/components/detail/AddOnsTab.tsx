@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { Link } from "react-router-dom";
-import { Loader2, AlertCircle, ExternalLink, Puzzle } from "lucide-react";
+import { Loader2, AlertCircle, ExternalLink, Puzzle } from "@/lib/icons";
 import { useRGDList } from "@/hooks/useRGDs";
 import { Button } from "@/components/ui/button";
 import { RGDMiniCard } from "@/components/shared/RGDMiniCard";
@@ -66,7 +66,7 @@ export function AddOnsTab({ kind }: AddOnsTabProps) {
             rgd={addon}
             action={
               <Button asChild size="sm" variant="outline" className="w-full gap-1.5">
-                <Link to={`/catalog/${encodeURIComponent(addon.name)}/deploy`}>
+                <Link to={`/catalog/${encodeURIComponent(addon.name)}`}>
                   <ExternalLink className="h-3.5 w-3.5" />
                   Deploy
                 </Link>

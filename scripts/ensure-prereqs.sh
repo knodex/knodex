@@ -13,7 +13,7 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-KRO_VERSION="${KRO_VERSION:-0.8.4}"
+KRO_VERSION="${KRO_VERSION:-0.9.1}"
 KRO_NAMESPACE="kro-system"
 GATEKEEPER_VERSION="3.17.1"
 GATEKEEPER_NAMESPACE="gatekeeper-system"
@@ -87,6 +87,7 @@ install_kro() {
         --namespace "${KRO_NAMESPACE}" \
         --create-namespace \
         --version "${KRO_VERSION}" \
+        --set config.featureGates.InstanceConditionEvents=true \
         --wait --timeout 300s
 
     # Verify installation

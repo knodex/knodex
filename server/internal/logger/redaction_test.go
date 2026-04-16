@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -339,17 +338,6 @@ func TestRedactionHandler_WithGroup(t *testing.T) {
 
 	// Verify group structure preserved
 	assert.Contains(t, output, "/api/users")
-}
-
-func TestAddRedactionPattern(t *testing.T) {
-	// Add a custom pattern
-	customPattern := regexp.MustCompile(`SECRET-[0-9]{6}`)
-	AddRedactionPattern("Custom Secret", customPattern)
-
-	input := "My secret is SECRET-123456 here"
-	result := RedactSensitiveData(input)
-
-	assert.Equal(t, "My secret is [REDACTED-Custom Secret] here", result)
 }
 
 func TestRedactionHandler_Enabled(t *testing.T) {

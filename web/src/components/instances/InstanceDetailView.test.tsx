@@ -6,6 +6,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { TooltipProvider } from '@/components/ui/tooltip';
 import { InstanceDetailView } from './InstanceDetailView';
 import type { Instance } from '@/types/rgd';
 
@@ -20,6 +21,16 @@ vi.mock('@/hooks/useCanI', () => ({
 
 vi.mock('@/hooks/useRGDs', () => ({
   useRGDList: vi.fn(),
+  useRGD: vi.fn(),
+}));
+
+vi.mock('@/hooks/useHistory', () => ({
+  useInstanceEvents: vi.fn().mockReturnValue({
+    data: undefined,
+    isLoading: false,
+    error: null,
+    refetch: vi.fn(),
+  }),
 }));
 
 // Mock child components
@@ -27,12 +38,14 @@ vi.mock('./HealthBadge', () => ({
   HealthBadge: ({ health }: { health: string }) => <div data-testid="health-badge">{health}</div>,
 }));
 
-vi.mock('./GitStatusDisplay', () => ({
-  GitStatusDisplay: () => <div data-testid="git-status-display">Git Status Display</div>,
+vi.mock('./InstanceStatusBanner', () => ({
+  InstanceStatusBanner: ({ health, state }: { health: string; state?: string }) => (
+    <div data-testid="instance-status-banner">{state || health}</div>
+  ),
 }));
 
-vi.mock('./StatusTimeline', () => ({
-  StatusTimeline: () => <div data-testid="status-timeline">Status Timeline</div>,
+vi.mock('./GitStatusDisplay', () => ({
+  GitStatusDisplay: () => <div data-testid="git-status-display">Git Status Display</div>,
 }));
 
 vi.mock('./DeploymentTimeline', () => ({
@@ -51,8 +64,14 @@ vi.mock('./InstanceAddOns', () => ({
   InstanceAddOns: () => <div data-testid="instance-add-ons">Instance Add-Ons</div>,
 }));
 
-vi.mock('./InstanceDependsOn', () => ({
-  InstanceDependsOn: () => <div data-testid="instance-depends-on">Instance Depends On</div>,
+vi.mock('./InstanceExternalRefs', () => ({
+  InstanceExternalRefs: () => <div data-testid="instance-external-refs">Instance External Refs</div>,
+}));
+
+vi.mock('./RevisionDiffDrawer', () => ({
+  RevisionDiffDrawer: ({ open, rgdName, currentRevision }: { open: boolean; rgdName: string; currentRevision: number }) => (
+    open ? <div data-testid="revision-diff-drawer">Revision Changes for {rgdName} rev {currentRevision}</div> : null
+  ),
 }));
 
 vi.mock('./InstanceStatusCard', () => ({
@@ -116,14 +135,16 @@ const renderWithProviders = (ui: React.ReactElement) => {
   return render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter>
-        {ui}
+        <TooltipProvider>
+          {ui}
+        </TooltipProvider>
       </MemoryRouter>
     </QueryClientProvider>
   );
 };
 
 describe('InstanceDetailView', () => {
-  const mockOnBack = vi.fn();
+
   const mockOnDeleted = vi.fn();
   const mockMutateAsync = vi.fn();
 
@@ -132,13 +153,14 @@ describe('InstanceDetailView', () => {
 
     const { useDeleteInstance } = await import('@/hooks/useInstances');
     const { useCanI } = await import('@/hooks/useCanI');
-    const { useRGDList } = await import('@/hooks/useRGDs');
+    const { useRGDList, useRGD } = await import('@/hooks/useRGDs');
 
     vi.mocked(useDeleteInstance).mockReturnValue({
       mutateAsync: mockMutateAsync,
       isPending: false,
       isError: false,
       error: null,
+      reset: vi.fn(),
     } as any);
 
     vi.mocked(useCanI).mockReturnValue({
@@ -151,12 +173,18 @@ describe('InstanceDetailView', () => {
       isLoading: false,
       error: null,
     } as any);
+
+    vi.mocked(useRGD).mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      error: null,
+    } as any);
   });
 
   describe('Basic Rendering', () => {
     it('renders instance name and namespace', () => {
       renderWithProviders(
-        <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
+        <InstanceDetailView instance={mockInstance} />
       );
 
       expect(screen.getByText('test-instance')).toBeInTheDocument();
@@ -165,44 +193,56 @@ describe('InstanceDetailView', () => {
 
     it('renders instance metadata', () => {
       renderWithProviders(
-        <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
+        <InstanceDetailView instance={mockInstance} />
       );
 
-      expect(screen.getByText('test-rgd')).toBeInTheDocument();
-      expect(screen.getByText('TestResource')).toBeInTheDocument();
-      expect(screen.getByText('kro.run/v1alpha1')).toBeInTheDocument();
+      // Kind links to the RGD catalog page
+      const kindLink = screen.getByRole('link', { name: 'TestResource' });
+      expect(kindLink).toHaveAttribute('href', '/catalog/test-rgd');
     });
 
-    it('renders health badge', () => {
+    it('renders health status in header without health-badge component', () => {
       renderWithProviders(
-        <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
+        <InstanceDetailView instance={mockInstance} />
       );
 
-      expect(screen.getByTestId('health-badge')).toBeInTheDocument();
-      expect(screen.getByText('Healthy')).toBeInTheDocument();
+      // Health is displayed inline in InstanceHeaderCard's Status row
+      expect(screen.getAllByText('Healthy').length).toBeGreaterThanOrEqual(1);
+      // HealthBadge component is not used — health is rendered inline
+      expect(screen.queryByTestId('health-badge')).not.toBeInTheDocument();
     });
 
-    it('renders created date', () => {
+    it('renders git status display for gitops instances', () => {
+      const gitopsInstance = { ...mockInstance, deploymentMode: 'gitops' as const, gitInfo: { branch: 'main', commitSha: 'abc123', pushStatus: 'completed' as const } };
       renderWithProviders(
-        <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
-      );
-
-      const expectedDate = new Date('2024-01-15T10:30:00Z').toLocaleString();
-      expect(screen.getByText(expectedDate)).toBeInTheDocument();
-    });
-
-    it('renders git status display', () => {
-      renderWithProviders(
-        <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
+        <InstanceDetailView instance={gitopsInstance} />
       );
 
       expect(screen.getByTestId('git-status-display')).toBeInTheDocument();
     });
 
+    it('renders git status display for hybrid instances', () => {
+      const hybridInstance = { ...mockInstance, deploymentMode: 'hybrid' as const, gitInfo: { branch: 'main', commitSha: 'abc123', pushStatus: 'completed' as const } };
+      renderWithProviders(
+        <InstanceDetailView instance={hybridInstance} />
+      );
+
+      expect(screen.getByTestId('git-status-display')).toBeInTheDocument();
+    });
+
+    it('does not render git status display for direct instances', () => {
+      renderWithProviders(
+        <InstanceDetailView instance={mockInstance} />
+      );
+
+      expect(screen.queryByTestId('git-status-display')).not.toBeInTheDocument();
+      expect(screen.getByText('Direct deployment')).toBeInTheDocument();
+    });
+
     it('renders deployment timeline in Deployment History tab', async () => {
       const user = userEvent.setup();
       renderWithProviders(
-        <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
+        <InstanceDetailView instance={mockInstance} />
       );
 
       // Deployment timeline is behind the Deployment History tab
@@ -211,32 +251,20 @@ describe('InstanceDetailView', () => {
     });
   });
 
-  describe('Back Button', () => {
-    it('renders back button', () => {
+  describe('Back Navigation', () => {
+    it('does not render a back button (breadcrumbs handle navigation)', () => {
       renderWithProviders(
-        <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
+        <InstanceDetailView instance={mockInstance} />
       );
 
-      expect(screen.getByRole('button', { name: /back/i })).toBeInTheDocument();
-    });
-
-    it('calls onBack when back button is clicked', async () => {
-      const user = userEvent.setup();
-      renderWithProviders(
-        <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
-      );
-
-      const backButton = screen.getByRole('button', { name: /back/i });
-      await user.click(backButton);
-
-      expect(mockOnBack).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole('button', { name: /back/i })).not.toBeInTheDocument();
     });
   });
 
   describe('Delete Button Permissions', () => {
     it('shows delete button when user has permission', () => {
       renderWithProviders(
-        <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
+        <InstanceDetailView instance={mockInstance} />
       );
 
       expect(screen.getByRole('button', { name: /delete/i })).toBeInTheDocument();
@@ -250,7 +278,7 @@ describe('InstanceDetailView', () => {
       } as any);
 
       renderWithProviders(
-        <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
+        <InstanceDetailView instance={mockInstance} />
       );
 
       expect(screen.queryByRole('button', { name: /delete/i })).not.toBeInTheDocument();
@@ -260,20 +288,22 @@ describe('InstanceDetailView', () => {
       const { useCanI } = await import('@/hooks/useCanI');
 
       renderWithProviders(
-        <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
+        <InstanceDetailView instance={mockInstance} />
       );
 
-      expect(useCanI).toHaveBeenCalledWith('instances', 'delete', 'test-namespace');
+      // No project label on mockInstance → falls back to '-' per useInstancePermissions
+      expect(useCanI).toHaveBeenCalledWith('instances', 'delete', '-');
     });
 
     it('checks correct permission for edit spec button', async () => {
       const { useCanI } = await import('@/hooks/useCanI');
 
       renderWithProviders(
-        <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
+        <InstanceDetailView instance={mockInstance} />
       );
 
-      expect(useCanI).toHaveBeenCalledWith('instances', 'update', 'test-namespace');
+      // No project label on mockInstance → falls back to '-' per useInstancePermissions
+      expect(useCanI).toHaveBeenCalledWith('instances', 'update', '-');
     });
 
     it('shows action buttons when useCanI returns an error (fail-open)', async () => {
@@ -285,7 +315,7 @@ describe('InstanceDetailView', () => {
       } as any);
 
       renderWithProviders(
-        <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
+        <InstanceDetailView instance={mockInstance} />
       );
 
       expect(screen.getByRole('button', { name: /delete/i })).toBeInTheDocument();
@@ -294,36 +324,37 @@ describe('InstanceDetailView', () => {
   });
 
   describe('Delete Confirmation Flow', () => {
-    it('shows confirmation dialog when delete is clicked', async () => {
+    it('opens type-to-confirm dialog when delete is clicked', async () => {
       const user = userEvent.setup();
       renderWithProviders(
-        <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
+        <InstanceDetailView instance={mockInstance} />
       );
 
       const deleteButton = screen.getByRole('button', { name: /delete/i });
       await user.click(deleteButton);
 
-      expect(screen.getByText(/Delete "test-instance"\?/i)).toBeInTheDocument();
-      expect(screen.getByText(/This action cannot be undone/i)).toBeInTheDocument();
+      expect(screen.getByText(`Delete ${mockInstance.name}?`)).toBeInTheDocument();
+      expect(screen.getByText(/All resources managed by this instance will be deleted/i)).toBeInTheDocument();
     });
 
-    it('shows confirm and cancel buttons in confirmation dialog', async () => {
+    it('shows type-to-confirm input and disabled Delete Instance button', async () => {
       const user = userEvent.setup();
       renderWithProviders(
-        <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
+        <InstanceDetailView instance={mockInstance} />
       );
 
       const deleteButton = screen.getByRole('button', { name: /delete/i });
       await user.click(deleteButton);
 
-      expect(screen.getByRole('button', { name: /yes, delete/i })).toBeInTheDocument();
+      expect(screen.getByTestId('confirm-name-input')).toBeInTheDocument();
+      expect(screen.getByTestId('confirm-delete-button')).toBeDisabled();
       expect(screen.getByRole('button', { name: /cancel/i })).toBeInTheDocument();
     });
 
     it('cancels deletion when cancel button is clicked', async () => {
       const user = userEvent.setup();
       renderWithProviders(
-        <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
+        <InstanceDetailView instance={mockInstance} />
       );
 
       const deleteButton = screen.getByRole('button', { name: /delete/i });
@@ -332,22 +363,25 @@ describe('InstanceDetailView', () => {
       const cancelButton = screen.getByRole('button', { name: /cancel/i });
       await user.click(cancelButton);
 
-      expect(screen.queryByText(/Delete "test-instance"\?/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(`Delete ${mockInstance.name}?`)).not.toBeInTheDocument();
       expect(mockMutateAsync).not.toHaveBeenCalled();
     });
 
-    it('calls delete mutation when confirmed', async () => {
+    it('calls delete mutation when name typed and confirmed', async () => {
       const user = userEvent.setup();
       mockMutateAsync.mockResolvedValue({});
 
       renderWithProviders(
-        <InstanceDetailView instance={mockInstance} onBack={mockOnBack} onDeleted={mockOnDeleted} />
+        <InstanceDetailView instance={mockInstance} onDeleted={mockOnDeleted} />
       );
 
       const deleteButton = screen.getByRole('button', { name: /delete/i });
       await user.click(deleteButton);
 
-      const confirmButton = screen.getByRole('button', { name: /yes, delete/i });
+      const input = screen.getByTestId('confirm-name-input');
+      await user.type(input, mockInstance.name);
+
+      const confirmButton = screen.getByTestId('confirm-delete-button');
       await user.click(confirmButton);
 
       await waitFor(() => {
@@ -364,13 +398,16 @@ describe('InstanceDetailView', () => {
       mockMutateAsync.mockResolvedValue({});
 
       renderWithProviders(
-        <InstanceDetailView instance={mockInstance} onBack={mockOnBack} onDeleted={mockOnDeleted} />
+        <InstanceDetailView instance={mockInstance} onDeleted={mockOnDeleted} />
       );
 
       const deleteButton = screen.getByRole('button', { name: /delete/i });
       await user.click(deleteButton);
 
-      const confirmButton = screen.getByRole('button', { name: /yes, delete/i });
+      const input = screen.getByTestId('confirm-name-input');
+      await user.type(input, mockInstance.name);
+
+      const confirmButton = screen.getByTestId('confirm-delete-button');
       await user.click(confirmButton);
 
       await waitFor(() => {
@@ -387,22 +424,25 @@ describe('InstanceDetailView', () => {
         isPending: true,
         isError: false,
         error: null,
+        reset: vi.fn(),
       } as any);
 
       renderWithProviders(
-        <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
+        <InstanceDetailView instance={mockInstance} />
       );
 
       const deleteButton = screen.getByRole('button', { name: /delete/i });
       await user.click(deleteButton);
 
-      expect(screen.getByRole('button', { name: /deleting\.\.\./i })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /deleting\.\.\./i })).toBeDisabled();
+      // Input and cancel should be disabled during deletion
+      expect(screen.getByTestId('confirm-name-input')).toBeDisabled();
+      expect(screen.getByRole('button', { name: /cancel/i })).toBeDisabled();
     });
   });
 
   describe('Delete Error Handling', () => {
-    it('displays error message when deletion fails', async () => {
+    it('displays error message in dialog when deletion fails', async () => {
+      const user = userEvent.setup();
       const { useDeleteInstance } = await import('@/hooks/useInstances');
       const mockError = new Error('Network connection failed');
 
@@ -411,39 +451,47 @@ describe('InstanceDetailView', () => {
         isPending: false,
         isError: true,
         error: mockError,
+        reset: vi.fn(),
       } as any);
 
       renderWithProviders(
-        <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
+        <InstanceDetailView instance={mockInstance} />
       );
 
-      expect(screen.getByText('Failed to delete instance')).toBeInTheDocument();
+      // Open the dialog to see the error
+      const deleteButton = screen.getByRole('button', { name: /delete/i });
+      await user.click(deleteButton);
+
       expect(screen.getByText('Network connection failed')).toBeInTheDocument();
     });
 
-    it('displays generic error message for unknown errors', async () => {
+    it('displays fallback error message for null error message', async () => {
+      const user = userEvent.setup();
       const { useDeleteInstance } = await import('@/hooks/useInstances');
 
       vi.mocked(useDeleteInstance).mockReturnValue({
         mutateAsync: mockMutateAsync,
         isPending: false,
         isError: true,
-        error: 'Some string error',
+        error: new Error(),
+        reset: vi.fn(),
       } as any);
 
       renderWithProviders(
-        <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
+        <InstanceDetailView instance={mockInstance} />
       );
 
+      const deleteButton = screen.getByRole('button', { name: /delete/i });
+      await user.click(deleteButton);
+
       expect(screen.getByText('Failed to delete instance')).toBeInTheDocument();
-      expect(screen.getByText('An unexpected error occurred')).toBeInTheDocument();
     });
   });
 
   describe('Status Card Rendering', () => {
     it('renders unified status card', () => {
       renderWithProviders(
-        <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
+        <InstanceDetailView instance={mockInstance} />
       );
 
       expect(screen.getByTestId('instance-status-card')).toBeInTheDocument();
@@ -451,7 +499,7 @@ describe('InstanceDetailView', () => {
 
     it('passes conditions to status card', () => {
       renderWithProviders(
-        <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
+        <InstanceDetailView instance={mockInstance} />
       );
 
       // Mock renders condition count
@@ -460,7 +508,7 @@ describe('InstanceDetailView', () => {
 
     it('passes status to status card', () => {
       renderWithProviders(
-        <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
+        <InstanceDetailView instance={mockInstance} />
       );
 
       // Mock renders status values (excluding state/conditions)
@@ -474,7 +522,7 @@ describe('InstanceDetailView', () => {
       };
 
       renderWithProviders(
-        <InstanceDetailView instance={instanceWithoutConditions} onBack={mockOnBack} />
+        <InstanceDetailView instance={instanceWithoutConditions} />
       );
 
       // Status card should still render (it has status data)
@@ -485,7 +533,7 @@ describe('InstanceDetailView', () => {
   describe('Tab Navigation', () => {
     it('shows Status tab as active by default with status content', () => {
       renderWithProviders(
-        <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
+        <InstanceDetailView instance={mockInstance} />
       );
 
       // Status tab exists and is active (has border-primary class)
@@ -493,14 +541,28 @@ describe('InstanceDetailView', () => {
       expect(statusTab).toBeInTheDocument();
       expect(statusTab.className).toContain('border-primary');
 
-      // Status content is visible
-      expect(screen.getByTestId('git-status-display')).toBeInTheDocument();
+      // Status content is visible (instance status card for direct mode)
+      expect(screen.getByTestId('instance-status-card')).toBeInTheDocument();
+    });
+
+    it('AC1: Status tab does not render status-timeline (StatusTimeline removed)', () => {
+      const gitopsInstance: Instance = {
+        ...mockInstance,
+        deploymentMode: 'gitops',
+      };
+
+      renderWithProviders(
+        <InstanceDetailView instance={gitopsInstance} />
+      );
+
+      // StatusTimeline component was removed — the Status tab must not render it
+      expect(screen.queryByTestId('status-timeline')).not.toBeInTheDocument();
     });
 
     it('switches to Deployment History tab and shows timeline', async () => {
       const user = userEvent.setup();
       renderWithProviders(
-        <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
+        <InstanceDetailView instance={mockInstance} />
       );
 
       await user.click(screen.getByRole('tab', { name: /deployment history/i }));
@@ -519,7 +581,7 @@ describe('InstanceDetailView', () => {
       } as any);
 
       renderWithProviders(
-        <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
+        <InstanceDetailView instance={mockInstance} />
       );
 
       expect(screen.getByRole('tab', { name: /add-ons \(2\)/i })).toBeInTheDocument();
@@ -527,7 +589,7 @@ describe('InstanceDetailView', () => {
 
     it('hides Add-ons tab when add-ons count is 0', () => {
       renderWithProviders(
-        <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
+        <InstanceDetailView instance={mockInstance} />
       );
 
       expect(screen.queryByRole('tab', { name: /add-ons/i })).not.toBeInTheDocument();
@@ -543,7 +605,7 @@ describe('InstanceDetailView', () => {
 
       const user = userEvent.setup();
       renderWithProviders(
-        <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
+        <InstanceDetailView instance={mockInstance} />
       );
 
       await user.click(screen.getByRole('tab', { name: /add-ons \(2\)/i }));
@@ -554,7 +616,7 @@ describe('InstanceDetailView', () => {
 
     it('shows Spec tab when instance.spec is non-empty', () => {
       renderWithProviders(
-        <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
+        <InstanceDetailView instance={mockInstance} />
       );
 
       expect(screen.getByRole('tab', { name: /^Spec$/i })).toBeInTheDocument();
@@ -567,7 +629,7 @@ describe('InstanceDetailView', () => {
       };
 
       renderWithProviders(
-        <InstanceDetailView instance={instanceWithoutSpec} onBack={mockOnBack} />
+        <InstanceDetailView instance={instanceWithoutSpec} />
       );
 
       expect(screen.queryByRole('tab', { name: /^Spec$/i })).not.toBeInTheDocument();
@@ -580,7 +642,7 @@ describe('InstanceDetailView', () => {
       };
 
       renderWithProviders(
-        <InstanceDetailView instance={instanceWithUndefinedSpec} onBack={mockOnBack} />
+        <InstanceDetailView instance={instanceWithUndefinedSpec} />
       );
 
       expect(screen.queryByRole('tab', { name: /^Spec$/i })).not.toBeInTheDocument();
@@ -589,7 +651,7 @@ describe('InstanceDetailView', () => {
     it('shows spec content when Spec tab is clicked', async () => {
       const user = userEvent.setup();
       renderWithProviders(
-        <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
+        <InstanceDetailView instance={mockInstance} />
       );
 
       await user.click(screen.getByRole('tab', { name: /^Spec$/i }));
@@ -599,7 +661,7 @@ describe('InstanceDetailView', () => {
       expect(within(specContent).getByText(/"image": "nginx:latest"/)).toBeInTheDocument();
     });
 
-    it('renders tabs in correct order: Status, Add-ons, Deployment History, Spec', async () => {
+    it('renders tabs in correct order: Status, Events, Add-ons, Deployment History, Resources, Spec', async () => {
       const { useRGDList } = await import('@/hooks/useRGDs');
       vi.mocked(useRGDList).mockReturnValue({
         data: { items: [{ name: 'addon-1' }], totalCount: 1 },
@@ -608,22 +670,24 @@ describe('InstanceDetailView', () => {
       } as any);
 
       renderWithProviders(
-        <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
+        <InstanceDetailView instance={mockInstance} />
       );
 
       const tabButtons = screen.getAllByRole('tab');
-      expect(tabButtons).toHaveLength(4);
+      expect(tabButtons).toHaveLength(6);
       expect(tabButtons[0]).toHaveTextContent(/^Status$/);
-      expect(tabButtons[1]).toHaveTextContent(/^Add-ons/);
-      expect(tabButtons[2]).toHaveTextContent(/^Deployment History$/);
-      expect(tabButtons[3]).toHaveTextContent(/^Spec$/);
+      expect(tabButtons[1]).toHaveTextContent(/^Events/);
+      expect(tabButtons[2]).toHaveTextContent(/^Add-ons/);
+      expect(tabButtons[3]).toHaveTextContent(/^Deployment History$/);
+      expect(tabButtons[4]).toHaveTextContent(/^Resources$/);
+      expect(tabButtons[5]).toHaveTextContent(/^Spec$/);
     });
 
     it('calls useRGDList with extendsKind and pageSize 100 for add-ons count', async () => {
       const { useRGDList } = await import('@/hooks/useRGDs');
 
       renderWithProviders(
-        <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
+        <InstanceDetailView instance={mockInstance} />
       );
 
       expect(useRGDList).toHaveBeenCalledWith({ extendsKind: 'TestResource', pageSize: 100 });
@@ -634,7 +698,7 @@ describe('InstanceDetailView', () => {
       const instanceWithoutKind: Instance = { ...mockInstance, kind: '' };
 
       renderWithProviders(
-        <InstanceDetailView instance={instanceWithoutKind} onBack={mockOnBack} />
+        <InstanceDetailView instance={instanceWithoutKind} />
       );
 
       expect(useRGDList).toHaveBeenCalledWith(undefined);
@@ -654,7 +718,9 @@ describe('InstanceDetailView', () => {
       const { rerender } = render(
         <QueryClientProvider client={queryClient}>
           <MemoryRouter>
-            <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
+            <TooltipProvider>
+              <InstanceDetailView instance={mockInstance} />
+            </TooltipProvider>
           </MemoryRouter>
         </QueryClientProvider>
       );
@@ -672,69 +738,75 @@ describe('InstanceDetailView', () => {
       rerender(
         <QueryClientProvider client={queryClient}>
           <MemoryRouter>
-            <InstanceDetailView instance={mockInstance} onBack={mockOnBack} />
+            <TooltipProvider>
+              <InstanceDetailView instance={mockInstance} />
+            </TooltipProvider>
           </MemoryRouter>
         </QueryClientProvider>
       );
 
       // useEffect detects "addons" is no longer in tabs and resets to Status
       await waitFor(() => {
-        expect(screen.getByTestId('git-status-display')).toBeInTheDocument();
+        expect(screen.getByTestId('instance-status-card')).toBeInTheDocument();
       });
     });
   });
 
-  describe('GitOps Deployment Mode', () => {
-    it('renders status timeline for gitops deployment', () => {
-      const gitopsInstance: Instance = {
+  describe('Cluster-Scoped Instances', () => {
+    it('shows Cluster-Scoped instead of namespace for cluster-scoped instances', () => {
+      const clusterScopedInstance: Instance = {
         ...mockInstance,
-        deploymentMode: 'gitops',
+        isClusterScoped: true,
+        namespace: '',
       };
 
       renderWithProviders(
-        <InstanceDetailView instance={gitopsInstance} onBack={mockOnBack} />
+        <InstanceDetailView instance={clusterScopedInstance} />
       );
 
-      expect(screen.getByTestId('status-timeline')).toBeInTheDocument();
+      expect(screen.getByText('Cluster-Scoped')).toBeInTheDocument();
+      expect(screen.queryByText('test-namespace')).not.toBeInTheDocument();
     });
 
-    it('renders status timeline for hybrid deployment', () => {
-      const hybridInstance: Instance = {
-        ...mockInstance,
-        deploymentMode: 'hybrid',
-      };
-
+    it('shows namespace for namespace-scoped instances', () => {
       renderWithProviders(
-        <InstanceDetailView instance={hybridInstance} onBack={mockOnBack} />
+        <InstanceDetailView instance={mockInstance} />
       );
 
-      expect(screen.getByTestId('status-timeline')).toBeInTheDocument();
+      expect(screen.getByText('test-namespace')).toBeInTheDocument();
+      expect(screen.queryByText('Cluster-Scoped')).not.toBeInTheDocument();
     });
 
-    it('does not render status timeline for direct deployment', () => {
-      const directInstance: Instance = {
+    it('calls delete mutation with empty namespace for cluster-scoped instances', async () => {
+      const user = userEvent.setup();
+      mockMutateAsync.mockResolvedValue({});
+
+      const clusterScopedInstance: Instance = {
         ...mockInstance,
-        deploymentMode: 'direct',
+        isClusterScoped: true,
+        namespace: '',
       };
 
       renderWithProviders(
-        <InstanceDetailView instance={directInstance} onBack={mockOnBack} />
+        <InstanceDetailView instance={clusterScopedInstance} onDeleted={mockOnDeleted} />
       );
 
-      expect(screen.queryByTestId('status-timeline')).not.toBeInTheDocument();
-    });
+      const deleteButton = screen.getByRole('button', { name: /delete/i });
+      await user.click(deleteButton);
 
-    it('does not render status timeline when deployment mode is undefined', () => {
-      const instanceWithoutMode: Instance = {
-        ...mockInstance,
-        deploymentMode: undefined,
-      };
+      const input = screen.getByTestId('confirm-name-input');
+      await user.type(input, clusterScopedInstance.name);
 
-      renderWithProviders(
-        <InstanceDetailView instance={instanceWithoutMode} onBack={mockOnBack} />
-      );
+      const confirmButton = screen.getByTestId('confirm-delete-button');
+      await user.click(confirmButton);
 
-      expect(screen.queryByTestId('status-timeline')).not.toBeInTheDocument();
+      await waitFor(() => {
+        expect(mockMutateAsync).toHaveBeenCalledWith({
+          namespace: '',
+          kind: 'TestResource',
+          name: 'test-instance',
+        });
+      });
     });
   });
 
@@ -746,10 +818,10 @@ describe('InstanceDetailView', () => {
       };
 
       renderWithProviders(
-        <InstanceDetailView instance={degradedInstance} onBack={mockOnBack} />
+        <InstanceDetailView instance={degradedInstance} />
       );
 
-      expect(screen.getByTestId('health-badge')).toHaveTextContent('Degraded');
+      expect(screen.getByText('Degraded')).toBeInTheDocument();
     });
 
     it('renders Unhealthy health status', () => {
@@ -759,10 +831,10 @@ describe('InstanceDetailView', () => {
       };
 
       renderWithProviders(
-        <InstanceDetailView instance={unhealthyInstance} onBack={mockOnBack} />
+        <InstanceDetailView instance={unhealthyInstance} />
       );
 
-      expect(screen.getByTestId('health-badge')).toHaveTextContent('Unhealthy');
+      expect(screen.getByText('Unhealthy')).toBeInTheDocument();
     });
 
     it('renders Progressing health status', () => {
@@ -772,10 +844,10 @@ describe('InstanceDetailView', () => {
       };
 
       renderWithProviders(
-        <InstanceDetailView instance={progressingInstance} onBack={mockOnBack} />
+        <InstanceDetailView instance={progressingInstance} />
       );
 
-      expect(screen.getByTestId('health-badge')).toHaveTextContent('Progressing');
+      expect(screen.getByText('Progressing')).toBeInTheDocument();
     });
 
     it('renders Unknown health status', () => {
@@ -785,10 +857,265 @@ describe('InstanceDetailView', () => {
       };
 
       renderWithProviders(
-        <InstanceDetailView instance={unknownInstance} onBack={mockOnBack} />
+        <InstanceDetailView instance={unknownInstance} />
       );
 
-      expect(screen.getByTestId('health-badge')).toHaveTextContent('Unknown');
+      expect(screen.getByText('Unknown')).toBeInTheDocument();
+    });
+  });
+
+  describe('Revision Badge (STORY-400)', () => {
+    it('renders revision badge when parentRGD has lastIssuedRevision > 0 and user has rgds:get permission', async () => {
+      const { useRGD } = await import('@/hooks/useRGDs');
+      vi.mocked(useRGD).mockReturnValue({
+        data: { name: 'test-rgd', namespace: 'default', lastIssuedRevision: 5 } as any,
+        isLoading: false,
+        error: null,
+      } as any);
+
+      renderWithProviders(
+        <InstanceDetailView instance={mockInstance} />
+      );
+
+      expect(screen.getByText('Rev 5')).toBeInTheDocument();
+    });
+
+    it('does not render revision badge when lastIssuedRevision is 0', async () => {
+      const { useRGD } = await import('@/hooks/useRGDs');
+      vi.mocked(useRGD).mockReturnValue({
+        data: { name: 'test-rgd', namespace: 'default', lastIssuedRevision: 0 } as any,
+        isLoading: false,
+        error: null,
+      } as any);
+
+      renderWithProviders(
+        <InstanceDetailView instance={mockInstance} />
+      );
+
+      expect(screen.queryByText(/Rev \d+/)).not.toBeInTheDocument();
+    });
+
+    it('does not render revision badge when lastIssuedRevision is undefined', async () => {
+      const { useRGD } = await import('@/hooks/useRGDs');
+      vi.mocked(useRGD).mockReturnValue({
+        data: { name: 'test-rgd', namespace: 'default' } as any,
+        isLoading: false,
+        error: null,
+      } as any);
+
+      renderWithProviders(
+        <InstanceDetailView instance={mockInstance} />
+      );
+
+      expect(screen.queryByText(/Rev \d+/)).not.toBeInTheDocument();
+    });
+
+    it('does not render revision badge when user lacks rgds:get permission', async () => {
+      const { useRGD } = await import('@/hooks/useRGDs');
+      const { useCanI } = await import('@/hooks/useCanI');
+      vi.mocked(useRGD).mockReturnValue({
+        data: { name: 'test-rgd', namespace: 'default', lastIssuedRevision: 3 } as any,
+        isLoading: false,
+        error: null,
+      } as any);
+      vi.mocked(useCanI).mockImplementation((resource: string) => {
+        if (resource === 'rgds') {
+          return { allowed: false, isLoading: false } as any;
+        }
+        return { allowed: true, isLoading: false } as any;
+      });
+
+      renderWithProviders(
+        <InstanceDetailView instance={mockInstance} />
+      );
+
+      expect(screen.queryByText(/Rev \d+/)).not.toBeInTheDocument();
+    });
+
+    it('falls back to instance project label for rgds:get when parentRGD has no project label', async () => {
+      const { useCanI } = await import('@/hooks/useCanI');
+      const projectInstance: Instance = {
+        ...mockInstance,
+        labels: { ...mockInstance.labels, 'knodex.io/project': 'alpha' },
+      };
+
+      renderWithProviders(
+        <InstanceDetailView instance={projectInstance} />
+      );
+
+      expect(useCanI).toHaveBeenCalledWith('rgds', 'get', 'alpha/test-rgd');
+    });
+
+    it('uses parent RGD project label for rgds:get when parentRGD has a project label', async () => {
+      const { useCanI } = await import('@/hooks/useCanI');
+      const { useRGD } = await import('@/hooks/useRGDs');
+      vi.mocked(useRGD).mockReturnValue({
+        data: {
+          name: 'test-rgd',
+          namespace: 'default',
+          lastIssuedRevision: 5,
+          labels: { 'knodex.io/project': 'platform' },
+        } as any,
+        isLoading: false,
+        error: null,
+      } as any);
+      const projectInstance: Instance = {
+        ...mockInstance,
+        labels: { ...mockInstance.labels, 'knodex.io/project': 'dev' },
+      };
+
+      renderWithProviders(
+        <InstanceDetailView instance={projectInstance} />
+      );
+
+      // Parent RGD's project label ('platform') takes precedence over instance label ('dev')
+      expect(useCanI).toHaveBeenCalledWith('rgds', 'get', 'platform/test-rgd');
+    });
+
+    it('uses dash fallback for rgds:get when instance has no project label', async () => {
+      const { useCanI } = await import('@/hooks/useCanI');
+
+      renderWithProviders(
+        <InstanceDetailView instance={mockInstance} />
+      );
+
+      // No project label on instance or parentRGD → falls back to '-' per useInstancePermissions
+      expect(useCanI).toHaveBeenCalledWith('rgds', 'get', '-');
+    });
+
+    it('badge is a button that opens revision diff drawer on click (STORY-401)', async () => {
+      const { default: userEvent } = await import('@testing-library/user-event');
+      const { useRGD } = await import('@/hooks/useRGDs');
+      vi.mocked(useRGD).mockReturnValue({
+        data: { name: 'test-rgd', namespace: 'default', lastIssuedRevision: 7 } as any,
+        isLoading: false,
+        error: null,
+      } as any);
+
+      renderWithProviders(
+        <InstanceDetailView instance={mockInstance} />
+      );
+
+      const badge = screen.getByText('Rev 7').closest('button');
+      expect(badge).toBeInTheDocument();
+      expect(badge).toHaveAttribute('type', 'button');
+      expect(badge).toHaveAttribute('aria-label', 'View changes for revision 7');
+
+      // Drawer should not be open initially
+      expect(screen.queryByTestId('revision-diff-drawer')).not.toBeInTheDocument();
+
+      // Click badge — drawer should open
+      await userEvent.click(badge!);
+      expect(screen.getByTestId('revision-diff-drawer')).toBeInTheDocument();
+    });
+
+    it('does not render revision diff drawer when canReadRGD is false', async () => {
+      const { useRGD } = await import('@/hooks/useRGDs');
+      const { useCanI } = await import('@/hooks/useCanI');
+      vi.mocked(useRGD).mockReturnValue({
+        data: { name: 'test-rgd', namespace: 'default', lastIssuedRevision: 5 } as any,
+        isLoading: false,
+        error: null,
+      } as any);
+      vi.mocked(useCanI).mockImplementation((resource: string) => {
+        if (resource === 'rgds') {
+          return { allowed: false, isLoading: false } as any;
+        }
+        return { allowed: true, isLoading: false } as any;
+      });
+
+      renderWithProviders(
+        <InstanceDetailView instance={mockInstance} />
+      );
+
+      expect(screen.queryByText('Revision Changes')).not.toBeInTheDocument();
+    });
+
+    it('does not render revision diff drawer when lastIssuedRevision is falsy', async () => {
+      const { useRGD } = await import('@/hooks/useRGDs');
+      vi.mocked(useRGD).mockReturnValue({
+        data: { name: 'test-rgd', namespace: 'default', lastIssuedRevision: 0 } as any,
+        isLoading: false,
+        error: null,
+      } as any);
+
+      renderWithProviders(
+        <InstanceDetailView instance={mockInstance} />
+      );
+
+      expect(screen.queryByText('Revision Changes')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('Terminal State Button Behavior (AC2)', () => {
+    it('hides Delete button when instance state is DELETING', () => {
+      const deletingInstance: Instance = {
+        ...mockInstance,
+        status: { state: 'DELETING' },
+      };
+
+      renderWithProviders(
+        <InstanceDetailView instance={deletingInstance} />
+      );
+
+      expect(screen.queryByRole('button', { name: /delete/i })).not.toBeInTheDocument();
+    });
+
+    it('disables Edit Spec button when instance state is DELETING', () => {
+      const deletingInstance: Instance = {
+        ...mockInstance,
+        status: { state: 'DELETING' },
+      };
+
+      renderWithProviders(
+        <InstanceDetailView instance={deletingInstance} />
+      );
+
+      const editButton = screen.getByRole('button', { name: /edit spec/i });
+      expect(editButton).toBeDisabled();
+    });
+
+    it('disables Edit Spec button when instance state is ERROR', () => {
+      const errorInstance: Instance = {
+        ...mockInstance,
+        status: { state: 'ERROR' },
+      };
+
+      renderWithProviders(
+        <InstanceDetailView instance={errorInstance} />
+      );
+
+      const editButton = screen.getByRole('button', { name: /edit spec/i });
+      expect(editButton).toBeDisabled();
+    });
+
+    it('shows Delete and enabled Edit Spec buttons for non-terminal states', () => {
+      const activeInstance: Instance = {
+        ...mockInstance,
+        status: { state: 'ACTIVE' },
+      };
+
+      renderWithProviders(
+        <InstanceDetailView instance={activeInstance} />
+      );
+
+      expect(screen.getByRole('button', { name: /delete/i })).toBeInTheDocument();
+      const editButton = screen.getByRole('button', { name: /edit spec/i });
+      expect(editButton).not.toBeDisabled();
+    });
+
+    it('shows DELETING state in instance header', () => {
+      const deletingInstance: Instance = {
+        ...mockInstance,
+        status: { state: 'DELETING' },
+      };
+
+      renderWithProviders(
+        <InstanceDetailView instance={deletingInstance} />
+      );
+
+      // InstanceHeaderCard renders kroState when != 'ACTIVE'
+      expect(screen.getByText('DELETING')).toBeInTheDocument();
     });
   });
 });

@@ -5,7 +5,7 @@
  * Confirmation dialog for removing a destination namespace from a project.
  * Shows impact warning when instances exist in the namespace being removed.
  */
-import { AlertTriangle, Loader2 } from "lucide-react";
+import { AlertTriangle, Loader2 } from "@/lib/icons";
 import {
   AlertDialog,
   AlertDialogContent,

@@ -19,8 +19,9 @@ import (
 
 // mockCasbinPolicyEnforcer implements CasbinPolicyEnforcer for testing
 type mockCasbinPolicyEnforcer struct {
-	canAccessFunc func(ctx context.Context, user, object, action string) (bool, error)
-	hasRoleFunc   func(ctx context.Context, user, role string) (bool, error) //
+	canAccessFunc           func(ctx context.Context, user, object, action string) (bool, error)
+	canAccessWithGroupsFunc func(ctx context.Context, user string, groups []string, object, action string) (bool, error)
+	hasRoleFunc             func(ctx context.Context, user, role string) (bool, error)
 }
 
 func (m *mockCasbinPolicyEnforcer) CanAccess(ctx context.Context, user, object, action string) (bool, error) {
@@ -32,8 +33,11 @@ func (m *mockCasbinPolicyEnforcer) CanAccess(ctx context.Context, user, object, 
 }
 
 // CanAccessWithGroups implements CasbinPolicyEnforcer
-// For testing, delegates to CanAccess with the user - groups/roles are not used in these tests
+// Delegates to canAccessWithGroupsFunc if set, otherwise falls back to CanAccess
 func (m *mockCasbinPolicyEnforcer) CanAccessWithGroups(ctx context.Context, user string, groups []string, object, action string) (bool, error) {
+	if m.canAccessWithGroupsFunc != nil {
+		return m.canAccessWithGroupsFunc(ctx, user, groups, object, action)
+	}
 	return m.CanAccess(ctx, user, object, action)
 }
 
@@ -232,6 +236,28 @@ func TestCasbinAuthz_Denied(t *testing.T) {
 	if w.Code != http.StatusForbidden {
 		t.Errorf("expected status 403, got %d", w.Code)
 	}
+
+	// Verify flat response format with details
+	var errResp struct {
+		Code    string            `json:"code"`
+		Message string            `json:"message"`
+		Details map[string]string `json:"details"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&errResp); err != nil {
+		t.Fatalf("failed to decode error response: %v", err)
+	}
+	if errResp.Code != "FORBIDDEN" {
+		t.Errorf("expected error code FORBIDDEN, got %q", errResp.Code)
+	}
+	if errResp.Message != "insufficient permissions" {
+		t.Errorf("expected message 'insufficient permissions', got %q", errResp.Message)
+	}
+	if errResp.Details["object"] != "projects/engineering" {
+		t.Errorf("expected details.object 'projects/engineering', got %q", errResp.Details["object"])
+	}
+	if errResp.Details["action"] != "delete" {
+		t.Errorf("expected details.action 'delete', got %q", errResp.Details["action"])
+	}
 }
 
 func TestCasbinAuthz_MissingUserContext(t *testing.T) {
@@ -309,6 +335,55 @@ func TestCasbinAuthz_GlobalAdminBypass(t *testing.T) {
 	}
 	if enforcerCalled {
 		t.Error("enforcer should not be called for global admin")
+	}
+}
+
+func TestCasbinAuthz_GlobalAdminBypassViaGroups(t *testing.T) {
+	t.Parallel()
+
+	// Verify that a user who is NOT a direct admin but whose OIDC group
+	// has role:serveradmin gets admin bypass via CanAccessWithGroups.
+	mockEnforcer := &mockCasbinPolicyEnforcer{
+		canAccessWithGroupsFunc: func(ctx context.Context, user string, groups []string, object, action string) (bool, error) {
+			// Admin wildcard check: grant access only when groups include "platform-admins"
+			if object == "*" && action == "*" {
+				for _, g := range groups {
+					if g == "platform-admins" {
+						return true, nil
+					}
+				}
+				return false, nil
+			}
+			return false, nil
+		},
+	}
+
+	middleware := CasbinAuthz(CasbinAuthzConfig{
+		Enforcer: mockEnforcer,
+		Logger:   slog.Default(),
+	})
+
+	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler := middleware(testHandler)
+
+	req := httptest.NewRequest("DELETE", "/api/v1/projects/critical", nil)
+	userCtx := &UserContext{
+		UserID:      "group-admin-user",
+		Email:       "groupadmin@example.com",
+		Groups:      []string{"platform-admins", "engineering"},
+		CasbinRoles: []string{}, // NOT a direct admin — admin comes via group
+	}
+	ctx := context.WithValue(req.Context(), UserContextKey, userCtx)
+	req = req.WithContext(ctx)
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200 (admin via group), got %d", w.Code)
 	}
 }
 
@@ -461,21 +536,19 @@ func TestCasbinAuthz_NullByteBlocked(t *testing.T) {
 		t.Errorf("expected status 400, got %d", w.Code)
 	}
 
-	// Verify response body contains correct error structure
+	// Verify response body contains correct error structure (flat format)
 	var errResp struct {
-		Error struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
-		} `json:"error"`
+		Code    string `json:"code"`
+		Message string `json:"message"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&errResp); err != nil {
 		t.Fatalf("failed to decode error response: %v", err)
 	}
-	if errResp.Error.Code != "BAD_REQUEST" {
-		t.Errorf("expected error code BAD_REQUEST, got %q", errResp.Error.Code)
+	if errResp.Code != "BAD_REQUEST" {
+		t.Errorf("expected error code BAD_REQUEST, got %q", errResp.Code)
 	}
-	if errResp.Error.Message != "invalid path parameter: contains null byte or control character" {
-		t.Errorf("unexpected error message: %q", errResp.Error.Message)
+	if errResp.Message != "invalid path parameter: contains null byte or control character" {
+		t.Errorf("unexpected error message: %q", errResp.Message)
 	}
 }
 
@@ -898,10 +971,52 @@ func TestInferCasbinObjectAndAction(t *testing.T) {
 			expectedAction: "list",
 		},
 		{
-			name:           "get nested instance",
+			name:           "get namespaced instance (K8s-aligned)",
 			method:         "GET",
-			path:           "/api/v1/instances/default/WebApp/my-app",
+			path:           "/api/v1/namespaces/default/instances/WebApp/my-app",
 			expectedObject: "instances/default/WebApp/my-app",
+			expectedAction: "get",
+		},
+		{
+			name:           "get cluster-scoped instance (K8s-aligned)",
+			method:         "GET",
+			path:           "/api/v1/instances/WebApp/my-app",
+			expectedObject: "instances/WebApp/my-app",
+			expectedAction: "get",
+		},
+		{
+			name:           "delete namespaced instance (K8s-aligned)",
+			method:         "DELETE",
+			path:           "/api/v1/namespaces/staging/instances/Database/my-db",
+			expectedObject: "instances/staging/Database/my-db",
+			expectedAction: "delete",
+		},
+		{
+			name:           "update namespaced instance (K8s-aligned)",
+			method:         "PATCH",
+			path:           "/api/v1/namespaces/prod/instances/Cache/redis-1",
+			expectedObject: "instances/prod/Cache/redis-1",
+			expectedAction: "update",
+		},
+		{
+			name:           "create namespaced instance (K8s-aligned)",
+			method:         "POST",
+			path:           "/api/v1/namespaces/default/instances/WebApp",
+			expectedObject: "instances/default/WebApp",
+			expectedAction: "create",
+		},
+		{
+			name:           "create cluster-scoped instance (K8s-aligned)",
+			method:         "POST",
+			path:           "/api/v1/instances/ClusterConfig",
+			expectedObject: "instances/ClusterConfig",
+			expectedAction: "create",
+		},
+		{
+			name:           "get namespaced instance history sub-resource (K8s-aligned)",
+			method:         "GET",
+			path:           "/api/v1/namespaces/default/instances/WebApp/my-app/history",
+			expectedObject: "instances/default/WebApp/my-app/history",
 			expectedAction: "get",
 		},
 		{
@@ -1180,6 +1295,160 @@ func TestMatchesPathPrefix_RootPrefixDoesNotMatchAll(t *testing.T) {
 }
 
 // ============================================================================
+// Instance Create Request Tests (K8s-aligned routes, STORY-327)
+// ============================================================================
+
+func TestIsInstanceCreateRequest(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name     string
+		path     string
+		method   string
+		expected bool
+	}{
+		{
+			name:     "namespaced create (K8s-aligned)",
+			path:     "/api/v1/namespaces/default/instances/WebApp",
+			method:   "POST",
+			expected: true,
+		},
+		{
+			name:     "cluster-scoped create (K8s-aligned)",
+			path:     "/api/v1/instances/ClusterConfig",
+			method:   "POST",
+			expected: true,
+		},
+		{
+			name:     "namespaced create with trailing slash",
+			path:     "/api/v1/namespaces/default/instances/WebApp/",
+			method:   "POST",
+			expected: true,
+		},
+		{
+			name:     "GET not matched",
+			path:     "/api/v1/namespaces/default/instances/WebApp",
+			method:   "GET",
+			expected: false,
+		},
+		{
+			name:     "list instances not matched",
+			path:     "/api/v1/instances",
+			method:   "POST",
+			expected: false,
+		},
+		{
+			name:     "too many segments not matched",
+			path:     "/api/v1/namespaces/default/instances/WebApp/my-app",
+			method:   "POST",
+			expected: false,
+		},
+		{
+			name:     "wrong resource not matched",
+			path:     "/api/v1/namespaces/default/projects/WebApp",
+			method:   "POST",
+			expected: false,
+		},
+		{
+			name:     "POST instances/count not matched (collection guard)",
+			path:     "/api/v1/instances/count",
+			method:   "POST",
+			expected: false,
+		},
+		{
+			name:     "POST instances/pending not matched (collection guard)",
+			path:     "/api/v1/instances/pending",
+			method:   "POST",
+			expected: false,
+		},
+		{
+			name:     "POST instances/stuck not matched (collection guard)",
+			path:     "/api/v1/instances/stuck",
+			method:   "POST",
+			expected: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			result := isInstanceCreateRequest(tc.path, tc.method)
+			if result != tc.expected {
+				t.Errorf("isInstanceCreateRequest(%q, %q) = %v, want %v", tc.path, tc.method, result, tc.expected)
+			}
+		})
+	}
+}
+
+// Instance List Request Tests (unchanged by STORY-327)
+// ============================================================================
+
+func TestIsInstanceListRequest(t *testing.T) {
+	t.Parallel()
+
+	testCases := []struct {
+		name     string
+		path     string
+		method   string
+		expected bool
+	}{
+		{
+			name:     "list instances",
+			path:     "/api/v1/instances",
+			method:   "GET",
+			expected: true,
+		},
+		{
+			name:     "count instances",
+			path:     "/api/v1/instances/count",
+			method:   "GET",
+			expected: true,
+		},
+		{
+			name:     "pending instances",
+			path:     "/api/v1/instances/pending",
+			method:   "GET",
+			expected: true,
+		},
+		{
+			name:     "stuck instances",
+			path:     "/api/v1/instances/stuck",
+			method:   "GET",
+			expected: true,
+		},
+		{
+			name:     "POST not matched",
+			path:     "/api/v1/instances",
+			method:   "POST",
+			expected: false,
+		},
+		{
+			name:     "specific instance not matched",
+			path:     "/api/v1/instances/WebApp/my-app",
+			method:   "GET",
+			expected: false,
+		},
+		{
+			name:     "namespaced instance not matched",
+			path:     "/api/v1/namespaces/default/instances/WebApp/my-app",
+			method:   "GET",
+			expected: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			result := isInstanceListRequest(tc.path, tc.method)
+			if result != tc.expected {
+				t.Errorf("isInstanceListRequest(%q, %q) = %v, want %v", tc.path, tc.method, result, tc.expected)
+			}
+		})
+	}
+}
+
 // Project Namespace Access Tests (Hybrid Authorization Model)
 // ============================================================================
 

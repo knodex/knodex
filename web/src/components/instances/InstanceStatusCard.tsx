@@ -1,11 +1,12 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { memo } from "react";
+import { memo, useState, useMemo } from "react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import type { InstanceCondition } from "@/types/rgd";
-import { Check, X, ExternalLink } from "lucide-react";
+import { Check, X, ExternalLink, CheckCircle, XCircle, AlertTriangle, ChevronDown } from "@/lib/icons";
+import { formatConditionMessage } from "@/lib/condition-message";
 
 interface InstanceStatusCardProps {
   status?: Record<string, unknown>;
@@ -179,11 +180,23 @@ const StatusFieldValue = memo(function StatusFieldValue({ value, depth = 0 }: St
 
 // ─── Main Component ────────────────────────────────────────────────────────
 
-export function InstanceStatusCard({ status, conditions }: InstanceStatusCardProps) {
+function InstanceStatusCardInner({ status, conditions }: InstanceStatusCardProps) {
   const state = status?.state as string | undefined;
-  const customFields = status ? getCustomFields(status) : {};
+  const customFields = useMemo(() => status ? getCustomFields(status) : {}, [status]);
   const hasCustomFields = Object.keys(customFields).length > 0;
   const hasConditions = conditions && conditions.length > 0;
+
+  // Auto-expand when any condition is not True (developer needs to see what's wrong)
+  const hasFailingCondition = hasConditions && conditions.some(c => c.status !== "True");
+  const [conditionsOpen, setConditionsOpen] = useState(hasFailingCondition);
+
+  const trueCount = useMemo(
+    () => hasConditions ? conditions.filter(c => c.status === "True").length : 0,
+    [hasConditions, conditions]
+  );
+  const totalCount = hasConditions ? conditions.length : 0;
+
+  const customFieldEntries = useMemo(() => Object.entries(customFields), [customFields]);
 
   // AC-8: If nothing to show, render nothing
   if (!state && !hasCustomFields && !hasConditions) {
@@ -191,10 +204,13 @@ export function InstanceStatusCard({ status, conditions }: InstanceStatusCardPro
   }
 
   return (
-    <div className="rounded-lg border border-border bg-card" data-testid="instance-status-card">
+    <div
+      className="rounded-lg border overflow-hidden border-[var(--border-default)] bg-[var(--surface-primary)]"
+      data-testid="instance-status-card"
+    >
       {/* Header: "Status" title + state badge */}
-      <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-        <h3 className="text-sm font-medium text-foreground">Status</h3>
+      <div className="px-5 py-3.5 flex items-center justify-between border-b border-[var(--border-subtle)]">
+        <h3 className="text-sm font-medium text-[var(--text-primary)]">Status</h3>
         {state && (
           <Badge
             className={cn("text-xs font-semibold", getStateBadgeClass(state))}
@@ -209,11 +225,11 @@ export function InstanceStatusCard({ status, conditions }: InstanceStatusCardPro
       {/* Custom status fields section */}
       {hasCustomFields && (
         <div
-          className={cn("px-4 py-3", hasConditions && "border-b border-border")}
+          className={cn("px-5 py-4", hasConditions && "border-b border-[var(--border-subtle)]")}
           data-testid="custom-fields-section"
         >
           <div className="space-y-3">
-            {Object.entries(customFields).map(([key, value]) => (
+            {customFieldEntries.map(([key, value]) => (
               <div key={key} className="grid grid-cols-[minmax(120px,auto)_1fr] gap-x-4 items-start">
                 <span className="text-xs text-muted-foreground whitespace-nowrap">
                   {formatLabel(key)}
@@ -225,64 +241,82 @@ export function InstanceStatusCard({ status, conditions }: InstanceStatusCardPro
         </div>
       )}
 
-      {/* Conditions section */}
+      {/* Conditions — collapsible, auto-expanded when failing */}
       {hasConditions && (
         <div data-testid="conditions-section">
-          <div className="px-4 py-2 border-b border-border">
-            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-              Conditions
+          <button
+            type="button"
+            onClick={() => setConditionsOpen(!conditionsOpen)}
+            className="w-full px-5 py-2.5 flex items-center justify-between hover:bg-[var(--border-subtle)] transition-colors"
+            aria-expanded={conditionsOpen}
+          >
+            <span className="flex items-center gap-2">
+              <span className="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider">
+                Conditions
+              </span>
+              <span className={cn(
+                "text-xs font-medium",
+                hasFailingCondition ? "text-destructive" : "text-[var(--text-muted)]"
+              )}>
+                {trueCount}/{totalCount}
+              </span>
             </span>
-          </div>
-          <div className="divide-y divide-border">
-            {conditions.map((condition, idx) => (
-              <div
-                key={`${condition.type}-${idx}`}
-                className="px-4 py-3 flex items-center justify-between gap-4"
-              >
-                <div className="flex items-center gap-3">
+            <ChevronDown className={cn(
+              "h-4 w-4 text-[var(--text-muted)] transition-transform",
+              conditionsOpen && "rotate-180"
+            )} />
+          </button>
+          {conditionsOpen && (
+            <div className="border-t border-[var(--border-subtle)]">
+              {conditions.map((condition, idx) => (
+                <div
+                  key={`${condition.type}-${idx}`}
+                  className={cn("px-5 py-3 flex items-center justify-between gap-4", idx < conditions.length - 1 && "border-b border-[var(--border-subtle)]")}
+                >
+                  <div className="flex items-center gap-3">
+                    {condition.status === "True" ? (
+                      <CheckCircle className="h-4 w-4 shrink-0 text-primary" />
+                    ) : condition.status === "False" ? (
+                      <XCircle className="h-4 w-4 shrink-0 text-destructive" />
+                    ) : (
+                      <AlertTriangle className="h-4 w-4 shrink-0 text-status-warning" />
+                    )}
+                    <div>
+                      <span className="font-medium text-sm text-foreground">
+                        {condition.type}
+                      </span>
+                      {condition.reason && (
+                        <span className="ml-2 text-xs text-muted-foreground font-mono">
+                          ({condition.reason})
+                        </span>
+                      )}
+                      {condition.message && (
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {formatConditionMessage(condition.message)}
+                        </p>
+                      )}
+                    </div>
+                  </div>
                   <span
                     className={cn(
-                      "h-2 w-2 rounded-full shrink-0",
+                      "px-2 py-0.5 rounded text-xs font-medium shrink-0",
                       condition.status === "True"
-                        ? "bg-primary"
+                        ? "bg-primary/10 text-primary"
                         : condition.status === "False"
-                        ? "bg-destructive"
-                        : "bg-status-warning"
+                        ? "bg-destructive/10 text-destructive"
+                        : "bg-status-warning/10 text-status-warning"
                     )}
-                  />
-                  <div>
-                    <span className="font-medium text-sm text-foreground">
-                      {condition.type}
-                    </span>
-                    {condition.reason && (
-                      <span className="ml-2 text-xs text-muted-foreground font-mono">
-                        ({condition.reason})
-                      </span>
-                    )}
-                    {condition.message && (
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        {condition.message}
-                      </p>
-                    )}
-                  </div>
+                  >
+                    {condition.status}
+                  </span>
                 </div>
-                <span
-                  className={cn(
-                    "px-2 py-0.5 rounded text-xs font-medium shrink-0",
-                    condition.status === "True"
-                      ? "bg-primary/10 text-primary"
-                      : condition.status === "False"
-                      ? "bg-destructive/10 text-destructive"
-                      : "bg-status-warning/10 text-status-warning"
-                  )}
-                >
-                  {condition.status}
-                </span>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
   );
 }
+
+export const InstanceStatusCard = memo(InstanceStatusCardInner);

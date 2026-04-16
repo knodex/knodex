@@ -51,7 +51,6 @@ func TestAnnotationConstants(t *testing.T) {
 		{"TagsAnnotation", TagsAnnotation, "knodex.io/tags"},
 		{"CategoryAnnotation", CategoryAnnotation, "knodex.io/category"},
 		{"IconAnnotation", IconAnnotation, "knodex.io/icon"},
-		{"VersionAnnotation", VersionAnnotation, "knodex.io/version"},
 		{"TitleAnnotation", TitleAnnotation, "knodex.io/title"},
 		{"DeploymentModesAnnotation", DeploymentModesAnnotation, "knodex.io/deployment-modes"},
 	}

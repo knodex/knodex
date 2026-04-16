@@ -88,12 +88,12 @@ func ValidateName(name string) error {
 func (s *ProviderStore) List(ctx context.Context) ([]SSOProvider, error) {
 	configs, err := s.readConfigs(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("listing SSO providers: %w", err)
 	}
 
 	secret, err := s.k8sClient.CoreV1().Secrets(s.namespace).Get(ctx, SecretName, metav1.GetOptions{})
 	if err != nil && !errors.IsNotFound(err) {
-		return nil, fmt.Errorf("failed to read SSO Secret: %w", err)
+		return nil, fmt.Errorf("reading SSO Secret: %w", err)
 	}
 
 	providers := make([]SSOProvider, 0, len(configs))
@@ -122,7 +122,7 @@ func (s *ProviderStore) List(ctx context.Context) ([]SSOProvider, error) {
 func (s *ProviderStore) Get(ctx context.Context, name string) (*SSOProvider, error) {
 	providers, err := s.List(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("getting SSO provider %q: %w", name, err)
 	}
 	for _, p := range providers {
 		if p.Name == name {
@@ -136,12 +136,12 @@ func (s *ProviderStore) Get(ctx context.Context, name string) (*SSOProvider, err
 // On Secret failure, rolls back the ConfigMap change.
 func (s *ProviderStore) Create(ctx context.Context, provider SSOProvider) error {
 	if err := ValidateName(provider.Name); err != nil {
-		return err
+		return fmt.Errorf("creating SSO provider: %w", err)
 	}
 
 	configs, err := s.readConfigs(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("creating SSO provider %q: %w", provider.Name, err)
 	}
 
 	// Check for duplicate name
@@ -162,7 +162,7 @@ func (s *ProviderStore) Create(ctx context.Context, provider SSOProvider) error 
 
 	// Write ConfigMap first
 	if err := s.writeConfigs(ctx, configs); err != nil {
-		return fmt.Errorf("failed to write SSO ConfigMap: %w", err)
+		return fmt.Errorf("creating SSO provider %q: %w", provider.Name, err)
 	}
 
 	// Write Secret
@@ -176,7 +176,7 @@ func (s *ProviderStore) Create(ctx context.Context, provider SSOProvider) error 
 				"provider", provider.Name,
 			)
 		}
-		return fmt.Errorf("failed to write SSO Secret: %w", err)
+		return fmt.Errorf("creating SSO provider %q: %w", provider.Name, err)
 	}
 
 	return nil
@@ -187,7 +187,7 @@ func (s *ProviderStore) Create(ctx context.Context, provider SSOProvider) error 
 func (s *ProviderStore) Update(ctx context.Context, name string, provider SSOProvider) error {
 	configs, err := s.readConfigs(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("updating SSO provider %q: %w", name, err)
 	}
 
 	found := false
@@ -211,7 +211,7 @@ func (s *ProviderStore) Update(ctx context.Context, name string, provider SSOPro
 
 	// Write ConfigMap first
 	if err := s.writeConfigs(ctx, configs); err != nil {
-		return fmt.Errorf("failed to update SSO ConfigMap: %w", err)
+		return fmt.Errorf("updating SSO provider %q: %w", name, err)
 	}
 
 	// Write Secret (only if credentials provided)
@@ -231,7 +231,7 @@ func (s *ProviderStore) Update(ctx context.Context, name string, provider SSOPro
 					"provider", name,
 				)
 			}
-			return fmt.Errorf("failed to update SSO Secret: %w", err)
+			return fmt.Errorf("updating SSO provider %q: %w", name, err)
 		}
 	}
 
@@ -243,7 +243,7 @@ func (s *ProviderStore) Update(ctx context.Context, name string, provider SSOPro
 func (s *ProviderStore) Delete(ctx context.Context, name string) error {
 	configs, err := s.readConfigs(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("deleting SSO provider %q: %w", name, err)
 	}
 
 	found := false
@@ -265,7 +265,7 @@ func (s *ProviderStore) Delete(ctx context.Context, name string) error {
 
 	// Write ConfigMap first
 	if err := s.writeConfigs(ctx, newConfigs); err != nil {
-		return fmt.Errorf("failed to update SSO ConfigMap: %w", err)
+		return fmt.Errorf("deleting SSO provider %q: %w", name, err)
 	}
 
 	// Remove Secret keys
@@ -279,7 +279,7 @@ func (s *ProviderStore) Delete(ctx context.Context, name string) error {
 				"provider", name,
 			)
 		}
-		return fmt.Errorf("failed to remove SSO Secret keys: %w", err)
+		return fmt.Errorf("deleting SSO provider %q: %w", name, err)
 	}
 
 	return nil
@@ -293,7 +293,7 @@ func (s *ProviderStore) readConfigs(ctx context.Context) ([]providerConfig, erro
 		if errors.IsNotFound(err) {
 			return []providerConfig{}, nil
 		}
-		return nil, err
+		return nil, fmt.Errorf("reading SSO ConfigMap: %w", err)
 	}
 
 	data, ok := cm.Data[ConfigMapKey]
@@ -303,7 +303,7 @@ func (s *ProviderStore) readConfigs(ctx context.Context) ([]providerConfig, erro
 
 	var configs []providerConfig
 	if err := json.Unmarshal([]byte(data), &configs); err != nil {
-		return nil, fmt.Errorf("failed to parse SSO providers JSON: %w", err)
+		return nil, fmt.Errorf("parsing SSO providers JSON: %w", err)
 	}
 
 	return configs, nil
@@ -313,7 +313,7 @@ func (s *ProviderStore) readConfigs(ctx context.Context) ([]providerConfig, erro
 func (s *ProviderStore) writeConfigs(ctx context.Context, configs []providerConfig) error {
 	data, err := json.Marshal(configs)
 	if err != nil {
-		return fmt.Errorf("failed to marshal SSO providers JSON: %w", err)
+		return fmt.Errorf("marshaling SSO providers JSON: %w", err)
 	}
 
 	cm := &corev1.ConfigMap{
@@ -334,15 +334,20 @@ func (s *ProviderStore) writeConfigs(ctx context.Context, configs []providerConf
 	if err != nil {
 		if errors.IsNotFound(err) {
 			_, createErr := s.k8sClient.CoreV1().ConfigMaps(s.namespace).Create(ctx, cm, metav1.CreateOptions{})
-			return createErr
+			if createErr != nil {
+				return fmt.Errorf("creating SSO ConfigMap: %w", createErr)
+			}
+			return nil
 		}
-		return err
+		return fmt.Errorf("reading existing SSO ConfigMap: %w", err)
 	}
 
 	existing.Data = cm.Data
 	existing.Labels = cm.Labels
-	_, err = s.k8sClient.CoreV1().ConfigMaps(s.namespace).Update(ctx, existing, metav1.UpdateOptions{})
-	return err
+	if _, err = s.k8sClient.CoreV1().ConfigMaps(s.namespace).Update(ctx, existing, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("updating SSO ConfigMap: %w", err)
+	}
+	return nil
 }
 
 // writeSecretKeys writes client credentials to the Secret
@@ -367,9 +372,12 @@ func (s *ProviderStore) writeSecretKeys(ctx context.Context, name, clientID, cli
 				},
 			}
 			_, createErr := s.k8sClient.CoreV1().Secrets(s.namespace).Create(ctx, secret, metav1.CreateOptions{})
-			return createErr
+			if createErr != nil {
+				return fmt.Errorf("creating SSO Secret: %w", createErr)
+			}
+			return nil
 		}
-		return err
+		return fmt.Errorf("reading SSO Secret: %w", err)
 	}
 
 	if secret.Data == nil {
@@ -384,8 +392,10 @@ func (s *ProviderStore) writeSecretKeys(ctx context.Context, name, clientID, cli
 		secret.Data[name+".client-secret"] = []byte(clientSecret)
 	}
 
-	_, err = s.k8sClient.CoreV1().Secrets(s.namespace).Update(ctx, secret, metav1.UpdateOptions{})
-	return err
+	if _, err = s.k8sClient.CoreV1().Secrets(s.namespace).Update(ctx, secret, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("updating SSO Secret: %w", err)
+	}
+	return nil
 }
 
 // removeSecretKeys removes the client credentials for a provider from the Secret
@@ -395,30 +405,38 @@ func (s *ProviderStore) removeSecretKeys(ctx context.Context, name string) error
 		if errors.IsNotFound(err) {
 			return nil // Nothing to delete
 		}
-		return err
+		return fmt.Errorf("reading SSO Secret for removal: %w", err)
 	}
 
 	delete(secret.Data, name+".client-id")
 	delete(secret.Data, name+".client-secret")
 
-	_, err = s.k8sClient.CoreV1().Secrets(s.namespace).Update(ctx, secret, metav1.UpdateOptions{})
-	return err
+	if _, err = s.k8sClient.CoreV1().Secrets(s.namespace).Update(ctx, secret, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("removing SSO Secret keys: %w", err)
+	}
+	return nil
 }
 
 // ConflictError is returned when creating a provider with a duplicate name
 type ConflictError struct {
 	Name string
+	Err  error
 }
 
 func (e *ConflictError) Error() string {
 	return fmt.Sprintf("SSO provider %q already exists", e.Name)
 }
 
+func (e *ConflictError) Unwrap() error { return e.Err }
+
 // NotFoundError is returned when a provider is not found
 type NotFoundError struct {
 	Name string
+	Err  error
 }
 
 func (e *NotFoundError) Error() string {
 	return fmt.Sprintf("SSO provider %q not found", e.Name)
 }
+
+func (e *NotFoundError) Unwrap() error { return e.Err }

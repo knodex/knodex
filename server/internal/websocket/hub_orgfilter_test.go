@@ -66,7 +66,7 @@ func newMockClient(hub *Hub, userID string, projects []string, addAdminPolicy bo
 }
 
 func TestShouldSendToClient_GlobalAdmin(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 
 	// Global admin should receive all events regardless of project
 	globalAdmin := newMockClient(hub, "admin-user", []string{"project-a"}, true)
@@ -124,7 +124,7 @@ func TestShouldSendToClient_GlobalAdmin(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := hub.shouldSendToClient(globalAdmin, tt.message)
+			got := hub.shouldSendToClient(globalAdmin, tt.message, hub.extractProjectID(tt.message))
 			if got != tt.want {
 				t.Errorf("shouldSendToClient() = %v, want %v", got, tt.want)
 			}
@@ -133,7 +133,7 @@ func TestShouldSendToClient_GlobalAdmin(t *testing.T) {
 }
 
 func TestShouldSendToClient_RegularUser_SingleProject(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 
 	// User belongs to project-a only
 	user := newMockClient(hub, "user-1", []string{"project-a"}, false)
@@ -209,7 +209,7 @@ func TestShouldSendToClient_RegularUser_SingleProject(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := hub.shouldSendToClient(user, tt.message)
+			got := hub.shouldSendToClient(user, tt.message, hub.extractProjectID(tt.message))
 			if got != tt.want {
 				t.Errorf("shouldSendToClient() = %v, want %v", got, tt.want)
 			}
@@ -218,7 +218,7 @@ func TestShouldSendToClient_RegularUser_SingleProject(t *testing.T) {
 }
 
 func TestShouldSendToClient_RegularUser_MultipleProjects(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 
 	// User belongs to project-a and project-b
 	user := newMockClient(hub, "user-2", []string{"project-a", "project-b"}, false)
@@ -286,7 +286,7 @@ func TestShouldSendToClient_RegularUser_MultipleProjects(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := hub.shouldSendToClient(user, tt.message)
+			got := hub.shouldSendToClient(user, tt.message, hub.extractProjectID(tt.message))
 			if got != tt.want {
 				t.Errorf("shouldSendToClient() = %v, want %v", got, tt.want)
 			}
@@ -295,7 +295,7 @@ func TestShouldSendToClient_RegularUser_MultipleProjects(t *testing.T) {
 }
 
 func TestShouldSendToClient_NoSubscription(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 
 	// User with no subscriptions (ArgoCD-aligned: Casbin policy enforcer for access checks)
 	client := &Client{
@@ -315,7 +315,7 @@ func TestShouldSendToClient_NoSubscription(t *testing.T) {
 		Data:      mustMarshal(InstanceUpdateData{Action: ActionAdd, Namespace: "project-a", Name: "instance-1", ProjectID: "project-a"}),
 	}
 
-	got := hub.shouldSendToClient(client, message)
+	got := hub.shouldSendToClient(client, message, hub.extractProjectID(message))
 	if got != false {
 		t.Errorf("shouldSendToClient() = %v, want false (no subscription)", got)
 	}
@@ -327,14 +327,14 @@ func TestShouldSendToClient_NoSubscription(t *testing.T) {
 		Data:      mustMarshal(ErrorData{Code: "TEST", Message: "test"}),
 	}
 
-	got = hub.shouldSendToClient(client, errorMsg)
+	got = hub.shouldSendToClient(client, errorMsg, hub.extractProjectID(errorMsg))
 	if got != true {
 		t.Errorf("shouldSendToClient() = %v, want true (error message always sent)", got)
 	}
 }
 
 func TestShouldSendToClient_InvalidMessageType(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 	user := newMockClient(hub, "user-4", []string{"project-a"}, false)
 
 	// Unknown message type
@@ -344,14 +344,14 @@ func TestShouldSendToClient_InvalidMessageType(t *testing.T) {
 		Data:      json.RawMessage(`{"test": "data"}`),
 	}
 
-	got := hub.shouldSendToClient(user, message)
+	got := hub.shouldSendToClient(user, message, hub.extractProjectID(message))
 	if got != false {
 		t.Errorf("shouldSendToClient() = %v, want false (unknown message type)", got)
 	}
 }
 
 func TestShouldSendToClient_MalformedData(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 	user := newMockClient(hub, "user-5", []string{"project-a"}, false)
 
 	// Message with malformed JSON data
@@ -362,14 +362,14 @@ func TestShouldSendToClient_MalformedData(t *testing.T) {
 	}
 
 	// Should return false when data can't be unmarshaled
-	got := hub.shouldSendToClient(user, message)
+	got := hub.shouldSendToClient(user, message, hub.extractProjectID(message))
 	if got != false {
 		t.Errorf("shouldSendToClient() = %v, want false (malformed data)", got)
 	}
 }
 
 func TestShouldSendToClient_IsolationBetweenUsers(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 
 	// Two users in different projects
 	userA := newMockClient(hub, "user-a", []string{"project-a"}, false)
@@ -383,12 +383,12 @@ func TestShouldSendToClient_IsolationBetweenUsers(t *testing.T) {
 	}
 
 	// User A should receive
-	if got := hub.shouldSendToClient(userA, messageProjectA); !got {
+	if got := hub.shouldSendToClient(userA, messageProjectA, hub.extractProjectID(messageProjectA)); !got {
 		t.Error("User A should receive message from their project")
 	}
 
 	// User B should NOT receive
-	if got := hub.shouldSendToClient(userB, messageProjectA); got {
+	if got := hub.shouldSendToClient(userB, messageProjectA, hub.extractProjectID(messageProjectA)); got {
 		t.Error("User B should NOT receive message from different project (isolation violated)")
 	}
 
@@ -400,18 +400,18 @@ func TestShouldSendToClient_IsolationBetweenUsers(t *testing.T) {
 	}
 
 	// User B should receive
-	if got := hub.shouldSendToClient(userB, messageProjectB); !got {
+	if got := hub.shouldSendToClient(userB, messageProjectB, hub.extractProjectID(messageProjectB)); !got {
 		t.Error("User B should receive message from their project")
 	}
 
 	// User A should NOT receive
-	if got := hub.shouldSendToClient(userA, messageProjectB); got {
+	if got := hub.shouldSendToClient(userA, messageProjectB, hub.extractProjectID(messageProjectB)); got {
 		t.Error("User A should NOT receive message from different project (isolation violated)")
 	}
 }
 
 func TestClientUserContext_ThreadSafety(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 	client := newMockClient(hub, "user-6", []string{"project-a"}, false)
 
 	// Concurrently set and get user context
@@ -463,7 +463,7 @@ func newMockClientWithSubscriptions(hub *Hub, userID string, projects []string, 
 }
 
 func TestShouldSendToClient_ViolationUpdate_GlobalAdmin(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 
 	// Global admin subscribed to violations should receive all violation updates
 	globalAdmin := newMockClientWithSubscriptions(hub, "admin-user", []string{"project-a"}, true, []string{"violations"})
@@ -481,14 +481,14 @@ func TestShouldSendToClient_ViolationUpdate_GlobalAdmin(t *testing.T) {
 		}),
 	}
 
-	got := hub.shouldSendToClient(globalAdmin, violationMsg)
+	got := hub.shouldSendToClient(globalAdmin, violationMsg, hub.extractProjectID(violationMsg))
 	if !got {
 		t.Error("Global admin with violations subscription should receive violation updates")
 	}
 }
 
 func TestShouldSendToClient_ViolationUpdate_GlobalAdmin_AllSubscription(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 
 	// Global admin subscribed to "all" should also receive violation updates
 	globalAdmin := newMockClientWithSubscriptions(hub, "admin-user", []string{"project-a"}, true, []string{"all"})
@@ -506,14 +506,14 @@ func TestShouldSendToClient_ViolationUpdate_GlobalAdmin_AllSubscription(t *testi
 		}),
 	}
 
-	got := hub.shouldSendToClient(globalAdmin, violationMsg)
+	got := hub.shouldSendToClient(globalAdmin, violationMsg, hub.extractProjectID(violationMsg))
 	if !got {
 		t.Error("Global admin with 'all' subscription should receive violation updates")
 	}
 }
 
 func TestShouldSendToClient_ViolationUpdate_NonAdmin_Denied(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 
 	// Non-admin user subscribed to violations should NOT receive violation updates
 	// Compliance data is admin-only
@@ -532,14 +532,14 @@ func TestShouldSendToClient_ViolationUpdate_NonAdmin_Denied(t *testing.T) {
 		}),
 	}
 
-	got := hub.shouldSendToClient(regularUser, violationMsg)
+	got := hub.shouldSendToClient(regularUser, violationMsg, hub.extractProjectID(violationMsg))
 	if got {
 		t.Error("Non-admin user should NOT receive violation updates (compliance is admin-only)")
 	}
 }
 
 func TestShouldSendToClient_ViolationUpdate_NonAdmin_AllSubscription_Denied(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 
 	// Non-admin user with "all" subscription should still NOT receive violation updates
 	regularUser := newMockClientWithSubscriptions(hub, "regular-user", []string{"project-a", "project-b"}, false, []string{"all"})
@@ -557,14 +557,14 @@ func TestShouldSendToClient_ViolationUpdate_NonAdmin_AllSubscription_Denied(t *t
 		}),
 	}
 
-	got := hub.shouldSendToClient(regularUser, violationMsg)
+	got := hub.shouldSendToClient(regularUser, violationMsg, hub.extractProjectID(violationMsg))
 	if got {
 		t.Error("Non-admin user with 'all' subscription should still NOT receive violation updates")
 	}
 }
 
 func TestShouldSendToClient_ViolationUpdate_NoSubscription(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 
 	// Global admin WITHOUT violations subscription should NOT receive violation updates
 	globalAdminNoSub := newMockClientWithSubscriptions(hub, "admin-user", []string{}, true, []string{"instances", "rgds"})
@@ -582,14 +582,14 @@ func TestShouldSendToClient_ViolationUpdate_NoSubscription(t *testing.T) {
 		}),
 	}
 
-	got := hub.shouldSendToClient(globalAdminNoSub, violationMsg)
+	got := hub.shouldSendToClient(globalAdminNoSub, violationMsg, hub.extractProjectID(violationMsg))
 	if got {
 		t.Error("Global admin without violations subscription should NOT receive violation updates")
 	}
 }
 
 func TestShouldSendToClient_ViolationUpdate_ResolvedAction(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 
 	// Global admin should receive resolved (delete action) violation updates
 	globalAdmin := newMockClientWithSubscriptions(hub, "admin-user", nil, true, []string{"violations"})
@@ -607,14 +607,14 @@ func TestShouldSendToClient_ViolationUpdate_ResolvedAction(t *testing.T) {
 		}),
 	}
 
-	got := hub.shouldSendToClient(globalAdmin, resolvedViolationMsg)
+	got := hub.shouldSendToClient(globalAdmin, resolvedViolationMsg, hub.extractProjectID(resolvedViolationMsg))
 	if !got {
 		t.Error("Global admin should receive resolved (delete action) violation updates")
 	}
 }
 
 func TestShouldSendToClient_ViolationUpdate_MultipleAdmins(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 
 	// Multiple global admins with violations subscription
 	admin1 := newMockClientWithSubscriptions(hub, "admin-1", []string{"project-a"}, true, []string{"violations"})
@@ -635,23 +635,23 @@ func TestShouldSendToClient_ViolationUpdate_MultipleAdmins(t *testing.T) {
 	}
 
 	// Admin 1 should receive
-	if got := hub.shouldSendToClient(admin1, violationMsg); !got {
+	if got := hub.shouldSendToClient(admin1, violationMsg, hub.extractProjectID(violationMsg)); !got {
 		t.Error("Admin 1 with violations subscription should receive violation updates")
 	}
 
 	// Admin 2 should receive (via "all" subscription)
-	if got := hub.shouldSendToClient(admin2, violationMsg); !got {
+	if got := hub.shouldSendToClient(admin2, violationMsg, hub.extractProjectID(violationMsg)); !got {
 		t.Error("Admin 2 with 'all' subscription should receive violation updates")
 	}
 
 	// Regular user should NOT receive (compliance is admin-only)
-	if got := hub.shouldSendToClient(regularUser, violationMsg); got {
+	if got := hub.shouldSendToClient(regularUser, violationMsg, hub.extractProjectID(violationMsg)); got {
 		t.Error("Regular user should NOT receive violation updates even with both subscriptions")
 	}
 }
 
 func TestShouldSendToClient_ViolationUpdate_EmptySubscriptions(t *testing.T) {
-	hub := NewHub()
+	hub := NewHub(nil)
 
 	// Global admin with empty subscriptions (ArgoCD-aligned: Casbin policy enforcer for access checks)
 	adminNoSubs := &Client{
@@ -678,9 +678,66 @@ func TestShouldSendToClient_ViolationUpdate_EmptySubscriptions(t *testing.T) {
 		}),
 	}
 
-	got := hub.shouldSendToClient(adminNoSubs, violationMsg)
+	got := hub.shouldSendToClient(adminNoSubs, violationMsg, hub.extractProjectID(violationMsg))
 	if got {
 		t.Error("Admin with no subscriptions should NOT receive violation updates")
+	}
+}
+
+func TestShouldSendToClient_DriftUpdate_ProjectScoped(t *testing.T) {
+	hub := NewHub(nil)
+
+	userA := newMockClient(hub, "user-a", []string{"project-a"}, false)
+	userB := newMockClient(hub, "user-b", []string{"project-b"}, false)
+
+	driftMsg := &Message{
+		Type:      MessageTypeDriftUpdate,
+		Timestamp: time.Now(),
+		Data:      mustMarshal(DriftUpdateData{Namespace: "default", Kind: "WebApp", Name: "my-app", Drifted: false, ProjectID: "project-a"}),
+	}
+
+	// User A (in project-a) should receive
+	if got := hub.shouldSendToClient(userA, driftMsg, hub.extractProjectID(driftMsg)); !got {
+		t.Error("User A should receive drift update from their project")
+	}
+
+	// User B (in project-b) should NOT receive
+	if got := hub.shouldSendToClient(userB, driftMsg, hub.extractProjectID(driftMsg)); got {
+		t.Error("User B should NOT receive drift update from different project")
+	}
+}
+
+func TestShouldSendToClient_DriftUpdate_GlobalAdmin(t *testing.T) {
+	hub := NewHub(nil)
+
+	admin := newMockClient(hub, "admin", []string{"project-a"}, true)
+
+	driftMsg := &Message{
+		Type:      MessageTypeDriftUpdate,
+		Timestamp: time.Now(),
+		Data:      mustMarshal(DriftUpdateData{Namespace: "default", Kind: "WebApp", Name: "my-app", Drifted: false, ProjectID: "project-b"}),
+	}
+
+	// Global admin should receive drift updates from any project
+	if got := hub.shouldSendToClient(admin, driftMsg, hub.extractProjectID(driftMsg)); !got {
+		t.Error("Global admin should receive drift update from any project")
+	}
+}
+
+func TestShouldSendToClient_DriftUpdate_NoSubscription(t *testing.T) {
+	hub := NewHub(nil)
+
+	// Client with NO subscriptions
+	client := newMockClientWithSubscriptions(hub, "user-1", []string{"project-a"}, false, []string{})
+
+	driftMsg := &Message{
+		Type:      MessageTypeDriftUpdate,
+		Timestamp: time.Now(),
+		Data:      mustMarshal(DriftUpdateData{Namespace: "default", Kind: "WebApp", Name: "my-app", Drifted: false, ProjectID: "project-a"}),
+	}
+
+	if got := hub.shouldSendToClient(client, driftMsg, hub.extractProjectID(driftMsg)); got {
+		t.Error("Client with no subscriptions should NOT receive drift updates")
 	}
 }
 

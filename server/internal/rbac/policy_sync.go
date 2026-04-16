@@ -59,6 +59,9 @@ type PolicySyncer interface {
 	IncrementBackgroundSyncs()
 }
 
+// Compile-time interface compliance check
+var _ PolicySyncService = (*policySyncService)(nil)
+
 // policySyncService implements PolicySyncService
 type policySyncService struct {
 	syncer PolicySyncer
@@ -214,21 +217,30 @@ func (s *policySyncService) doSync(ctx context.Context) {
 
 	duration := time.Since(startTime)
 
-	s.mu.Lock()
+	// Lock only for state update; SyncPolicies above runs without lock to
+	// avoid holding s.mu during a potentially long-running sync operation.
+	// (setNotRunning uses defer since it has no pre-lock work.)
+	func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if err != nil {
+			s.lastSyncError = err
+		} else {
+			s.lastSyncTime = time.Now()
+			s.lastSyncError = nil
+		}
+	}()
+
 	if err != nil {
-		s.lastSyncError = err
 		s.logger.Error("policy sync failed",
 			"error", err,
 			"duration", duration.String())
 	} else {
-		s.lastSyncTime = time.Now()
-		s.lastSyncError = nil
 		s.logger.Info("policy sync completed",
 			"duration", duration.String())
-		// Increment metric
+		// Increment metric (uses atomic — no lock needed)
 		s.syncer.IncrementBackgroundSyncs()
 	}
-	s.mu.Unlock()
 }
 
 // PolicyCacheManagerEnforcer defines the subset of enforcer methods

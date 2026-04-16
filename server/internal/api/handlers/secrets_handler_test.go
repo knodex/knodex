@@ -175,7 +175,7 @@ func TestSecretsHandler_CreateSecret_Duplicate(t *testing.T) {
 	rr := httptest.NewRecorder()
 	handler.CreateSecret(rr, req)
 
-	assert.Equal(t, http.StatusBadRequest, rr.Code)
+	assert.Equal(t, http.StatusConflict, rr.Code)
 	assert.Contains(t, rr.Body.String(), "already exists")
 }
 
@@ -307,7 +307,7 @@ func TestSecretsHandler_ListSecrets_Success(t *testing.T) {
 	err := json.Unmarshal(rr.Body.Bytes(), &resp)
 	require.NoError(t, err)
 
-	assert.Equal(t, 2, resp.TotalCount)
+	assert.Equal(t, 2, resp.PageCount)
 	assert.Len(t, resp.Items, 2)
 
 	// Verify no secret values in response
@@ -485,7 +485,7 @@ func TestSecretsHandler_ListSecrets_CrossProjectIsolation(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
 
 	// Only demo-secret should be returned
-	assert.Equal(t, 1, resp.TotalCount)
+	assert.Equal(t, 1, resp.PageCount)
 	require.Len(t, resp.Items, 1)
 	assert.Equal(t, "demo-secret", resp.Items[0].Name)
 
@@ -1875,4 +1875,405 @@ func TestSecretsHandler_UpdateSecret_SizeValidation(t *testing.T) {
 			assert.Contains(t, rr.Body.String(), tt.msg)
 		})
 	}
+}
+
+func TestSecretsHandler_ValidateSecretData_InvalidKeyCharacters(t *testing.T) {
+	tests := []struct {
+		name    string
+		key     string
+		wantErr bool
+		errKey  string
+	}{
+		{"valid alphanumeric", "my-key_v1.0", false, ""},
+		{"space in key", "bad key", true, "data:bad key"},
+		{"slash in key", "path/to/key", true, "data:path/to/key"},
+		{"equals in key", "key=value", true, "data:key=value"},
+		{"unicode in key", "clé", true, "data:clé"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data := map[string]string{tt.key: "value"}
+			errs := validateSecretData(data, make(map[string]string))
+			if tt.wantErr {
+				assert.Contains(t, errs, tt.errKey, "expected error for key %q", tt.key)
+				assert.Contains(t, errs[tt.errKey], "invalid characters")
+			} else {
+				assert.Empty(t, errs)
+			}
+		})
+	}
+}
+
+func TestSecretsHandler_ValidateSecretData_CollectsAllErrors(t *testing.T) {
+	data := map[string]string{
+		"good-key": "ok",
+		"bad key":  "v1",
+		"also/bad": "v2",
+		"":         "v3",
+	}
+	errs := validateSecretData(data, make(map[string]string))
+
+	// Should have errors for all three bad keys
+	assert.Contains(t, errs, "data:bad key")
+	assert.Contains(t, errs, "data:also/bad")
+	assert.Contains(t, errs, "data:emptyKey") // empty key error
+	// good-key should not produce an error
+	assert.NotContains(t, errs, "data:good-key")
+}
+
+func TestSecretsHandler_UpdateSecret_UpdatedAtAnnotation(t *testing.T) {
+	k8sClient := fake.NewSimpleClientset(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "my-secret",
+			Namespace: "default",
+			Labels: map[string]string{
+				"knodex.io/project":    "demo",
+				"knodex.io/managed-by": "knodex",
+			},
+		},
+		Data: map[string][]byte{"password": []byte("old")},
+	})
+
+	handler := NewSecretsHandler(SecretsHandlerConfig{
+		K8sClient: k8sClient,
+		Enforcer:  &mockSecretsEnforcer{canAccess: true},
+	})
+
+	body := UpdateSecretRequest{
+		Namespace: "default",
+		Data:      map[string]string{"password": "new"},
+	}
+	req := newSecretsRequest("PUT", "/api/v1/secrets/my-secret?project=demo", body, defaultUserCtx())
+	req.SetPathValue("name", "my-secret")
+	rr := httptest.NewRecorder()
+
+	before := time.Now().UTC().Add(-time.Second)
+	handler.UpdateSecret(rr, req)
+	after := time.Now().UTC().Add(time.Second)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var resp SecretResponse
+	err := json.Unmarshal(rr.Body.Bytes(), &resp)
+	require.NoError(t, err)
+
+	// updatedAt must be present and within [before, after] window
+	require.NotNil(t, resp.UpdatedAt, "updatedAt should be set after update")
+	assert.True(t, !resp.UpdatedAt.Before(before), "updatedAt %v should be >= %v", resp.UpdatedAt, before)
+	assert.True(t, !resp.UpdatedAt.After(after), "updatedAt %v should be <= %v", resp.UpdatedAt, after)
+
+	// Verify annotation was persisted on the K8s secret
+	secret, err := k8sClient.CoreV1().Secrets("default").Get(context.Background(), "my-secret", metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.NotEmpty(t, secret.Annotations[updatedAtAnnotation])
+}
+
+func TestSecretsHandler_GetSecret_DeniedAccessAudit(t *testing.T) {
+	k8sClient := fake.NewSimpleClientset(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "my-secret",
+			Namespace: "default",
+			Labels: map[string]string{
+				"knodex.io/project":    "demo",
+				"knodex.io/managed-by": "knodex",
+			},
+		},
+		Data: map[string][]byte{"k": []byte("v")},
+	})
+
+	recorder := &mockAuditRecorder{}
+	handler := NewSecretsHandler(SecretsHandlerConfig{
+		K8sClient: k8sClient,
+		Enforcer:  &mockSecretsEnforcer{canAccess: false},
+		Recorder:  recorder,
+	})
+
+	req := newSecretsRequest("GET", "/api/v1/secrets/my-secret?project=demo&namespace=default", nil, defaultUserCtx())
+	req.SetPathValue("name", "my-secret")
+	rr := httptest.NewRecorder()
+	handler.GetSecret(rr, req)
+
+	assert.Equal(t, http.StatusForbidden, rr.Code)
+
+	// Verify a denied audit event was recorded
+	require.Len(t, recorder.events, 1)
+	evt := recorder.events[0]
+	assert.Equal(t, "get", evt.Action)
+	assert.Equal(t, "secrets", evt.Resource)
+	assert.Equal(t, "my-secret", evt.Name)
+	assert.Equal(t, "demo", evt.Project)
+	assert.Equal(t, "denied", evt.Result)
+	assert.Equal(t, "user@test.local", evt.UserID)
+}
+
+func TestSecretsHandler_GetSecret_NoDeniedAuditWithoutRecorder(t *testing.T) {
+	// When recorder is nil (OSS), denied access should not panic
+	handler := NewSecretsHandler(SecretsHandlerConfig{
+		K8sClient: fake.NewSimpleClientset(),
+		Enforcer:  &mockSecretsEnforcer{canAccess: false},
+		// Recorder intentionally nil
+	})
+
+	req := newSecretsRequest("GET", "/api/v1/secrets/my-secret?project=demo&namespace=default", nil, defaultUserCtx())
+	req.SetPathValue("name", "my-secret")
+	rr := httptest.NewRecorder()
+	handler.GetSecret(rr, req)
+
+	assert.Equal(t, http.StatusForbidden, rr.Code)
+}
+
+func TestSecretsHandler_GetSecret_UpdatedAtInResponse(t *testing.T) {
+	updatedTime := time.Date(2026, 3, 25, 10, 0, 0, 0, time.UTC)
+	k8sClient := fake.NewSimpleClientset(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "my-secret",
+			Namespace: "default",
+			Labels: map[string]string{
+				"knodex.io/project":    "demo",
+				"knodex.io/managed-by": "knodex",
+			},
+			Annotations: map[string]string{
+				updatedAtAnnotation: updatedTime.Format(time.RFC3339),
+			},
+		},
+		Data: map[string][]byte{"k": []byte("v")},
+	})
+
+	handler := NewSecretsHandler(SecretsHandlerConfig{
+		K8sClient: k8sClient,
+		Enforcer:  &mockSecretsEnforcer{canAccess: true},
+	})
+
+	req := newSecretsRequest("GET", "/api/v1/secrets/my-secret?project=demo&namespace=default", nil, defaultUserCtx())
+	req.SetPathValue("name", "my-secret")
+	rr := httptest.NewRecorder()
+	handler.GetSecret(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var resp SecretDetailResponse
+	err := json.Unmarshal(rr.Body.Bytes(), &resp)
+	require.NoError(t, err)
+
+	require.NotNil(t, resp.UpdatedAt)
+	assert.True(t, resp.UpdatedAt.Equal(updatedTime))
+}
+
+func TestSecretsHandler_GetSecret_NilUpdatedAtWhenNoAnnotation(t *testing.T) {
+	k8sClient := fake.NewSimpleClientset(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "my-secret",
+			Namespace: "default",
+			Labels: map[string]string{
+				"knodex.io/project":    "demo",
+				"knodex.io/managed-by": "knodex",
+			},
+		},
+		Data: map[string][]byte{"k": []byte("v")},
+	})
+
+	handler := NewSecretsHandler(SecretsHandlerConfig{
+		K8sClient: k8sClient,
+		Enforcer:  &mockSecretsEnforcer{canAccess: true},
+	})
+
+	req := newSecretsRequest("GET", "/api/v1/secrets/my-secret?project=demo&namespace=default", nil, defaultUserCtx())
+	req.SetPathValue("name", "my-secret")
+	rr := httptest.NewRecorder()
+	handler.GetSecret(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var resp SecretDetailResponse
+	err := json.Unmarshal(rr.Body.Bytes(), &resp)
+	require.NoError(t, err)
+
+	assert.Nil(t, resp.UpdatedAt)
+	// updatedAt should be omitted from JSON
+	assert.NotContains(t, rr.Body.String(), "updatedAt")
+}
+
+// --- Namespace Access Provider Tests (V5/V6 security fixes) ---
+
+// mockNSAccessProvider implements NamespaceAccessProvider for secrets tests.
+type mockNSAccessProvider struct {
+	namespaces []string // ["*"] = admin, specific list = restricted, empty = no access
+	err        error
+}
+
+func (m *mockNSAccessProvider) GetAccessibleNamespaces(_ context.Context, _ *middleware.UserContext) ([]string, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.namespaces, nil
+}
+
+func TestSecretsHandler_GetSecret_NamespaceDenied(t *testing.T) {
+	t.Parallel()
+
+	// Create a secret in "kube-system" namespace
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "db-creds",
+			Namespace: "kube-system",
+			Labels: map[string]string{
+				"knodex.io/project":    "alpha",
+				"knodex.io/managed-by": "knodex",
+			},
+		},
+		Data: map[string][]byte{"password": []byte("secret")},
+	}
+	k8sClient := fake.NewSimpleClientset(secret)
+	enforcer := &mockSecretsEnforcer{canAccess: true}
+
+	// User only has access to "eng-shared" namespace
+	handler := NewSecretsHandler(SecretsHandlerConfig{
+		K8sClient: k8sClient,
+		Enforcer:  enforcer,
+		NSAccess:  &mockNSAccessProvider{namespaces: []string{"eng-shared"}},
+	})
+
+	req := newSecretsRequest("GET", "/api/v1/secrets/db-creds?project=alpha&namespace=kube-system", nil, defaultUserCtx())
+	req.SetPathValue("name", "db-creds")
+	rr := httptest.NewRecorder()
+	handler.GetSecret(rr, req)
+
+	// Should be forbidden — user cannot access kube-system
+	assert.Equal(t, http.StatusForbidden, rr.Code)
+}
+
+func TestSecretsHandler_GetSecret_NamespaceAllowed(t *testing.T) {
+	t.Parallel()
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "db-creds",
+			Namespace: "eng-shared",
+			Labels: map[string]string{
+				"knodex.io/project":    "alpha",
+				"knodex.io/managed-by": "knodex",
+			},
+		},
+		Data: map[string][]byte{"password": []byte("secret")},
+	}
+	k8sClient := fake.NewSimpleClientset(secret)
+	enforcer := &mockSecretsEnforcer{canAccess: true}
+
+	handler := NewSecretsHandler(SecretsHandlerConfig{
+		K8sClient: k8sClient,
+		Enforcer:  enforcer,
+		NSAccess:  &mockNSAccessProvider{namespaces: []string{"eng-shared"}},
+	})
+
+	req := newSecretsRequest("GET", "/api/v1/secrets/db-creds?project=alpha&namespace=eng-shared", nil, defaultUserCtx())
+	req.SetPathValue("name", "db-creds")
+	rr := httptest.NewRecorder()
+	handler.GetSecret(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+}
+
+func TestSecretsHandler_ListSecrets_FiltersByNamespace(t *testing.T) {
+	t.Parallel()
+
+	// Create secrets in different namespaces
+	k8sClient := fake.NewSimpleClientset(
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "s1", Namespace: "eng-shared",
+				Labels: map[string]string{"knodex.io/project": "alpha", "knodex.io/managed-by": "knodex"},
+			},
+		},
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "s2", Namespace: "kube-system",
+				Labels: map[string]string{"knodex.io/project": "alpha", "knodex.io/managed-by": "knodex"},
+			},
+		},
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "s3", Namespace: "eng-shared",
+				Labels: map[string]string{"knodex.io/project": "alpha", "knodex.io/managed-by": "knodex"},
+			},
+		},
+	)
+	enforcer := &mockSecretsEnforcer{canAccess: true}
+
+	// User only has access to eng-shared
+	handler := NewSecretsHandler(SecretsHandlerConfig{
+		K8sClient: k8sClient,
+		Enforcer:  enforcer,
+		NSAccess:  &mockNSAccessProvider{namespaces: []string{"eng-shared"}},
+	})
+
+	req := newSecretsRequest("GET", "/api/v1/secrets?project=alpha", nil, defaultUserCtx())
+	rr := httptest.NewRecorder()
+	handler.ListSecrets(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+	var resp SecretListResponse
+	err := json.Unmarshal(rr.Body.Bytes(), &resp)
+	require.NoError(t, err)
+
+	// Should only see secrets from eng-shared (s1 and s3), not kube-system (s2)
+	assert.Equal(t, 2, resp.PageCount)
+	for _, s := range resp.Items {
+		assert.Equal(t, "eng-shared", s.Namespace, "secret %s should be in eng-shared", s.Name)
+	}
+}
+
+func TestSecretsHandler_GetSecret_NSAccessError_FailsClosed(t *testing.T) {
+	t.Parallel()
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "db-creds", Namespace: "eng-shared",
+			Labels: map[string]string{"knodex.io/project": "alpha", "knodex.io/managed-by": "knodex"},
+		},
+		Data: map[string][]byte{"password": []byte("secret")},
+	}
+	k8sClient := fake.NewSimpleClientset(secret)
+	enforcer := &mockSecretsEnforcer{canAccess: true}
+
+	// NSAccess returns an error
+	handler := NewSecretsHandler(SecretsHandlerConfig{
+		K8sClient: k8sClient,
+		Enforcer:  enforcer,
+		NSAccess:  &mockNSAccessProvider{err: errors.New("provider unavailable")},
+	})
+
+	req := newSecretsRequest("GET", "/api/v1/secrets/db-creds?project=alpha&namespace=eng-shared", nil, defaultUserCtx())
+	req.SetPathValue("name", "db-creds")
+	rr := httptest.NewRecorder()
+	handler.GetSecret(rr, req)
+
+	// Should fail closed — 403 when namespace access cannot be determined
+	assert.Equal(t, http.StatusForbidden, rr.Code)
+}
+
+func TestSecretsHandler_DeleteSecret_NamespaceDenied(t *testing.T) {
+	t.Parallel()
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "db-creds", Namespace: "prod",
+			Labels: map[string]string{"knodex.io/project": "alpha", "knodex.io/managed-by": "knodex"},
+		},
+	}
+	k8sClient := fake.NewSimpleClientset(secret)
+	enforcer := &mockSecretsEnforcer{canAccess: true}
+
+	handler := NewSecretsHandler(SecretsHandlerConfig{
+		K8sClient: k8sClient,
+		Enforcer:  enforcer,
+		NSAccess:  &mockNSAccessProvider{namespaces: []string{"eng-shared"}},
+	})
+
+	req := newSecretsRequest("DELETE", "/api/v1/secrets/db-creds?project=alpha&namespace=prod", nil, defaultUserCtx())
+	req.SetPathValue("name", "db-creds")
+	rr := httptest.NewRecorder()
+	handler.DeleteSecret(rr, req)
+
+	assert.Equal(t, http.StatusForbidden, rr.Code)
 }

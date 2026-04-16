@@ -60,7 +60,7 @@ func NewTestServer(t *testing.T) *TestServer {
 	authService := NewMockAuthService(JWTSecretTest)
 
 	// Create real project service with fake k8s clients
-	projectService := rbac.NewProjectService(k8sClient, dynamicClient)
+	projectService := rbac.NewProjectService(k8sClient, dynamicClient, "knodex-system")
 
 	// Create handlers
 	projectHandler := handlers.NewProjectHandler(projectService, enforcer, nil)
@@ -221,6 +221,7 @@ func (ts *TestServer) CreateProjectDirectly(name, description string, roles []rb
 			"kind":       "Project",
 			"metadata": map[string]interface{}{
 				"name":            name,
+				"namespace":       "knodex-system",
 				"resourceVersion": "1", // Preset for testing
 				"labels": map[string]interface{}{
 					"knodex.io/created-by": "test-setup",
@@ -263,8 +264,8 @@ func (ts *TestServer) CreateProjectDirectly(name, description string, roles []rb
 		spec["roles"] = rolesSlice
 	}
 
-	// Create directly in fake k8s client
-	result, err := ts.K8sClient.Resource(ProjectGVR).Create(ctx, project, metav1.CreateOptions{})
+	// Create directly in fake k8s client (namespace-scoped)
+	result, err := ts.K8sClient.Resource(ProjectGVR).Namespace("knodex-system").Create(ctx, project, metav1.CreateOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -383,7 +384,7 @@ func CreateUnstructuredProject(name, description string, roles []map[string]inte
 			"kind":       "Project",
 			"metadata": map[string]interface{}{
 				"name":      name,
-				"namespace": "default",
+				"namespace": "knodex-system",
 			},
 			"spec": map[string]interface{}{
 				"description": description,

@@ -204,3 +204,44 @@ func TestBackoffDelay_Jitter(t *testing.T) {
 		t.Errorf("jitter produced only %d distinct values out of 20 calls, expected variation", len(seen))
 	}
 }
+
+func TestDo_PermanentError_StopsRetry(t *testing.T) {
+	config := RetryConfig{MaxAttempts: 5, BaseDelay: time.Millisecond, MaxDelay: 10 * time.Millisecond}
+	sentinel := errors.New("permanent failure")
+	calls := 0
+	err := Do(context.Background(), config, func() error {
+		calls++
+		return Permanent(sentinel)
+	})
+	if !errors.Is(err, sentinel) {
+		t.Errorf("expected sentinel error, got: %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("expected 1 call (no retry for permanent error), got %d", calls)
+	}
+}
+
+func TestDo_PermanentError_AfterTransient(t *testing.T) {
+	config := RetryConfig{MaxAttempts: 5, BaseDelay: time.Millisecond, MaxDelay: 10 * time.Millisecond}
+	sentinel := errors.New("permanent failure")
+	calls := 0
+	err := Do(context.Background(), config, func() error {
+		calls++
+		if calls == 1 {
+			return errors.New("transient")
+		}
+		return Permanent(sentinel)
+	})
+	if !errors.Is(err, sentinel) {
+		t.Errorf("expected sentinel error, got: %v", err)
+	}
+	if calls != 2 {
+		t.Errorf("expected 2 calls (1 transient + 1 permanent), got %d", calls)
+	}
+}
+
+func TestPermanent_Nil(t *testing.T) {
+	if Permanent(nil) != nil {
+		t.Error("Permanent(nil) should return nil")
+	}
+}

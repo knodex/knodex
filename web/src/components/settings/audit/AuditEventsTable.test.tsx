@@ -50,7 +50,7 @@ describe("AuditEventsTable", () => {
     expect(screen.queryByText("No audit events found")).not.toBeInTheDocument();
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
     // Skeletons are rendered as divs with animation classes
-    const skeletons = container.querySelectorAll("[class*='animate-pulse']");
+    const skeletons = container.querySelectorAll("[class*='animate-token-shimmer']");
     expect(skeletons.length).toBeGreaterThan(0);
   });
 

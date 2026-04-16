@@ -17,8 +17,64 @@ import (
 	"github.com/knodex/knodex/server/internal/health"
 	"github.com/knodex/knodex/server/internal/kro/watcher"
 	"github.com/knodex/knodex/server/internal/models"
+	"github.com/knodex/knodex/server/internal/rbac"
 	"github.com/knodex/knodex/server/internal/services"
 )
+
+// testE2EAdminPolicyEnforcer implements rbac.PolicyEnforcer for E2E tests.
+// All authorization checks grant access (global admin).
+type testE2EAdminPolicyEnforcer struct{}
+
+// Authorizer methods
+func (t *testE2EAdminPolicyEnforcer) CanAccess(_ context.Context, _, _, _ string) (bool, error) {
+	return true, nil
+}
+func (t *testE2EAdminPolicyEnforcer) CanAccessWithGroups(_ context.Context, _ string, _ []string, _, _ string) (bool, error) {
+	return true, nil
+}
+func (t *testE2EAdminPolicyEnforcer) EnforceProjectAccess(_ context.Context, _, _, _ string) error {
+	return nil
+}
+func (t *testE2EAdminPolicyEnforcer) GetAccessibleProjects(_ context.Context, _ string, _ []string) ([]string, error) {
+	return nil, nil // nil = global admin (all projects)
+}
+func (t *testE2EAdminPolicyEnforcer) HasRole(_ context.Context, _, _ string) (bool, error) {
+	return true, nil
+}
+
+// PolicyLoader methods
+func (t *testE2EAdminPolicyEnforcer) LoadProjectPolicies(_ context.Context, _ *rbac.Project) error {
+	return nil
+}
+func (t *testE2EAdminPolicyEnforcer) SyncPolicies(_ context.Context) error { return nil }
+func (t *testE2EAdminPolicyEnforcer) RemoveProjectPolicies(_ context.Context, _ string) error {
+	return nil
+}
+
+// RoleManager methods
+func (t *testE2EAdminPolicyEnforcer) AssignUserRoles(_ context.Context, _ string, _ []string) error {
+	return nil
+}
+func (t *testE2EAdminPolicyEnforcer) GetUserRoles(_ context.Context, _ string) ([]string, error) {
+	return []string{"role:serveradmin"}, nil
+}
+func (t *testE2EAdminPolicyEnforcer) RemoveUserRoles(_ context.Context, _ string) error { return nil }
+func (t *testE2EAdminPolicyEnforcer) RemoveUserRole(_ context.Context, _, _ string) error {
+	return nil
+}
+func (t *testE2EAdminPolicyEnforcer) RestorePersistedRoles(_ context.Context) error { return nil }
+
+// CacheController methods
+func (t *testE2EAdminPolicyEnforcer) InvalidateCache()                       {}
+func (t *testE2EAdminPolicyEnforcer) InvalidateCacheForUser(_ string) int    { return 0 }
+func (t *testE2EAdminPolicyEnforcer) InvalidateCacheForProject(_ string) int { return 0 }
+func (t *testE2EAdminPolicyEnforcer) CacheStats() rbac.CacheStats            { return rbac.CacheStats{} }
+
+// MetricsProvider methods
+func (t *testE2EAdminPolicyEnforcer) Metrics() rbac.PolicyMetrics { return rbac.PolicyMetrics{} }
+func (t *testE2EAdminPolicyEnforcer) IncrementPolicyReloads()     {}
+func (t *testE2EAdminPolicyEnforcer) IncrementBackgroundSyncs()   {}
+func (t *testE2EAdminPolicyEnforcer) IncrementWatcherRestarts()   {}
 
 // testGlobalAdminMiddleware injects a global admin user context into all requests.
 // This is used for testing endpoints that require authentication after auth changes
@@ -48,7 +104,6 @@ func setupE2ETestServer(t *testing.T) (*httptest.Server, *watcher.RGDCache) {
 			Name:        "postgres-cluster",
 			Namespace:   "default",
 			Description: "PostgreSQL cluster with high availability",
-			Version:     "1.0.0",
 			Tags:        []string{"database", "production"},
 			Category:    "database",
 			APIVersion:  "kro.run/v1alpha1",
@@ -68,7 +123,6 @@ func setupE2ETestServer(t *testing.T) (*httptest.Server, *watcher.RGDCache) {
 			Name:        "fullstack-app",
 			Namespace:   "default",
 			Description: "Full-stack application with database dependency",
-			Version:     "1.0.0",
 			Tags:        []string{"webapp", "production"},
 			Category:    "compute",
 			APIVersion:  "kro.run/v1alpha1",
@@ -102,7 +156,6 @@ func setupE2ETestServer(t *testing.T) (*httptest.Server, *watcher.RGDCache) {
 			Name:        "webapp",
 			Namespace:   "default",
 			Description: "Simple web application",
-			Version:     "1.0.0",
 			Tags:        []string{"webapp"},
 			Category:    "compute",
 			APIVersion:  "kro.run/v1alpha1",
@@ -131,9 +184,16 @@ func setupE2ETestServer(t *testing.T) (*httptest.Server, *watcher.RGDCache) {
 	checker := health.NewChecker(nil, nil, w)
 
 	// Create router (nil for instanceTracker, schema extractor, and wsHub - we'll test without them)
-	router := api.NewRouterWithConfig(checker, w, nil, nil, api.RouterConfig{})
+	routerResult := api.NewRouterWithConfig(checker, w, nil, nil, api.RouterConfig{
+		PolicyEnforcer: &testE2EAdminPolicyEnforcer{},
+	})
+	t.Cleanup(func() {
+		for _, rl := range routerResult.UserRateLimiters {
+			rl.Stop()
+		}
+	})
 
-	server := httptest.NewServer(router)
+	server := httptest.NewServer(routerResult.Handler)
 	return server, cache
 }
 
@@ -295,7 +355,6 @@ func setupE2EResourceGraphTestServer(t *testing.T) (*httptest.Server, *watcher.R
 			Name:        "fullstack-app-with-resources",
 			Namespace:   "default",
 			Description: "Full-stack application with conditional ingress and externalRef",
-			Version:     "1.0.0",
 			Tags:        []string{"webapp", "fullstack"},
 			Category:    "compute",
 			APIVersion:  "kro.run/v1alpha1",
@@ -392,7 +451,6 @@ func setupE2EResourceGraphTestServer(t *testing.T) (*httptest.Server, *watcher.R
 			Name:        "postgres-cluster-resources",
 			Namespace:   "default",
 			Description: "PostgreSQL cluster with conditional replicas",
-			Version:     "1.0.0",
 			Tags:        []string{"database", "production"},
 			Category:    "database",
 			APIVersion:  "kro.run/v1alpha1",
@@ -468,7 +526,6 @@ func setupE2EResourceGraphTestServer(t *testing.T) (*httptest.Server, *watcher.R
 			Name:        "simple-app-no-resources",
 			Namespace:   "default",
 			Description: "Simple app with no resources defined",
-			Version:     "1.0.0",
 			Tags:        []string{"simple"},
 			Category:    "compute",
 			APIVersion:  "kro.run/v1alpha1",
@@ -493,9 +550,16 @@ func setupE2EResourceGraphTestServer(t *testing.T) (*httptest.Server, *watcher.R
 
 	w := watcher.NewRGDWatcherWithCache(cache)
 	checker := health.NewChecker(nil, nil, w)
-	router := api.NewRouterWithConfig(checker, w, nil, nil, api.RouterConfig{})
+	routerResult := api.NewRouterWithConfig(checker, w, nil, nil, api.RouterConfig{
+		PolicyEnforcer: &testE2EAdminPolicyEnforcer{},
+	})
+	t.Cleanup(func() {
+		for _, rl := range routerResult.UserRateLimiters {
+			rl.Stop()
+		}
+	})
 
-	server := httptest.NewServer(router)
+	server := httptest.NewServer(routerResult.Handler)
 	return server, cache
 }
 
@@ -798,7 +862,6 @@ func setupE2ETestServerWithInstances(t *testing.T) (*httptest.Server, *watcher.R
 		Name:        "microservices-platform",
 		Namespace:   "default",
 		Description: "Microservices platform with database",
-		Version:     "v1",
 		Tags:        []string{"platform", "microservices"},
 		Category:    "application",
 		APIVersion:  "kro.run/v1alpha1",
@@ -910,12 +973,19 @@ func setupE2ETestServerWithInstances(t *testing.T) (*httptest.Server, *watcher.R
 	checker := health.NewChecker(nil, nil, w)
 
 	// Create router with instance tracker
-	router := api.NewRouterWithConfig(checker, w, tracker, nil, api.RouterConfig{})
+	routerResult := api.NewRouterWithConfig(checker, w, tracker, nil, api.RouterConfig{
+		PolicyEnforcer: &testE2EAdminPolicyEnforcer{},
+	})
+	t.Cleanup(func() {
+		for _, rl := range routerResult.UserRateLimiters {
+			rl.Stop()
+		}
+	})
 
 	// Wrap with global admin middleware to provide authentication context
 	// Instance filtering now requires authentication - unauthenticated
 	// requests correctly see no instances (secure default)
-	wrappedRouter := testGlobalAdminMiddleware(router)
+	wrappedRouter := testGlobalAdminMiddleware(routerResult.Handler)
 
 	server := httptest.NewServer(wrappedRouter)
 	return server, rgdCache, instanceCache
@@ -1056,7 +1126,7 @@ func TestE2E_InstancesVisibleInAPI(t *testing.T) {
 	})
 
 	t.Run("get specific instance", func(t *testing.T) {
-		resp, err := http.Get(server.URL + "/api/v1/instances/dev/MicroservicesPlatform/platform-dev")
+		resp, err := http.Get(server.URL + "/api/v1/namespaces/dev/instances/MicroservicesPlatform/platform-dev")
 		if err != nil {
 			t.Fatalf("failed to make request: %v", err)
 		}
@@ -1152,7 +1222,93 @@ func TestE2E_InstancesVisibleInAPI(t *testing.T) {
 	})
 }
 
-// TestE2E_InstanceCreation_FailsClosed_NilPolicyEnforcer tests that POST /api/v1/instances
+// TestE2E_OldInstanceRoutes_Return404 verifies that the pre-STORY-327 route patterns
+// (/{namespace}/{kind}/{name} and /-/{kind}/{name}) no longer match instance endpoints.
+func TestE2E_OldInstanceRoutes_Return404(t *testing.T) {
+	cache := watcher.NewRGDCache()
+	w := watcher.NewRGDWatcherWithCache(cache)
+	checker := health.NewChecker(nil, nil, w)
+
+	routerResult := api.NewRouterWithConfig(checker, w, nil, nil, api.RouterConfig{
+		PolicyEnforcer: &testE2EAdminPolicyEnforcer{},
+	})
+	t.Cleanup(func() {
+		for _, rl := range routerResult.UserRateLimiters {
+			rl.Stop()
+		}
+	})
+	server := httptest.NewServer(routerResult.Handler)
+	defer server.Close()
+
+	t.Run("old namespaced get returns 404", func(t *testing.T) {
+		resp, err := http.Get(server.URL + "/api/v1/instances/default/webapp/my-app")
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("expected 404, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("old cluster-scoped sentinel get returns 404", func(t *testing.T) {
+		resp, err := http.Get(server.URL + "/api/v1/instances/-/webapp/my-app")
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("expected 404, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("old POST /api/v1/instances returns 405", func(t *testing.T) {
+		req, _ := http.NewRequest(http.MethodPost, server.URL+"/api/v1/instances", nil)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound && resp.StatusCode != http.StatusMethodNotAllowed {
+			t.Errorf("expected 404 or 405, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("new K8s-aligned cluster-scoped get routes to handler", func(t *testing.T) {
+		// Without auth middleware this returns 401/503, but NOT 404 — proving the route is registered
+		resp, err := http.Get(server.URL + "/api/v1/instances/webapp/my-app")
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusNotFound {
+			t.Error("cluster-scoped instance route should be registered (got 404)")
+		}
+	})
+
+	t.Run("cluster-scoped history routes not registered without HistoryService", func(t *testing.T) {
+		// History routes are conditionally registered only when HistoryService != nil.
+		// Without HistoryService, these should return 404 (not registered).
+		paths := []string{
+			"/api/v1/instances/webapp/my-app/history",
+			"/api/v1/instances/webapp/my-app/history/export",
+			"/api/v1/instances/webapp/my-app/timeline",
+		}
+		for _, path := range paths {
+			resp, err := http.Get(server.URL + path)
+			if err != nil {
+				t.Fatalf("request to %s failed: %v", path, err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusNotFound {
+				t.Errorf("cluster-scoped history route %s should NOT be registered without HistoryService (got %d)", path, resp.StatusCode)
+			}
+		}
+	})
+}
+
+// TestE2E_InstanceCreation_FailsClosed_NilPolicyEnforcer tests that POST instance create
 // returns 503 when PolicyEnforcer is nil (AC-1: fail-closed on missing auth service)
 func TestE2E_InstanceCreation_FailsClosed_NilPolicyEnforcer(t *testing.T) {
 	// Create minimal test setup without PolicyEnforcer or ProjectService
@@ -1161,12 +1317,19 @@ func TestE2E_InstanceCreation_FailsClosed_NilPolicyEnforcer(t *testing.T) {
 	checker := health.NewChecker(nil, nil, w)
 
 	// Router with no PolicyEnforcer — should register fail-closed handler
-	router := api.NewRouterWithConfig(checker, w, nil, nil, api.RouterConfig{})
-	server := httptest.NewServer(router)
+	routerResult := api.NewRouterWithConfig(checker, w, nil, nil, api.RouterConfig{
+		PolicyEnforcer: &testE2EAdminPolicyEnforcer{},
+	})
+	t.Cleanup(func() {
+		for _, rl := range routerResult.UserRateLimiters {
+			rl.Stop()
+		}
+	})
+	server := httptest.NewServer(routerResult.Handler)
 	defer server.Close()
 
-	// POST to create instance — should get 503
-	resp, err := http.Post(server.URL+"/api/v1/instances", "application/json", nil)
+	// POST to create instance (K8s-aligned route) — should get 503
+	resp, err := http.Post(server.URL+"/api/v1/instances/webapp", "application/json", nil)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}

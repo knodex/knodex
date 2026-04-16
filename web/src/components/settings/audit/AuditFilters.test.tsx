@@ -56,13 +56,13 @@ describe("AuditFilters", () => {
   it("renders all filter controls", () => {
     render(<AuditFilters {...defaultProps} />, { wrapper: createWrapper() });
 
-    expect(screen.getByText("User")).toBeInTheDocument();
-    expect(screen.getByText("Action")).toBeInTheDocument();
-    expect(screen.getByText("Resource")).toBeInTheDocument();
-    expect(screen.getByText("Project")).toBeInTheDocument();
-    expect(screen.getByText("Result")).toBeInTheDocument();
-    expect(screen.getByText("From")).toBeInTheDocument();
-    expect(screen.getByText("To")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Filter by user...")).toBeInTheDocument();
+    expect(screen.getByText("All actions")).toBeInTheDocument();
+    expect(screen.getByText("All resources")).toBeInTheDocument();
+    expect(screen.getByText("All projects")).toBeInTheDocument();
+    expect(screen.getByText("All results")).toBeInTheDocument();
+    expect(screen.getByLabelText("From date")).toBeInTheDocument();
+    expect(screen.getByLabelText("To date")).toBeInTheDocument();
   });
 
   it("renders project filter as a dropdown with projects from API", () => {

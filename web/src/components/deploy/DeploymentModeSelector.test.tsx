@@ -3,6 +3,7 @@
 
 import { render, screen, fireEvent } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
+import { MemoryRouter } from "react-router-dom";
 import { DeploymentModeSelector } from "./DeploymentModeSelector";
 import type { RepositoryConfig } from "@/types/repository";
 
@@ -51,14 +52,6 @@ describe("DeploymentModeSelector", () => {
       expect(screen.getByText("Deployment Mode")).toBeInTheDocument();
     });
 
-    it("shows mode description for selected mode", () => {
-      render(<DeploymentModeSelector {...defaultProps} mode="direct" />);
-
-      expect(
-        screen.getByText(/Deploy directly to the Kubernetes cluster via API/)
-      ).toBeInTheDocument();
-    });
-
     it("applies custom className when provided", () => {
       const { container } = render(
         <DeploymentModeSelector {...defaultProps} className="custom-class" />
@@ -74,7 +67,7 @@ describe("DeploymentModeSelector", () => {
 
       // Find the GitOps button and check it has selected styling
       const gitopsButton = screen.getByRole("button", { name: /GitOps/i });
-      expect(gitopsButton).toHaveClass("border-primary");
+      expect(gitopsButton).toHaveClass("border-primary/30");
     });
 
     it("calls onModeChange when Direct mode is selected", () => {
@@ -233,11 +226,13 @@ describe("DeploymentModeSelector", () => {
 
     it("shows message when no repositories are configured", () => {
       render(
-        <DeploymentModeSelector
-          {...defaultProps}
-          mode="gitops"
-          repositories={[]}
-        />
+        <MemoryRouter>
+          <DeploymentModeSelector
+            {...defaultProps}
+            mode="gitops"
+            repositories={[]}
+          />
+        </MemoryRouter>
       );
 
       expect(
@@ -247,15 +242,10 @@ describe("DeploymentModeSelector", () => {
   });
 
   describe("Hybrid Mode", () => {
-    it("shows hybrid mode explanation when hybrid is selected", () => {
+    it("shows repository selector when hybrid is selected", () => {
       render(<DeploymentModeSelector {...defaultProps} mode="hybrid" />);
 
-      expect(
-        screen.getByText(/Manifest is applied to the cluster immediately/i)
-      ).toBeInTheDocument();
-      expect(
-        screen.getByText(/Manifest is then pushed to Git asynchronously/i)
-      ).toBeInTheDocument();
+      expect(screen.getByText("Git Repository")).toBeInTheDocument();
     });
   });
 
@@ -302,35 +292,6 @@ describe("DeploymentModeSelector", () => {
       expect(screen.getByRole("button", { name: /Direct/i })).toBeInTheDocument();
       expect(screen.queryByRole("button", { name: /GitOps/i })).not.toBeInTheDocument();
       expect(screen.getByRole("button", { name: /Hybrid/i })).toBeInTheDocument();
-    });
-
-    it("shows restriction banner when only one mode is allowed", () => {
-      render(
-        <DeploymentModeSelector
-          {...defaultProps}
-          mode="gitops"
-          allowedModes={["gitops"]}
-        />
-      );
-
-      // The banner text contains "This RGD only allows GitOps deployment mode"
-      const banner = screen.getByText(/This RGD only allows/i);
-      expect(banner).toBeInTheDocument();
-      expect(banner.textContent).toContain("GitOps");
-    });
-
-    it("shows restriction banner with multiple allowed modes", () => {
-      render(
-        <DeploymentModeSelector
-          {...defaultProps}
-          mode="direct"
-          allowedModes={["direct", "gitops"]}
-        />
-      );
-
-      expect(
-        screen.getByText(/This RGD is restricted to the following deployment modes/i)
-      ).toBeInTheDocument();
     });
 
     it("does not show restriction banner when all modes are allowed", () => {
@@ -412,30 +373,5 @@ describe("DeploymentModeSelector", () => {
       expect(onModeChange).not.toHaveBeenCalled();
     });
 
-    it("uses grid-cols-2 when two modes are allowed", () => {
-      const { container } = render(
-        <DeploymentModeSelector
-          {...defaultProps}
-          mode="direct"
-          allowedModes={["direct", "gitops"]}
-        />
-      );
-
-      const grid = container.querySelector(".grid-cols-2");
-      expect(grid).toBeInTheDocument();
-    });
-
-    it("uses grid-cols-1 when one mode is allowed", () => {
-      const { container } = render(
-        <DeploymentModeSelector
-          {...defaultProps}
-          mode="gitops"
-          allowedModes={["gitops"]}
-        />
-      );
-
-      const grid = container.querySelector(".grid-cols-1");
-      expect(grid).toBeInTheDocument();
-    });
   });
 });

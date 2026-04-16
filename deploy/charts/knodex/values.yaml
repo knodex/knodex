@@ -4,6 +4,10 @@
 nameOverride: ""
 fullnameOverride: ""
 
+# -- Namespace where Knodex Project CRDs are stored.
+# Defaults to the Helm release namespace (.Release.Namespace).
+# knodexNamespace: ""
+
 # -- Global settings shared across all pods
 global:
   # -- Node selector for all pods
@@ -80,6 +84,12 @@ server:
     # @default -- `false`
     swaggerUI: false
     # redisDB: 0  # Optional: Redis database number
+
+    # -- Comma-separated list of package names to filter RGD catalog ingestion.
+    # Only RGDs with a matching `knodex.io/package` label are ingested.
+    # When empty (default), all catalog-annotated RGDs are ingested.
+    # @default -- `""` (no filtering)
+    catalogPackageFilter: ""
 
     # Session cookie configuration
     cookie:
@@ -365,6 +375,45 @@ server:
       # @default -- `""`
       groupMappingsFile: ""
 
+# -- Catalog configuration
+catalog:
+  # -- Sidebar category ordering.
+  # Defines which categories appear in the sidebar sub-nav, in what order,
+  # and with optional icon overrides. When empty (default), no category sub-nav is shown.
+  # Changes require a server restart to take effect.
+  # @default -- `[]` (no sidebar sub-nav)
+  categoryConfig: []
+  # Example:
+  # categoryConfig:
+  #   - name: Infrastructure
+  #     weight: 10
+  #     icon: server
+  #   - name: Applications
+  #     weight: 20
+  #   - name: Networking
+  #     weight: 30
+  #     icon: network
+
+  # -- Custom icon registry.
+  # Add brand SVG icons not included in the built-in set. Each key is the icon slug
+  # (lowercase letters, digits, and hyphens only); the value is the inline SVG content.
+  # Creates a ConfigMap labeled `knodex.io/icon-registry: "true"` so the server picks it up.
+  # Changes require a server restart to take effect.
+  # @default -- `{}` (no custom icons)
+  customIcons: {}
+  # Example:
+  # customIcons:
+  #   my-app: |
+  #     <svg role="img" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  #       <title>My App</title>
+  #       <path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12-5.373 12-12S18.627 0 12 0z"/>
+  #     </svg>
+  #   internal-tool: |
+  #     <svg role="img" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  #       <title>Internal Tool</title>
+  #       <rect x="4" y="4" width="16" height="16" rx="2"/>
+  #     </svg>
+
 # -- Enterprise features
 enterprise:
   # -- Enable enterprise edition (uses knodex-ee image)
@@ -390,32 +439,6 @@ enterprise:
     # @default -- `""` (no inline license)
     text: ""
 
-  # -- Custom views configuration (Enterprise feature)
-  views:
-    enabled: false
-    # Custom views filter RGDs by the knodex.io/category annotation
-    # and appear in the sidebar below the standard navigation
-    items: []
-    # Example views:
-    # items:
-    #   - name: Testing Resources
-    #     slug: testing
-    #     icon: flask
-    #     category: testing
-    #     order: 1
-    #     description: RGDs for testing and QA environments
-    #   - name: Database Templates
-    #     slug: databases
-    #     icon: database
-    #     category: database
-    #     order: 2
-    #     description: Database provisioning templates
-    #   - name: Network Infrastructure
-    #     slug: networking
-    #     icon: network
-    #     category: networking
-    #     order: 3
-    #     description: Network and connectivity resources
 
   # -- Audit configuration (Enterprise feature)
   audit:
@@ -465,6 +488,65 @@ enterprise:
       #         kubernetes.io/metadata.name: ingress-nginx
       ingressFrom: []
 
+# ------------------------------------------------------------------------------
+# Dex OIDC Federation Proxy (Cloud feature)
+# https://dexidp.io/
+# ------------------------------------------------------------------------------
+# When enabled, Dex runs on the management cluster as an OIDC proxy.
+# It reads Knodex SSO provider config and translates it into Dex connectors,
+# allowing all managed tools (ArgoCD, Grafana, etc.) to authenticate via a
+# single Dex endpoint backed by the customer's IDP (Entra ID, Okta, Google).
+dex:
+  # -- Enable Dex OIDC federation proxy
+  enabled: false
+
+  # -- Number of Dex server replicas
+  replicaCount: 1
+
+  image:
+    repository: ghcr.io/dexidp/dex
+    tag: v2.45.1
+    pullPolicy: IfNotPresent
+
+  # Dex configuration
+  config:
+    # -- Public URL of the Dex instance (must be reachable by end users' browsers)
+    issuerURL: ""
+    # -- OAuth2 callback URL for Knodex (e.g., https://knodex.example.com/auth/callback)
+    knodexRedirectURL: ""
+    # -- OAuth2 client secret for the Knodex static client. If empty, auto-generated.
+    knodexClientSecret: ""
+    # -- Run Dex in HTTP mode (set to false for production with TLS)
+    disableTLS: true
+    # -- Dex log level (debug, info, warn, error)
+    logLevel: "info"
+    # -- TLS secret name (when disableTLS is false)
+    tlsSecretName: ""
+
+  service:
+    type: ClusterIP
+    httpPort: 5556
+    grpcPort: 5557
+    metricsPort: 5558
+    annotations: {}
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits: {}
+
+  # -- Annotations for Dex pods
+  podAnnotations: {}
+  # -- Labels for Dex pods
+  podLabels: {}
+  # -- Node selector for Dex pods (overrides global)
+  nodeSelector: {}
+  # -- Tolerations for Dex pods (overrides global)
+  tolerations: []
+  # -- Affinity for Dex pods (overrides global)
+  affinity: {}
+
 # Ingress configuration
 ingress:
   enabled: false
@@ -496,14 +578,21 @@ gateway:
     - "knodex.staging.knodex.io"
 
 # Redis configuration (Bitnami Redis subchart)
-# Redis authentication is enabled by default. The chart creates a persistent
-# secret (helm.sh/resource-policy: keep) with a distinct name (<fullname>-redis-password)
-# that is owned by this chart. The existingSecret tpl expression tells Bitnami
-# to use this chart-managed secret instead of generating its own, ensuring all
-# components share the same password without naming collisions.
 #
-# To use your own secret: replace redis.auth.existingSecret with your secret name
-# To set an explicit password: set redis.auth.password
+# Password management (choose one):
+#
+#   1. Chart-managed (default): A Helm hook Job creates the Secret via the
+#      Kubernetes API on first install (create-if-not-exists pattern, same as
+#      ArgoCD). The Secret is NOT in rendered manifests, so ArgoCD SSA cannot
+#      overwrite it. Safe for all deployment methods.
+#
+#   2. ExternalSecret (recommended for production): Set existingSecret to a
+#      Secret managed by the ExternalSecrets operator. The password lives in
+#      your vault (Azure KV, AWS SM, etc.) and is deterministic across all
+#      syncs. See docs/operator-manual/redis-password-management.md
+#
+#   3. Explicit password: Set redis.auth.password to a static value. Simple but
+#      the password appears in values files. Suitable for dev/test environments.
 #
 # NOTE: Bitnami removed semver tags from Docker Hub. The image is pinned by digest
 # to ensure reproducible deployments. Update the digest when upgrading Redis.
@@ -513,16 +602,18 @@ redis:
   architecture: standalone
   auth:
     enabled: true
-    # -- Tells the Bitnami subchart to use the chart-managed persistent secret
-    # instead of generating its own. The tpl expression is evaluated by Bitnami
-    # at render time. knodex.redisSecretName produces a consistent name in both
-    # the parent chart and subchart contexts.
-    # To use your own externally-managed secret, replace this with your secret name.
+    # -- Secret containing the Redis password. The default tpl expression points
+    # to the chart-managed secret (created by a Helm hook Job). For production,
+    # replace with an ExternalSecret-managed Secret name.
     # @default -- `'{{ include "knodex.redisSecretName" . }}'`
     existingSecret: '{{ include "knodex.redisSecretName" . }}'
     # -- Key within the existingSecret that holds the password.
     # @default -- `"redis-password"` (Bitnami default)
     existingSecretPasswordKey: ""
+    # -- Explicit password (option 3). When set, the chart-managed secret uses
+    # this value instead of generating a random password. Ignored when using
+    # a custom existingSecret.
+    password: ""
   image:
     # Bitnami no longer publishes semver tags — pin by digest for reproducibility.
     # To update: docker pull bitnami/redis:latest && docker inspect --format='{{index .RepoDigests 0}}' bitnami/redis:latest

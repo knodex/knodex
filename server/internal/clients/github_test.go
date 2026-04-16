@@ -22,16 +22,6 @@ func TestNewGitHubClient(t *testing.T) {
 	assert.Equal(t, DefaultSecretsNamespace, client.namespace)
 }
 
-func TestSetNamespace(t *testing.T) {
-	k8sClient := fake.NewSimpleClientset()
-	client := NewGitHubClient(k8sClient)
-
-	customNamespace := "custom-namespace"
-	client.SetNamespace(customNamespace)
-
-	assert.Equal(t, customNamespace, client.namespace)
-}
-
 func TestGetCredentials_Success(t *testing.T) {
 	// Create fake Kubernetes client with a secret
 	secret := &corev1.Secret{
@@ -295,58 +285,8 @@ func TestGetCredentials_DifferentNamespaces(t *testing.T) {
 	}
 }
 
-func TestCommitFiles_NilClient(t *testing.T) {
-	k8sClient := fake.NewSimpleClientset()
-	client := NewGitHubClient(k8sClient)
-
-	// Test with nil GitHub client
-	sha, err := client.CommitFiles(context.Background(), nil, "owner", "repo", "main", map[string]string{"test.txt": "content"}, "test commit")
-
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "GitHub client cannot be nil")
-	assert.Empty(t, sha)
-}
-
-func TestCommitFiles_NoFiles(t *testing.T) {
-	// Note: This tests the validation logic
-	// Testing with a mock GitHub client would require complex mocking
-	// so we document that the validation happens before any API calls
-
-	k8sClient := fake.NewSimpleClientset()
-	client := NewGitHubClient(k8sClient)
-
-	// Create a minimal GitHub client (will fail on API calls but validates input)
-	// We're testing that empty files map is rejected
-	// In practice, this would need a real or mocked GitHub client
-
-	// For now, we verify through code inspection that the check exists
-	// Integration tests will validate the full flow
-	_ = client
-
-	// Verify the validation exists in the code
-	// The actual test would require mocking the GitHub API
-	t.Skip("Requires GitHub API mocking - validation logic verified by code review")
-}
-
-func TestCommitFile_ConvenienceMethod(t *testing.T) {
-	// Note: This is a unit test for the convenience method logic only
-	// Integration tests with real GitHub API are in github_integration_test.go
-
-	k8sClient := fake.NewSimpleClientset()
-	client := NewGitHubClient(k8sClient)
-
-	// Test that CommitFile calls CommitFiles with single file
-	// Since we can't mock the GitHub client easily in unit tests,
-	// we verify it properly calls the underlying method
-	sha, err := client.CommitFile(context.Background(), nil, "owner", "repo", "main", "test.txt", "content", "message")
-
-	// Should fail because GitHub client is nil (expected for unit test)
-	assert.Error(t, err)
-	assert.Empty(t, sha)
-}
-
-// Note: TestCommitFiles, TestCommitFile (full), TestGetDefaultBranch, TestNewClientWithCredentials,
-// TestValidateToken, and TestTestConnection require real GitHub API calls or complex mocking.
+// Note: TestNewClientWithCredentials, TestValidateToken, and TestTestConnection require
+// real GitHub API calls or complex mocking.
 // These are covered in integration tests (github_integration_test.go) instead of unit tests.
 // For unit testing, we've covered the credential reading logic and basic validation which is
 // the core functionality of this package.

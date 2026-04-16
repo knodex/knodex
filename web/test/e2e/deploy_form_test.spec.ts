@@ -24,6 +24,26 @@ import {
  * to the deploy form for the microservices-platform RGD.
  */
 async function setupDeployFormMocks(page: Page) {
+  // Mock account/info so session restore succeeds (prevents blank page / redirect to login)
+  await page.route('**/api/v1/account/info', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        userID: 'user-global-admin',
+        email: 'admin@e2e-test.local',
+        displayName: 'Global Administrator',
+        groups: [],
+        casbinRoles: ['role:serveradmin'],
+        projects: [],
+        roles: {},
+        issuer: 'knodex',
+        tokenExpiresAt: Math.floor(Date.now() / 1000) + 3600,
+        tokenIssuedAt: Math.floor(Date.now() / 1000) - 60,
+      }),
+    })
+  })
+
   // Mock the RGD list endpoint and specific RGD endpoints
   await page.route(`**${API_PATHS.rgds}**`, async (route) => {
     const url = route.request().url()
@@ -119,9 +139,29 @@ async function setupDeployFormMocks(page: Page) {
       body: JSON.stringify(mockK8sServices),
     })
   })
+
+  // Mock compliance validate endpoint (called when advancing from Configure to Review)
+  await page.route('**/api/v1/compliance/**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ result: 'pass', violations: [] }),
+    })
+  })
+
+  // Mock preflight dry-run endpoint (called when advancing from Configure to Review)
+  await page.route('**/instances/**/preflight', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ valid: true }),
+    })
+  })
 }
 
-/** Navigate from catalog to the deploy form for microservices-platform */
+/** Navigate from catalog to the deploy form for microservices-platform.
+ *  The deploy modal is a 3-step wizard: Target -> Configure -> Review.
+ *  This helper fills in the Target step and advances to Configure. */
 async function navigateToDeployForm(page: Page) {
   await page.goto('/catalog')
   await page.waitForLoadState('networkidle')
@@ -133,12 +173,23 @@ async function navigateToDeployForm(page: Page) {
   await page.waitForURL(/\/catalog\//, { timeout: 10000 })
   await page.waitForLoadState('networkidle')
 
-  const deployButton = page.getByRole('button', { name: /deploy/i })
+  const deployButton = page.getByRole('button', { name: /deploy/i }).first()
   await expect(deployButton).toBeVisible({ timeout: 15000 })
   await deployButton.click()
 
-  await page.waitForLoadState('networkidle')
-  await expect(page.getByText('Configuration')).toBeVisible({ timeout: 15000 })
+  // Step 1: Target — fill instance name, select project & namespace
+  await expect(page.getByTestId('target-step')).toBeVisible({ timeout: 15000 })
+  await page.getByPlaceholder('my-instance').fill('test-deploy')
+
+  // Project auto-selects when only one exists; select namespace
+  const nsSelect = page.getByTestId('namespace-select')
+  await expect(nsSelect).toBeEnabled({ timeout: 5000 })
+  await nsSelect.click()
+  await page.getByRole('option', { name: 'default' }).click()
+
+  // Advance to Configure step
+  await page.getByRole('button', { name: /continue/i }).click()
+  await expect(page.getByTestId('configure-step')).toBeVisible({ timeout: 15000 })
 }
 
 test.describe('Conditional Field Visibility', () => {
@@ -225,6 +276,9 @@ test.describe('Conditional Field Visibility', () => {
     const select = page.getByTestId('input-externalRef.externaldb')
     await expect(select).toBeVisible()
 
+    // Wait for the dropdown to load resources (enabled = not disabled)
+    await expect(select).toBeEnabled({ timeout: 10000 })
+
     // Select a specific resource from the dropdown by value
     await select.selectOption({ value: 'postgres-service' })
 
@@ -235,35 +289,48 @@ test.describe('Conditional Field Visibility', () => {
 
   test('includes all visible fields in form submission', async ({ page }) => {
     // Mock the create instance endpoint
+    // Instance creation endpoint: POST /api/v1/namespaces/{ns}/instances/{kind}
     let submittedData: Record<string, unknown> | null = null
-    const responsePromise = page.waitForResponse('**/api/v1/instances')
 
-    await page.route('**/api/v1/instances', async (route) => {
-      submittedData = await route.request().postDataJSON()
-      await route.fulfill({
-        status: 201,
-        contentType: 'application/json',
-        body: JSON.stringify({ success: true }),
-      })
+    await page.route('**/api/v1/namespaces/*/instances/**', async (route) => {
+      // Let preflight requests fall through to the preflight mock
+      if (route.request().url().includes('/preflight')) {
+        await route.fallback()
+        return
+      }
+      if (route.request().method() === 'POST') {
+        submittedData = await route.request().postDataJSON()
+        await route.fulfill({
+          status: 201,
+          contentType: 'application/json',
+          body: JSON.stringify({ success: true }),
+        })
+      } else {
+        await route.continue()
+      }
     })
 
-    // Fill in required fields
+    // Fill in required fields on the Configure step
     await page.getByTestId('input-platformName').fill('test-platform')
 
-    // Fill the instance name
-    await page.getByTestId('input-instanceName').fill('my-platform')
+    // Navigate to Review step
+    await page.getByRole('button', { name: /continue/i }).click()
+    // Wait for Review step — identified by "Deployment Summary" heading
+    await expect(page.getByText('Deployment Summary')).toBeVisible({ timeout: 10000 })
 
-    // Submit the form
-    await page.getByTestId('deploy-submit-button').click()
+    // Submit from Review step via the deploy button (🚀 Deploy)
+    const deployBtn = page.getByRole('button', { name: /deploy/i }).last()
+    await expect(deployBtn).toBeVisible({ timeout: 5000 })
 
-    // Wait for response instead of arbitrary timeout
+    const responsePromise = page.waitForResponse('**/api/v1/namespaces/*/instances/**')
+    await deployBtn.click()
     await responsePromise
 
     // Verify the submitted data includes only visible fields
     expect(submittedData).toBeDefined()
-    expect(submittedData.spec).toBeDefined()
-    expect(submittedData.spec.platformName).toBe('test-platform')
-    expect(submittedData.spec.useExistingDatabase).toBe(false)
+    expect(submittedData!.spec).toBeDefined()
+    expect((submittedData!.spec as Record<string, unknown>).platformName).toBe('test-platform')
+    expect((submittedData!.spec as Record<string, unknown>).useExistingDatabase).toBe(false)
     // externalRef should not have values when conditional is disabled
   })
 
@@ -271,16 +338,25 @@ test.describe('Conditional Field Visibility', () => {
     page,
   }) => {
     // Mock the create instance endpoint
+    // Instance creation endpoint: POST /api/v1/namespaces/{ns}/instances/{kind}
     let submittedData: Record<string, unknown> | null = null
-    const responsePromise = page.waitForResponse('**/api/v1/instances')
 
-    await page.route('**/api/v1/instances', async (route) => {
-      submittedData = await route.request().postDataJSON()
-      await route.fulfill({
-        status: 201,
-        contentType: 'application/json',
-        body: JSON.stringify({ success: true }),
-      })
+    await page.route('**/api/v1/namespaces/*/instances/**', async (route) => {
+      // Let preflight requests fall through to the preflight mock
+      if (route.request().url().includes('/preflight')) {
+        await route.fallback()
+        return
+      }
+      if (route.request().method() === 'POST') {
+        submittedData = await route.request().postDataJSON()
+        await route.fulfill({
+          status: 201,
+          contentType: 'application/json',
+          body: JSON.stringify({ success: true }),
+        })
+      } else {
+        await route.continue()
+      }
     })
 
     // Fill in required fields
@@ -290,29 +366,37 @@ test.describe('Conditional Field Visibility', () => {
     const checkbox = page.getByTestId('input-useExistingDatabase')
     await checkbox.check()
 
-    // Wait for resource picker to appear
+    // Wait for resource picker to appear and load
     const conditionalSelect = page.getByTestId('input-externalRef.externaldb')
     await expect(conditionalSelect).toBeVisible()
+    await expect(conditionalSelect).toBeEnabled({ timeout: 10000 })
 
     // Select a specific resource from the dropdown (auto-fills name + namespace)
     await conditionalSelect.selectOption({ value: 'postgres-service' })
 
-    // Fill the instance name
-    await page.getByTestId('input-instanceName').fill('my-platform')
+    // Navigate to Review step
+    await page.getByRole('button', { name: /continue/i }).click()
+    // Wait for Review step — identified by "Deployment Summary" heading
+    await expect(page.getByText('Deployment Summary')).toBeVisible({ timeout: 10000 })
 
-    // Submit the form
-    await page.getByTestId('deploy-submit-button').click()
+    // Submit from Review step via the deploy button (🚀 Deploy)
+    const deployBtn = page.getByRole('button', { name: /deploy/i }).last()
+    await expect(deployBtn).toBeVisible({ timeout: 5000 })
 
-    // Wait for response instead of arbitrary timeout
+    const responsePromise = page.waitForResponse('**/api/v1/namespaces/*/instances/**')
+    await deployBtn.click()
     await responsePromise
 
     // Verify the submitted data includes auto-filled name and namespace
     expect(submittedData).toBeDefined()
-    expect(submittedData.spec).toBeDefined()
-    expect(submittedData.spec.platformName).toBe('test-platform')
-    expect(submittedData.spec.useExistingDatabase).toBe(true)
-    expect(submittedData.spec.externalRef.externaldb.name).toBe('postgres-service') // Auto-filled from resource picker
-    expect(submittedData.spec.externalRef.externaldb.namespace).toBe('default') // Auto-filled from resource picker
+    expect(submittedData!.spec).toBeDefined()
+    expect((submittedData!.spec as Record<string, unknown>).platformName).toBe('test-platform')
+    expect((submittedData!.spec as Record<string, unknown>).useExistingDatabase).toBe(true)
+    const spec = submittedData!.spec as Record<string, unknown>
+    const externalRef = spec.externalRef as Record<string, unknown>
+    const externaldb = externalRef.externaldb as Record<string, unknown>
+    expect(externaldb.name).toBe('postgres-service') // Auto-filled from resource picker
+    expect(externaldb.namespace).toBe('default') // Auto-filled from resource picker
   })
 
   test('non-controlling fields are always visible', async ({ page }) => {
@@ -400,14 +484,19 @@ test.describe('Conditional Field Helper Functions', () => {
 
   test('captureFormSubmission helper captures data', async ({ page }) => {
     await fillField(page, 'platformName', 'test-platform')
-    await fillField(page, 'instanceName', 'my-instance')
+
+    // Navigate to Review step (deploy button is only on Review step)
+    await page.getByRole('button', { name: /continue/i }).click()
+    // Wait for Review step — identified by "Deployment Summary" heading
+    await expect(page.getByText('Deployment Summary')).toBeVisible({ timeout: 10000 })
 
     const submittedData = await captureFormSubmission(page, async () => {
-      await page.getByTestId('deploy-submit-button').click()
+      // Click the last deploy button (the 🚀 Deploy button on the Review step)
+      await page.getByRole('button', { name: /deploy/i }).last().click()
     })
 
     expect(submittedData.spec).toBeDefined()
-    expect(submittedData.spec.platformName).toBe('test-platform')
+    expect((submittedData.spec as Record<string, unknown>).platformName).toBe('test-platform')
     // instanceName is metadata, not spec - verify it exists in the request
     expect(submittedData).toBeDefined()
   })
@@ -420,6 +509,26 @@ test.describe('Conditional Field Helper Functions', () => {
  * (keyVaultRef) externalRef selectors produce identical ExternalRefSelectorMetadata.
  */
 async function setupCompositeRGDMocks(page: Page) {
+  // Mock account/info so session restore succeeds (prevents blank page / redirect to login)
+  await page.route('**/api/v1/account/info', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        userID: 'user-global-admin',
+        email: 'admin@e2e-test.local',
+        displayName: 'Global Administrator',
+        groups: [],
+        casbinRoles: ['role:serveradmin'],
+        projects: [],
+        roles: {},
+        issuer: 'knodex',
+        tokenExpiresAt: Math.floor(Date.now() / 1000) + 3600,
+        tokenIssuedAt: Math.floor(Date.now() / 1000) - 60,
+      }),
+    })
+  })
+
   await page.route(`**${API_PATHS.rgds}**`, async (route) => {
     const url = route.request().url()
 
@@ -530,9 +639,28 @@ async function setupCompositeRGDMocks(page: Page) {
       })
     }
   })
+
+  // Mock compliance validate endpoint (called when advancing from Configure to Review)
+  await page.route('**/api/v1/compliance/**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ result: 'pass', violations: [] }),
+    })
+  })
+
+  // Mock preflight dry-run endpoint (called when advancing from Configure to Review)
+  await page.route('**/instances/**/preflight', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ valid: true }),
+    })
+  })
 }
 
-/** Navigate to the deploy form for the composite RGD */
+/** Navigate to the deploy form for the composite RGD.
+ *  Fills in the Target step and advances to Configure. */
 async function navigateToCompositeDeployForm(page: Page) {
   await page.goto('/catalog')
   await page.waitForLoadState('networkidle')
@@ -544,12 +672,22 @@ async function navigateToCompositeDeployForm(page: Page) {
   await page.waitForURL(/\/catalog\//, { timeout: 10000 })
   await page.waitForLoadState('networkidle')
 
-  const deployButton = page.getByRole('button', { name: /deploy/i })
+  const deployButton = page.getByRole('button', { name: /deploy/i }).first()
   await expect(deployButton).toBeVisible({ timeout: 15000 })
   await deployButton.click()
 
-  await page.waitForLoadState('networkidle')
-  await expect(page.getByText('Configuration')).toBeVisible({ timeout: 15000 })
+  // Step 1: Target — fill instance name, select project & namespace
+  await expect(page.getByTestId('target-step')).toBeVisible({ timeout: 15000 })
+  await page.getByPlaceholder('my-instance').fill('test-deploy')
+
+  const nsSelect = page.getByTestId('namespace-select')
+  await expect(nsSelect).toBeEnabled({ timeout: 5000 })
+  await nsSelect.click()
+  await page.getByRole('option', { name: 'default' }).click()
+
+  // Advance to Configure step
+  await page.getByRole('button', { name: /continue/i }).click()
+  await expect(page.getByTestId('configure-step')).toBeVisible({ timeout: 15000 })
 }
 
 test.describe('Nested ExternalRef Dropdowns (Composite RGDs)', () => {
@@ -580,6 +718,9 @@ test.describe('Nested ExternalRef Dropdowns (Composite RGDs)', () => {
     const keyVaultDropdown = page.getByTestId('input-externalRef.keyVaultRef')
     await expect(keyVaultDropdown).toBeVisible()
 
+    // Wait for dropdown to load (enabled = not disabled)
+    await expect(keyVaultDropdown).toBeEnabled({ timeout: 10000 })
+
     // Select a key vault from the dropdown
     await keyVaultDropdown.selectOption({ value: 'prod-keyvault' })
     const selectedValue = await keyVaultDropdown.inputValue()
@@ -593,6 +734,9 @@ test.describe('Nested ExternalRef Dropdowns (Composite RGDs)', () => {
     const argocdDropdown = page.getByTestId('input-externalRef.argocdClusterRef')
     await expect(argocdDropdown).toBeVisible()
 
+    // Wait for dropdown to load (enabled = not disabled)
+    await expect(argocdDropdown).toBeEnabled({ timeout: 10000 })
+
     // Select a cluster from the dropdown
     await argocdDropdown.selectOption({ value: 'aks-prod-cluster' })
     const selectedValue = await argocdDropdown.inputValue()
@@ -602,44 +746,70 @@ test.describe('Nested ExternalRef Dropdowns (Composite RGDs)', () => {
   test('form submission includes auto-filled values from both externalRef types', async ({
     page,
   }) => {
+    // Mock the create instance endpoint
+    // Instance creation endpoint: POST /api/v1/namespaces/{ns}/instances/{kind}
     let submittedData: Record<string, unknown> | null = null
-    const responsePromise = page.waitForResponse('**/api/v1/instances')
 
-    await page.route('**/api/v1/instances', async (route) => {
-      submittedData = await route.request().postDataJSON()
-      await route.fulfill({
-        status: 201,
-        contentType: 'application/json',
-        body: JSON.stringify({ success: true }),
-      })
+    await page.route('**/api/v1/namespaces/*/instances/**', async (route) => {
+      // Let preflight requests fall through to the preflight mock
+      if (route.request().url().includes('/preflight')) {
+        await route.fallback()
+        return
+      }
+      if (route.request().method() === 'POST') {
+        submittedData = await route.request().postDataJSON()
+        await route.fulfill({
+          status: 201,
+          contentType: 'application/json',
+          body: JSON.stringify({ success: true }),
+        })
+      } else {
+        await route.continue()
+      }
     })
 
     // Fill required fields
     await page.getByTestId('input-appName').fill('my-aks-app')
-    await page.getByTestId('input-instanceName').fill('my-eso-instance')
 
-    // Select from both dropdowns
+    // Wait for and select from both dropdowns
     const argocdDropdown = page.getByTestId('input-externalRef.argocdClusterRef')
+    await expect(argocdDropdown).toBeVisible()
+    await expect(argocdDropdown).toBeEnabled({ timeout: 10000 })
     await argocdDropdown.selectOption({ value: 'aks-prod-cluster' })
 
     const keyVaultDropdown = page.getByTestId('input-externalRef.keyVaultRef')
+    await expect(keyVaultDropdown).toBeVisible()
+    await expect(keyVaultDropdown).toBeEnabled({ timeout: 10000 })
     await keyVaultDropdown.selectOption({ value: 'prod-keyvault' })
 
-    // Submit the form
-    await page.getByTestId('deploy-submit-button').click()
+    // Navigate to Review step
+    await page.getByRole('button', { name: /continue/i }).click()
+    // Wait for Review step — identified by "Deployment Summary" heading
+    await expect(page.getByText('Deployment Summary')).toBeVisible({ timeout: 10000 })
+
+    // Submit from Review step via the deploy button (🚀 Deploy)
+    const deployBtn = page.getByRole('button', { name: /deploy/i }).last()
+    await expect(deployBtn).toBeVisible({ timeout: 5000 })
+
+    const responsePromise = page.waitForResponse('**/api/v1/namespaces/*/instances/**')
+    await deployBtn.click()
     await responsePromise
 
     // Verify both externalRef values are submitted with auto-filled name + namespace
     expect(submittedData).toBeDefined()
-    expect(submittedData.spec).toBeDefined()
-    expect(submittedData.spec.appName).toBe('my-aks-app')
+    expect(submittedData!.spec).toBeDefined()
+    const spec = submittedData!.spec as Record<string, unknown>
+    expect(spec.appName).toBe('my-aks-app')
 
     // Resource-level externalRef (argocdClusterRef)
-    expect(submittedData.spec.externalRef.argocdClusterRef.name).toBe('aks-prod-cluster')
-    expect(submittedData.spec.externalRef.argocdClusterRef.namespace).toBe('argocd')
+    const externalRef = spec.externalRef as Record<string, unknown>
+    const argocdClusterRef = externalRef.argocdClusterRef as Record<string, unknown>
+    expect(argocdClusterRef.name).toBe('aks-prod-cluster')
+    expect(argocdClusterRef.namespace).toBe('argocd')
 
     // Nested externalRef (keyVaultRef) - identical metadata format
-    expect(submittedData.spec.externalRef.keyVaultRef.name).toBe('prod-keyvault')
-    expect(submittedData.spec.externalRef.keyVaultRef.namespace).toBe('secrets')
+    const keyVaultRef = externalRef.keyVaultRef as Record<string, unknown>
+    expect(keyVaultRef.name).toBe('prod-keyvault')
+    expect(keyVaultRef.namespace).toBe('secrets')
   })
 })

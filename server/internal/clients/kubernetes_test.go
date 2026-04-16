@@ -25,7 +25,7 @@ func TestNewKubernetesClient_Timeout(t *testing.T) {
 
 	// Create client - should not panic even with invalid config
 	// The client creation should succeed, but connection test may fail
-	client := NewKubernetesClient(cfg)
+	client := NewKubernetesClient(cfg, nil)
 
 	// Client may be nil if kubeconfig is completely invalid
 	// But if config is valid but API is slow, client should be returned
@@ -53,7 +53,7 @@ func TestNewKubernetesClient_WithValidConfig(t *testing.T) {
 		t.Error("expected timeout to be set on rest config")
 	}
 
-	client := NewKubernetesClient(cfg)
+	client := NewKubernetesClient(cfg, nil)
 	if client == nil {
 		t.Fatal("expected client to be created with valid config")
 	}

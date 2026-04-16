@@ -23,11 +23,11 @@ import (
 	"github.com/knodex/knodex/server/internal/api/response"
 	"github.com/knodex/knodex/server/internal/audit"
 	"github.com/knodex/knodex/server/internal/deployment"
-	"github.com/knodex/knodex/server/internal/deployment/vcs"
+	"github.com/knodex/knodex/server/internal/history"
 	"github.com/knodex/knodex/server/internal/kro/watcher"
-	"github.com/knodex/knodex/server/internal/manifest"
 	"github.com/knodex/knodex/server/internal/models"
 	"github.com/knodex/knodex/server/internal/repository"
+	"github.com/knodex/knodex/server/internal/util/sanitize"
 )
 
 const (
@@ -59,6 +59,8 @@ type CreateInstanceRequest struct {
 	GitBranch string `json:"gitBranch,omitempty"`
 	// GitPath overrides the auto-generated semantic path for this deployment
 	GitPath string `json:"gitPath,omitempty"`
+	// ClusterRef is the target CAPI cluster for multi-cluster deployments
+	ClusterRef string `json:"clusterRef,omitempty"`
 }
 
 // CreateInstanceResponse represents the response after creating an instance
@@ -83,6 +85,7 @@ type InstanceDeploymentHandler struct {
 	kubeClient           kubernetes.Interface
 	deploymentController *deployment.Controller
 	repoService          *repository.Service
+	historyService       *history.Service
 	recorder             audit.Recorder
 	logger               *slog.Logger
 }
@@ -94,6 +97,7 @@ type InstanceDeploymentHandlerConfig struct {
 	DynamicClient   dynamic.Interface
 	KubeClient      kubernetes.Interface
 	RepoService     *repository.Service
+	HistoryService  *history.Service
 	AuditRecorder   audit.Recorder
 	Logger          *slog.Logger
 }
@@ -117,14 +121,19 @@ func NewInstanceDeploymentHandler(config InstanceDeploymentHandlerConfig) *Insta
 		kubeClient:           config.KubeClient,
 		deploymentController: deployCtrl,
 		repoService:          config.RepoService,
+		historyService:       config.HistoryService,
 		recorder:             config.AuditRecorder,
 		logger:               logger.With("component", "instance-deployment-handler"),
 	}
 }
 
-// CreateInstance handles POST /api/v1/instances
-// Enforces project-scoped namespace deployment
-// Supports deployment modes: direct, gitops, hybrid
+// CreateInstance handles instance creation.
+// K8s-aligned routes: POST /api/v1/namespaces/{ns}/instances/{kind} (namespaced)
+//
+//	POST /api/v1/instances/{kind} (cluster-scoped)
+//
+// Enforces project-scoped namespace deployment.
+// Supports deployment modes: direct, gitops, hybrid.
 func (h *InstanceDeploymentHandler) CreateInstance(w http.ResponseWriter, r *http.Request) {
 	// Check if watcher is available
 	if h.rgdWatcher == nil {
@@ -152,18 +161,41 @@ func (h *InstanceDeploymentHandler) CreateInstance(w http.ResponseWriter, r *htt
 		return
 	}
 
-	slog.Info("CreateInstance request received",
+	// K8s-aligned routes: namespace and kind come from path parameters.
+	// Path namespace takes precedence over body namespace.
+	pathNamespace := r.PathValue("namespace")
+	pathKind := r.PathValue("kind")
+
+	// STORY-348: DNS-1123 validation for K8s-bound path params
+	if pathNamespace != "" && !sanitize.IsValidDNS1123Label(pathNamespace) {
+		response.BadRequest(w, "namespace must be a valid DNS-1123 label (lowercase alphanumeric with hyphens, max 63 chars)", nil)
+		return
+	}
+	if pathKind != "" && !sanitize.IsValidK8sKind(pathKind) {
+		response.BadRequest(w, "kind must be a valid Kubernetes Kind name (CamelCase, starting with uppercase letter)", nil)
+		return
+	}
+
+	if pathNamespace != "" {
+		req.Namespace = pathNamespace
+	}
+
+	// STORY-348: Validate body namespace when path namespace is absent (cluster-scoped route).
+	// Path namespace is already validated above; body namespace needs the same check.
+	if pathNamespace == "" && req.Namespace != "" && !sanitize.IsValidDNS1123Label(req.Namespace) {
+		response.BadRequest(w, "namespace must be a valid DNS-1123 label (lowercase alphanumeric with hyphens, max 63 chars)", nil)
+		return
+	}
+
+	h.logger.Info("CreateInstance request received",
 		"name", req.Name,
 		"namespace", req.Namespace,
 		"rgdName", req.RGDName)
 
-	// Validate required fields
+	// Validate fields that are always required (namespace validated after RGD lookup for scope awareness)
 	validationErrors := make(map[string]string)
 	if req.Name == "" {
 		validationErrors["name"] = "name is required"
-	}
-	if req.Namespace == "" {
-		validationErrors["namespace"] = "namespace is required"
 	}
 	if req.RGDName == "" {
 		validationErrors["rgdName"] = "rgdName is required"
@@ -178,13 +210,18 @@ func (h *InstanceDeploymentHandler) CreateInstance(w http.ResponseWriter, r *htt
 	// 2. DeploymentValidator middleware for project/namespace policy validation (POST /api/v1/instances)
 	// The permissionService is now only used for namespace filtering, not authorization.
 
-	// Use namespace from request
-	namespace := req.Namespace
-
 	// Validate name format (DNS-1123 subdomain)
-	if !isValidDNS1123Name(req.Name) {
+	if !sanitize.IsValidDNS1123Subdomain(req.Name) {
 		response.BadRequest(w, "invalid instance name", map[string]string{
 			"name": "must be lowercase alphanumeric with hyphens, starting and ending with alphanumeric",
+		})
+		return
+	}
+
+	// Validate ClusterRef format if provided (DNS-1123 label — K8s resource name)
+	if req.ClusterRef != "" && !sanitize.IsValidDNS1123Label(req.ClusterRef) {
+		response.BadRequest(w, "invalid clusterRef", map[string]string{
+			"clusterRef": "must be a valid DNS-1123 label (lowercase alphanumeric with hyphens, max 63 chars)",
 		})
 		return
 	}
@@ -192,13 +229,13 @@ func (h *InstanceDeploymentHandler) CreateInstance(w http.ResponseWriter, r *htt
 	// Security: validate spec against injection/DoS attack patterns
 	// before applying to Kubernetes (INJ-VULN-02)
 	if req.Spec != nil {
-		if err := manifest.ValidateSpecMap(req.Spec, 0, manifest.MaxSpecDepth); err != nil {
+		if err := deployment.ValidateSpecMap(req.Spec, 0, deployment.MaxSpecDepth); err != nil {
 			response.BadRequest(w, "invalid spec: "+err.Error(), nil)
 			return
 		}
 	}
 
-	// Look up the RGD
+	// Look up the RGD (needed before namespace validation to check scope)
 	var rgd *models.CatalogRGD
 	var found bool
 
@@ -211,6 +248,29 @@ func (h *InstanceDeploymentHandler) CreateInstance(w http.ResponseWriter, r *htt
 	if !found {
 		response.NotFound(w, "RGD", req.RGDName)
 		return
+	}
+
+	// Validate path kind matches RGD kind early (before further processing)
+	if pathKind != "" && pathKind != rgd.Kind {
+		response.BadRequest(w, "kind in URL path does not match RGD kind", map[string]string{
+			"pathKind": pathKind,
+			"rgdKind":  rgd.Kind,
+		})
+		return
+	}
+
+	// Validate namespace: required for namespace-scoped RGDs, optional/ignored for cluster-scoped
+	if !rgd.IsClusterScoped && req.Namespace == "" {
+		response.BadRequest(w, "validation failed", map[string]string{
+			"namespace": "namespace is required for namespace-scoped RGDs",
+		})
+		return
+	}
+
+	// Use namespace from request (empty for cluster-scoped)
+	namespace := req.Namespace
+	if rgd.IsClusterScoped {
+		namespace = ""
 	}
 
 	// Extract API group and kind from the RGD
@@ -269,25 +329,27 @@ func (h *InstanceDeploymentHandler) CreateInstance(w http.ResponseWriter, r *htt
 
 	// Build deployment request
 	deployReq := &deployment.DeployRequest{
-		InstanceID:     uuid.New().String(),
-		Name:           req.Name,
-		Namespace:      namespace,
-		RGDName:        req.RGDName,
-		RGDNamespace:   rgd.Namespace,
-		APIVersion:     apiGroup + "/" + version,
-		Kind:           kind,
-		Spec:           req.Spec,
-		DeploymentMode: deployMode,
-		ProjectID:      req.ProjectID,
-		CreatedBy:      userCtx.Email,
-		CreatedAt:      time.Now(),
+		InstanceID:      uuid.New().String(),
+		Name:            req.Name,
+		Namespace:       namespace,
+		RGDName:         req.RGDName,
+		RGDNamespace:    rgd.Namespace,
+		APIVersion:      apiGroup + "/" + version,
+		Kind:            kind,
+		Spec:            req.Spec,
+		IsClusterScoped: rgd.IsClusterScoped,
+		DeploymentMode:  deployMode,
+		ProjectID:       req.ProjectID,
+		ClusterRef:      req.ClusterRef,
+		CreatedBy:       userCtx.Email,
+		CreatedAt:       time.Now(),
 	}
 
 	// Look up repository configuration for GitOps/Hybrid modes
 	if (deployMode == deployment.ModeGitOps || deployMode == deployment.ModeHybrid) && req.RepositoryID != "" {
 		// Validate repository service is available
 		if h.repoService == nil {
-			slog.Error("repository service not configured for GitOps deployment",
+			h.logger.Error("repository service not configured for GitOps deployment",
 				"instance", req.Name,
 				"repository_id", req.RepositoryID,
 			)
@@ -298,7 +360,7 @@ func (h *InstanceDeploymentHandler) CreateInstance(w http.ResponseWriter, r *htt
 		// Look up the repository config by ID
 		repoConfig, err := h.repoService.GetRepositoryConfig(ctx, req.RepositoryID)
 		if err != nil {
-			slog.Error("failed to get repository config",
+			h.logger.Error("failed to get repository config",
 				"repository_id", req.RepositoryID,
 				"error", err,
 			)
@@ -308,55 +370,8 @@ func (h *InstanceDeploymentHandler) CreateInstance(w http.ResponseWriter, r *htt
 			return
 		}
 
-		// Detect provider from repository URL
-		parsedURL, parseErr := vcs.ParseRepoURL(repoConfig.Spec.RepoURL)
-		provider := ""
-		if parseErr == nil && parsedURL.Provider != "" {
-			provider = string(parsedURL.Provider)
-		}
-
-		// Determine the correct secret key based on auth type
-		// HTTPS with bearer token uses "bearerToken", basic auth uses "password"
-		// SSH uses "sshPrivateKey", GitHub App has its own keys
-		secretKey := "bearerToken" // Default to bearer token for HTTPS
-		switch repoConfig.Spec.AuthType {
-		case "https":
-			// For HTTPS, prefer bearerToken (GitHub PAT), fall back to password
-			secretKey = "bearerToken"
-		case "ssh":
-			secretKey = "sshPrivateKey"
-		case "github-app":
-			// GitHub App uses dynamic token generation (handled elsewhere)
-			secretKey = "githubAppPrivateKey"
-		}
-
-		// Convert to deployment.RepositoryConfig
-		// Owner/Repo are parsed from RepoURL (no longer stored in spec)
-		owner := ""
-		repo := ""
-		if parsedURL != nil {
-			owner = parsedURL.Owner
-			repo = parsedURL.Repo
-		}
-		deployReq.Repository = &deployment.RepositoryConfig{
-			ID:            repoConfig.Name,
-			Name:          repoConfig.Spec.Name,
-			ProjectID:     repoConfig.Spec.ProjectID,
-			Provider:      provider,
-			Owner:         owner,
-			Repo:          repo,
-			Branch:        repoConfig.Spec.DefaultBranch,
-			DefaultBranch: repoConfig.Spec.DefaultBranch,
-			BasePath:      "manifests", // Default base path for GitOps
-			SecretRef: deployment.SecretReference{
-				Name:      repoConfig.Spec.SecretRef.Name,
-				Namespace: repoConfig.Spec.SecretRef.Namespace,
-				Key:       secretKey,
-			},
-			SecretName:      repoConfig.Spec.SecretRef.Name,
-			SecretNamespace: repoConfig.Spec.SecretRef.Namespace,
-			SecretKey:       secretKey,
-		}
+		// Convert to deployment.RepositoryConfig (shared with instance_crud.go)
+		deployReq.Repository = buildDeployRepoConfig(repoConfig)
 
 		// Set GitBranch override (from request or default to repo's default branch)
 		if req.GitBranch != "" {
@@ -370,11 +385,11 @@ func (h *InstanceDeploymentHandler) CreateInstance(w http.ResponseWriter, r *htt
 			deployReq.GitPath = req.GitPath
 		}
 
-		slog.Info("repository config loaded for GitOps deployment",
+		h.logger.Info("repository config loaded for GitOps deployment",
 			"instance", req.Name,
 			"repository_id", req.RepositoryID,
-			"owner", owner,
-			"repo", repo,
+			"owner", deployReq.Repository.Owner,
+			"repo", deployReq.Repository.Repo,
 			"branch", deployReq.GitBranch,
 			"path", deployReq.GitPath,
 		)
@@ -384,7 +399,7 @@ func (h *InstanceDeploymentHandler) CreateInstance(w http.ResponseWriter, r *htt
 	if (deployMode == deployment.ModeGitOps || deployMode == deployment.ModeHybrid) &&
 		h.deploymentController == nil {
 		// Fall back to direct mode if deployment controller not configured
-		slog.Warn("deployment controller not configured, falling back to direct mode",
+		h.logger.Warn("deployment controller not configured, falling back to direct mode",
 			"requested_mode", deployMode,
 			"instance", req.Name,
 		)
@@ -400,7 +415,7 @@ func (h *InstanceDeploymentHandler) CreateInstance(w http.ResponseWriter, r *htt
 		deployResult, deployErr = h.deploymentController.Deploy(ctx, deployReq)
 	} else {
 		// Fallback to direct deployment (legacy behavior)
-		deployResult, deployErr = h.directDeploy(ctx, deployReq, apiGroup, version, kind, namespace)
+		deployResult, deployErr = h.directDeploy(ctx, deployReq)
 	}
 
 	if deployErr != nil {
@@ -434,6 +449,27 @@ func (h *InstanceDeploymentHandler) CreateInstance(w http.ResponseWriter, r *htt
 		}
 	}
 
+	// Record deployment creation in history service (sets rgdName for timeline merge)
+	if h.historyService != nil {
+		if err := h.historyService.RecordCreation(r.Context(), namespace, kind, req.Name, req.RGDName, userCtx.Email, models.DeploymentMode(deployMode)); err != nil {
+			h.logger.Warn("failed to record deployment creation in history", "error", err, "instance", req.Name)
+		}
+
+		// For GitOps-only deployments, record a WaitingForSync event so the
+		// Deployment Timeline shows that the instance is pending its first sync.
+		if deployMode == deployment.ModeGitOps {
+			waitEvent := models.DeploymentEvent{
+				EventType: models.EventTypeWaitingForSync,
+				Status:    string(deployment.StatusWaitingForSync),
+				User:      userCtx.Email,
+				Message:   "Instance is awaiting its first GitOps synchronization to provision resources.",
+			}
+			if err := h.historyService.RecordEvent(r.Context(), namespace, kind, req.Name, waitEvent); err != nil {
+				h.logger.Warn("failed to record WaitingForSync event in history", "error", err, "instance", req.Name)
+			}
+		}
+	}
+
 	// Build audit details — NEVER include instance Spec (may contain secrets)
 	deployDetails := map[string]any{
 		"rgdName":        req.RGDName,
@@ -464,43 +500,39 @@ func (h *InstanceDeploymentHandler) CreateInstance(w http.ResponseWriter, r *htt
 	response.WriteJSON(w, http.StatusCreated, resp)
 }
 
-// directDeploy performs legacy direct deployment without the controller
-func (h *InstanceDeploymentHandler) directDeploy(ctx context.Context, req *deployment.DeployRequest, apiGroup, version, kind, namespace string) (*deployment.DeployResult, error) {
-	// Build the unstructured object
+// directDeploy performs legacy direct deployment without the controller.
+// Namespace comes from req.Namespace (not a separate parameter).
+func (h *InstanceDeploymentHandler) directDeploy(ctx context.Context, req *deployment.DeployRequest) (*deployment.DeployResult, error) {
+	// Build labels, annotations, and metadata via shared builder
 	// Note: KRO automatically sets "kro.run/resource-graph-definition-name" label on instances
 	// Note: app.kubernetes.io/managed-by will be set by KRO or GitOps tool (ArgoCD/Flux)
-	obj := &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": req.APIVersion,
-			"kind":       req.Kind,
-			"metadata": map[string]interface{}{
-				"name":      req.Name,
-				"namespace": namespace,
-				"labels": map[string]interface{}{
-					models.ProjectLabel:        namespace, // Use namespace name (e.g., "acme") not project ID
-					models.DeploymentModeLabel: string(deployment.ModeDirect),
-				},
-			},
-			"spec": req.Spec,
-		},
-	}
+	mb := deployment.NewInstanceMetadataBuilder(req)
+
+	obj := mb.BuildUnstructured(req.APIVersion, req.Kind, req.Spec)
 
 	// Resolve GVR using discovery (falls back to naive pluralization).
 	// ResolveGVR always returns nil error (fallback is built-in); the check guards
 	// against future contract changes.
-	gvr, err := h.instanceTracker.ResolveGVR(req.APIVersion, kind)
+	gvr, err := h.instanceTracker.ResolveGVR(req.APIVersion, req.Kind)
 	if err != nil {
-		slog.Error("Failed to resolve GVR for direct deploy",
-			"apiVersion", req.APIVersion, "kind", kind, "error", err)
+		h.logger.Error("Failed to resolve GVR for direct deploy",
+			"apiVersion", req.APIVersion, "kind", req.Kind, "error", err)
 		return nil, err
 	}
 
-	created, err := h.dynamicClient.Resource(gvr).Namespace(namespace).Create(ctx, obj, metav1.CreateOptions{})
+	// Use scope-aware dynamic client call
+	var created *unstructured.Unstructured
+	if req.IsClusterScoped {
+		created, err = h.dynamicClient.Resource(gvr).Create(ctx, obj, metav1.CreateOptions{})
+	} else {
+		created, err = h.dynamicClient.Resource(gvr).Namespace(req.Namespace).Create(ctx, obj, metav1.CreateOptions{})
+	}
 	if err != nil {
-		slog.Error("Failed to create resource in Kubernetes",
+		h.logger.Error("Failed to create resource in Kubernetes",
 			"gvr", gvr.String(),
-			"namespace", namespace,
+			"namespace", req.Namespace,
 			"name", req.Name,
+			"isClusterScoped", req.IsClusterScoped,
 			"error", err.Error())
 		return nil, err
 	}
@@ -515,13 +547,148 @@ func (h *InstanceDeploymentHandler) directDeploy(ctx context.Context, req *deplo
 	}, nil
 }
 
+// PreflightInstance validates an instance deployment using a Kubernetes server-side
+// dry-run without creating any resources. It catches admission webhook violations
+// (including Gatekeeper policies) on the KRO instance resource itself.
+//
+// Note: this validates the KRO instance resource. Violations on child resources
+// (e.g. Deployments created by KRO) are not caught here — those surface as
+// condition errors after deployment.
+//
+// K8s-aligned routes: POST /api/v1/namespaces/{ns}/instances/{kind}/preflight
+//
+//	POST /api/v1/instances/{kind}/preflight
+func (h *InstanceDeploymentHandler) PreflightInstance(w http.ResponseWriter, r *http.Request) {
+	if h.rgdWatcher == nil {
+		response.InternalError(w, "RGD watcher not available")
+		return
+	}
+
+	namespace := r.PathValue("namespace")
+	pathKind := r.PathValue("kind")
+
+	req, err := helpers.DecodeJSON[CreateInstanceRequest](r, w, 0)
+	if err != nil {
+		return // DecodeJSON already wrote the error response
+	}
+
+	if req.Name == "" {
+		req.Name = "preflight-check"
+	}
+	if namespace != "" {
+		req.Namespace = namespace
+	}
+
+	if req.Spec != nil {
+		if err := deployment.ValidateSpecMap(req.Spec, 0, deployment.MaxSpecDepth); err != nil {
+			response.BadRequest(w, "invalid spec: "+err.Error(), nil)
+			return
+		}
+	}
+
+	var rgd *models.CatalogRGD
+	var found bool
+	if req.RGDNamespace != "" {
+		rgd, found = h.rgdWatcher.GetRGD(req.RGDNamespace, req.RGDName)
+	} else {
+		rgd, found = h.rgdWatcher.GetRGDByName(req.RGDName)
+	}
+	if !found {
+		response.NotFound(w, "RGD", req.RGDName)
+		return
+	}
+
+	if pathKind != "" && pathKind != rgd.Kind {
+		response.BadRequest(w, "kind in URL path does not match RGD kind", nil)
+		return
+	}
+
+	// Build API version from RGD (same logic as CreateInstance)
+	apiGroup := kro.RGDGroup
+	version := "v1alpha1"
+	if rgd.APIVersion != "" {
+		parts := strings.Split(rgd.APIVersion, "/")
+		if len(parts) == 2 {
+			apiGroup = parts[0]
+			version = parts[1]
+		}
+	}
+	apiVersion := apiGroup + "/" + version
+
+	mb := deployment.NewInstanceMetadataBuilder(&deployment.DeployRequest{
+		Name:            req.Name,
+		Namespace:       req.Namespace,
+		RGDName:         req.RGDName,
+		APIVersion:      apiVersion,
+		Kind:            rgd.Kind,
+		IsClusterScoped: rgd.IsClusterScoped,
+		Spec:            req.Spec,
+	})
+	obj := mb.BuildUnstructured(apiVersion, rgd.Kind, req.Spec)
+
+	gvr, err := h.instanceTracker.ResolveGVR(apiVersion, rgd.Kind)
+	if err != nil {
+		response.InternalError(w, "failed to resolve resource type")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), instanceCreateTimeout)
+	defer cancel()
+
+	dryRunOpts := metav1.CreateOptions{DryRun: []string{metav1.DryRunAll}}
+	if rgd.IsClusterScoped {
+		_, err = h.dynamicClient.Resource(gvr).Create(ctx, obj, dryRunOpts)
+	} else {
+		_, err = h.dynamicClient.Resource(gvr).Namespace(req.Namespace).Create(ctx, obj, dryRunOpts)
+	}
+
+	type preflightResponse struct {
+		Valid   bool   `json:"valid"`
+		Message string `json:"message,omitempty"`
+	}
+
+	if err != nil {
+		errMsg := err.Error()
+		friendlyMsg := parseAdmissionWebhookError(errMsg)
+		response.WriteJSON(w, http.StatusOK, preflightResponse{Valid: false, Message: friendlyMsg})
+		return
+	}
+
+	response.WriteJSON(w, http.StatusOK, preflightResponse{Valid: true})
+}
+
+// parseAdmissionWebhookError extracts a user-friendly message from a Kubernetes
+// admission webhook denial error. Returns the original error string if no
+// known pattern matches.
+func parseAdmissionWebhookError(errMsg string) string {
+	// Gatekeeper: admission webhook "validation.gatekeeper.sh" denied the request: [constraint] reason
+	if idx := strings.Index(errMsg, `admission webhook "validation.gatekeeper.sh" denied the request: `); idx != -1 {
+		rest := errMsg[idx+len(`admission webhook "validation.gatekeeper.sh" denied the request: `):]
+		// Extract [constraint-name]
+		if rest != "" && rest[0] == '[' {
+			end := strings.Index(rest, "]")
+			if end > 1 {
+				constraint := rest[1:end]
+				reason := strings.TrimSpace(rest[end+1:])
+				return `Blocked by Gatekeeper policy "` + constraint + `": ` + reason
+			}
+		}
+		return "Blocked by Gatekeeper policy: " + rest
+	}
+	// Generic admission webhook denial
+	if idx := strings.Index(errMsg, `admission webhook "`); idx != -1 {
+		return "Blocked by admission webhook: " + errMsg[idx:]
+	}
+	return errMsg
+}
+
 // handleDeployError maps deployment errors to HTTP responses.
 // Raw error details are logged server-side only; clients receive generic messages.
 func (h *InstanceDeploymentHandler) handleDeployError(w http.ResponseWriter, err error) {
 	errMsg := err.Error()
 
 	// Log all deployment errors for debugging (server-side only)
-	slog.Error("Deployment failed", "error", errMsg)
+	h.logger.Error("Deployment failed", "error", errMsg)
 
 	if strings.Contains(errMsg, "not found") || strings.Contains(errMsg, "no matches") {
 		response.WriteError(w, http.StatusNotFound, response.ErrCodeNotFound,
@@ -541,6 +708,11 @@ func (h *InstanceDeploymentHandler) handleDeployError(w http.ResponseWriter, err
 			nil)
 		return
 	}
+	if strings.Contains(errMsg, "admission webhook") {
+		friendlyMsg := parseAdmissionWebhookError(errMsg)
+		response.WriteError(w, http.StatusUnprocessableEntity, "ADMISSION_DENIED", friendlyMsg, nil)
+		return
+	}
 	if strings.Contains(errMsg, "GitHub") || strings.Contains(errMsg, "git push") || strings.Contains(errMsg, "git clone") {
 		response.WriteError(w, http.StatusBadGateway, "GITOPS_ERROR",
 			"GitOps deployment failed",
@@ -549,24 +721,4 @@ func (h *InstanceDeploymentHandler) handleDeployError(w http.ResponseWriter, err
 	}
 
 	response.InternalError(w, "Failed to create instance")
-}
-
-// isValidDNS1123Name validates a name matches DNS-1123 subdomain format
-func isValidDNS1123Name(name string) bool {
-	if len(name) == 0 || len(name) > 253 {
-		return false
-	}
-	for i, c := range name {
-		if c >= 'a' && c <= 'z' {
-			continue
-		}
-		if c >= '0' && c <= '9' {
-			continue
-		}
-		if c == '-' && i > 0 && i < len(name)-1 {
-			continue
-		}
-		return false
-	}
-	return true
 }

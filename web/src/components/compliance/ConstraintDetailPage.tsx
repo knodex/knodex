@@ -1,6 +1,7 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { useCallback, useMemo } from "react";
 import { useParams, Link } from "react-router-dom";
 import { toast } from "sonner";
 import {
@@ -9,7 +10,7 @@ import {
   AlertTriangle,
   FileText,
   Layers,
-} from "lucide-react";
+} from "@/lib/icons";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -23,7 +24,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useConstraint, useUpdateConstraintEnforcement } from "@/hooks/useCompliance";
-import { PageHeader } from "./PageHeader";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { EnforcementBadge } from "./EnforcementBadge";
 import { EnforcementSelector } from "./EnforcementSelector";
 import { MatchRulesDisplay } from "./MatchRulesDisplay";
@@ -50,7 +51,7 @@ export function ConstraintDetailPage() {
 
   const updateEnforcement = useUpdateConstraintEnforcement();
 
-  const handleEnforcementChange = async (newAction: EnforcementAction) => {
+  const handleEnforcementChange = useCallback(async (newAction: EnforcementAction) => {
     if (!kind || !name) return;
 
     await updateEnforcement.mutateAsync(
@@ -66,7 +67,21 @@ export function ConstraintDetailPage() {
         },
       }
     );
-  };
+  }, [kind, name, updateEnforcement]);
+
+  const violations = useMemo(() => constraint?.violations || [], [constraint?.violations]);
+
+  const parametersJson = useMemo(
+    () => constraint?.parameters && Object.keys(constraint.parameters).length > 0
+      ? JSON.stringify(constraint.parameters, null, 2)
+      : null,
+    [constraint]
+  );
+
+  const targetKindsCount = useMemo(
+    () => constraint?.match?.kinds?.flatMap((k) => k.kinds).length || 0,
+    [constraint?.match?.kinds]
+  );
 
   if (!kind || !name) {
     return (
@@ -120,8 +135,6 @@ export function ConstraintDetailPage() {
       </div>
     );
   }
-
-  const violations = constraint.violations || [];
 
   return (
     <div className="space-y-6">
@@ -257,8 +270,7 @@ export function ConstraintDetailPage() {
           </Card>
 
           {/* Parameters */}
-          {constraint.parameters &&
-            Object.keys(constraint.parameters).length > 0 && (
+          {parametersJson && (
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
@@ -269,7 +281,7 @@ export function ConstraintDetailPage() {
                 <CardContent>
                   <pre className="p-4 bg-muted rounded-lg overflow-x-auto text-sm">
                     <code>
-                      {JSON.stringify(constraint.parameters, null, 2)}
+                      {parametersJson}
                     </code>
                   </pre>
                 </CardContent>
@@ -386,7 +398,7 @@ export function ConstraintDetailPage() {
                   Target Kinds
                 </span>
                 <span className="font-semibold">
-                  {constraint.match.kinds?.flatMap((k) => k.kinds).length || 0}
+                  {targetKindsCount}
                 </span>
               </div>
               <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">

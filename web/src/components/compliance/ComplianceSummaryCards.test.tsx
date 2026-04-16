@@ -23,13 +23,12 @@ describe("ComplianceSummaryCards", () => {
     },
   };
 
-  it("renders all four summary cards", () => {
+  it("renders all three summary cards", () => {
     renderWithRouter(<ComplianceSummaryCards summary={mockSummary} />);
 
     expect(screen.getByText("Policy Templates")).toBeInTheDocument();
     expect(screen.getByText("Active Constraints")).toBeInTheDocument();
     expect(screen.getByText("Total Violations")).toBeInTheDocument();
-    expect(screen.getByText("By Enforcement")).toBeInTheDocument();
   });
 
   it("displays correct values from summary", () => {
@@ -40,15 +39,13 @@ describe("ComplianceSummaryCards", () => {
     expect(screen.getByText("7")).toBeInTheDocument(); // violations
   });
 
-  it("displays enforcement breakdown", () => {
+  it("displays enforcement breakdown inside violations card", () => {
     renderWithRouter(<ComplianceSummaryCards summary={mockSummary} />);
 
-    expect(screen.getByText("Deny")).toBeInTheDocument();
-    expect(screen.getByText("Warn")).toBeInTheDocument();
-    expect(screen.getByText("Dry Run")).toBeInTheDocument();
-    expect(screen.getByText("3")).toBeInTheDocument(); // deny count
-    // warn and dryrun both have value 2, use getAllByText
-    expect(screen.getAllByText("2")).toHaveLength(2); // warn and dryrun counts
+    // Enforcement badges render as "Label Count" text within the violations card
+    expect(screen.getByText("Deny 3")).toBeInTheDocument();
+    expect(screen.getByText("Warn 2")).toBeInTheDocument();
+    expect(screen.getByText("Dry Run 2")).toBeInTheDocument();
   });
 
   it("shows loading skeletons when isLoading is true", () => {
@@ -58,7 +55,6 @@ describe("ComplianceSummaryCards", () => {
     expect(screen.getByText("Policy Templates")).toBeInTheDocument();
     expect(screen.getByText("Active Constraints")).toBeInTheDocument();
     expect(screen.getByText("Total Violations")).toBeInTheDocument();
-    expect(screen.getByText("By Enforcement")).toBeInTheDocument();
   });
 
   it("displays zero values correctly", () => {
@@ -93,12 +89,11 @@ describe("ComplianceSummaryCards", () => {
     expect(violationsLink).toHaveAttribute("href", "/compliance/violations");
   });
 
-  it("shows subtitles for cards", () => {
+  it("shows subtitles for first two cards", () => {
     renderWithRouter(<ComplianceSummaryCards summary={mockSummary} />);
 
     expect(screen.getByText("ConstraintTemplates")).toBeInTheDocument();
     expect(screen.getByText("Enforcing policies")).toBeInTheDocument();
-    expect(screen.getByText("Resources non-compliant")).toBeInTheDocument();
   });
 
   it("formats large numbers with locale", () => {

@@ -1,5 +1,6 @@
 # Azure EntraID Staging Project - OIDC group-based RBAC
 # Maps Azure AD (Microsoft Entra ID) security groups to project roles
+# Apply with: kubectl apply -f <this-file> -n <knodex-namespace>
 apiVersion: knodex.io/v1alpha1
 kind: Project
 metadata:

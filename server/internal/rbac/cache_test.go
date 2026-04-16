@@ -9,6 +9,24 @@ import (
 	"time"
 )
 
+// newTestCache creates an *inMemoryCache for testing with a long cleanup interval.
+func newTestCache(t *testing.T) *inMemoryCache {
+	t.Helper()
+	return newTestCacheWithCleanupInterval(t, 1*time.Hour)
+}
+
+// newTestCacheWithCleanupInterval creates an *inMemoryCache with a custom cleanup interval for testing.
+func newTestCacheWithCleanupInterval(t *testing.T, interval time.Duration) *inMemoryCache {
+	t.Helper()
+	cache := &inMemoryCache{
+		ttl:    DefaultCacheTTL,
+		stopCh: make(chan struct{}),
+	}
+	go cache.cleanupLoopWithInterval(interval)
+	t.Cleanup(func() { cache.Stop() })
+	return cache
+}
+
 func TestNewAuthorizationCache(t *testing.T) {
 	cache := NewAuthorizationCache()
 	if cache == nil {
@@ -22,7 +40,7 @@ func TestNewAuthorizationCache(t *testing.T) {
 }
 
 func TestCache_GetSet(t *testing.T) {
-	cache := NewAuthorizationCacheWithCleanupInterval(1 * time.Hour) // Long interval for tests
+	cache := newTestCache(t) // Long interval for tests
 	defer cache.Stop()
 
 	// Set value
@@ -39,7 +57,7 @@ func TestCache_GetSet(t *testing.T) {
 }
 
 func TestCache_GetSet_Denied(t *testing.T) {
-	cache := NewAuthorizationCacheWithCleanupInterval(1 * time.Hour)
+	cache := newTestCache(t)
 	defer cache.Stop()
 
 	// Set denied value
@@ -56,7 +74,7 @@ func TestCache_GetSet_Denied(t *testing.T) {
 }
 
 func TestCache_Miss(t *testing.T) {
-	cache := NewAuthorizationCacheWithCleanupInterval(1 * time.Hour)
+	cache := newTestCache(t)
 	defer cache.Stop()
 
 	_, found := cache.Get("user1", "projects/eng", "get")
@@ -66,7 +84,7 @@ func TestCache_Miss(t *testing.T) {
 }
 
 func TestCache_TTLExpiration(t *testing.T) {
-	cache := NewAuthorizationCacheWithCleanupInterval(1 * time.Hour)
+	cache := newTestCache(t)
 	defer cache.Stop()
 
 	// Set with very short TTL
@@ -89,7 +107,7 @@ func TestCache_TTLExpiration(t *testing.T) {
 }
 
 func TestCache_ZeroTTL(t *testing.T) {
-	cache := NewAuthorizationCacheWithCleanupInterval(1 * time.Hour)
+	cache := newTestCache(t)
 	defer cache.Stop()
 
 	// Set with zero TTL should not cache
@@ -103,7 +121,7 @@ func TestCache_ZeroTTL(t *testing.T) {
 }
 
 func TestCache_NegativeTTL(t *testing.T) {
-	cache := NewAuthorizationCacheWithCleanupInterval(1 * time.Hour)
+	cache := newTestCache(t)
 	defer cache.Stop()
 
 	// Set with negative TTL should not cache
@@ -117,7 +135,7 @@ func TestCache_NegativeTTL(t *testing.T) {
 }
 
 func TestCache_Delete(t *testing.T) {
-	cache := NewAuthorizationCacheWithCleanupInterval(1 * time.Hour)
+	cache := newTestCache(t)
 	defer cache.Stop()
 
 	// Set value
@@ -140,7 +158,7 @@ func TestCache_Delete(t *testing.T) {
 }
 
 func TestCache_Clear(t *testing.T) {
-	cache := NewAuthorizationCacheWithCleanupInterval(1 * time.Hour)
+	cache := newTestCache(t)
 	defer cache.Stop()
 
 	// Set multiple values
@@ -162,7 +180,7 @@ func TestCache_Clear(t *testing.T) {
 }
 
 func TestCache_Stats(t *testing.T) {
-	cache := NewAuthorizationCacheWithCleanupInterval(1 * time.Hour)
+	cache := newTestCache(t)
 	defer cache.Stop()
 
 	// Reset stats for clean test
@@ -191,7 +209,7 @@ func TestCache_Stats(t *testing.T) {
 }
 
 func TestCache_StatsZeroRequests(t *testing.T) {
-	cache := NewAuthorizationCacheWithCleanupInterval(1 * time.Hour)
+	cache := newTestCache(t)
 	defer cache.Stop()
 
 	stats := cache.Stats()
@@ -204,7 +222,7 @@ func TestCache_StatsZeroRequests(t *testing.T) {
 }
 
 func TestCache_ConcurrentAccess(t *testing.T) {
-	cache := NewAuthorizationCacheWithCleanupInterval(1 * time.Hour)
+	cache := newTestCache(t)
 	defer cache.Stop()
 
 	var wg sync.WaitGroup
@@ -257,7 +275,7 @@ func TestCache_ConcurrentAccess(t *testing.T) {
 }
 
 func TestCache_ConcurrentClear(t *testing.T) {
-	cache := NewAuthorizationCacheWithCleanupInterval(1 * time.Hour)
+	cache := newTestCache(t)
 	defer cache.Stop()
 
 	var wg sync.WaitGroup
@@ -283,7 +301,7 @@ func TestCache_ConcurrentClear(t *testing.T) {
 }
 
 func TestCache_ResetStats(t *testing.T) {
-	cache := NewAuthorizationCacheWithCleanupInterval(1 * time.Hour)
+	cache := newTestCache(t)
 	defer cache.Stop()
 
 	// Generate some stats
@@ -381,7 +399,7 @@ func TestCacheEntry_IsExpired(t *testing.T) {
 
 func TestCache_Cleanup(t *testing.T) {
 	// Create cache with very short cleanup interval for testing
-	cache := NewAuthorizationCacheWithCleanupInterval(50 * time.Millisecond)
+	cache := newTestCacheWithCleanupInterval(t, 50*time.Millisecond)
 	defer cache.Stop()
 
 	// Add entry with short TTL
@@ -405,9 +423,20 @@ func TestCache_Cleanup(t *testing.T) {
 
 // Benchmark tests
 
+// newBenchCache creates an *inMemoryCache for benchmark tests.
+func newBenchCache(b *testing.B) *inMemoryCache {
+	b.Helper()
+	cache := &inMemoryCache{
+		ttl:    DefaultCacheTTL,
+		stopCh: make(chan struct{}),
+	}
+	go cache.cleanupLoopWithInterval(1 * time.Hour)
+	b.Cleanup(func() { cache.Stop() })
+	return cache
+}
+
 func BenchmarkCache_Get_Hit(b *testing.B) {
-	cache := NewAuthorizationCacheWithCleanupInterval(1 * time.Hour)
-	defer cache.Stop()
+	cache := newBenchCache(b)
 
 	cache.Set("user1", "projects/eng", "get", true, 1*time.Hour)
 
@@ -418,8 +447,7 @@ func BenchmarkCache_Get_Hit(b *testing.B) {
 }
 
 func BenchmarkCache_Get_Miss(b *testing.B) {
-	cache := NewAuthorizationCacheWithCleanupInterval(1 * time.Hour)
-	defer cache.Stop()
+	cache := newBenchCache(b)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -428,8 +456,7 @@ func BenchmarkCache_Get_Miss(b *testing.B) {
 }
 
 func BenchmarkCache_Set(b *testing.B) {
-	cache := NewAuthorizationCacheWithCleanupInterval(1 * time.Hour)
-	defer cache.Stop()
+	cache := newBenchCache(b)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -438,8 +465,7 @@ func BenchmarkCache_Set(b *testing.B) {
 }
 
 func BenchmarkCache_ConcurrentGetSet(b *testing.B) {
-	cache := NewAuthorizationCacheWithCleanupInterval(1 * time.Hour)
-	defer cache.Stop()
+	cache := newBenchCache(b)
 
 	cache.Set("user1", "projects/eng", "get", true, 1*time.Hour)
 

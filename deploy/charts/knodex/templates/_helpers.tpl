@@ -200,3 +200,30 @@ Returns existingSecretPasswordKey if set, otherwise the Bitnami default key.
 {{- "redis-password" }}
 {{- end }}
 {{- end }}
+
+{{/*
+Dex labels
+*/}}
+{{- define "knodex.dex.labels" -}}
+{{ include "knodex.labels" . }}
+app.kubernetes.io/component: dex-server
+{{- end }}
+
+{{/*
+Dex selector labels
+*/}}
+{{- define "knodex.dex.selectorLabels" -}}
+{{ include "knodex.selectorLabels" . }}
+app.kubernetes.io/component: dex-server
+{{- end }}
+
+{{/*
+Dex server URL — used by the Knodex server to discover Dex's OIDC endpoint
+*/}}
+{{- define "knodex.dex.serverURL" -}}
+{{- if .Values.dex.config.issuerURL }}
+{{- .Values.dex.config.issuerURL }}
+{{- else }}
+{{- printf "http://%s-dex-server:%d" (include "knodex.fullname" .) (int (.Values.dex.service.httpPort | default 5556)) }}
+{{- end }}
+{{- end }}

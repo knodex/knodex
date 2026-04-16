@@ -90,21 +90,6 @@ func newPathError(op string, path []string, expectedType, actualType string, err
 	}
 }
 
-// IsFieldNotFound returns true if the error indicates a field was not found.
-func IsFieldNotFound(err error) bool {
-	return errors.Is(err, ErrFieldNotFound)
-}
-
-// IsTypeMismatch returns true if the error indicates a type mismatch.
-func IsTypeMismatch(err error) bool {
-	return errors.Is(err, ErrTypeMismatch)
-}
-
-// IsNilObject returns true if the error indicates a nil object was provided.
-func IsNilObject(err error) bool {
-	return errors.Is(err, ErrNilObject)
-}
-
 // typeName returns a human-readable name for a type.
 func typeName(v interface{}) string {
 	if v == nil {

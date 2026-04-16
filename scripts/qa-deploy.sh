@@ -247,8 +247,8 @@ deploy_example_projects() {
         return 0
     fi
 
-    kubectl apply -f deploy/examples/projects/
-    log_success "Example Projects deployed"
+    kubectl apply -f deploy/examples/projects/ -n "${NAMESPACE}"
+    log_success "Example Projects deployed in namespace ${NAMESPACE}"
 }
 
 # Deploy example Gatekeeper resources (Enterprise only)
@@ -305,10 +305,10 @@ verify_fixtures() {
     fi
 
     # Check Projects
-    local project_count=$(kubectl get projects.knodex.io --no-headers 2>/dev/null | wc -l | tr -d ' ')
+    local project_count=$(kubectl get projects.knodex.io -n "${NAMESPACE}" --no-headers 2>/dev/null | wc -l | tr -d ' ')
     if [ "${project_count}" -lt 2 ]; then
         log_warn "Expected at least 2 Projects, found ${project_count}."
-        log_warn "RBAC tests may fail. Run: kubectl apply -f deploy/examples/projects/"
+        log_warn "RBAC tests may fail. Run: kubectl apply -f deploy/examples/projects/ -n ${NAMESPACE}"
     else
         log_success "Found ${project_count} Projects"
     fi
@@ -418,7 +418,7 @@ show_status() {
     echo ""
 
     log_info "Projects (RBAC):"
-    kubectl get projects.knodex.io 2>/dev/null || echo "  No projects deployed"
+    kubectl get projects.knodex.io -n "${NAMESPACE}" 2>/dev/null || echo "  No projects deployed"
     echo ""
 
     # Show access URLs

@@ -1,7 +1,7 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { AlertTriangle, ShieldAlert, ShieldCheck } from "lucide-react";
+import { AlertTriangle, ShieldAlert, ShieldCheck } from "@/lib/icons";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -123,7 +123,7 @@ export function ConfirmEnforcementDialog({
               className={cn(
                 "h-5 w-5",
                 severity === "danger" && "text-red-500",
-                severity === "warning" && "text-yellow-500",
+                severity === "warning" && "text-amber-500",
                 severity === "info" && "text-blue-500"
               )}
             />
@@ -167,9 +167,9 @@ export function ConfirmEnforcementDialog({
               <div
                 className={cn(
                   "p-3 rounded-md text-sm",
-                  severity === "danger" && "bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-400",
-                  severity === "warning" && "bg-yellow-50 text-yellow-700 dark:bg-yellow-950/30 dark:text-yellow-400",
-                  severity === "info" && "bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-400"
+                  severity === "danger" && "bg-red-50 text-red-800 dark:bg-red-950/30 dark:text-red-400",
+                  severity === "warning" && "bg-amber-50 text-amber-800 dark:bg-amber-950/30 dark:text-amber-400",
+                  severity === "info" && "bg-blue-50 text-blue-800 dark:bg-blue-950/30 dark:text-blue-400"
                 )}
               >
                 {message}
@@ -186,7 +186,7 @@ export function ConfirmEnforcementDialog({
             disabled={isLoading}
             className={cn(
               severity === "danger" && "bg-red-600 hover:bg-red-700",
-              severity === "warning" && "bg-yellow-600 hover:bg-yellow-700"
+              severity === "warning" && "bg-amber-600 hover:bg-amber-700"
             )}
           >
             {isLoading ? "Updating..." : "Confirm Change"}

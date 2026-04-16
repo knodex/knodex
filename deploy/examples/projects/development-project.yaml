@@ -1,5 +1,6 @@
 # Development Project - Multi-environment namespace pattern
 # This project allows developers to deploy to dev, staging, and feature namespaces
+# Apply with: kubectl apply -f <this-file> -n <knodex-namespace>
 apiVersion: knodex.io/v1alpha1
 kind: Project
 metadata:

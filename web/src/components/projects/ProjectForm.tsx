@@ -4,11 +4,11 @@
 /**
  * Project form for creating and editing projects
  */
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Plus, X, Loader2, Shield, Sparkles } from "lucide-react";
+import { Plus, X, Loader2, Shield, Sparkles } from "@/lib/icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -18,6 +18,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import type { Project, CreateProjectRequest, Destination, ProjectRole } from "@/types/project";
 import { PolicyRulesTable } from "./PolicyRulesTable";
 import { OIDCGroupsManager } from "./OIDCGroupsManager";
+import { DestinationScopeSelector } from "./DestinationScopeSelector";
 import { ROLE_PRESETS, resolvePreset } from "@/lib/role-presets";
 
 // DNS-1123 subdomain pattern for project names
@@ -88,7 +89,7 @@ export function ProjectForm({
     }
   }, [nameValue, isEditing, destinations.length, namespaceManuallyEdited]);
 
-  const handleFormSubmit = async (values: ProjectFormValues) => {
+  const handleFormSubmit = useCallback(async (values: ProjectFormValues) => {
     // Validate destinations
     if (destinations.length === 0) {
       setDestinationError("At least one destination is required");
@@ -115,30 +116,28 @@ export function ProjectForm({
       destinations: destinations.length > 0 ? destinations : undefined,
       roles: roles.length > 0 ? roles : undefined,
     });
-  };
+  }, [destinations, roles, onSubmit]);
 
-  const addDestination = () => {
+  const addDestination = useCallback(() => {
     if (newDestNamespace.trim()) {
       setDestinations([
         ...destinations,
-        {
-          namespace: newDestNamespace.trim(),
-        },
+        { namespace: newDestNamespace.trim() },
       ]);
       if (destinationError) setDestinationError(null);
       setNewDestNamespace("");
       setNamespaceManuallyEdited(false);
     }
-  };
+  }, [newDestNamespace, destinations, destinationError]);
 
-  const removeDestination = (index: number) => {
+  const removeDestination = useCallback((index: number) => {
     const updated = destinations.filter((_, i) => i !== index);
     setDestinations(updated);
     // Reset auto-populate tracking when all destinations are removed
     if (updated.length === 0) {
       setNamespaceManuallyEdited(false);
     }
-  };
+  }, [destinations]);
 
   return (
     <form onSubmit={handleSubmit(handleFormSubmit)} className="space-y-6">
@@ -226,25 +225,27 @@ export function ProjectForm({
         </div>
 
         {/* Add new destination */}
-        <div className="flex gap-2">
-          <Input
-            value={newDestNamespace}
-            onChange={(e) => {
-              setNewDestNamespace(e.target.value);
-              setNamespaceManuallyEdited(true);
-            }}
-            placeholder="Namespace (e.g., my-project, dev-*)"
-            disabled={isLoading}
-            className="flex-1"
-          />
-          <Button
-            type="button"
-            variant="outline"
-            onClick={addDestination}
-            disabled={isLoading}
-          >
-            <Plus className="h-4 w-4" />
-          </Button>
+        <div className="space-y-2">
+          <div className="flex gap-2">
+            <Input
+              value={newDestNamespace}
+              onChange={(e) => {
+                setNewDestNamespace(e.target.value);
+                setNamespaceManuallyEdited(true);
+              }}
+              placeholder="Namespace (e.g., my-project, dev-*)"
+              disabled={isLoading}
+              className="flex-1"
+            />
+            <Button
+              type="button"
+              variant="outline"
+              onClick={addDestination}
+              disabled={isLoading}
+            >
+              <Plus className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -368,6 +369,23 @@ export function ProjectForm({
                   canEdit={true}
                   isLoading={isLoading}
                 />
+
+                {/* Destination Scope */}
+                {destinations.length > 1 && (
+                  <DestinationScopeSelector
+                    projectDestinations={destinations}
+                    selectedDestinations={role.destinations || []}
+                    onChange={(dests) => {
+                      setRoles(prev => prev.map((r, i) =>
+                        i === index
+                          ? { ...r, destinations: dests.length > 0 ? dests : undefined }
+                          : r
+                      ));
+                    }}
+                    canEdit={true}
+                    isLoading={isLoading}
+                  />
+                )}
               </CardContent>
             </Card>
           ))}

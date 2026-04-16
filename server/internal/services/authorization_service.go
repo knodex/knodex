@@ -8,7 +8,64 @@ import (
 	"log/slog"
 
 	"github.com/knodex/knodex/server/internal/api/middleware"
+	"github.com/knodex/knodex/server/internal/rbac"
 )
+
+// ProjectTypeResolver resolves project names to their types (app or platform).
+// Used by CatalogService to compute which catalog tiers are visible to a user.
+type ProjectTypeResolver interface {
+	// GetProjectTypes returns a mapping of project name → type ("app" or "platform").
+	// Projects without a type default to "app" (backward compatible).
+	GetProjectTypes(ctx context.Context, projectNames []string) (map[string]string, error)
+}
+
+// projectTypeResolverImpl implements ProjectTypeResolver using ProjectServiceInterface.
+// Note: This makes N K8s API calls for N projects (one GetProject per project).
+// This is acceptable for typical project counts (<50). If project counts grow
+// significantly, consider a batch ListProjects + filter approach.
+type projectTypeResolverImpl struct {
+	projectService rbac.ProjectServiceInterface
+	logger         *slog.Logger
+}
+
+// NewProjectTypeResolver creates a ProjectTypeResolver from a ProjectServiceInterface.
+// Returns nil if projectService is nil (nil-safe for backward compatibility).
+func NewProjectTypeResolver(projectService rbac.ProjectServiceInterface, logger *slog.Logger) ProjectTypeResolver {
+	if projectService == nil {
+		return nil
+	}
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &projectTypeResolverImpl{
+		projectService: projectService,
+		logger:         logger.With("component", "project-type-resolver"),
+	}
+}
+
+// GetProjectTypes implements ProjectTypeResolver.
+// Design: individual project lookup errors are swallowed and default to "app" (backward
+// compatible). This means the returned error is always nil for this implementation.
+// The error return exists on the interface for alternative implementations (e.g., batch
+// resolvers) that may encounter non-recoverable failures.
+func (r *projectTypeResolverImpl) GetProjectTypes(ctx context.Context, projectNames []string) (map[string]string, error) {
+	result := make(map[string]string, len(projectNames))
+	for _, name := range projectNames {
+		project, err := r.projectService.GetProject(ctx, name)
+		if err != nil {
+			r.logger.Warn("failed to get project for type resolution, defaulting to app",
+				"project", name, "error", err)
+			result[name] = string(rbac.ProjectTypeApp)
+			continue
+		}
+		projectType := string(project.Spec.Type)
+		if projectType == "" {
+			projectType = string(rbac.ProjectTypeApp)
+		}
+		result[name] = projectType
+	}
+	return result, nil
+}
 
 // PolicyEnforcer defines the interface for Casbin policy enforcement.
 // This matches the existing rbac.PolicyEnforcer interface to allow dependency injection.
@@ -27,9 +84,9 @@ type PolicyEnforcer interface {
 type NamespaceProvider interface {
 	// GetUserNamespacesWithGroups returns all Kubernetes namespaces the user has access to.
 	// Roles are sourced from Casbin's authoritative state, NOT from JWT claims.
-	// Returns:
-	// - nil: user can access all namespaces (global admin)
-	// - empty slice: user has no namespace access
+	// Returns (never nil):
+	// - []string{"*"}: user can access all namespaces (global admin via wildcard project destination)
+	// - []string{}: user has no namespace access (secure default, fail-closed)
 	// - non-empty slice: user can access these specific namespaces
 	GetUserNamespacesWithGroups(ctx context.Context, userID string, groups []string) ([]string, error)
 }
@@ -117,19 +174,28 @@ func (s *AuthorizationService) GetUserAuthContext(ctx context.Context, userCtx *
 			namespaces = []string{}
 		}
 		authCtx.AccessibleNamespaces = namespaces
-		// nil namespaces indicates global access (admin)
-		authCtx.IsGlobalAccess = namespaces == nil
 	} else {
-		// No namespace provider - allow all namespaces (backward compatibility)
-		authCtx.AccessibleNamespaces = nil
-		authCtx.IsGlobalAccess = true
+		// No namespace provider - check if user is global admin via Casbin wildcard check.
+		// Uses CanAccessWithGroups("*", "*") — same pattern as DeploymentValidator.
+		// Non-admin users fail closed (deny all namespaces).
+		isAdmin := false
+		if s.policyEnforcer != nil {
+			canAccess, aErr := s.policyEnforcer.CanAccessWithGroups(ctx, userCtx.UserID, userCtx.Groups, "*", "*")
+			if aErr == nil && canAccess {
+				isAdmin = true
+			}
+		}
+		if isAdmin {
+			authCtx.AccessibleNamespaces = []string{"*"}
+		} else {
+			authCtx.AccessibleNamespaces = []string{}
+		}
 	}
 
 	s.logger.Debug("computed user auth context",
 		"user_id", userCtx.UserID,
 		"accessible_projects", len(authCtx.AccessibleProjects),
-		"accessible_namespaces_count", len(authCtx.AccessibleNamespaces),
-		"is_global_access", authCtx.IsGlobalAccess)
+		"accessible_namespaces_count", len(authCtx.AccessibleNamespaces))
 
 	return authCtx, nil
 }
@@ -168,18 +234,28 @@ func (s *AuthorizationService) GetAccessibleProjects(ctx context.Context, userCt
 // This consolidates namespace access logic used by RGDHandler and instance handlers.
 //
 // Returns:
-// - nil: User can access all namespaces (global admin)
+// - []string{"*"}: User can access all namespaces (global admin)
 // - empty slice: User has no namespace access (secure default, also on error)
 // - non-empty slice: User can only access these namespaces
+// NOTE: Never returns nil. A zero-value []string{} means "no access" (fail-closed).
 func (s *AuthorizationService) GetAccessibleNamespaces(ctx context.Context, userCtx *middleware.UserContext) ([]string, error) {
 	// Unauthenticated - secure default
 	if userCtx == nil {
 		return []string{}, nil
 	}
 
-	// No namespace provider - allow all (backward compatibility)
+	// No namespace provider - check if user is global admin via Casbin wildcard check.
+	// Uses CanAccessWithGroups("*", "*") — same pattern as DeploymentValidator.
+	// Non-admin users fail closed (deny all namespaces).
 	if s.namespaceProvider == nil {
-		return nil, nil
+		if s.policyEnforcer != nil {
+			canAccess, aErr := s.policyEnforcer.CanAccessWithGroups(ctx, userCtx.UserID, userCtx.Groups, "*", "*")
+			if aErr == nil && canAccess {
+				return []string{"*"}, nil // Global admin: access to all namespaces
+			}
+		}
+		s.logger.Warn("namespace provider not configured, returning empty namespace list (fail-closed)")
+		return []string{}, nil
 	}
 
 	namespaces, err := s.namespaceProvider.GetUserNamespacesWithGroups(

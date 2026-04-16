@@ -1,18 +1,17 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { Shield, ChevronRight, Filter, X } from "lucide-react";
+import { Shield, X } from "@/lib/icons";
 import {
   Table,
   TableBody,
   TableCell,
-  TableHead,
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { SortableHead } from "@/components/ui/sortable-table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,7 +25,7 @@ import {
   useConstraints,
   useConstraintTemplates,
 } from "@/hooks/useCompliance";
-import { PageHeader } from "./PageHeader";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { CompliancePagination } from "./CompliancePagination";
 import { TableLoadingSkeleton } from "./TableLoadingSkeleton";
 import { EmptyState } from "./EmptyState";
@@ -34,62 +33,53 @@ import { ErrorState } from "./ErrorState";
 import { EnforcementBadge } from "./EnforcementBadge";
 import { MatchRulesDisplay } from "./MatchRulesDisplay";
 import { formatDistanceToNow } from "@/lib/date";
+import { filterSelectClasses } from "@/components/ui/filter-bar";
+import { cn } from "@/lib/utils";
 import type { EnforcementAction } from "@/types/compliance";
 
-/**
- * Constraints list page with filtering
- * AC-CON-01: Table of constraints with name, kind, enforcement, violations
- * AC-CON-02: Filter by constraint kind (dropdown)
- * AC-CON-03: Filter by enforcement action
- * AC-CON-04: Badge showing violation count
- * AC-CON-05: Row click navigates to constraint detail
- * AC-CON-06: Filter state in URL query params
- */
+type SortField = "name" | "kind" | "enforcement" | "violations" | "createdAt";
+type SortDir = "asc" | "desc";
+
 export function ConstraintsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
+  const [sortField, setSortField] = useState<SortField>("name");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
 
-  // Get filters from URL
   const kindFilter = searchParams.get("kind") || "";
-  const enforcementFilter =
-    (searchParams.get("enforcement") as EnforcementAction | "") || "";
+  const enforcementFilter = (searchParams.get("enforcement") as EnforcementAction | "") || "";
 
-  // Update URL when filters change
-  const updateFilters = (updates: {
-    kind?: string;
-    enforcement?: string;
-  }) => {
-    const newParams = new URLSearchParams(searchParams);
-
-    if (updates.kind !== undefined) {
-      if (updates.kind) {
-        newParams.set("kind", updates.kind);
-      } else {
-        newParams.delete("kind");
+  const updateFilters = useCallback((updates: { kind?: string; enforcement?: string }) => {
+    setSearchParams((prev) => {
+      const newParams = new URLSearchParams(prev);
+      if (updates.kind !== undefined) {
+        if (updates.kind) { newParams.set("kind", updates.kind); } else { newParams.delete("kind"); }
       }
-    }
-
-    if (updates.enforcement !== undefined) {
-      if (updates.enforcement) {
-        newParams.set("enforcement", updates.enforcement);
-      } else {
-        newParams.delete("enforcement");
+      if (updates.enforcement !== undefined) {
+        if (updates.enforcement) { newParams.set("enforcement", updates.enforcement); } else { newParams.delete("enforcement"); }
       }
-    }
+      return newParams;
+    });
+    setPage(1);
+  }, [setSearchParams]);
 
-    setSearchParams(newParams);
-    setPage(1); // Reset to first page when filters change
-  };
-
-  const clearFilters = () => {
+  const clearFilters = useCallback(() => {
     setSearchParams(new URLSearchParams());
     setPage(1);
-  };
+  }, [setSearchParams]);
 
   const hasFilters = kindFilter || enforcementFilter;
 
-  // Fetch constraints with filters
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortField(field);
+      setSortDir("asc");
+    }
+  };
+
   const { data, isLoading, isError, error, refetch, isRefetching } =
     useConstraints({
       kind: kindFilter || undefined,
@@ -98,18 +88,8 @@ export function ConstraintsPage() {
       pageSize,
     });
 
-  // Fetch templates for kind filter dropdown
   const { data: templatesData } = useConstraintTemplates({ pageSize: 100 });
   const constraintKinds = templatesData?.items.map((t) => t.kind) || [];
-
-  const handlePageChange = (newPage: number) => {
-    setPage(newPage);
-  };
-
-  const handlePageSizeChange = (newPageSize: number) => {
-    setPageSize(newPageSize);
-    setPage(1);
-  };
 
   const columns = [
     { header: "Name", width: "25%" },
@@ -121,203 +101,146 @@ export function ConstraintsPage() {
   ];
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title="Constraints"
-        subtitle="Active OPA Gatekeeper policy constraints and their enforcement status"
-        breadcrumbs={[
-          { label: "Compliance", href: "/compliance" },
-          { label: "Constraints" },
-        ]}
-      />
+    <section className="space-y-6">
+      <PageHeader title="Constraints" breadcrumbs={[{ label: "Compliance", href: "/compliance" }, { label: "Constraints" }]} />
 
-      <Card>
-        <CardHeader className="pb-3">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <CardTitle className="flex items-center gap-2 text-lg">
-              <Shield className="h-5 w-5 text-muted-foreground" />
-              Constraints
-              {data && (
-                <span className="text-sm font-normal text-muted-foreground">
-                  ({data.total})
-                </span>
-              )}
-            </CardTitle>
+      {/* Filters */}
+      <div className="flex items-center gap-2">
+        <Select
+          value={kindFilter || "__all__"}
+          onValueChange={(v) => updateFilters({ kind: v === "__all__" ? "" : v })}
+        >
+          <SelectTrigger data-testid="kind-filter" className={cn(filterSelectClasses(!!kindFilter), "h-8 w-[150px] text-xs")}>
+            <SelectValue placeholder="All kinds" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">All kinds</SelectItem>
+            {constraintKinds.map((kind) => (
+              <SelectItem key={kind} value={kind}>{kind}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
 
-            {/* Filters */}
-            <div className="flex items-center gap-2">
-              <Filter className="h-4 w-4 text-muted-foreground" />
+        <Select
+          value={enforcementFilter || "__all__"}
+          onValueChange={(v) => updateFilters({ enforcement: v === "__all__" ? "" : v })}
+        >
+          <SelectTrigger data-testid="enforcement-filter" className={cn(filterSelectClasses(!!enforcementFilter), "h-8 w-[130px] text-xs")}>
+            <SelectValue placeholder="All actions" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">All actions</SelectItem>
+            <SelectItem value="deny">Deny</SelectItem>
+            <SelectItem value="warn">Warn</SelectItem>
+            <SelectItem value="dryrun">Dryrun</SelectItem>
+          </SelectContent>
+        </Select>
 
-              {/* Kind filter */}
-              <Select
-                value={kindFilter}
-                onValueChange={(value) =>
-                  updateFilters({ kind: value === "all" ? "" : value })
-                }
-              >
-                <SelectTrigger className="w-[160px] h-8">
-                  <SelectValue placeholder="All kinds" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All kinds</SelectItem>
-                  {constraintKinds.map((kind) => (
-                    <SelectItem key={kind} value={kind}>
-                      {kind}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+        {hasFilters && (
+          <Button variant="ghost" size="sm" onClick={clearFilters} className="h-8 px-2 text-xs">
+            <X className="h-3.5 w-3.5 mr-1" />
+            Clear
+          </Button>
+        )}
+      </div>
 
-              {/* Enforcement filter */}
-              <Select
-                value={enforcementFilter}
-                onValueChange={(value) =>
-                  updateFilters({ enforcement: value === "all" ? "" : value })
-                }
-              >
-                <SelectTrigger className="w-[130px] h-8">
-                  <SelectValue placeholder="All actions" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All actions</SelectItem>
-                  <SelectItem value="deny">Deny</SelectItem>
-                  <SelectItem value="warn">Warn</SelectItem>
-                  <SelectItem value="dryrun">Dryrun</SelectItem>
-                </SelectContent>
-              </Select>
+      {isLoading && <TableLoadingSkeleton columns={columns} showDoubleLines />}
 
-              {hasFilters && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={clearFilters}
-                  className="h-8 px-2"
-                >
-                  <X className="h-4 w-4 mr-1" />
-                  Clear
-                </Button>
-              )}
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {isLoading && (
-            <TableLoadingSkeleton columns={columns} showDoubleLines />
-          )}
+      {isError && (
+        <ErrorState
+          message="Failed to load constraints"
+          details={error instanceof Error ? error.message : "Unknown error"}
+          onRetry={() => refetch()}
+          isRetrying={isRefetching}
+        />
+      )}
 
-          {isError && (
-            <ErrorState
-              message="Failed to load constraints"
-              details={error instanceof Error ? error.message : "Unknown error"}
-              onRetry={() => refetch()}
-              isRetrying={isRefetching}
-            />
-          )}
+      {!isLoading && !isError && data?.items.length === 0 && (
+        <EmptyState
+          icon={<Shield className="h-8 w-8 text-muted-foreground" />}
+          title={hasFilters ? "No Matching Constraints" : "No Constraints"}
+          description={
+            hasFilters
+              ? "No constraints match the selected filters."
+              : "No OPA Gatekeeper constraints have been created in the cluster."
+          }
+          action={hasFilters ? <Button variant="outline" onClick={clearFilters}>Clear Filters</Button> : undefined}
+        />
+      )}
 
-          {!isLoading && !isError && data?.items.length === 0 && (
-            <EmptyState
-              icon={<Shield className="h-8 w-8 text-muted-foreground" />}
-              title={hasFilters ? "No Matching Constraints" : "No Constraints"}
-              description={
-                hasFilters
-                  ? "No constraints match the selected filters. Try adjusting your filters."
-                  : "No OPA Gatekeeper constraints have been created in the cluster."
-              }
-              action={
-                hasFilters ? (
-                  <Button variant="outline" onClick={clearFilters}>
-                    Clear Filters
-                  </Button>
-                ) : undefined
-              }
-            />
-          )}
-
-          {!isLoading && !isError && data && data.items.length > 0 && (
-            <>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    {columns.map((col, index) => (
-                      <TableHead
-                        key={index}
-                        className={
-                          col.hideOnMobile ? "hidden md:table-cell" : ""
-                        }
-                        style={{ width: col.width }}
+      {!isLoading && !isError && data && data.items.length > 0 && (
+        <>
+          <div className="rounded-lg border border-border overflow-hidden">
+            <Table className="table-fixed">
+              <TableHeader>
+                <TableRow>
+                  <SortableHead field="name" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="w-[25%]">Name</SortableHead>
+                  <SortableHead field="kind" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="w-[15%]">Kind</SortableHead>
+                  <SortableHead field="enforcement" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="w-[12%]">Enforcement</SortableHead>
+                  <SortableHead field="violations" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="w-[10%]">Violations</SortableHead>
+                  <SortableHead field="name" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="w-[25%] hidden md:table-cell">Match Scope</SortableHead>
+                  <SortableHead field="createdAt" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="w-[13%] hidden md:table-cell">Created</SortableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.items.map((constraint) => (
+                  <TableRow
+                    key={`${constraint.kind}-${constraint.name}`}
+                    className="cursor-pointer hover:bg-muted/50"
+                  >
+                    <TableCell>
+                      <Link
+                        to={`/compliance/constraints/${constraint.kind}/${constraint.name}`}
+                        className="font-medium hover:underline"
                       >
-                        {col.header}
-                      </TableHead>
-                    ))}
+                        {constraint.name}
+                      </Link>
+                    </TableCell>
+                    <TableCell>
+                      <Link
+                        to={`/compliance/constraints?kind=${constraint.kind}`}
+                        className="text-primary hover:underline"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {constraint.kind}
+                      </Link>
+                    </TableCell>
+                    <TableCell>
+                      <EnforcementBadge action={constraint.enforcementAction} />
+                    </TableCell>
+                    <TableCell>
+                      {constraint.violationCount > 0 ? (
+                        <Badge variant="destructive" className="font-mono">
+                          {constraint.violationCount}
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="text-green-600 border-green-200 bg-green-50 dark:text-green-400 dark:border-green-900 dark:bg-green-950/30">
+                          0
+                        </Badge>
+                      )}
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell">
+                      <MatchRulesDisplay match={constraint.match} variant="compact" />
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell text-xs text-muted-foreground">
+                      {formatDistanceToNow(constraint.createdAt)}
+                    </TableCell>
                   </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {data.items.map((constraint) => (
-                    <TableRow
-                      key={`${constraint.kind}-${constraint.name}`}
-                      className="cursor-pointer hover:bg-muted/50"
-                    >
-                      <TableCell>
-                        <Link
-                          to={`/compliance/constraints/${constraint.kind}/${constraint.name}`}
-                          className="flex items-center gap-2 font-medium hover:underline"
-                        >
-                          {constraint.name}
-                          <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                        </Link>
-                      </TableCell>
-                      <TableCell>
-                        <Link
-                          to={`/compliance/constraints?kind=${constraint.kind}`}
-                          className="text-primary hover:underline"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          {constraint.kind}
-                        </Link>
-                      </TableCell>
-                      <TableCell>
-                        <EnforcementBadge action={constraint.enforcementAction} />
-                      </TableCell>
-                      <TableCell>
-                        {constraint.violationCount > 0 ? (
-                          <Badge variant="destructive" className="font-mono">
-                            {constraint.violationCount}
-                          </Badge>
-                        ) : (
-                          <Badge
-                            variant="outline"
-                            className="text-green-600 border-green-200 bg-green-50 dark:text-green-400 dark:border-green-900 dark:bg-green-950/30"
-                          >
-                            0
-                          </Badge>
-                        )}
-                      </TableCell>
-                      <TableCell className="hidden md:table-cell">
-                        <MatchRulesDisplay
-                          match={constraint.match}
-                          variant="compact"
-                        />
-                      </TableCell>
-                      <TableCell className="hidden md:table-cell text-muted-foreground text-sm">
-                        {formatDistanceToNow(constraint.createdAt)}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
 
-              <CompliancePagination
-                page={page}
-                pageSize={pageSize}
-                totalCount={data.total}
-                onPageChange={handlePageChange}
-                onPageSizeChange={handlePageSizeChange}
-              />
-            </>
-          )}
-        </CardContent>
-      </Card>
-    </div>
+          <CompliancePagination
+            page={page}
+            pageSize={pageSize}
+            totalCount={data.total}
+            onPageChange={setPage}
+            onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
+          />
+        </>
+      )}
+    </section>
   );
 }
 

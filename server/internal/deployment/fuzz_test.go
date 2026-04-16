@@ -6,6 +6,8 @@ package deployment
 import (
 	"testing"
 	"unicode/utf8"
+
+	"github.com/knodex/knodex/server/internal/util/sanitize"
 )
 
 // MEDIUM PRIORITY: Fuzzing tests for security-critical validation functions
@@ -225,28 +227,28 @@ func FuzzSanitizePathComponent(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, input string) {
-		result, err := sanitizePathComponent(input)
+		result, err := sanitize.PathComponent(input)
 
 		// If function succeeds, verify the result is safe
 		if err == nil {
 			// Result should never contain path traversal
 			if containsPathTraversal(result) {
-				t.Errorf("sanitizePathComponent returned path traversal: input=%q result=%q", input, result)
+				t.Errorf("sanitize.PathComponent returned path traversal: input=%q result=%q", input, result)
 			}
 
 			// Result should never be empty after successful sanitization
 			if result == "" {
-				t.Errorf("sanitizePathComponent returned empty string for input: %q", input)
+				t.Errorf("sanitize.PathComponent returned empty string for input: %q", input)
 			}
 
 			// Result should be valid UTF-8
 			if !utf8.ValidString(result) {
-				t.Errorf("sanitizePathComponent returned invalid UTF-8: input=%q result=%q", input, result)
+				t.Errorf("sanitize.PathComponent returned invalid UTF-8: input=%q result=%q", input, result)
 			}
 
 			// Result should not contain path separators
 			if containsByte(result, '/') || containsByte(result, '\\') {
-				t.Errorf("sanitizePathComponent returned path separator: input=%q result=%q", input, result)
+				t.Errorf("sanitize.PathComponent returned path separator: input=%q result=%q", input, result)
 			}
 		}
 

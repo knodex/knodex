@@ -5,21 +5,39 @@ package deployment
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/restmapper"
 
 	"github.com/knodex/knodex/server/internal/deployment/vcs"
+	"github.com/knodex/knodex/server/internal/util/retry"
 )
+
+// errResourceAlreadyExists is a sentinel used inside the retry closure to signal
+// that Create returned AlreadyExists and the caller should fall through to Patch.
+var errResourceAlreadyExists = errors.New("resource already exists")
+
+// vcsClient is a narrow interface covering only the VCS operations used by the
+// controller. Defined here (not in the vcs package) per Go convention: interfaces
+// belong at the point of use. *vcs.GitHubClient satisfies this interface.
+type vcsClient interface {
+	CommitFile(ctx context.Context, req *vcs.CommitFileRequest) (*vcs.CommitResult, error)
+	DeleteFile(ctx context.Context, path, branch, message string) error
+	Close()
+}
 
 // Controller orchestrates instance deployments across different modes
 type Controller struct {
@@ -30,6 +48,13 @@ type Controller struct {
 
 	// Manifest generator
 	generator *Generator
+
+	// retryConfig controls retry behavior for K8s API calls in applyToCluster.
+	retryConfig retry.RetryConfig
+
+	// vcsClientFactory creates a VCS client for Git operations.
+	// Defaults to vcs.NewGitHubClient. Override in tests to inject a mock.
+	vcsClientFactory func(ctx context.Context, token, owner, repo string) (vcsClient, error)
 
 	// Logger
 	logger *slog.Logger
@@ -44,7 +69,15 @@ func NewController(dynamicClient dynamic.Interface, kubeClient kubernetes.Interf
 		dynamicClient: dynamicClient,
 		kubeClient:    kubeClient,
 		generator:     NewGenerator(),
-		logger:        logger,
+		retryConfig: retry.RetryConfig{
+			MaxAttempts: 3,
+			BaseDelay:   500 * time.Millisecond,
+			MaxDelay:    5 * time.Second,
+		},
+		vcsClientFactory: func(ctx context.Context, token, owner, repo string) (vcsClient, error) {
+			return vcs.NewGitHubClient(ctx, token, owner, repo)
+		},
+		logger: logger,
 	}
 	// Extract discovery client from kubeClient if available
 	if kubeClient != nil {
@@ -125,7 +158,10 @@ func (c *Controller) deployDirect(ctx context.Context, req *DeployRequest, resul
 	return result, nil
 }
 
-// deployGitOps pushes the manifest to Git without applying to cluster
+// deployGitOps applies the manifest to the cluster with suspended reconciliation,
+// then pushes the clean manifest (without suspended annotation) to Git.
+// If the Git push fails after a successful cluster apply, a compensating delete
+// is attempted to avoid leaving a permanently suspended resource on the cluster.
 func (c *Controller) deployGitOps(ctx context.Context, req *DeployRequest, result *DeployResult) (*DeployResult, error) {
 	c.logger.Info("executing GitOps deployment",
 		"instanceId", req.InstanceID,
@@ -150,14 +186,58 @@ func (c *Controller) deployGitOps(ctx context.Context, req *DeployRequest, resul
 		return result, fmt.Errorf("invalid repository configuration: %w", err)
 	}
 
-	result.Status = StatusManifestGenerated
+	// Apply suspended manifest to cluster for immediate visibility.
+	// Resolve GVR once here so the compensating delete path reuses it without
+	// a second discovery round-trip.
+	result.Status = StatusCreating
+	mb := NewInstanceMetadataBuilder(req)
+	suspendedObj := mb.BuildUnstructuredSuspended(req.APIVersion, req.Kind, req.Spec)
 
-	// Push manifest to Git
-	commitSHA, manifestPath, err := c.pushToGit(ctx, req)
+	suspendedGVR, err := c.getGVRFromUnstructured(suspendedObj)
 	if err != nil {
 		result.Status = StatusFailed
+		result.ClusterError = err.Error()
+		c.logger.Error("GitOps deployment GVR resolution failed",
+			"instanceId", req.InstanceID,
+			"error", err,
+		)
+		return result, fmt.Errorf("failed to apply suspended manifest to cluster: %w", err)
+	}
+
+	if err := c.applyObjectToCluster(ctx, suspendedObj, req); err != nil {
+		result.Status = StatusFailed
+		result.ClusterError = err.Error()
+		c.logger.Error("GitOps deployment cluster apply failed",
+			"instanceId", req.InstanceID,
+			"error", err,
+		)
+		return result, fmt.Errorf("failed to apply suspended manifest to cluster: %w", err)
+	}
+
+	result.ClusterDeployed = true
+	result.Status = StatusManifestGenerated
+
+	// Push clean manifest (without suspended annotation) to Git
+	commitSHA, manifestPath, err := c.pushToGit(ctx, req)
+	if err != nil {
+		// Compensating delete: remove the suspended resource from the cluster
+		// to avoid leaving a permanently unreconciled instance.
+		// Use a detached context so the delete completes even if the parent
+		// context was canceled (e.g., request timeout).
+		delCtx, delCancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer delCancel()
+		if delErr := c.deleteFromClusterByGVR(delCtx, suspendedGVR, suspendedObj, req); delErr != nil {
+			c.logger.Warn("failed to delete suspended resource after Git push failure",
+				"instanceId", req.InstanceID,
+				"deleteError", delErr,
+			)
+		} else {
+			result.ClusterDeployed = false
+		}
+
+		result.Status = StatusFailed
 		result.GitError = err.Error()
-		c.logger.Error("GitOps deployment failed",
+		c.logger.Error("GitOps deployment Git push failed",
 			"instanceId", req.InstanceID,
 			"error", err,
 		)
@@ -250,54 +330,107 @@ func (c *Controller) deployHybrid(ctx context.Context, req *DeployRequest, resul
 	return result, nil
 }
 
-// applyToCluster creates the resource in the Kubernetes cluster
+// applyToCluster creates or updates the resource in the Kubernetes cluster.
+// It builds a standard (non-suspended) object from the DeployRequest, then
+// delegates to applyObjectToCluster for the actual Create-then-Patch upsert.
 func (c *Controller) applyToCluster(ctx context.Context, req *DeployRequest) error {
-	// Build the unstructured object
+	// Build labels, annotations, and metadata via shared builder
 	// Note: KRO automatically sets "kro.run/resource-graph-definition-name" label
 	// Note: app.kubernetes.io/managed-by will be set by KRO or GitOps tool
-	obj := &unstructured.Unstructured{
-		Object: map[string]interface{}{
-			"apiVersion": req.APIVersion,
-			"kind":       req.Kind,
-			"metadata": map[string]interface{}{
-				"name":      req.Name,
-				"namespace": req.Namespace,
-				"labels": map[string]interface{}{
-					"app.kubernetes.io/name":    req.Name,
-					"knodex.io/deployment-mode": string(req.DeploymentMode),
-				},
-				"annotations": map[string]interface{}{
-					"knodex.io/instance-id": req.InstanceID,
-					"knodex.io/created-by":  req.CreatedBy,
-					"knodex.io/created-at":  req.CreatedAt.Format(time.RFC3339),
-				},
-			},
-			"spec": req.Spec,
-		},
-	}
+	mb := NewInstanceMetadataBuilder(req)
+	obj := mb.BuildUnstructured(req.APIVersion, req.Kind, req.Spec)
+	return c.applyObjectToCluster(ctx, obj, req)
+}
 
-	// Add project labels/annotations if present
-	if req.ProjectID != "" {
-		labels := obj.GetLabels()
-		labels["knodex.io/project"] = req.ProjectID
-		obj.SetLabels(labels)
-		annotations := obj.GetAnnotations()
-		annotations["knodex.io/project-id"] = req.ProjectID
-		obj.SetAnnotations(annotations)
-	}
-
+// applyObjectToCluster creates or updates a pre-built unstructured object in the
+// Kubernetes cluster. It uses a Create-then-Patch upsert pattern: Create is attempted
+// first (fast path for new resources); on AlreadyExists, it falls back to MergePatch.
+// Transient errors on Create are retried with exponential backoff and jitter.
+func (c *Controller) applyObjectToCluster(ctx context.Context, obj *unstructured.Unstructured, req *DeployRequest) error {
 	// Get the GVR for the resource
 	gvr, err := c.getGVRFromUnstructured(obj)
 	if err != nil {
-		return fmt.Errorf("failed to determine GroupVersionResource: %w", err)
+		return fmt.Errorf("determine GVR for %s %s/%s: %w", req.Kind, req.Namespace, req.Name, err)
 	}
 
-	// Create the resource
-	_, err = c.dynamicClient.Resource(gvr).Namespace(req.Namespace).Create(ctx, obj, metav1.CreateOptions{})
+	// Create with retry — AlreadyExists and permanent errors exit immediately via retry.Permanent
+	err = retry.Do(ctx, c.retryConfig, func() error {
+		var createErr error
+		if req.IsClusterScoped {
+			_, createErr = c.dynamicClient.Resource(gvr).Create(ctx, obj, metav1.CreateOptions{})
+		} else {
+			_, createErr = c.dynamicClient.Resource(gvr).Namespace(req.Namespace).Create(ctx, obj, metav1.CreateOptions{})
+		}
+		if createErr == nil {
+			return nil
+		}
+		if apierrors.IsAlreadyExists(createErr) {
+			return retry.Permanent(errResourceAlreadyExists)
+		}
+		// Retry transient errors (network, server timeout, rate limit, conflict)
+		if retry.IsRetryable(createErr) || apierrors.IsServerTimeout(createErr) || apierrors.IsTooManyRequests(createErr) || apierrors.IsConflict(createErr) {
+			return createErr
+		}
+		// Permanent K8s error (Forbidden, Invalid, etc.) — stop retrying
+		return retry.Permanent(createErr)
+	})
+
+	// Upsert fallback: resource already exists, patch with new spec.
+	// MergePatch with the full object we built — this is "last writer wins" since we
+	// don't set resourceVersion. Server-managed fields (status, managedFields) are
+	// unaffected because they're absent from our object.
+	if errors.Is(err, errResourceAlreadyExists) {
+		patchBytes, marshalErr := json.Marshal(obj)
+		if marshalErr != nil {
+			return fmt.Errorf("marshal patch for %s %s/%s: %w", req.Kind, req.Namespace, req.Name, marshalErr)
+		}
+		if req.IsClusterScoped {
+			_, err = c.dynamicClient.Resource(gvr).Patch(ctx, obj.GetName(), k8stypes.MergePatchType, patchBytes, metav1.PatchOptions{})
+		} else {
+			_, err = c.dynamicClient.Resource(gvr).Namespace(req.Namespace).Patch(ctx, obj.GetName(), k8stypes.MergePatchType, patchBytes, metav1.PatchOptions{})
+		}
+		if err != nil {
+			return fmt.Errorf("patch existing %s %s/%s: %w", req.Kind, req.Namespace, req.Name, err)
+		}
+		c.logger.Info("resource already exists, patched with new spec",
+			"kind", req.Kind, "name", req.Name, "namespace", req.Namespace)
+		return nil
+	}
 	if err != nil {
-		return fmt.Errorf("failed to create resource: %w", err)
+		return fmt.Errorf("create %s %s/%s: %w", req.Kind, req.Namespace, req.Name, err)
 	}
 
+	return nil
+}
+
+// deleteFromCluster removes a resource from the Kubernetes cluster.
+// Used as a best-effort compensating action when Git push fails after a
+// successful cluster apply in GitOps mode. IsNotFound is treated as success
+// (idempotent delete).
+func (c *Controller) deleteFromCluster(ctx context.Context, obj *unstructured.Unstructured, req *DeployRequest) error {
+	gvr, err := c.getGVRFromUnstructured(obj)
+	if err != nil {
+		return fmt.Errorf("determine GVR for delete: %w", err)
+	}
+	return c.deleteFromClusterByGVR(ctx, gvr, obj, req)
+}
+
+// deleteFromClusterByGVR deletes a resource using a pre-resolved GVR, skipping the
+// discovery round-trip. Used in the GitOps compensating-delete path where the GVR
+// was already resolved during cluster apply.
+func (c *Controller) deleteFromClusterByGVR(ctx context.Context, gvr schema.GroupVersionResource, obj *unstructured.Unstructured, req *DeployRequest) error {
+	var err error
+	if req.IsClusterScoped {
+		err = c.dynamicClient.Resource(gvr).Delete(ctx, obj.GetName(), metav1.DeleteOptions{})
+	} else {
+		err = c.dynamicClient.Resource(gvr).Namespace(req.Namespace).Delete(ctx, obj.GetName(), metav1.DeleteOptions{})
+	}
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("delete %s %s/%s: %w", req.Kind, req.Namespace, req.Name, err)
+	}
 	return nil
 }
 
@@ -313,8 +446,8 @@ func (c *Controller) pushToGit(ctx context.Context, req *DeployRequest) (commitS
 		return "", "", fmt.Errorf("failed to get GitHub token: %w", err)
 	}
 
-	// Create GitHub client
-	ghClient, err := vcs.NewGitHubClient(ctx, token, req.Repository.Owner, req.Repository.Repo)
+	// Create GitHub client via factory (allows test injection)
+	ghClient, err := c.vcsClientFactory(ctx, token, req.Repository.Owner, req.Repository.Repo)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to create GitHub client: %w", err)
 	}
@@ -336,11 +469,8 @@ func (c *Controller) pushToGit(ctx context.Context, req *DeployRequest) (commitS
 	// Generate commit message
 	commitMessage := c.generator.GenerateCommitMessage(req)
 
-	// Determine branch
-	branch := req.Repository.DefaultBranch
-	if branch == "" {
-		branch = "main"
-	}
+	// Determine branch — respect per-deployment GitBranch override via GetEffectiveBranch
+	branch := req.GetEffectiveBranch()
 
 	// Commit manifest file
 	// Note: .metadata folder removed - all tracking info is in manifest annotations
@@ -361,28 +491,22 @@ func (c *Controller) pushToGit(ctx context.Context, req *DeployRequest) (commitS
 // SECURITY: The returned token should be used immediately and the calling
 // code should call ghClient.Close() via defer to minimize memory exposure.
 func (c *Controller) getGitHubToken(ctx context.Context, repo *RepositoryConfig) (string, error) {
-	if repo.SecretName == "" {
+	secretName := repo.GetSecretName()
+	if secretName == "" {
 		return "", fmt.Errorf("secret name is required")
 	}
 
-	namespace := repo.SecretNamespace
-	if namespace == "" {
-		namespace = "kro-system"
-	}
+	namespace := repo.GetSecretNamespace()
+	key := repo.GetSecretKey()
 
-	key := repo.SecretKey
-	if key == "" {
-		key = "token"
-	}
-
-	secret, err := c.kubeClient.CoreV1().Secrets(namespace).Get(ctx, repo.SecretName, metav1.GetOptions{})
+	secret, err := c.kubeClient.CoreV1().Secrets(namespace).Get(ctx, secretName, metav1.GetOptions{})
 	if err != nil {
-		return "", fmt.Errorf("failed to get secret %s/%s: %w", namespace, repo.SecretName, err)
+		return "", fmt.Errorf("failed to get secret %s/%s: %w", namespace, secretName, err)
 	}
 
 	tokenBytes, ok := secret.Data[key]
 	if !ok {
-		return "", fmt.Errorf("secret %s/%s does not contain key %s", namespace, repo.SecretName, key)
+		return "", fmt.Errorf("secret %s/%s does not contain key %s", namespace, secretName, key)
 	}
 
 	// SECURITY: Copy the token and zero the original bytes to minimize exposure
@@ -396,10 +520,11 @@ func (c *Controller) getGitHubToken(ctx context.Context, repo *RepositoryConfig)
 }
 
 // Delete removes an instance deployment
-func (c *Controller) Delete(ctx context.Context, namespace, name, rgdName, deletedBy string, repo *RepositoryConfig, mode DeploymentMode) error {
+func (c *Controller) Delete(ctx context.Context, namespace, name, kind, rgdName, deletedBy string, isClusterScoped bool, repo *RepositoryConfig, mode DeploymentMode) error {
 	c.logger.Info("deleting instance",
 		"namespace", namespace,
 		"name", name,
+		"isClusterScoped", isClusterScoped,
 		"mode", mode,
 	)
 
@@ -413,12 +538,12 @@ func (c *Controller) Delete(ctx context.Context, namespace, name, rgdName, delet
 		if repo == nil {
 			return fmt.Errorf("repository configuration is required for GitOps deletion")
 		}
-		return c.deleteFromGit(ctx, namespace, name, rgdName, deletedBy, repo)
+		return c.deleteFromGit(ctx, namespace, name, kind, rgdName, deletedBy, isClusterScoped, repo)
 
 	case ModeHybrid:
 		// Hybrid mode: delete from Git (cluster deletion handled by caller)
 		if repo != nil {
-			if err := c.deleteFromGit(ctx, namespace, name, rgdName, deletedBy, repo); err != nil {
+			if err := c.deleteFromGit(ctx, namespace, name, kind, rgdName, deletedBy, isClusterScoped, repo); err != nil {
 				c.logger.Warn("failed to delete from Git during hybrid delete",
 					"namespace", namespace,
 					"name", name,
@@ -435,33 +560,29 @@ func (c *Controller) Delete(ctx context.Context, namespace, name, rgdName, delet
 }
 
 // deleteFromGit removes the manifest file from Git
-func (c *Controller) deleteFromGit(ctx context.Context, namespace, name, rgdName, deletedBy string, repo *RepositoryConfig) error {
+func (c *Controller) deleteFromGit(ctx context.Context, namespace, name, kind, rgdName, deletedBy string, isClusterScoped bool, repo *RepositoryConfig) error {
 	token, err := c.getGitHubToken(ctx, repo)
 	if err != nil {
 		return fmt.Errorf("failed to get GitHub token: %w", err)
 	}
 
-	ghClient, err := vcs.NewGitHubClient(ctx, token, repo.Owner, repo.Repo)
+	ghClient, err := c.vcsClientFactory(ctx, token, repo.Owner, repo.Repo)
 	if err != nil {
 		return fmt.Errorf("failed to create GitHub client: %w", err)
 	}
 	// SECURITY: Ensure client resources are cleaned up to minimize token exposure
 	defer ghClient.Close()
 
-	// Generate path to delete
-	basePath := repo.BasePath
-	if basePath == "" {
-		basePath = "instances"
+	// Generate path to delete (consistent with create path)
+	manifestPath, pathErr := ManifestPathFor(name, namespace, kind, isClusterScoped, repo.BasePath)
+	if pathErr != nil {
+		return fmt.Errorf("failed to generate manifest path for deletion: %w", pathErr)
 	}
-	manifestPath := fmt.Sprintf("%s/%s/%s.yaml", basePath, namespace, name)
 
-	// Generate delete commit message
-	commitMessage := c.generator.GenerateDeleteCommitMessage(namespace, name, rgdName, deletedBy)
+	// Generate delete commit message — scope-aware
+	commitMessage := c.generator.GenerateDeleteCommitMessage(namespace, name, rgdName, deletedBy, isClusterScoped)
 
-	branch := repo.DefaultBranch
-	if branch == "" {
-		branch = "main"
-	}
+	branch := repo.GetBranch()
 
 	// Delete manifest file
 	err = ghClient.DeleteFile(ctx, manifestPath, branch, commitMessage)
@@ -473,7 +594,7 @@ func (c *Controller) deleteFromGit(ctx context.Context, namespace, name, rgdName
 }
 
 // getGVRFromUnstructured extracts GroupVersionResource from an unstructured object.
-// Uses discovery client when available for correct plural resolution; falls back to naive pluralization.
+// Uses the discovery client for correct plural resolution; returns an error if discovery is unavailable.
 func (c *Controller) getGVRFromUnstructured(obj *unstructured.Unstructured) (schema.GroupVersionResource, error) {
 	apiVersion := obj.GetAPIVersion()
 	kind := obj.GetKind()
@@ -499,62 +620,27 @@ func (c *Controller) getGVRFromUnstructured(obj *unstructured.Unstructured) (sch
 		return schema.GroupVersionResource{}, fmt.Errorf("invalid apiVersion format: %s", apiVersion)
 	}
 
-	// Try discovery-based resolution first
+	// Try discovery-based resolution first.
+	// Common irregular K8s plurals that discovery handles correctly:
+	// Policy→policies, Ingress→ingresses, EndpointSlice→endpointslices.
+	// Without discovery we cannot safely guess plurals.
 	if c.discoveryClient != nil {
 		gvk := schema.GroupVersionKind{Group: group, Version: version, Kind: kind}
-		groupResources, err := restmapper.GetAPIGroupResources(c.discoveryClient)
-		if err == nil {
+		groupResources, discoveryErr := restmapper.GetAPIGroupResources(c.discoveryClient)
+		if discoveryErr == nil {
 			mapper := restmapper.NewDiscoveryRESTMapper(groupResources)
-			mapping, err := mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
-			if err == nil {
+			mapping, mappingErr := mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
+			if mappingErr == nil {
 				return mapping.Resource, nil
 			}
-			c.logger.Warn("discovery REST mapping failed, falling back to naive pluralization",
-				"kind", kind, "error", err)
-		} else {
-			c.logger.Warn("discovery API group resources failed, falling back to naive pluralization",
-				"kind", kind, "error", err)
+			c.logger.Warn("discovery REST mapping failed for kind",
+				"kind", kind, "error", mappingErr)
+			return schema.GroupVersionResource{}, fmt.Errorf("cannot determine plural resource name for kind %q: %w", kind, mappingErr)
 		}
+		c.logger.Warn("discovery API group resources failed for kind",
+			"kind", kind, "error", discoveryErr)
+		return schema.GroupVersionResource{}, fmt.Errorf("cannot determine plural resource name for kind %q (discovery unavailable): %w", kind, discoveryErr)
 	}
 
-	// Fallback: naive pluralization
-	resource := strings.ToLower(kind) + "s"
-	return schema.GroupVersionResource{
-		Group:    group,
-		Version:  version,
-		Resource: resource,
-	}, nil
+	return schema.GroupVersionResource{}, fmt.Errorf("cannot determine plural resource name for kind %q: no discovery client available", kind)
 }
-
-// SecretReader interface for getting secrets (used for testing)
-type SecretReader interface {
-	GetSecret(ctx context.Context, namespace, name, key string) (string, error)
-}
-
-// KubernetesSecretReader implements SecretReader using Kubernetes client
-type KubernetesSecretReader struct {
-	client kubernetes.Interface
-}
-
-// NewKubernetesSecretReader creates a new KubernetesSecretReader
-func NewKubernetesSecretReader(client kubernetes.Interface) *KubernetesSecretReader {
-	return &KubernetesSecretReader{client: client}
-}
-
-// GetSecret retrieves a secret value from Kubernetes
-func (r *KubernetesSecretReader) GetSecret(ctx context.Context, namespace, name, key string) (string, error) {
-	secret, err := r.client.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		return "", fmt.Errorf("failed to get secret %s/%s: %w", namespace, name, err)
-	}
-
-	value, ok := secret.Data[key]
-	if !ok {
-		return "", fmt.Errorf("secret %s/%s does not contain key %s", namespace, name, key)
-	}
-
-	return string(value), nil
-}
-
-// Ensure KubernetesSecretReader implements SecretReader
-var _ SecretReader = (*KubernetesSecretReader)(nil)

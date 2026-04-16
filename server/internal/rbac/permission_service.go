@@ -19,14 +19,10 @@ const (
 	PermissionRGDView        Permission = "rgd:view"
 )
 
-// Role represents a user's role (including global admin)
+// Role represents a user's role
+// Server-level admin uses CasbinRoleServerAdmin ("role:serveradmin") from casbin.go.
+// Project-scoped roles are defined in types.go: RolePlatformAdmin, RoleDeveloper, RoleViewer.
 type Role string
-
-const (
-	RoleGlobalAdmin Role = "global-admin"
-	// Project-scoped roles are defined in types.go:
-	// RolePlatformAdmin, RoleDeveloper, RoleViewer
-)
 
 // PermissionServiceEnforcer defines the subset of policy enforcement methods
 // needed by PermissionService. This follows Interface Segregation Principle.
@@ -147,9 +143,10 @@ func (s *PermissionService) GetUserNamespaces(ctx context.Context, userID string
 
 // Global admins see all project namespaces because their Casbin policies grant access to all projects.
 // Returns:
-// - nil: Only when policyEnforcer is not configured (backward compatibility)
+// - []string{"*"}: User can access all namespaces (wildcard project destination)
 // - empty slice: User has no namespace access
 // - non-empty slice: User can only see instances in these namespaces
+// NOTE: Never returns nil. A zero-value []string{} means "no access" (fail-closed).
 
 func (s *PermissionService) GetUserNamespacesWithGroups(ctx context.Context, userID string, groups []string) ([]string, error) {
 	// Security: Add timeout to prevent unbounded operations (CWE-400 mitigation)
@@ -192,13 +189,13 @@ func (s *PermissionService) GetUserNamespacesWithGroups(ctx context.Context, use
 				}
 				for _, dest := range project.Spec.Destinations {
 					// Handle universal wildcard "*" (access to ALL namespaces)
-					// Return nil to signal no namespace filtering should be applied
+					// Return ["*"] to signal global namespace access
 					if dest.Namespace == "*" {
-						s.logger.Debug("project has wildcard namespace access, disabling filtering",
+						s.logger.Debug("project has wildcard namespace access, granting global access",
 							"user_id", userID,
 							"project", projectName,
 						)
-						return nil, nil
+						return []string{"*"}, nil
 					}
 					// Include exact namespaces and wildcard patterns (e.g., "staging*")
 					if dest.Namespace != "" {
@@ -242,13 +239,13 @@ func (s *PermissionService) GetUserNamespacesWithGroups(ctx context.Context, use
 		for _, project := range directProjects {
 			for _, dest := range project.Spec.Destinations {
 				// Handle universal wildcard "*" (access to ALL namespaces)
-				// Return nil to signal no namespace filtering should be applied
+				// Return ["*"] to signal global namespace access
 				if dest.Namespace == "*" {
-					s.logger.Debug("project has wildcard namespace access, disabling filtering",
+					s.logger.Debug("project has wildcard namespace access, granting global access",
 						"user_id", userID,
 						"project", project.Name,
 					)
-					return nil, nil
+					return []string{"*"}, nil
 				}
 				// Include exact namespaces and wildcard patterns (e.g., "staging*")
 				if dest.Namespace != "" {
@@ -272,13 +269,13 @@ func (s *PermissionService) GetUserNamespacesWithGroups(ctx context.Context, use
 			for _, project := range groupProjects {
 				for _, dest := range project.Spec.Destinations {
 					// Handle universal wildcard "*" (access to ALL namespaces)
-					// Return nil to signal no namespace filtering should be applied
+					// Return ["*"] to signal global namespace access
 					if dest.Namespace == "*" {
-						s.logger.Debug("group project has wildcard namespace access, disabling filtering",
+						s.logger.Debug("group project has wildcard namespace access, granting global access",
 							"user_id", userID,
 							"project", project.Name,
 						)
-						return nil, nil
+						return []string{"*"}, nil
 					}
 					// Include exact namespaces and wildcard patterns (e.g., "staging*")
 					if dest.Namespace != "" {

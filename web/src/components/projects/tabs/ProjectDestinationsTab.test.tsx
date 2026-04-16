@@ -282,7 +282,7 @@ describe("ProjectDestinationsTab", () => {
       />
     );
 
-    expect(screen.getByText("3 destinations")).toBeInTheDocument();
+    expect(screen.getByText("3 namespaces")).toBeInTheDocument();
   });
 
   // Wildcard namespace addition (regression test for regex bug)

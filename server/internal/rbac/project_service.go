@@ -32,13 +32,16 @@ var (
 type ProjectService struct {
 	k8sClient     kubernetes.Interface
 	dynamicClient dynamic.Interface
+	namespace     string // Namespace where Project CRDs live (e.g., "knodex-system")
 }
 
-// NewProjectService creates a new ProjectService
-func NewProjectService(k8sClient kubernetes.Interface, dynamicClient dynamic.Interface) *ProjectService {
+// NewProjectService creates a new ProjectService.
+// The namespace parameter specifies where Project CRDs are stored (e.g., "knodex-system").
+func NewProjectService(k8sClient kubernetes.Interface, dynamicClient dynamic.Interface, namespace string) *ProjectService {
 	return &ProjectService{
 		k8sClient:     k8sClient,
 		dynamicClient: dynamicClient,
+		namespace:     namespace,
 	}
 }
 
@@ -61,7 +64,8 @@ func (s *ProjectService) CreateProject(ctx context.Context, name string, spec Pr
 			Kind:       ProjectKind,
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name: name,
+			Name:      name,
+			Namespace: s.namespace,
 			Labels: map[string]string{
 				"app.kubernetes.io/managed-by": "knodex",
 			},
@@ -90,8 +94,8 @@ func (s *ProjectService) CreateProject(ctx context.Context, name string, spec Pr
 		return nil, fmt.Errorf("failed to convert project to unstructured: %w", err)
 	}
 
-	// Create resource
-	result, err := s.dynamicClient.Resource(ProjectGVR).Create(
+	// Create resource in the Knodex namespace
+	result, err := s.dynamicClient.Resource(ProjectGVR).Namespace(s.namespace).Create(
 		ctx,
 		&unstructured.Unstructured{Object: unstructuredProject},
 		metav1.CreateOptions{},
@@ -124,7 +128,7 @@ func (s *ProjectService) CreateProjectWithDescription(ctx context.Context, descr
 
 // GetProject retrieves a Project by ID
 func (s *ProjectService) GetProject(ctx context.Context, projectID string) (*Project, error) {
-	result, err := s.dynamicClient.Resource(ProjectGVR).Get(
+	result, err := s.dynamicClient.Resource(ProjectGVR).Namespace(s.namespace).Get(
 		ctx,
 		projectID,
 		metav1.GetOptions{},
@@ -182,7 +186,7 @@ func matchesWildcard(pattern, value string) bool {
 
 // ListProjects lists all Project resources
 func (s *ProjectService) ListProjects(ctx context.Context) (*ProjectList, error) {
-	result, err := s.dynamicClient.Resource(ProjectGVR).List(
+	result, err := s.dynamicClient.Resource(ProjectGVR).Namespace(s.namespace).List(
 		ctx,
 		metav1.ListOptions{},
 	)
@@ -218,8 +222,8 @@ func (s *ProjectService) UpdateProject(ctx context.Context, project *Project, up
 		return nil, fmt.Errorf("failed to convert project to unstructured: %w", err)
 	}
 
-	// Update resource
-	result, err := s.dynamicClient.Resource(ProjectGVR).Update(
+	// Update resource in the Knodex namespace
+	result, err := s.dynamicClient.Resource(ProjectGVR).Namespace(s.namespace).Update(
 		ctx,
 		&unstructured.Unstructured{Object: unstructuredProject},
 		metav1.UpdateOptions{},
@@ -245,8 +249,8 @@ func (s *ProjectService) UpdateProjectStatus(ctx context.Context, project *Proje
 		return nil, fmt.Errorf("failed to convert project to unstructured: %w", err)
 	}
 
-	// Update status subresource
-	result, err := s.dynamicClient.Resource(ProjectGVR).UpdateStatus(
+	// Update status subresource in the Knodex namespace
+	result, err := s.dynamicClient.Resource(ProjectGVR).Namespace(s.namespace).UpdateStatus(
 		ctx,
 		&unstructured.Unstructured{Object: unstructuredProject},
 		metav1.UpdateOptions{},
@@ -266,7 +270,7 @@ func (s *ProjectService) UpdateProjectStatus(ctx context.Context, project *Proje
 
 // DeleteProject deletes a Project by ID
 func (s *ProjectService) DeleteProject(ctx context.Context, projectID string) error {
-	err := s.dynamicClient.Resource(ProjectGVR).Delete(
+	err := s.dynamicClient.Resource(ProjectGVR).Namespace(s.namespace).Delete(
 		ctx,
 		projectID,
 		metav1.DeleteOptions{},

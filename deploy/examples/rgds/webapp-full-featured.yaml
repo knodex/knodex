@@ -1,18 +1,13 @@
 # Example RGD: Full-Featured Web Application
-# Demonstrates: Template conditional resources with affectedProperties propagation
+# Demonstrates all form field patterns:
 #
-# Test matrix:
-#   Field              | Used By                         | Expected Behavior
-#   -------------------|---------------------------------|------------------------------------------
-#   name               | app (non-cond) + cache (cond)   | Always visible (in non-conditional)
-#   image              | app (non-cond)                  | Always visible
-#   port               | app (non-cond)                  | Always visible
-#   visibleAnnotation  | app + database + cache          | Always visible (in non-conditional)
-#   hiddenAnnotation   | database + cache ONLY           | Hidden when BOTH enables are false
-#   enableDatabase     | Controlling field                | Always visible (controller)
-#   enableCache        | Controlling field                | Always visible (controller)
-#   database (object)  | database ONLY                   | Hidden when enableDatabase=false
-#   advanced.*         | app (non-cond)                  | Advanced section (hidden behind toggle)
+#   Pattern                    | Example                          | UI Behavior
+#   ---------------------------|----------------------------------|-------------------------------
+#   Always-visible field       | name, image, port                | Always shown at top level
+#   Global advanced            | advanced.logLevel, advanced.cors | Hidden behind global toggle
+#   Per-feature enabled toggle | database.enabled, cache.enabled  | Controls includeWhen resources
+#   Per-feature always-visible | database.name, cache.maxMemory   | Always shown inside feature
+#   Per-feature advanced       | database.advanced.*, cache.adv.* | Hidden behind inline toggle
 apiVersion: kro.run/v1alpha1
 kind: ResourceGraphDefinition
 metadata:
@@ -21,28 +16,44 @@ metadata:
     knodex.io/catalog: "true"
     knodex.io/deployment-modes: "direct,gitops"
     knodex.io/title: "Full-Featured Web App"
-    knodex.io/description: "Full-featured web application with conditional database, cache, and advanced configuration"
-    knodex.io/tags: "webapp,fullstack,conditions,test"
+    knodex.io/description: "Full-featured web application with database, cache, and multi-level advanced configuration"
+    knodex.io/tags: "webapp,fullstack,conditions,per-feature"
     knodex.io/category: "applications"
     knodex.io/docs-url: "https://docs.example.com/webapp"
+    knodex.io/property-order: '{"": ["name", "image", "port", "database", "cache", "advanced"], "database": ["enabled", "name", "advanced"], "cache": ["enabled", "maxMemory", "advanced"]}'
 spec:
   schema:
     apiVersion: v1alpha1
     kind: WebApp
     spec:
-      # Basic fields - always visible
+      # ── Always-visible top-level fields ──
       name: string
       image: string | default="nginx:latest"
       port: integer | default=8080
-      visibleAnnotation: string | default=""
-      hiddenAnnotation: string | default=""
-      # Conditional toggles
-      enableDatabase: boolean | default=false
-      enableCache: boolean | default=false
-      # Object field used only by conditional resource
+
+      # ── Per-feature: Database ──
+      # database.enabled     → controls includeWhen (creates/skips DB resources)
+      # database.name        → always visible inside the database section
+      # database.advanced.*  → hidden behind per-feature advanced toggle
       database:
+        enabled: boolean | default=false
         name: string | default="mydb"
-      # Advanced fields - hidden by default behind toggle
+        advanced:
+          storageClass: string | default="standard"
+          storageSize: string | default="10Gi"
+          maxConnections: string | default="100"
+
+      # ── Per-feature: Cache ──
+      cache:
+        enabled: boolean | default=false
+        maxMemory: string | default="256mb"
+        advanced:
+          evictionPolicy: string | default="allkeys-lru"
+          persistenceEnabled: boolean | default=false
+          snapshotInterval: string | default="3600"
+
+      # ── Global advanced (top-level) ──
+      # Hidden behind the global "Show Advanced Configuration" toggle
       advanced:
         replicas: integer | default=2
         resources:
@@ -53,18 +64,19 @@ spec:
           enabled: boolean | default=true
           path: string | default="/health"
           interval: integer | default=30
+        logLevel: string | default="info"
+        cors:
+          allowOrigins: string | default="*"
+          allowMethods: string | default="GET,POST,PUT,DELETE"
 
   resources:
-    # Main application - always included
-    # Uses: name, image, port, visibleAnnotation, advanced.*
+    # ── Main application (always included) ──
     - id: app
       template:
         apiVersion: apps/v1
         kind: Deployment
         metadata:
           name: ${schema.spec.name}
-          annotations:
-            app.knodex.io/visible: "${schema.spec.visibleAnnotation}"
         spec:
           replicas: ${schema.spec.advanced.replicas}
           selector:
@@ -80,6 +92,13 @@ spec:
                   image: ${schema.spec.image}
                   ports:
                     - containerPort: ${schema.spec.port}
+                  env:
+                    - name: LOG_LEVEL
+                      value: ${schema.spec.advanced.logLevel}
+                    - name: CORS_ORIGINS
+                      value: ${schema.spec.advanced.cors.allowOrigins}
+                    - name: CORS_METHODS
+                      value: ${schema.spec.advanced.cors.allowMethods}
                   resources:
                     limits:
                       cpu: ${schema.spec.advanced.resources.limits.cpu}
@@ -90,19 +109,28 @@ spec:
                       port: ${schema.spec.port}
                     periodSeconds: ${schema.spec.advanced.healthCheck.interval}
 
-    # Database - conditionally included when enableDatabase == true
-    # Uses: database.name, visibleAnnotation (shared), hiddenAnnotation (exclusive)
+    - id: appSvc
+      template:
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: ${schema.spec.name}
+        spec:
+          selector:
+            app: ${schema.spec.name}
+          ports:
+            - port: 80
+              targetPort: ${schema.spec.port}
+
+    # ── Database (conditional on database.enabled) ──
     - id: database
       includeWhen:
-        - ${schema.spec.enableDatabase == true}
+        - ${schema.spec.database.enabled == true}
       template:
         apiVersion: apps/v1
         kind: StatefulSet
         metadata:
           name: ${schema.spec.name}-db
-          annotations:
-            app.knodex.io/visible: "${schema.spec.visibleAnnotation}"
-            app.knodex.io/hidden: "${schema.spec.hiddenAnnotation}"
         spec:
           serviceName: ${schema.spec.name}-db
           replicas: 1
@@ -122,13 +150,26 @@ spec:
                   env:
                     - name: POSTGRES_DB
                       value: ${schema.spec.database.name}
+                    - name: POSTGRES_MAX_CONNECTIONS
+                      value: "${schema.spec.database.advanced.maxConnections}"
                   ports:
                     - containerPort: 5432
+                  volumeMounts:
+                    - name: data
+                      mountPath: /var/lib/postgresql/data
+          volumeClaimTemplates:
+            - metadata:
+                name: data
+              spec:
+                storageClassName: ${schema.spec.database.advanced.storageClass}
+                accessModes: ["ReadWriteOnce"]
+                resources:
+                  requests:
+                    storage: ${schema.spec.database.advanced.storageSize}
 
-    # Database Service - also conditional on enableDatabase
     - id: databaseSvc
       includeWhen:
-        - ${schema.spec.enableDatabase == true}
+        - ${schema.spec.database.enabled == true}
       template:
         apiVersion: v1
         kind: Service
@@ -142,19 +183,15 @@ spec:
             - port: 5432
               targetPort: 5432
 
-    # Cache - conditionally included when enableCache == true
-    # Uses: name (shared with app), visibleAnnotation (shared), hiddenAnnotation (exclusive)
+    # ── Cache (conditional on cache.enabled) ──
     - id: cache
       includeWhen:
-        - ${schema.spec.enableCache == true}
+        - ${schema.spec.cache.enabled == true}
       template:
         apiVersion: apps/v1
         kind: Deployment
         metadata:
           name: ${schema.spec.name}-cache
-          annotations:
-            app.knodex.io/visible: "${schema.spec.visibleAnnotation}"
-            app.knodex.io/hidden: "${schema.spec.hiddenAnnotation}"
         spec:
           replicas: 1
           selector:
@@ -170,13 +207,21 @@ spec:
               containers:
                 - name: redis
                   image: redis:7-alpine
+                  args:
+                    - redis-server
+                    - --maxmemory
+                    - ${schema.spec.cache.maxMemory}
+                    - --maxmemory-policy
+                    - ${schema.spec.cache.advanced.evictionPolicy}
+                    - --save
+                    - "${schema.spec.cache.advanced.snapshotInterval}"
+                    - "1"
                   ports:
                     - containerPort: 6379
 
-    # Cache Service - also conditional on enableCache
     - id: cacheSvc
       includeWhen:
-        - ${schema.spec.enableCache == true}
+        - ${schema.spec.cache.enabled == true}
       template:
         apiVersion: v1
         kind: Service

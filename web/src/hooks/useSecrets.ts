@@ -3,8 +3,9 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { AxiosError } from "axios";
-import { listSecrets, createSecret, checkSecretExists, getSecret, updateSecret, deleteSecret } from "@/api/secrets";
+import { listSecrets, createSecret, checkSecretExists, updateSecret, deleteSecret } from "@/api/secrets";
 import type { CreateSecretRequest, UpdateSecretRequest } from "@/types/secret";
+import { STALE_TIME } from "@/lib/query-client";
 /**
  * Hook for fetching secrets list for a project with optional pagination.
  */
@@ -16,7 +17,7 @@ export function useSecretList(
     queryKey: ["secrets", project, options?.limit, options?.continue],
     queryFn: () => listSecrets(project, options),
     enabled: !!project,
-    staleTime: 30 * 1000,
+    staleTime: STALE_TIME.FREQUENT,
   });
 }
 
@@ -39,18 +40,6 @@ export function useCreateSecret() {
 }
 
 /**
- * Hook for fetching a single secret with full data (values included)
- */
-export function useSecret(name: string, project: string, namespace: string) {
-  return useQuery({
-    queryKey: ["secrets", project, namespace, name],
-    queryFn: () => getSecret(name, project, namespace),
-    enabled: !!name && !!project && !!namespace,
-    staleTime: 30 * 1000,
-  });
-}
-
-/**
  * Hook for updating a secret.
  * Project is passed per-call to avoid stale closures.
  */
@@ -65,9 +54,8 @@ export function useUpdateSecret() {
     }: { name: string; project: string } & UpdateSecretRequest) => {
       return updateSecret(name, project, req);
     },
-    onSuccess: (_, { project, name, namespace }) => {
+    onSuccess: (_, { project }) => {
       queryClient.invalidateQueries({ queryKey: ["secrets", project] });
-      queryClient.invalidateQueries({ queryKey: ["secrets", project, namespace, name] });
     },
   });
 }
@@ -93,7 +81,7 @@ export function useSecretExists(name: string, project: string, namespace: string
       }
     },
     enabled: !!name && !!project && !!namespace,
-    staleTime: 5 * 60 * 1000, // 5 minutes — secrets rarely change between page loads
+    staleTime: STALE_TIME.STATIC, // secrets rarely change between page loads
     refetchOnWindowFocus: false,
   });
 

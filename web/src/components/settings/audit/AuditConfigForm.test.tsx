@@ -95,7 +95,7 @@ describe("AuditConfigForm", () => {
     });
 
     expect(screen.getByText("Audit Configuration")).toBeInTheDocument();
-    const skeletons = container.querySelectorAll('[class*="animate-pulse"]');
+    const skeletons = container.querySelectorAll('[class*="animate-token-shimmer"]');
     expect(skeletons.length).toBeGreaterThan(0);
   });
 

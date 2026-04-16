@@ -21,6 +21,7 @@ import (
 	"k8s.io/client-go/restmapper"
 	"k8s.io/client-go/tools/cache"
 
+	"github.com/knodex/knodex/server/internal/deployment"
 	"github.com/knodex/knodex/server/internal/k8s/parser"
 	"github.com/knodex/knodex/server/internal/kro"
 	"github.com/knodex/knodex/server/internal/kro/metadata"
@@ -41,10 +42,6 @@ const (
 	InstanceActionUpdate InstanceAction = "update"
 	// InstanceActionDelete indicates an instance was deleted
 	InstanceActionDelete InstanceAction = "delete"
-
-	// instanceTrackerResyncPeriod is how often to re-list instance resources from K8s API.
-	// 30s balances real-time instance visibility with API server load.
-	instanceTrackerResyncPeriod = 30 * time.Second
 )
 
 // InstanceUpdateCallback is called when instances are added, updated, or deleted
@@ -57,19 +54,26 @@ type rgdRef struct {
 	name      string
 }
 
+// informerEntry tracks a registered event handler on a shared informer.
+// Each RGD gets its own handler registration, even when multiple RGDs share the same GVR informer.
+type informerEntry struct {
+	reg cache.ResourceEventHandlerRegistration
+	gvr schema.GroupVersionResource
+	rgd rgdRef
+}
+
 // InstanceTracker watches for instances (CRs) created by RGDs
 type InstanceTracker struct {
 	dynamicClient   dynamic.Interface
 	discoveryClient discovery.DiscoveryInterface
+	factory         dynamicinformer.DynamicSharedInformerFactory
 	cache           *InstanceCache
 	rgdWatcher      *RGDWatcher
 
-	// Map of informer key (namespace/name@gvr) to informer stop channel
-	informers   map[string]chan struct{}
+	// Map of informer key (namespace/name@gvr) to handler registration.
+	// Multiple RGDs sharing the same GVR share one informer but have separate handlers.
+	informers   map[string]informerEntry
 	informersMu sync.RWMutex
-
-	// Map of informer key to the RGD it tracks (for cache cleanup on stop)
-	informerRGDs map[string]rgdRef
 
 	stopCh            chan struct{}
 	synced            atomic.Bool
@@ -78,34 +82,37 @@ type InstanceTracker struct {
 	onChangeCallbacks []InstanceChangeCallback
 	onUpdateCallbacks []InstanceUpdateCallback
 
-	// resyncPeriod for informers
-	resyncPeriod time.Duration
+	// wg tracks background goroutines (e.g. cache sync) so Stop() can wait for them.
+	wg sync.WaitGroup
+
+	// stopOnce ensures the stop channel is only closed once
+	// preventing panic from concurrent Stop() calls
+	stopOnce sync.Once
 }
 
-// NewInstanceTracker creates a new instance tracker
-func NewInstanceTracker(dynamicClient dynamic.Interface, discoveryClient discovery.DiscoveryInterface, rgdWatcher *RGDWatcher) *InstanceTracker {
+// NewInstanceTracker creates a new instance tracker using a shared dynamic client
+// and informer factory. The factory deduplicates informers: multiple RGDs producing
+// the same GVR share a single watch stream, reducing API server load.
+func NewInstanceTracker(dynamicClient dynamic.Interface, discoveryClient discovery.DiscoveryInterface, factory dynamicinformer.DynamicSharedInformerFactory, rgdWatcher *RGDWatcher) *InstanceTracker {
 	return &InstanceTracker{
 		dynamicClient:   dynamicClient,
 		discoveryClient: discoveryClient,
+		factory:         factory,
 		cache:           NewInstanceCache(),
 		rgdWatcher:      rgdWatcher,
-		informers:       make(map[string]chan struct{}),
-		informerRGDs:    make(map[string]rgdRef),
+		informers:       make(map[string]informerEntry),
 		stopCh:          make(chan struct{}),
 		logger:          slog.Default().With("component", "instance-tracker"),
-		resyncPeriod:    instanceTrackerResyncPeriod,
 	}
 }
 
 // NewInstanceTrackerWithCache creates a tracker with an existing cache (for testing)
 func NewInstanceTrackerWithCache(cache *InstanceCache) *InstanceTracker {
 	t := &InstanceTracker{
-		cache:        cache,
-		informers:    make(map[string]chan struct{}),
-		informerRGDs: make(map[string]rgdRef),
-		stopCh:       make(chan struct{}),
-		logger:       slog.Default().With("component", "instance-tracker"),
-		resyncPeriod: instanceTrackerResyncPeriod,
+		cache:     cache,
+		informers: make(map[string]informerEntry),
+		stopCh:    make(chan struct{}),
+		logger:    slog.Default().With("component", "instance-tracker"),
 	}
 	t.running.Store(true)
 	t.synced.Store(true)
@@ -157,10 +164,41 @@ func (t *InstanceTracker) Start(ctx context.Context) error {
 		})
 	}
 
-	// Mark as synced after initial informers are started
+	// Wait for initial informer caches to sync in background.
+	// Uses factory.WaitForCacheSync instead of a fixed sleep — accurate on fast and slow clusters.
+	t.wg.Add(1)
 	go func() {
-		// Give informers time to sync
-		time.Sleep(2 * time.Second)
+		defer t.wg.Done()
+		if t.factory == nil {
+			t.synced.Store(true)
+			return
+		}
+		// Apply 30s timeout (NFR18: <30s startup). If sync takes longer,
+		// the tracker becomes operational serving stale data.
+		syncCtx, syncCancel := context.WithTimeout(ctx, 30*time.Second)
+		defer syncCancel()
+
+		// Also cancel when stopCh closes (AC #1: cancellable via t.stopCh)
+		go func() {
+			select {
+			case <-t.stopCh:
+				syncCancel()
+			case <-syncCtx.Done():
+			}
+		}()
+
+		syncResults := t.factory.WaitForCacheSync(syncCtx.Done())
+		allSynced := true
+		for gvr, synced := range syncResults {
+			if !synced {
+				t.logger.Error("informer cache failed to sync", "gvr", gvr.String())
+				allSynced = false
+			}
+		}
+		if !allSynced {
+			t.logger.Error("instance tracker cache sync incomplete, serving stale data")
+			return
+		}
 		t.synced.Store(true)
 		t.logger.Info("instance tracker synced", "count", t.cache.Count())
 	}()
@@ -168,7 +206,9 @@ func (t *InstanceTracker) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop stops all informers
+// Stop removes all event handlers and marks the tracker as stopped.
+// Closing stopCh also stops informers started via factory.Start(stopCh).
+// Safe to call multiple times — uses sync.Once to prevent double-close panic.
 func (t *InstanceTracker) Stop() {
 	if !t.running.Load() {
 		return
@@ -176,17 +216,24 @@ func (t *InstanceTracker) Stop() {
 
 	t.logger.Info("stopping instance tracker")
 
-	// Stop all informers
+	// Remove all event handlers from shared informers
 	t.informersMu.Lock()
-	for key, stopCh := range t.informers {
-		close(stopCh)
-		t.logger.Debug("stopped informer", "key", key)
+	for key, entry := range t.informers {
+		if t.factory != nil {
+			informer := t.factory.ForResource(entry.gvr).Informer()
+			if err := informer.RemoveEventHandler(entry.reg); err != nil {
+				t.logger.Error("failed to remove event handler during stop", "error", err, "key", key)
+			}
+		}
+		t.logger.Debug("removed handler", "key", key)
 	}
-	t.informers = make(map[string]chan struct{})
-	t.informerRGDs = make(map[string]rgdRef)
+	t.informers = make(map[string]informerEntry)
 	t.informersMu.Unlock()
 
-	close(t.stopCh)
+	t.stopOnce.Do(func() {
+		close(t.stopCh)
+	})
+	t.wg.Wait()
 	t.running.Store(false)
 }
 
@@ -283,23 +330,27 @@ func (t *InstanceTracker) handleRGDChange() {
 		}
 	}
 
-	// Stop informers for RGDs that no longer exist and purge their cached instances
+	// Remove handlers for RGDs that no longer exist and purge their cached instances.
+	// The shared informer itself keeps running — other RGDs may share the same GVR.
 	t.informersMu.Lock()
-	for key, stopCh := range t.informers {
+	for key, entry := range t.informers {
 		if !currentKeys[key] {
-			close(stopCh)
+			// Remove event handler (don't stop the informer — other RGDs may share it)
+			if t.factory != nil {
+				informer := t.factory.ForResource(entry.gvr).Informer()
+				if err := informer.RemoveEventHandler(entry.reg); err != nil {
+					t.logger.Error("failed to remove event handler", "error", err, "key", key)
+				}
+			}
 
 			// Purge cached instances for this RGD
-			if ref, ok := t.informerRGDs[key]; ok {
-				removed := t.cache.DeleteByRGD(ref.namespace, ref.name)
-				for _, inst := range removed {
-					t.notifyUpdate(InstanceActionDelete, inst.Namespace, inst.Kind, inst.Name, nil)
-				}
-				delete(t.informerRGDs, key)
+			removed := t.cache.DeleteByRGD(entry.rgd.namespace, entry.rgd.name)
+			for _, inst := range removed {
+				t.notifyUpdate(InstanceActionDelete, inst.Namespace, inst.Kind, inst.Name, nil)
 			}
 
 			delete(t.informers, key)
-			t.logger.Info("stopped informer for removed RGD", "key", key)
+			t.logger.Info("removed handler for deleted RGD", "key", key)
 		}
 	}
 	t.informersMu.Unlock()
@@ -315,31 +366,79 @@ func (t *InstanceTracker) informerKey(rgd *models.CatalogRGD, gvr schema.GroupVe
 	return fmt.Sprintf("%s/%s@%s", rgd.Namespace, rgd.Name, gvr.String())
 }
 
-// ensureInformerForRGD ensures an informer exists for the given RGD type
+// ensureInformerForRGD ensures an event handler is registered on a shared informer
+// for the given RGD type. Multiple RGDs sharing the same GVR share one informer
+// but get separate event handlers that filter by RGD ownership.
 func (t *InstanceTracker) ensureInformerForRGD(rgd *models.CatalogRGD) {
-	gvr := t.gvrFromRGD(rgd)
-	key := t.informerKey(rgd, gvr)
-
-	t.informersMu.Lock()
-	defer t.informersMu.Unlock()
-
-	// Check if informer already exists for this specific RGD
-	if _, exists := t.informers[key]; exists {
+	if t.factory == nil {
 		return
 	}
 
-	// Create new informer for this RGD
-	stopCh := make(chan struct{})
-	t.informers[key] = stopCh
-	t.informerRGDs[key] = rgdRef{namespace: rgd.Namespace, name: rgd.Name}
+	gvr := t.gvrFromRGD(rgd)
+	key := t.informerKey(rgd, gvr)
 
-	t.logger.Info("starting informer for RGD",
+	// Register handler under lock, but defer factory.Start outside the critical section
+	// to avoid holding informersMu while the factory acquires its own internal lock.
+	var needsStart bool
+	var informer cache.SharedIndexInformer
+
+	t.informersMu.Lock()
+
+	// Check if handler already registered for this specific RGD
+	if _, exists := t.informers[key]; exists {
+		t.informersMu.Unlock()
+		return
+	}
+
+	// Get or create informer from shared factory — same GVR returns same informer
+	informer = t.factory.ForResource(gvr).Informer()
+
+	// Add event handler for this specific RGD
+	reg, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {
+			t.handleInstanceAdd(obj, rgd.Name, rgd.Namespace)
+		},
+		UpdateFunc: func(oldObj, newObj interface{}) {
+			t.handleInstanceUpdate(oldObj, newObj, rgd.Name, rgd.Namespace)
+		},
+		DeleteFunc: func(obj interface{}) {
+			t.handleInstanceDelete(obj)
+		},
+	})
+	if err != nil {
+		t.informersMu.Unlock()
+		t.logger.Error("failed to add event handler", "error", err, "gvr", gvr.String())
+		return
+	}
+
+	t.informers[key] = informerEntry{
+		reg: reg,
+		gvr: gvr,
+		rgd: rgdRef{namespace: rgd.Namespace, name: rgd.Name},
+	}
+	needsStart = true
+
+	t.informersMu.Unlock()
+
+	// Start factory outside the lock — idempotent, already-running informers are not restarted
+	if needsStart {
+		t.factory.Start(t.stopCh)
+	}
+
+	t.logger.Info("registered handler for RGD",
 		"key", key,
 		"rgd", rgd.Name,
 		"namespace", rgd.Namespace,
 		"gvr", gvr.String())
 
-	go t.runInformer(gvr, rgd.Name, rgd.Namespace, stopCh)
+	// Wait for informer cache sync in background
+	go func() {
+		if !cache.WaitForCacheSync(t.stopCh, informer.HasSynced) {
+			t.logger.Error("informer cache failed to sync", "gvr", gvr.String())
+		} else {
+			t.logger.Info("informer cache synced", "gvr", gvr.String())
+		}
+	}()
 }
 
 // parseAPIVersion splits an apiVersion string into group and version.
@@ -448,44 +547,6 @@ func (t *InstanceTracker) ResolveGVR(apiVersion, kind string) (schema.GroupVersi
 	}, nil
 }
 
-// runInformer runs an informer for a specific GVR
-func (t *InstanceTracker) runInformer(gvr schema.GroupVersionResource, rgdName, rgdNamespace string, stopCh chan struct{}) {
-	factory := dynamicinformer.NewDynamicSharedInformerFactory(t.dynamicClient, t.resyncPeriod)
-	informer := factory.ForResource(gvr).Informer()
-
-	_, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
-			t.handleInstanceAdd(obj, rgdName, rgdNamespace)
-		},
-		UpdateFunc: func(oldObj, newObj interface{}) {
-			t.handleInstanceUpdate(oldObj, newObj, rgdName, rgdNamespace)
-		},
-		DeleteFunc: func(obj interface{}) {
-			t.handleInstanceDelete(obj)
-		},
-	})
-	if err != nil {
-		t.logger.Error("failed to add event handler", "error", err, "gvr", gvr.String())
-		return
-	}
-
-	// Start the factory (starts all informers in the factory)
-	factory.Start(stopCh)
-
-	// Wait for the informer cache to sync before processing events
-	synced := cache.WaitForCacheSync(stopCh, informer.HasSynced)
-	if !synced {
-		t.logger.Error("informer cache failed to sync", "gvr", gvr.String())
-		return
-	}
-
-	t.logger.Info("informer cache synced", "gvr", gvr.String())
-
-	// Wait for stop signal
-	<-stopCh
-	t.logger.Debug("informer stopped", "gvr", gvr.String())
-}
-
 // handleInstanceAdd processes a new instance
 func (t *InstanceTracker) handleInstanceAdd(obj interface{}, rgdName, rgdNamespace string) {
 	u, ok := obj.(*unstructured.Unstructured)
@@ -580,9 +641,9 @@ func (t *InstanceTracker) belongsToRGD(u *unstructured.Unstructured, rgdName, rg
 	}
 
 	// Use LabelWithFallback for forward-compatible label resolution across KRO versions.
-	// Currently a single key; the variadic signature supports adding legacy keys if KRO
-	// renames labels in a future release.
-	labelRGDName := metadata.LabelWithFallback(labels, metadata.ResourceGraphDefinitionNameLabel)
+	// KRO's label migration (KREP) moves labels from "kro.run/" to "internal.kro.run/".
+	// Try the new prefix first; fall back to legacy for pre-migration instances.
+	labelRGDName := metadata.LabelWithFallback(labels, metadata.InternalResourceGraphDefinitionNameLabel, metadata.ResourceGraphDefinitionNameLabel)
 
 	// Check if RGD name matches
 	if labelRGDName != rgdName {
@@ -632,34 +693,82 @@ func (t *InstanceTracker) unstructuredToInstance(u *unstructured.Unstructured, r
 		}
 	}
 
-	// Look up parent RGD status from the catalog cache
-	var rgdStatus string
+	// Look up parent RGD fields from the catalog cache
+	var rgdStatus, rgdIcon, rgdCategory string
+	var isClusterScoped bool
+	var rgdProjectName string
 	if t.rgdWatcher != nil {
 		if parentRGD, found := t.rgdWatcher.GetRGD(rgdNamespace, rgdName); found {
 			rgdStatus = parentRGD.Status
+			rgdIcon = parentRGD.Icon
+			rgdCategory = parentRGD.Category
+			isClusterScoped = parentRGD.IsClusterScoped
+			if parentRGD.Labels != nil {
+				rgdProjectName = parentRGD.Labels[kro.RGDProjectLabel]
+			}
 		}
 	}
 
+	// Resolve project identity from instance labels/annotations, falling back to
+	// the parent RGD's project label. Instances deployed via Knodex have both
+	// a "knodex.io/project" label and a "knodex.io/project-id" annotation set by
+	// the deployment generator. For instances deployed outside Knodex (e.g., kubectl),
+	// only the parent RGD's project label is available.
+	projectName := labels[kro.RGDProjectLabel]
+	if projectName == "" {
+		projectName = rgdProjectName
+	}
+	projectID := annotations[models.AnnotationProjectID]
+	if projectID == "" {
+		projectID = projectName // In Knodex, project name = project ID
+	}
+
 	return &models.Instance{
-		Name:            parser.GetName(u),
-		Namespace:       parser.GetNamespace(u),
-		RGDName:         rgdName,
-		RGDNamespace:    rgdNamespace,
-		APIVersion:      parser.GetAPIVersion(u),
-		Kind:            parser.GetKind(u),
-		Health:          health,
-		Phase:           phase,
-		Message:         message,
-		Conditions:      conditions,
-		Spec:            spec,
-		Status:          statusMap,
-		Labels:          labels,
-		Annotations:     annotations,
-		CreatedAt:       createdAt,
-		UpdatedAt:       updatedAt,
-		ResourceVersion: parser.GetResourceVersion(u),
-		UID:             parser.GetUID(u),
-		RGDStatus:       rgdStatus,
+		Name:                    parser.GetName(u),
+		Namespace:               parser.GetNamespace(u),
+		RGDName:                 rgdName,
+		RGDNamespace:            rgdNamespace,
+		APIVersion:              parser.GetAPIVersion(u),
+		Kind:                    parser.GetKind(u),
+		Health:                  health,
+		Phase:                   phase,
+		Message:                 message,
+		Conditions:              conditions,
+		Spec:                    spec,
+		Status:                  statusMap,
+		Labels:                  labels,
+		Annotations:             annotations,
+		CreatedAt:               createdAt,
+		UpdatedAt:               updatedAt,
+		ResourceVersion:         parser.GetResourceVersion(u),
+		UID:                     parser.GetUID(u),
+		TargetCluster:           annotations[models.AnnotationTargetCluster],
+		IsClusterScoped:         isClusterScoped,
+		ProjectID:               projectID,
+		ProjectName:             projectName,
+		RGDStatus:               rgdStatus,
+		RGDIcon:                 rgdIcon,
+		RGDCategory:             rgdCategory,
+		DeploymentMode:          deployment.ParseDeploymentMode(labels[models.DeploymentModeLabel]),
+		ReconciliationSuspended: annotations["kro.run/reconcile"] == "suspended",
+		GitInfo:                 buildGitInfoFromAnnotations(annotations),
+	}
+}
+
+// buildGitInfoFromAnnotations constructs a GitInfo from knodex.io/git-* annotations
+// written at deploy time. Returns nil if no git annotations are present.
+func buildGitInfoFromAnnotations(annotations map[string]string) *deployment.GitInfo {
+	repo := annotations["knodex.io/git-repository"]
+	branch := annotations["knodex.io/git-branch"]
+	path := annotations["knodex.io/git-path"]
+	if repo == "" && branch == "" && path == "" {
+		return nil
+	}
+	return &deployment.GitInfo{
+		RepositoryURL: repo,
+		Branch:        branch,
+		Path:          path,
+		PushStatus:    deployment.GitPushSuccess,
 	}
 }
 
@@ -773,15 +882,17 @@ func (t *InstanceTracker) calculateHealth(conditions []models.InstanceCondition,
 	return models.HealthProgressing
 }
 
-// updateInstancesRGDStatus updates the RGDStatus field on all cached instances
-// belonging to the given RGD when the RGD's status changes.
+// updateInstancesRGDStatus updates the RGDStatus, RGDIcon, and RGDCategory fields on all cached instances
+// belonging to the given RGD when the RGD's metadata changes.
 func (t *InstanceTracker) updateInstancesRGDStatus(rgd *models.CatalogRGD) {
 	instances := t.cache.GetByRGD(rgd.Namespace, rgd.Name)
 	for _, inst := range instances {
-		if inst.RGDStatus != rgd.Status {
+		if inst.RGDStatus != rgd.Status || inst.RGDIcon != rgd.Icon || inst.RGDCategory != rgd.Category {
 			// Clone before mutation to avoid data races with concurrent cache readers
 			updated := *inst
 			updated.RGDStatus = rgd.Status
+			updated.RGDIcon = rgd.Icon
+			updated.RGDCategory = rgd.Category
 			t.cache.Set(&updated)
 			t.notifyUpdate(InstanceActionUpdate, updated.Namespace, updated.Kind, updated.Name, &updated)
 		}
@@ -798,6 +909,11 @@ func (t *InstanceTracker) GetInstance(namespace, kind, name string) (*models.Ins
 	return t.cache.Get(namespace, kind, name)
 }
 
+// GetInstanceByUID returns the instance with the given Kubernetes UID.
+func (t *InstanceTracker) GetInstanceByUID(uid string) (*models.Instance, bool) {
+	return t.cache.GetByUID(uid)
+}
+
 // GetInstancesByRGD returns all instances for a specific RGD
 // Note: Primarily used for testing purposes
 func (t *InstanceTracker) GetInstancesByRGD(rgdNamespace, rgdName string) []*models.Instance {
@@ -810,7 +926,7 @@ func (t *InstanceTracker) CountInstancesByRGD(rgdNamespace, rgdName string) int 
 }
 
 // CountInstancesByNamespaces returns the count of instances accessible to the user.
-// namespaces: list of namespace patterns the user has access to (nil = all, empty = none)
+// namespaces: list of namespace patterns (["*"] = all, empty = none)
 // matchFunc: function to match a namespace against patterns (e.g., rbac.MatchNamespaceInList)
 func (t *InstanceTracker) CountInstancesByNamespaces(namespaces []string, matchFunc func(namespace string, patterns []string) bool) int {
 	return t.cache.CountByNamespaces(namespaces, matchFunc)
@@ -818,10 +934,17 @@ func (t *InstanceTracker) CountInstancesByNamespaces(namespaces []string, matchF
 
 // CountInstancesByRGDAndNamespaces returns the count of instances for a specific RGD
 // filtered by the user's accessible namespaces.
-// namespaces: list of namespace patterns the user has access to (nil = all, empty = none)
+// namespaces: list of namespace patterns (["*"] = all, empty = none)
 // matchFunc: function to match a namespace against patterns (e.g., rbac.MatchNamespaceInList)
 func (t *InstanceTracker) CountInstancesByRGDAndNamespaces(rgdNamespace, rgdName string, namespaces []string, matchFunc func(namespace string, patterns []string) bool) int {
 	return t.cache.CountByRGDAndNamespaces(rgdNamespace, rgdName, namespaces, matchFunc)
+}
+
+// CountFilteredInstances returns the count of instances matching the given predicate.
+// Use this when both namespace and project-based filtering is required (e.g., for
+// non-admin users who need cluster-scoped instance counts filtered by project access).
+func (t *InstanceTracker) CountFilteredInstances(filter func(*models.Instance) bool) int {
+	return t.cache.CountFiltered(filter)
 }
 
 // DeleteInstance deletes an instance from the cluster
@@ -830,7 +953,14 @@ func (t *InstanceTracker) DeleteInstance(ctx context.Context, namespace, name, a
 	// ResolveGVR handles apiVersion parsing, discovery, fallback, and warning logs internally.
 	gvr, _ := t.ResolveGVR(apiVersion, kind)
 
-	err := t.dynamicClient.Resource(gvr).Namespace(namespace).Delete(ctx, name, metav1.DeleteOptions{})
+	// Scope-aware delete: cluster-scoped instances have empty namespace
+	var err error
+	if namespace == "" {
+		slog.Debug("deleting cluster-scoped instance", "kind", kind, "name", name, "gvr", gvr)
+		err = t.dynamicClient.Resource(gvr).Delete(ctx, name, metav1.DeleteOptions{})
+	} else {
+		err = t.dynamicClient.Resource(gvr).Namespace(namespace).Delete(ctx, name, metav1.DeleteOptions{})
+	}
 	if err != nil {
 		return err
 	}

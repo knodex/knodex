@@ -9,35 +9,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// TestValidateRole tests the ValidateRole function
-func TestValidateRole(t *testing.T) {
-	tests := []struct {
-		name     string
-		role     string
-		expected bool
-	}{
-		{"PlatformAdmin", RolePlatformAdmin, true},
-		{"Developer", RoleDeveloper, true},
-		{"Viewer", RoleViewer, true},
-		{"InvalidRole", "admin", false},
-		{"EmptyRole", "", false},
-		{"CaseSensitive", "Platform-Admin", false},
-		{"CaseSensitiveDeveloper", "DEVELOPER", false},
-		{"RandomString", "random-role", false},
-		{"SuperAdmin", "super-admin", false},
-		{"Owner", "owner", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := ValidateRole(tt.role)
-			if result != tt.expected {
-				t.Errorf("ValidateRole(%s) = %v, expected %v", tt.role, result, tt.expected)
-			}
-		})
-	}
-}
-
 // TestRoleConstants tests role constant values
 func TestRoleConstants(t *testing.T) {
 	if RolePlatformAdmin != "platform-admin" {

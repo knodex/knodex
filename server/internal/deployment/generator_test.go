@@ -14,23 +14,6 @@ func TestNewGenerator(t *testing.T) {
 	if g == nil {
 		t.Fatal("NewGenerator() returned nil")
 	}
-	if !g.includeMetadata {
-		t.Error("NewGenerator() includeMetadata should default to true")
-	}
-}
-
-func TestGenerator_SetIncludeMetadata(t *testing.T) {
-	g := NewGenerator()
-
-	g.SetIncludeMetadata(false)
-	if g.includeMetadata {
-		t.Error("SetIncludeMetadata(false) should set includeMetadata to false")
-	}
-
-	g.SetIncludeMetadata(true)
-	if !g.includeMetadata {
-		t.Error("SetIncludeMetadata(true) should set includeMetadata to true")
-	}
 }
 
 func TestGenerator_GenerateManifest(t *testing.T) {
@@ -216,99 +199,6 @@ func TestGenerator_GenerateManifest(t *testing.T) {
 	})
 }
 
-func TestGenerator_GenerateMetadata(t *testing.T) {
-	g := NewGenerator()
-	now := time.Now()
-
-	t.Run("nil request", func(t *testing.T) {
-		_, err := g.GenerateMetadata(nil, "sha123")
-		if err == nil {
-			t.Error("expected error for nil request")
-		}
-	})
-
-	t.Run("valid request", func(t *testing.T) {
-		req := &DeployRequest{
-			InstanceID:     "inst-123",
-			Name:           "my-app",
-			Namespace:      "production",
-			RGDName:        "application-stack",
-			RGDNamespace:   "kro-system",
-			ProjectID:      "proj-456",
-			DeploymentMode: ModeGitOps,
-			CreatedBy:      "user@example.com",
-			CreatedAt:      now,
-			Repository: &RepositoryConfig{
-				ID: "repo-789",
-			},
-		}
-
-		metadata, err := g.GenerateMetadata(req, "abc123def456")
-		if err != nil {
-			t.Fatalf("GenerateMetadata() error: %v", err)
-		}
-
-		// Check header
-		if !strings.Contains(metadata, "# Knodex Instance Metadata") {
-			t.Error("metadata should contain header comment")
-		}
-
-		// Check fields
-		if !strings.Contains(metadata, "instanceId: inst-123") {
-			t.Error("metadata should contain instanceId")
-		}
-		if !strings.Contains(metadata, "name: my-app") {
-			t.Error("metadata should contain name")
-		}
-		if !strings.Contains(metadata, "namespace: production") {
-			t.Error("metadata should contain namespace")
-		}
-		if !strings.Contains(metadata, "rgdName: application-stack") {
-			t.Error("metadata should contain rgdName")
-		}
-		if !strings.Contains(metadata, "projectId: proj-456") {
-			t.Error("metadata should contain projectId")
-		}
-		// Note: ManifestMetadata only has ProjectID, not ProjectName
-		// In ArgoCD-aligned model, projects are identified by ID (projectId)
-		if !strings.Contains(metadata, "deploymentMode: gitops") {
-			t.Error("metadata should contain deploymentMode")
-		}
-		if !strings.Contains(metadata, "createdBy: user@example.com") {
-			t.Error("metadata should contain createdBy")
-		}
-		if !strings.Contains(metadata, "commitSha: abc123def456") {
-			t.Error("metadata should contain commitSha")
-		}
-		if !strings.Contains(metadata, "repositoryId: repo-789") {
-			t.Error("metadata should contain repositoryId")
-		}
-	})
-
-	t.Run("request without repository", func(t *testing.T) {
-		req := &DeployRequest{
-			InstanceID:     "inst-456",
-			Name:           "test-app",
-			Namespace:      "default",
-			RGDName:        "test",
-			RGDNamespace:   "kro-system",
-			DeploymentMode: ModeDirect,
-			CreatedBy:      "admin",
-			CreatedAt:      now,
-		}
-
-		metadata, err := g.GenerateMetadata(req, "")
-		if err != nil {
-			t.Fatalf("GenerateMetadata() error: %v", err)
-		}
-
-		// Should have empty repository ID
-		if strings.Contains(metadata, "repositoryId: repo-") {
-			t.Error("metadata should not contain non-empty repositoryId when repository is nil")
-		}
-	})
-}
-
 func TestGenerator_GenerateCommitMessage(t *testing.T) {
 	g := NewGenerator()
 	now := time.Now()
@@ -398,21 +288,21 @@ func TestGenerator_GenerateManifestPath(t *testing.T) {
 		}{
 			{
 				name:     "default base path",
-				req:      &DeployRequest{Namespace: "production", Name: "my-app"},
+				req:      &DeployRequest{Namespace: "production", Name: "my-app", Kind: "WebApp"},
 				basePath: "",
-				want:     "instances/production/my-app.yaml",
+				want:     "instances/production/WebApp/my-app.yaml",
 			},
 			{
 				name:     "custom base path",
-				req:      &DeployRequest{Namespace: "staging", Name: "test-app"},
+				req:      &DeployRequest{Namespace: "staging", Name: "test-app", Kind: "Application"},
 				basePath: "manifests/kro",
-				want:     "manifests/kro/staging/test-app.yaml",
+				want:     "manifests/kro/staging/Application/test-app.yaml",
 			},
 			{
 				name:     "default namespace",
-				req:      &DeployRequest{Namespace: "default", Name: "nginx"},
+				req:      &DeployRequest{Namespace: "default", Name: "nginx", Kind: "WebServer"},
 				basePath: "k8s",
-				want:     "k8s/default/nginx.yaml",
+				want:     "k8s/default/WebServer/nginx.yaml",
 			},
 		}
 
@@ -446,7 +336,7 @@ func TestGenerator_GenerateManifestPath(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				req := &DeployRequest{Namespace: tt.namespace, Name: tt.instance}
+				req := &DeployRequest{Namespace: tt.namespace, Name: tt.instance, Kind: "WebApp"}
 				path, err := g.GenerateManifestPath(req, "instances")
 
 				// Should either return an error OR the path should not contain ".."
@@ -461,15 +351,17 @@ func TestGenerator_GenerateManifestPath(t *testing.T) {
 		tests := []struct {
 			name      string
 			namespace string
+			kind      string
 			instance  string
 		}{
-			{"empty namespace", "", "my-app"},
-			{"empty name", "default", ""},
+			{"empty namespace", "", "WebApp", "my-app"},
+			{"empty name", "default", "WebApp", ""},
+			{"empty kind", "default", "", "my-app"},
 		}
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				req := &DeployRequest{Namespace: tt.namespace, Name: tt.instance}
+				req := &DeployRequest{Namespace: tt.namespace, Name: tt.instance, Kind: tt.kind}
 				_, err := g.GenerateManifestPath(req, "instances")
 				if err == nil {
 					t.Error("expected error for invalid input")
@@ -479,154 +371,278 @@ func TestGenerator_GenerateManifestPath(t *testing.T) {
 	})
 }
 
-func TestGenerator_GenerateMetadataPath(t *testing.T) {
-	g := NewGenerator()
-
-	t.Run("valid paths", func(t *testing.T) {
-		tests := []struct {
-			name     string
-			req      *DeployRequest
-			basePath string
-			want     string
-		}{
-			{
-				name:     "default base path",
-				req:      &DeployRequest{Namespace: "production", Name: "my-app"},
-				basePath: "",
-				want:     "instances/production/.metadata/my-app.yaml",
-			},
-			{
-				name:     "custom base path",
-				req:      &DeployRequest{Namespace: "staging", Name: "test-app"},
-				basePath: "manifests/kro",
-				want:     "manifests/kro/staging/.metadata/test-app.yaml",
-			},
-			{
-				name:     "default namespace",
-				req:      &DeployRequest{Namespace: "default", Name: "nginx"},
-				basePath: "k8s",
-				want:     "k8s/default/.metadata/nginx.yaml",
-			},
-		}
-
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				got, err := g.GenerateMetadataPath(tt.req, tt.basePath)
-				if err != nil {
-					t.Fatalf("GenerateMetadataPath() unexpected error: %v", err)
-				}
-				if got != tt.want {
-					t.Errorf("GenerateMetadataPath() = %v, want %v", got, tt.want)
-				}
-			})
-		}
-	})
-
-	t.Run("path traversal prevention", func(t *testing.T) {
-		// SECURITY: These tests verify that path traversal attacks are blocked
-		tests := []struct {
-			name      string
-			namespace string
-			instance  string
-		}{
-			{"traversal dots", "../../etc", "passwd"},
-			{"traversal in name", "default", "../../etc/passwd"},
-		}
-
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				req := &DeployRequest{Namespace: tt.namespace, Name: tt.instance}
-				path, err := g.GenerateMetadataPath(req, "instances")
-
-				// Should either return an error OR the path should not contain ".."
-				if err == nil && strings.Contains(path, "..") {
-					t.Errorf("Path traversal not prevented: got path %q", path)
-				}
-			})
-		}
-	})
-}
-
 func TestGenerator_GenerateDeleteCommitMessage(t *testing.T) {
 	g := NewGenerator()
 
-	msg := g.GenerateDeleteCommitMessage("production", "my-app", "application-stack", "admin@example.com")
+	t.Run("namespace-scoped delete", func(t *testing.T) {
+		msg := g.GenerateDeleteCommitMessage("production", "my-app", "application-stack", "admin@example.com", false)
 
-	// Check subject line
-	if !strings.Contains(msg, "Delete production/my-app (RGD: application-stack)") {
-		t.Error("delete commit message should contain subject line")
-	}
+		if !strings.Contains(msg, "Delete production/my-app (RGD: application-stack)") {
+			t.Error("delete commit message should contain namespace/name subject line")
+		}
+		if !strings.Contains(msg, "Deleted by: admin@example.com") {
+			t.Error("delete commit message should contain deleted by")
+		}
+		if !strings.Contains(msg, "Timestamp:") {
+			t.Error("delete commit message should contain timestamp")
+		}
+		if !strings.Contains(msg, "Managed by Knodex GitOps") {
+			t.Error("delete commit message should contain footer")
+		}
+		if strings.Contains(msg, "[cluster-scoped]") {
+			t.Error("namespace-scoped delete should NOT contain [cluster-scoped]")
+		}
+	})
 
-	// Check body
-	if !strings.Contains(msg, "Deleted by: admin@example.com") {
-		t.Error("delete commit message should contain deleted by")
-	}
-	if !strings.Contains(msg, "Timestamp:") {
-		t.Error("delete commit message should contain timestamp")
-	}
+	t.Run("cluster-scoped delete", func(t *testing.T) {
+		msg := g.GenerateDeleteCommitMessage("", "global-config", "cluster-rgd", "admin@example.com", true)
 
-	// Check footer
-	if !strings.Contains(msg, "Managed by Knodex GitOps") {
-		t.Error("delete commit message should contain footer")
-	}
+		if !strings.Contains(msg, "Delete global-config [cluster-scoped] (RGD: cluster-rgd)") {
+			t.Errorf("cluster-scoped delete should use name-only format, got: %s", msg)
+		}
+		if !strings.Contains(msg, "Scope: cluster") {
+			t.Error("cluster-scoped delete should include Scope: cluster")
+		}
+		if strings.Contains(msg, "/global-config") {
+			t.Error("cluster-scoped delete should NOT use namespace/name format")
+		}
+		if !strings.Contains(msg, "Deleted by: admin@example.com") {
+			t.Error("delete commit message should contain deleted by")
+		}
+	})
 }
 
-func TestGenerator_GenerateKustomization(t *testing.T) {
+// --- Cluster-Scoped Tests (STORY-302) ---
+
+func TestGenerator_GenerateManifest_ClusterScoped(t *testing.T) {
+	g := NewGenerator()
+	now := time.Now()
+
+	t.Run("cluster-scoped omits namespace from manifest", func(t *testing.T) {
+		req := &DeployRequest{
+			Name:            "my-cluster-config",
+			Namespace:       "", // empty for cluster-scoped
+			IsClusterScoped: true,
+			APIVersion:      "kro.run/v1alpha1",
+			Kind:            "ClusterConfig",
+			Spec:            map[string]interface{}{"tier": "gold"},
+			DeploymentMode:  ModeDirect,
+			InstanceID:      "inst-123",
+			CreatedBy:       "admin@test.local",
+			CreatedAt:       now,
+			ProjectID:       "platform",
+		}
+
+		yaml, err := g.GenerateManifest(req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if strings.Contains(yaml, "namespace:") {
+			t.Error("cluster-scoped manifest must not contain namespace field")
+		}
+		if !strings.Contains(yaml, "name: my-cluster-config") {
+			t.Error("manifest should contain the instance name")
+		}
+		if !strings.Contains(yaml, "knodex.io/project: platform") {
+			t.Error("manifest should contain project label")
+		}
+		if !strings.Contains(yaml, "knodex.io/instance-id: inst-123") {
+			t.Error("manifest should contain instance-id annotation")
+		}
+	})
+
+	t.Run("namespace-scoped still includes namespace", func(t *testing.T) {
+		req := &DeployRequest{
+			Name:            "my-app",
+			Namespace:       "production",
+			IsClusterScoped: false,
+			APIVersion:      "kro.run/v1alpha1",
+			Kind:            "Application",
+			Spec:            map[string]interface{}{"replicas": int64(1)},
+			DeploymentMode:  ModeDirect,
+			InstanceID:      "inst-456",
+			CreatedBy:       "dev@test.local",
+			CreatedAt:       now,
+		}
+
+		yaml, err := g.GenerateManifest(req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if !strings.Contains(yaml, "namespace: production") {
+			t.Error("namespace-scoped manifest must contain namespace field")
+		}
+	})
+
+	t.Run("cluster-scoped with empty namespace does not error", func(t *testing.T) {
+		req := &DeployRequest{
+			Name:            "global-policy",
+			Namespace:       "",
+			IsClusterScoped: true,
+			APIVersion:      "kro.run/v1alpha1",
+			Kind:            "ClusterPolicy",
+			Spec:            map[string]interface{}{"enforce": true},
+			DeploymentMode:  ModeDirect,
+			InstanceID:      "inst-789",
+			CreatedBy:       "admin@test.local",
+			CreatedAt:       now,
+		}
+
+		_, err := g.GenerateManifest(req)
+		if err != nil {
+			t.Fatalf("cluster-scoped with empty namespace should not error: %v", err)
+		}
+	})
+}
+
+func TestGenerator_GenerateManifestPath_ClusterScoped(t *testing.T) {
 	g := NewGenerator()
 
-	t.Run("empty namespace", func(t *testing.T) {
-		_, err := g.GenerateKustomization("", []string{"app.yaml"})
-		if err == nil {
-			t.Error("expected error for empty namespace")
+	t.Run("cluster-scoped uses kind-based path", func(t *testing.T) {
+		req := &DeployRequest{
+			Name:            "my-config",
+			IsClusterScoped: true,
+			Kind:            "ClusterConfig",
 		}
-		if !strings.Contains(err.Error(), "namespace is required") {
-			t.Errorf("unexpected error: %v", err)
-		}
-	})
-
-	t.Run("valid kustomization", func(t *testing.T) {
-		resources := []string{"app.yaml", "service.yaml", "configmap.yaml"}
-		kustomization, err := g.GenerateKustomization("production", resources)
+		path, err := g.GenerateManifestPath(req, "instances")
 		if err != nil {
-			t.Fatalf("GenerateKustomization() error: %v", err)
+			t.Fatalf("unexpected error: %v", err)
 		}
-
-		// Check header
-		if !strings.Contains(kustomization, "# Kustomization for Knodex") {
-			t.Error("kustomization should contain header comment")
-		}
-
-		// Check structure
-		if !strings.Contains(kustomization, "apiVersion: kustomize.config.k8s.io/v1beta1") {
-			t.Error("kustomization should contain apiVersion")
-		}
-		if !strings.Contains(kustomization, "kind: Kustomization") {
-			t.Error("kustomization should contain kind")
-		}
-		if !strings.Contains(kustomization, "namespace: production") {
-			t.Error("kustomization should contain namespace")
-		}
-
-		// Check resources
-		if !strings.Contains(kustomization, "app.yaml") {
-			t.Error("kustomization should contain app.yaml resource")
-		}
-		if !strings.Contains(kustomization, "service.yaml") {
-			t.Error("kustomization should contain service.yaml resource")
-		}
-		if !strings.Contains(kustomization, "configmap.yaml") {
-			t.Error("kustomization should contain configmap.yaml resource")
+		want := "instances/cluster-scoped/clusterconfig/my-config.yaml"
+		if path != want {
+			t.Errorf("got %q, want %q", path, want)
 		}
 	})
 
-	t.Run("empty resources", func(t *testing.T) {
-		kustomization, err := g.GenerateKustomization("default", []string{})
+	t.Run("cluster-scoped with custom base path", func(t *testing.T) {
+		req := &DeployRequest{
+			Name:            "global-policy",
+			IsClusterScoped: true,
+			Kind:            "Policy",
+		}
+		path, err := g.GenerateManifestPath(req, "manifests")
 		if err != nil {
-			t.Fatalf("GenerateKustomization() error: %v", err)
+			t.Fatalf("unexpected error: %v", err)
 		}
-
-		if !strings.Contains(kustomization, "resources: []") {
-			t.Error("kustomization should handle empty resources")
+		want := "manifests/cluster-scoped/policy/global-policy.yaml"
+		if path != want {
+			t.Errorf("got %q, want %q", path, want)
 		}
 	})
+
+	t.Run("namespace-scoped includes kind", func(t *testing.T) {
+		req := &DeployRequest{
+			Name:            "my-app",
+			Namespace:       "production",
+			Kind:            "Application",
+			IsClusterScoped: false,
+		}
+		path, err := g.GenerateManifestPath(req, "instances")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := "instances/production/Application/my-app.yaml"
+		if path != want {
+			t.Errorf("got %q, want %q", path, want)
+		}
+	})
+}
+
+func TestGenerator_GenerateCommitMessage_ClusterScoped(t *testing.T) {
+	g := NewGenerator()
+	now := time.Now()
+
+	t.Run("cluster-scoped includes scope indicator", func(t *testing.T) {
+		req := &DeployRequest{
+			Name:            "global-config",
+			IsClusterScoped: true,
+			RGDName:         "cluster-config-rgd",
+			InstanceID:      "inst-100",
+			CreatedBy:       "admin@test.local",
+			DeploymentMode:  ModeGitOps,
+			CreatedAt:       now,
+		}
+		msg := g.GenerateCommitMessage(req)
+		if !strings.Contains(msg, "[cluster-scoped]") {
+			t.Error("commit message should include [cluster-scoped] indicator")
+		}
+		if !strings.Contains(msg, "Scope: cluster") {
+			t.Error("commit message body should include scope")
+		}
+		if strings.Contains(msg, "/global-config") {
+			t.Error("commit message should NOT use namespace/name format for cluster-scoped")
+		}
+	})
+
+	t.Run("namespace-scoped uses namespace/name format", func(t *testing.T) {
+		req := &DeployRequest{
+			Name:            "my-app",
+			Namespace:       "production",
+			IsClusterScoped: false,
+			RGDName:         "app-rgd",
+			InstanceID:      "inst-200",
+			CreatedBy:       "dev@test.local",
+			DeploymentMode:  ModeGitOps,
+			CreatedAt:       now,
+		}
+		msg := g.GenerateCommitMessage(req)
+		if !strings.Contains(msg, "production/my-app") {
+			t.Error("commit message should use namespace/name format")
+		}
+		if strings.Contains(msg, "[cluster-scoped]") {
+			t.Error("commit message should NOT include [cluster-scoped] for namespace-scoped")
+		}
+	})
+}
+
+// TestDeployRequest_GetEffectiveBranch verifies that GetEffectiveBranch respects
+// the GitBranch override over the repository default — ensuring pushToGit uses
+// the correct branch when a per-deployment override is set.
+func TestDeployRequest_GetEffectiveBranch(t *testing.T) {
+	tests := []struct {
+		name     string
+		req      DeployRequest
+		expected string
+	}{
+		{
+			name: "GitBranch override wins",
+			req: DeployRequest{
+				GitBranch:  "feature/deploy-override",
+				Repository: &RepositoryConfig{Branch: "main"},
+			},
+			expected: "feature/deploy-override",
+		},
+		{
+			name: "falls back to repository branch",
+			req: DeployRequest{
+				GitBranch:  "",
+				Repository: &RepositoryConfig{Branch: "develop"},
+			},
+			expected: "develop",
+		},
+		{
+			name: "falls back to main when nothing set",
+			req: DeployRequest{
+				GitBranch:  "",
+				Repository: &RepositoryConfig{},
+			},
+			expected: "main",
+		},
+		{
+			name:     "falls back to main when no repo",
+			req:      DeployRequest{GitBranch: ""},
+			expected: "main",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.req.GetEffectiveBranch()
+			if got != tt.expected {
+				t.Errorf("GetEffectiveBranch() = %q, want %q", got, tt.expected)
+			}
+		})
+	}
 }

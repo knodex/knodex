@@ -4,6 +4,7 @@
 import { useMemo, useState } from "react";
 import { useForm, FormProvider } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { toast } from "sonner";
 import {
   Loader2,
   AlertTriangle,
@@ -12,7 +13,7 @@ import {
   GitBranch,
   Cloud,
   RefreshCw,
-} from "lucide-react";
+} from "@/lib/icons";
 import {
   Dialog,
   DialogContent,
@@ -23,9 +24,10 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { FormField } from "@/components/deploy/FormField";
-import { AdvancedConfigToggle, useAdvancedConfigToggle } from "@/components/deploy/AdvancedConfigToggle";
+import { AdvancedConfigToggle } from "@/components/deploy/AdvancedConfigToggle";
 import { buildFormSchema, getDefaultValues } from "@/lib/schema-to-zod";
 import { useFieldVisibility } from "@/hooks/useFieldVisibility";
+import { useAdvancedFieldSplit } from "@/hooks/useAdvancedFieldSplit";
 import { useRGDSchema } from "@/hooks/useRGDs";
 import { useUpdateInstanceSpec } from "@/hooks/useInstances";
 import type { Instance, DeploymentMode } from "@/types/rgd";
@@ -80,9 +82,11 @@ export function EditInstanceSpecDialog({
       setShowConfirmation(false);
       setPendingValues(null);
       setSuccessInfo({ gitInfo: result.gitInfo });
-    } catch {
+      toast.success(`Instance "${instance.name}" spec updated`);
+    } catch (err) {
       // Error is captured by updateMutation.error
       setShowConfirmation(false);
+      toast.error(err instanceof Error ? err.message : "Failed to update spec");
     }
   };
 
@@ -346,32 +350,8 @@ function EditSpecForm({ schema, currentSpec, namespace, onSubmit }: EditSpecForm
     formValues
   );
 
-  const { isExpanded: isAdvancedExpanded, toggle: toggleAdvanced } = useAdvancedConfigToggle();
-
-  const isAdvancedField = (fieldName: string): boolean => {
-    return fieldName === "advanced" || fieldName.startsWith("advanced.");
-  };
-
-  const { regularProperties, advancedProperties } = useMemo(() => {
-    const regular: Array<[string, typeof schema.properties[string]]> = [];
-    const advanced: Array<[string, typeof schema.properties[string]]> = [];
-
-    for (const [name, property] of Object.entries(schema.properties)) {
-      if (isAdvancedField(name)) {
-        if (name === "advanced" && property.type === "object" && property.properties) {
-          for (const [childName, childProp] of Object.entries(property.properties)) {
-            advanced.push([`advanced.${childName}`, childProp]);
-          }
-        } else {
-          advanced.push([name, property]);
-        }
-      } else {
-        regular.push([name, property]);
-      }
-    }
-
-    return { regularProperties: regular, advancedProperties: advanced };
-  }, [schema]);
+  const { regularProperties, advancedProperties, globalSection, isAdvancedExpanded, toggleAdvanced } =
+    useAdvancedFieldSplit(schema.properties, schema.advancedSections);
 
   return (
     <FormProvider {...methods}>
@@ -387,6 +367,7 @@ function EditSpecForm({ schema, currentSpec, namespace, onSubmit }: EditSpecForm
                 property={property}
                 required={schema.required?.includes(name)}
                 deploymentNamespace={namespace}
+                inlineAdvancedSection={schema.advancedSections?.find(s => s.path === `${name}.advanced`)}
               />
             );
           })}
@@ -394,7 +375,7 @@ function EditSpecForm({ schema, currentSpec, namespace, onSubmit }: EditSpecForm
 
         {/* Advanced fields */}
         <AdvancedConfigToggle
-          advancedSection={schema.advancedSection ?? null}
+          advancedSection={globalSection}
           isExpanded={isAdvancedExpanded}
           onToggle={toggleAdvanced}
         >

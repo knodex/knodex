@@ -115,16 +115,6 @@ func BenchmarkGetInt64(b *testing.B) {
 	}
 }
 
-// BenchmarkGetBool benchmarks boolean access
-func BenchmarkGetBool(b *testing.B) {
-	obj := buildNestedMap(0)
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = GetBool(obj, "spec", "enabled")
-	}
-}
-
 // BenchmarkGetString_DeeplyNested benchmarks deep nesting traversal (10 levels)
 func BenchmarkGetString_DeeplyNested(b *testing.B) {
 	obj := buildNestedMap(10)
@@ -154,6 +144,5 @@ func BenchmarkAccessorMixed(b *testing.B) {
 		_, _ = GetMap(obj, "metadata", "labels")
 		_ = GetStringOrDefault(obj, "", "metadata", "annotations", "knodex.io/catalog")
 		_, _ = GetInt64(obj, "spec", "replicas")
-		_, _ = GetBool(obj, "spec", "enabled")
 	}
 }

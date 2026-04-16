@@ -3,6 +3,7 @@ apiVersion: knodex.io/v1alpha1
 kind: Project
 metadata:
   name: {{ .Values.defaultProject.name | default "default" }}
+  namespace: {{ .Values.knodexNamespace | default .Release.Namespace }}
   labels:
     {{- include "knodex.labels" . | nindent 4 }}
     app.kubernetes.io/component: rbac

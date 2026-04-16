@@ -4,6 +4,7 @@
 package watcher
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -513,6 +514,176 @@ func TestInstanceCache_DeleteByRGD_Empty(t *testing.T) {
 	}
 }
 
+// --- STORY-300: Cluster-scoped instance cache operations (empty namespace) ---
+
+func TestInstanceCache_ClusterScoped_SetGetDelete(t *testing.T) {
+	cache := NewInstanceCache()
+
+	// Cluster-scoped instance has empty namespace
+	clusterInst := &models.Instance{
+		Name:      "global-config",
+		Namespace: "",
+		Kind:      "ClusterConfig",
+		RGDName:   "cluster-config-rgd",
+	}
+
+	cache.Set(clusterInst)
+
+	got, ok := cache.Get("", "ClusterConfig", "global-config")
+	if !ok {
+		t.Fatal("expected to find cluster-scoped instance")
+	}
+	if got.Namespace != "" {
+		t.Errorf("expected empty namespace, got %q", got.Namespace)
+	}
+	if got.Name != "global-config" {
+		t.Errorf("expected name 'global-config', got %q", got.Name)
+	}
+
+	// Delete cluster-scoped instance
+	cache.Delete("", "ClusterConfig", "global-config")
+	_, ok = cache.Get("", "ClusterConfig", "global-config")
+	if ok {
+		t.Error("expected cluster-scoped instance to be deleted")
+	}
+}
+
+func TestInstanceCache_ClusterScoped_NoCollisionWithNamespaced(t *testing.T) {
+	cache := NewInstanceCache()
+
+	// Cluster-scoped instance (empty namespace)
+	clusterInst := &models.Instance{
+		Name:      "my-resource",
+		Namespace: "",
+		Kind:      "MyKind",
+		RGDName:   "cluster-rgd",
+	}
+
+	// Namespace-scoped instance with same kind and name
+	nsInst := &models.Instance{
+		Name:      "my-resource",
+		Namespace: "default",
+		Kind:      "MyKind",
+		RGDName:   "ns-rgd",
+	}
+
+	cache.Set(clusterInst)
+	cache.Set(nsInst)
+
+	// Both should coexist
+	if cache.Count() != 2 {
+		t.Errorf("expected 2 instances, got %d", cache.Count())
+	}
+
+	// Retrieve cluster-scoped
+	got, ok := cache.Get("", "MyKind", "my-resource")
+	if !ok {
+		t.Fatal("expected to find cluster-scoped instance")
+	}
+	if got.RGDName != "cluster-rgd" {
+		t.Errorf("expected RGDName 'cluster-rgd', got %q", got.RGDName)
+	}
+
+	// Retrieve namespace-scoped
+	got, ok = cache.Get("default", "MyKind", "my-resource")
+	if !ok {
+		t.Fatal("expected to find namespace-scoped instance")
+	}
+	if got.RGDName != "ns-rgd" {
+		t.Errorf("expected RGDName 'ns-rgd', got %q", got.RGDName)
+	}
+
+	// Delete cluster-scoped should not affect namespace-scoped
+	cache.Delete("", "MyKind", "my-resource")
+	if cache.Count() != 1 {
+		t.Errorf("expected 1 instance after deleting cluster-scoped, got %d", cache.Count())
+	}
+	_, ok = cache.Get("default", "MyKind", "my-resource")
+	if !ok {
+		t.Error("expected namespace-scoped instance to remain after deleting cluster-scoped")
+	}
+}
+
+func TestInstanceCache_ClusterScoped_ListWithMixedScopes(t *testing.T) {
+	cache := NewInstanceCache()
+
+	now := time.Now()
+	cache.Set(&models.Instance{Name: "cluster-app", Namespace: "", Kind: "ClusterApp", RGDName: "cluster-rgd", Health: models.HealthHealthy, CreatedAt: now})
+	cache.Set(&models.Instance{Name: "ns-app-1", Namespace: "prod", Kind: "App", RGDName: "ns-rgd", Health: models.HealthHealthy, CreatedAt: now})
+	cache.Set(&models.Instance{Name: "ns-app-2", Namespace: "dev", Kind: "App", RGDName: "ns-rgd", Health: models.HealthUnhealthy, CreatedAt: now})
+
+	// Unfiltered list — must include both cluster-scoped and namespace-scoped instances
+	result := cache.List(models.InstanceListOptions{Page: 1, PageSize: 10})
+	if result.TotalCount != 3 {
+		t.Errorf("expected 3 total instances (1 cluster-scoped + 2 namespaced), got %d", result.TotalCount)
+	}
+
+	// Filter by specific namespace "prod" — cluster-scoped instance is NOT in "prod" so
+	// opts.Namespace="" means "all namespaces"; opts.Namespace="prod" means only "prod".
+	// The opts.Namespace filter is exact: cluster-scoped (Namespace="") is excluded when
+	// opts.Namespace is non-empty because "" != "prod".
+	resultProd := cache.List(models.InstanceListOptions{Page: 1, PageSize: 10, Namespace: "prod"})
+	if resultProd.TotalCount != 1 {
+		t.Errorf("expected 1 instance for Namespace='prod' filter, got %d", resultProd.TotalCount)
+	}
+	if resultProd.Items[0].Name != "ns-app-1" {
+		t.Errorf("expected 'ns-app-1' for prod filter, got %q", resultProd.Items[0].Name)
+	}
+
+	// Filter by RGD — cluster-scoped RGD returns only cluster-scoped instances
+	resultCluster := cache.List(models.InstanceListOptions{Page: 1, PageSize: 10, RGDName: "cluster-rgd"})
+	if resultCluster.TotalCount != 1 {
+		t.Errorf("expected 1 instance for RGDName='cluster-rgd', got %d", resultCluster.TotalCount)
+	}
+	if resultCluster.Items[0].Namespace != "" {
+		t.Errorf("expected empty namespace for cluster-scoped instance, got %q", resultCluster.Items[0].Namespace)
+	}
+}
+
+func TestInstanceCache_ClusterScoped_CountByRGD(t *testing.T) {
+	cache := NewInstanceCache()
+
+	cache.Set(&models.Instance{Name: "cluster-inst1", Namespace: "", Kind: "ClusterConfig", RGDName: "cluster-rgd", RGDNamespace: ""})
+	cache.Set(&models.Instance{Name: "cluster-inst2", Namespace: "", Kind: "ClusterConfig", RGDName: "cluster-rgd", RGDNamespace: ""})
+	cache.Set(&models.Instance{Name: "ns-inst1", Namespace: "default", Kind: "App", RGDName: "ns-rgd", RGDNamespace: "default"})
+
+	count := cache.CountByRGD("", "cluster-rgd")
+	if count != 2 {
+		t.Errorf("expected 2 instances for cluster-rgd, got %d", count)
+	}
+}
+
+func TestInstanceCache_ClusterScoped_DeleteByRGD(t *testing.T) {
+	cache := NewInstanceCache()
+
+	cache.Set(&models.Instance{Name: "cluster-inst1", Namespace: "", Kind: "ClusterConfig", RGDName: "cluster-rgd", RGDNamespace: ""})
+	cache.Set(&models.Instance{Name: "cluster-inst2", Namespace: "", Kind: "ClusterConfig", RGDName: "cluster-rgd", RGDNamespace: ""})
+	cache.Set(&models.Instance{Name: "ns-inst1", Namespace: "default", Kind: "App", RGDName: "ns-rgd", RGDNamespace: "default"})
+
+	removed := cache.DeleteByRGD("", "cluster-rgd")
+	if len(removed) != 2 {
+		t.Errorf("expected 2 removed, got %d", len(removed))
+	}
+	if cache.Count() != 1 {
+		t.Errorf("expected 1 remaining, got %d", cache.Count())
+	}
+}
+
+func TestInstanceCacheKey_EmptyNamespace(t *testing.T) {
+	// Verify key format for cluster-scoped instances
+	key := instanceCacheKey("", "ClusterConfig", "my-config")
+	expected := "/ClusterConfig/my-config"
+	if key != expected {
+		t.Errorf("expected key %q, got %q", expected, key)
+	}
+
+	// Verify no collision with namespace-scoped
+	nsKey := instanceCacheKey("default", "ClusterConfig", "my-config")
+	if key == nsKey {
+		t.Error("cluster-scoped and namespace-scoped keys should not collide")
+	}
+}
+
 func TestInstanceCache_CountByNamespaces(t *testing.T) {
 	cache := NewInstanceCache()
 
@@ -523,10 +694,10 @@ func TestInstanceCache_CountByNamespaces(t *testing.T) {
 	cache.Set(&models.Instance{Name: "inst4", Namespace: "staging"})
 	cache.Set(&models.Instance{Name: "inst5", Namespace: "prod"})
 
-	// Simple match function for exact namespace matching
+	// Match function supporting exact match and "*" wildcard (mirrors rbac.MatchNamespaceInList)
 	exactMatch := func(namespace string, patterns []string) bool {
 		for _, p := range patterns {
-			if p == namespace {
+			if p == "*" || p == namespace {
 				return true
 			}
 		}
@@ -539,8 +710,8 @@ func TestInstanceCache_CountByNamespaces(t *testing.T) {
 		expected   int
 	}{
 		{
-			name:       "nil namespaces returns all (global admin)",
-			namespaces: nil,
+			name:       "wildcard namespaces returns all (global admin)",
+			namespaces: []string{"*"},
 			expected:   5,
 		},
 		{
@@ -577,5 +748,235 @@ func TestInstanceCache_CountByNamespaces(t *testing.T) {
 				t.Errorf("expected count %d, got %d", tt.expected, count)
 			}
 		})
+	}
+}
+
+func TestInstanceCache_CountByNamespaces_ClusterScoped(t *testing.T) {
+	cache := NewInstanceCache()
+
+	// Mix of cluster-scoped and namespace-scoped instances.
+	// CountByNamespaces does NOT include cluster-scoped instances — they require
+	// project-based filtering via CountFiltered (STORY-301 security fix).
+	cache.Set(&models.Instance{Name: "ns-inst1", Namespace: "team-alpha", Kind: "App"})
+	cache.Set(&models.Instance{Name: "ns-inst2", Namespace: "team-beta", Kind: "App"})
+	cache.Set(&models.Instance{Name: "cluster-inst1", Namespace: "", Kind: "ClusterConfig", IsClusterScoped: true})
+	cache.Set(&models.Instance{Name: "cluster-inst2", Namespace: "", Kind: "ClusterPolicy", IsClusterScoped: true})
+
+	exactMatch := func(namespace string, patterns []string) bool {
+		for _, p := range patterns {
+			if p == "*" || p == namespace {
+				return true
+			}
+		}
+		return false
+	}
+
+	tests := []struct {
+		name       string
+		namespaces []string
+		expected   int
+	}{
+		{
+			name:       "wildcard namespaces returns all (global admin)",
+			namespaces: []string{"*"},
+			expected:   4,
+		},
+		{
+			name:       "single namespace excludes cluster-scoped",
+			namespaces: []string{"team-alpha"},
+			expected:   1, // only ns-scoped match
+		},
+		{
+			name:       "empty namespaces returns none",
+			namespaces: []string{},
+			expected:   0,
+		},
+		{
+			name:       "non-existent namespace returns zero",
+			namespaces: []string{"non-existent"},
+			expected:   0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			count := cache.CountByNamespaces(tt.namespaces, exactMatch)
+			if count != tt.expected {
+				t.Errorf("expected count %d, got %d", tt.expected, count)
+			}
+		})
+	}
+}
+
+func TestInstanceCache_CountByRGDAndNamespaces_ClusterScoped(t *testing.T) {
+	cache := NewInstanceCache()
+
+	cache.Set(&models.Instance{Name: "ns-inst1", Namespace: "prod", Kind: "App", RGDName: "app-rgd", RGDNamespace: "", IsClusterScoped: false})
+	cache.Set(&models.Instance{Name: "cluster-inst1", Namespace: "", Kind: "ClusterConfig", RGDName: "cluster-rgd", RGDNamespace: "", IsClusterScoped: true})
+	cache.Set(&models.Instance{Name: "cluster-inst2", Namespace: "", Kind: "ClusterConfig", RGDName: "cluster-rgd", RGDNamespace: "", IsClusterScoped: true})
+
+	exactMatch := func(namespace string, patterns []string) bool {
+		for _, p := range patterns {
+			if p == "*" || p == namespace {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Non-admin: CountByRGDAndNamespaces does NOT include cluster-scoped instances
+	// because it cannot perform project-based filtering. Use CountFiltered for
+	// project-aware counting (STORY-301 security fix).
+	count := cache.CountByRGDAndNamespaces("", "cluster-rgd", []string{"prod"}, exactMatch)
+	if count != 0 {
+		t.Errorf("expected 0 (cluster-scoped excluded from namespace-only count), got %d", count)
+	}
+
+	// Non-admin: ns-scoped RGD count works as before
+	count = cache.CountByRGDAndNamespaces("", "app-rgd", []string{"prod"}, exactMatch)
+	if count != 1 {
+		t.Errorf("expected 1 ns-scoped instance for app-rgd, got %d", count)
+	}
+
+	// Global admin (["*"] namespaces): sees all including cluster-scoped
+	count = cache.CountByRGDAndNamespaces("", "cluster-rgd", []string{"*"}, exactMatch)
+	if count != 2 {
+		t.Errorf("expected 2 cluster-scoped instances for global admin, got %d", count)
+	}
+}
+
+// --- STORY-300: Benchmark — cluster-wide watch doesn't degrade namespace-scoped performance ---
+
+// BenchmarkInstanceCache_MixedScopeList measures List() performance with a realistic
+// mix of cluster-scoped and namespace-scoped instances. A cluster-wide watch adds all
+// instances to the same cache regardless of scope; this ensures the mixed load path has
+// no measurable overhead compared to namespace-only workloads.
+func BenchmarkInstanceCache_MixedScopeList(b *testing.B) {
+	cache := NewInstanceCache()
+	now := time.Now()
+
+	// Populate 200 namespace-scoped instances across 10 namespaces
+	for i := 0; i < 200; i++ {
+		cache.Set(&models.Instance{
+			Name:      fmt.Sprintf("ns-app-%d", i),
+			Namespace: fmt.Sprintf("ns-%d", i%10),
+			Kind:      "App",
+			RGDName:   "app-rgd",
+			CreatedAt: now,
+		})
+	}
+	// Add 20 cluster-scoped instances
+	for i := 0; i < 20; i++ {
+		cache.Set(&models.Instance{
+			Name:            fmt.Sprintf("cluster-cfg-%d", i),
+			Namespace:       "",
+			Kind:            "ClusterConfig",
+			RGDName:         "cluster-rgd",
+			IsClusterScoped: true,
+			CreatedAt:       now,
+		})
+	}
+
+	opts := models.InstanceListOptions{Page: 1, PageSize: 50, SortBy: "name", SortOrder: "asc"}
+
+	b.ResetTimer()
+	for range b.N {
+		_ = cache.List(opts)
+	}
+}
+
+func TestInstanceCache_GetByTargetCluster(t *testing.T) {
+	cache := NewInstanceCache()
+	now := time.Now()
+
+	// Populate cache with mixed instances
+	cache.Set(&models.Instance{
+		Name: "app-eu-1", Namespace: "team-alpha", Kind: "App",
+		TargetCluster: "prod-eu-west", CreatedAt: now,
+	})
+	cache.Set(&models.Instance{
+		Name: "app-eu-2", Namespace: "team-alpha", Kind: "App",
+		TargetCluster: "prod-eu-west", CreatedAt: now,
+	})
+	cache.Set(&models.Instance{
+		Name: "app-us-1", Namespace: "team-alpha", Kind: "App",
+		TargetCluster: "prod-us-east", CreatedAt: now,
+	})
+	cache.Set(&models.Instance{
+		Name: "app-local", Namespace: "default", Kind: "App",
+		// No TargetCluster — management cluster
+		CreatedAt: now,
+	})
+
+	t.Run("returns matching instances", func(t *testing.T) {
+		result := cache.GetByTargetCluster("prod-eu-west")
+		if len(result) != 2 {
+			t.Fatalf("expected 2 instances, got %d", len(result))
+		}
+		names := map[string]bool{}
+		for _, inst := range result {
+			names[inst.Name] = true
+		}
+		if !names["app-eu-1"] || !names["app-eu-2"] {
+			t.Errorf("expected app-eu-1 and app-eu-2, got %v", names)
+		}
+	})
+
+	t.Run("returns single match", func(t *testing.T) {
+		result := cache.GetByTargetCluster("prod-us-east")
+		if len(result) != 1 {
+			t.Fatalf("expected 1 instance, got %d", len(result))
+		}
+		if result[0].Name != "app-us-1" {
+			t.Errorf("expected app-us-1, got %s", result[0].Name)
+		}
+	})
+
+	t.Run("returns nil for unknown cluster", func(t *testing.T) {
+		result := cache.GetByTargetCluster("nonexistent-cluster")
+		if result != nil {
+			t.Errorf("expected nil, got %d instances", len(result))
+		}
+	})
+
+	t.Run("returns nil for empty cluster ref", func(t *testing.T) {
+		// Instances without TargetCluster should NOT match empty string query
+		// (but since app-local has TargetCluster="" and we query "", it would match)
+		result := cache.GetByTargetCluster("")
+		if len(result) != 1 || result[0].Name != "app-local" {
+			t.Errorf("expected [app-local] for empty cluster ref, got %v", result)
+		}
+	})
+
+	t.Run("empty cache returns nil", func(t *testing.T) {
+		emptyCache := NewInstanceCache()
+		result := emptyCache.GetByTargetCluster("prod-eu-west")
+		if result != nil {
+			t.Errorf("expected nil from empty cache, got %d instances", len(result))
+		}
+	})
+}
+
+// BenchmarkInstanceCache_NamespaceScopedOnly is the baseline for comparison with
+// BenchmarkInstanceCache_MixedScopeList — same workload without cluster-scoped instances.
+func BenchmarkInstanceCache_NamespaceScopedOnly(b *testing.B) {
+	cache := NewInstanceCache()
+	now := time.Now()
+
+	for i := 0; i < 220; i++ {
+		cache.Set(&models.Instance{
+			Name:      fmt.Sprintf("ns-app-%d", i),
+			Namespace: fmt.Sprintf("ns-%d", i%10),
+			Kind:      "App",
+			RGDName:   "app-rgd",
+			CreatedAt: now,
+		})
+	}
+
+	opts := models.InstanceListOptions{Page: 1, PageSize: 50, SortBy: "name", SortOrder: "asc"}
+
+	b.ResetTimer()
+	for range b.N {
+		_ = cache.List(opts)
 	}
 }

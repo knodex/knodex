@@ -28,7 +28,7 @@ import (
 // - Handler (data level): Controls WHICH instances are counted based on namespace access
 //
 // Namespace Access Rules:
-// - Global Admin: Counts ALL instances across all namespaces (nil namespaces = no filter)
+// - Global Admin: Counts ALL instances across all namespaces (["*"] = match all)
 // - Regular User: Counts only instances in namespaces they have access to via projects
 // - No Access: Returns count of 0 (empty namespace list = no access)
 //

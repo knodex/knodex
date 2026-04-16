@@ -578,7 +578,7 @@ describe("RepositoryForm", () => {
             bearerToken: undefined,
             tlsClientCert: undefined,
             tlsClientKey: undefined,
-            insecureSkipTLSVerify: undefined,
+            insecureSkipTLSVerify: false,
           },
         });
       });
@@ -726,7 +726,7 @@ describe("RepositoryForm", () => {
             bearerToken: undefined,
             tlsClientCert: undefined,
             tlsClientKey: undefined,
-            insecureSkipTLSVerify: undefined,
+            insecureSkipTLSVerify: false,
           },
         });
       });

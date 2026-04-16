@@ -301,7 +301,7 @@ test.describe('Note: Instance Namespace Filtering Security Fix', () => {
             if (ns && name) {
               // Try to get instance details
               const detailResponse = await page.request.get(
-                `${BASE_URL}/api/v1/instances/${ns}/${kind}/${name}`,
+                `${BASE_URL}/api/v1/namespaces/${ns}/instances/${kind}/${name}`,
                 { headers: { Authorization: `Bearer ${token}` } }
               )
 

@@ -377,7 +377,7 @@ const INSTANCE_DELETER_USER: CustomTestUser = {
 
 test.describe(' Projects Settings - Permission-Based UI', () => {
   test('AC6: Global Admin sees Create Project button via useCanI("projects", "create")', async ({ page }) => {
-    await authenticateWithCustomUser(page, GLOBAL_ADMIN_USER, '/settings/projects');
+    await authenticateWithCustomUser(page, GLOBAL_ADMIN_USER, '/projects');
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(2000);
 
@@ -387,15 +387,16 @@ test.describe(' Projects Settings - Permission-Based UI', () => {
       fullPage: true,
     });
 
-    // Verify Create Project button is visible
-    const createButton = page.locator('button').filter({ hasText: /Create Project|New Project/i });
+    // Verify Create Project button is visible.
+    // Empty state shows "Create Project"; non-empty state shows "Create" in the header.
+    const createButton = page.locator('button').filter({ hasText: /^Create(?: Project)?$/i }).first();
     await expect(createButton).toBeVisible({ timeout: 10000 });
 
     console.log('✓ AC6: Global Admin sees Create Project button');
   });
 
   test('AC6: Project Creator sees Create Project button via useCanI("projects", "create")', async ({ page }) => {
-    await authenticateWithCustomUser(page, PROJECT_CREATOR_USER, '/settings/projects');
+    await authenticateWithCustomUser(page, PROJECT_CREATOR_USER, '/projects');
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(2000);
 
@@ -408,15 +409,16 @@ test.describe(' Projects Settings - Permission-Based UI', () => {
     const pageTitle = page.locator('h1, h2').filter({ hasText: /Projects/i }).first();
     await expect(pageTitle).toBeVisible({ timeout: 10000 });
 
-    // Should see Create button due to projects:create permission
-    const createButton = page.locator('button').filter({ hasText: /Create Project|New Project/i });
+    // Should see Create button due to projects:create permission.
+    // Empty state shows "Create Project"; non-empty state shows "Create" in the header.
+    const createButton = page.locator('button').filter({ hasText: /^Create(?: Project)?$/i }).first();
     await expect(createButton).toBeVisible({ timeout: 10000 });
 
     console.log('✓ AC6: Project Creator sees Create Project button via useCanI');
   });
 
   test('AC6: Viewer does NOT see Create Project button (no projects:create)', async ({ page }) => {
-    await authenticateWithCustomUser(page, VIEWER_USER, '/settings/projects');
+    await authenticateWithCustomUser(page, VIEWER_USER, '/projects');
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(2000);
 
@@ -430,14 +432,14 @@ test.describe(' Projects Settings - Permission-Based UI', () => {
     await expect(pageTitle).toBeVisible({ timeout: 10000 });
 
     // Viewer should NOT see Create button
-    const createButton = page.locator('button').filter({ hasText: /Create Project|New Project/i });
+    const createButton = page.locator('button').filter({ hasText: /^Create$/i });
     await expect(createButton).not.toBeVisible({ timeout: 5000 });
 
     console.log('✓ AC6: Viewer does NOT see Create Project button');
   });
 
   test('AC8: Project Creator does NOT see Delete button (no projects:delete)', async ({ page }) => {
-    await authenticateWithCustomUser(page, PROJECT_CREATOR_USER, '/settings/projects');
+    await authenticateWithCustomUser(page, PROJECT_CREATOR_USER, '/projects');
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(2000);
 
@@ -609,7 +611,7 @@ test.describe(' Instances - Delete Button Permission Checks', () => {
 test.describe(' Custom Casbin Policies - Permission-Based UI', () => {
   test('AC9: User with custom project permissions sees correct UI', async ({ page }) => {
     // Project Admin has project-scoped permissions
-    await authenticateWithCustomUser(page, PROJECT_ADMIN_USER, '/settings/projects');
+    await authenticateWithCustomUser(page, PROJECT_ADMIN_USER, '/projects');
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(2000);
 
@@ -619,7 +621,7 @@ test.describe(' Custom Casbin Policies - Permission-Based UI', () => {
     });
 
     // Should NOT see global Create Project button (no projects:create)
-    const createButton = page.locator('button').filter({ hasText: /Create Project|New Project/i });
+    const createButton = page.locator('button').filter({ hasText: /^Create$/i });
     const createVisible = await createButton.isVisible({ timeout: 3000 }).catch(() => false);
     expect(createVisible).toBe(false);
 
@@ -684,7 +686,7 @@ test.describe(' useCanI Hook Verification', () => {
 
   test('useCanI returns correct result for projects:update permission', async ({ page }) => {
     // Project Admin has projects:update:proj-alpha-team
-    await authenticateWithCustomUser(page, PROJECT_ADMIN_USER, '/settings/projects');
+    await authenticateWithCustomUser(page, PROJECT_ADMIN_USER, '/projects');
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(2000);
 

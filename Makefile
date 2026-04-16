@@ -3,7 +3,7 @@
         cluster-up cluster-down \
         test test-server test-web e2e qa qa-stop \
         tilt-up tilt-down tilt-status \
-        docs-serve docs-build docs-clean docs-install \
+        docs-serve docs-build docs-clean docs-install docs-version \
         api-docs \
         helm-lint helm-template helm-package \
         _ensure-prereqs _deploy-app
@@ -94,11 +94,11 @@ build-web:
 	@echo "Building web..."
 	cd web && npm run build
 
-# Copy web dist into Go embed path
+# Copy web dist into Go embed path (exclude pre-compressed .gz/.br and stats.html)
 _embed-web:
 	@echo "Embedding web dist into Go binary..."
 	@rm -rf server/internal/static/dist
-	@cp -r web/dist server/internal/static/dist
+	@rsync -a --exclude='*.gz' --exclude='*.br' --exclude='stats.html' web/dist/ server/internal/static/dist/
 
 # ===== Build - OSS Edition =====
 	@echo ""
@@ -244,7 +244,7 @@ clean:
 	touch server/internal/static/dist/.gitkeep
 
 # ===== Tilt - Kubernetes Live Development =====
-tilt-up:
+tilt-up: _ensure-prereqs
 	@kubectl cluster-info >/dev/null 2>&1 || { \
 		echo ""; \
 		echo "============================================"; \
@@ -284,37 +284,46 @@ tilt-status:
 	@command -v tilt >/dev/null 2>&1 || { echo "Tilt is not installed."; exit 1; }
 	tilt get
 
-# ===== Documentation - MkDocs Material =====
+# ===== Documentation - Docusaurus =====
 docs-install:
 	@echo "Installing documentation dependencies..."
-	@command -v pip3 >/dev/null 2>&1 || { echo "Error: pip3 is required but not installed. Install Python 3 first."; exit 1; }
-	pip3 install -r requirements-docs.txt
+	cd website && npm install
 	@echo "Documentation dependencies installed successfully!"
 	@echo "Run 'make docs-serve' to preview documentation locally."
 
 docs-serve:
 	@echo "Starting documentation server..."
-	@command -v mkdocs >/dev/null 2>&1 || { echo "Error: mkdocs not found. Run 'make docs-install' first."; exit 1; }
 	@echo ""
-	@echo "Documentation server starting at http://localhost:8000"
+	@echo "Documentation server starting at http://localhost:4000"
 	@echo "Press Ctrl+C to stop the server."
 	@echo ""
-	mkdocs serve
+	cd website && npx docusaurus start --port 4000
 
 docs-build:
 	@echo "Building documentation..."
-	@command -v mkdocs >/dev/null 2>&1 || { echo "Error: mkdocs not found. Run 'make docs-install' first."; exit 1; }
-	mkdocs build
+	cd website && npm run build
 	@echo ""
 	@echo "Documentation built successfully!"
-	@echo "Output: site/"
+	@echo "Output: website/build/"
+
+docs-version:
+ifndef VERSION
+	@echo "Usage: make docs-version VERSION=x.y.z"
 	@echo ""
-	@echo "To preview the built site, run:"
-	@echo "  cd site && python3 -m http.server 8000"
+	@echo "This freezes the current docs as a versioned snapshot."
+	@echo "Example: make docs-version VERSION=0.1.0"
+	@exit 1
+endif
+	@echo "Creating documentation version $(VERSION)..."
+	cd website && npx docusaurus docs:version $(VERSION)
+	@echo ""
+	@echo "Version $(VERSION) created!"
+	@echo "Update 'lastVersion' in website/docusaurus.config.ts to '$(VERSION)'"
+	@echo "Then commit: versioned_docs/, versioned_sidebars/, versions.json, docusaurus.config.ts"
 
 docs-clean:
 	@echo "Cleaning documentation build artifacts..."
-	rm -rf site/
+	rm -rf website/build/ website/.docusaurus/
 	@echo "Documentation cleaned successfully!"
 
 # ===== API Documentation =====

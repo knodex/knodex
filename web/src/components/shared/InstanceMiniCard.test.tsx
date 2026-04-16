@@ -50,7 +50,7 @@ describe("InstanceMiniCard", () => {
   });
 
   describe("not-found state", () => {
-    it("shows alert and 'Not deployed' message", () => {
+    it("shows alert and 'External resource' message", () => {
       renderCard({
         isLoading: false,
         notFound: true,
@@ -58,7 +58,7 @@ describe("InstanceMiniCard", () => {
         action: null,
       });
       expect(screen.getByText("missing-service")).toBeInTheDocument();
-      expect(screen.getByText("Not deployed")).toBeInTheDocument();
+      expect(screen.getByText("External resource")).toBeInTheDocument();
     });
 
     it("shows kind and namespace badges when provided", () => {
@@ -81,9 +81,9 @@ describe("InstanceMiniCard", () => {
         label: "my-db",
         action: null,
       });
-      // Only the label and "Not deployed" should show
+      // Only the label and "External resource" should show
       expect(screen.getByText("my-db")).toBeInTheDocument();
-      expect(screen.getByText("Not deployed")).toBeInTheDocument();
+      expect(screen.getByText("External resource")).toBeInTheDocument();
     });
   });
 

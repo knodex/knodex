@@ -39,25 +39,31 @@ type DriftEntry struct {
 
 // Service manages GitOps drift state in Redis.
 type Service struct {
-	client *redis.Client
-	logger *slog.Logger
+	client       *redis.Client
+	logger       *slog.Logger
+	organization string
 }
 
 // NewService creates a new drift detection service.
 // If client is nil, all operations are no-ops (graceful degradation).
-func NewService(client *redis.Client, logger *slog.Logger) *Service {
+// If organization is empty, it defaults to "default".
+func NewService(client *redis.Client, logger *slog.Logger, organization string) *Service {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	if organization == "" {
+		organization = "default"
+	}
 	return &Service{
-		client: client,
-		logger: logger.With("component", "drift-service"),
+		client:       client,
+		logger:       logger.With("component", "drift-service"),
+		organization: organization,
 	}
 }
 
 // driftKey builds the Redis key for a drift entry.
-func driftKey(namespace, kind, name string) string {
-	return fmt.Sprintf("drift:%s/%s/%s", namespace, kind, name)
+func (s *Service) driftKey(namespace, kind, name string) string {
+	return fmt.Sprintf("drift:%s/%s/%s/%s", s.organization, namespace, kind, name)
 }
 
 // HashSpec computes a SHA-256 hash of a spec map.
@@ -139,7 +145,7 @@ func (s *Service) StoreDrift(ctx context.Context, namespace, kind, name string, 
 		return fmt.Errorf("marshal drift entry: %w", err)
 	}
 
-	key := driftKey(namespace, kind, name)
+	key := s.driftKey(namespace, kind, name)
 	if err := s.client.Set(ctx, key, data, safetyTTL).Err(); err != nil {
 		s.logger.Warn("failed to store drift entry", "key", key, "error", err)
 		return fmt.Errorf("redis set drift: %w", err)
@@ -150,41 +156,123 @@ func (s *Service) StoreDrift(ctx context.Context, namespace, kind, name string, 
 }
 
 // CheckDrift checks if an instance has drift by comparing the live spec hash
-// to the stored desired spec hash. Returns (isDrifted, desiredSpec, error).
-// If no drift entry exists or Redis is unavailable, returns (false, nil, nil).
-func (s *Service) CheckDrift(ctx context.Context, namespace, kind, name string, liveSpec map[string]interface{}) (bool, map[string]interface{}, error) {
+// to the stored desired spec hash. Returns (isDrifted, desiredSpec, driftedAt, error).
+// If no drift entry exists or Redis is unavailable, returns (false, nil, nil, nil).
+func (s *Service) CheckDrift(ctx context.Context, namespace, kind, name string, liveSpec map[string]interface{}) (bool, map[string]interface{}, *time.Time, error) {
 	if s.client == nil {
-		return false, nil, nil
+		return false, nil, nil, nil
 	}
 
-	key := driftKey(namespace, kind, name)
+	key := s.driftKey(namespace, kind, name)
 	data, err := s.client.Get(ctx, key).Bytes()
 	if err == redis.Nil {
-		return false, nil, nil
+		return false, nil, nil, nil
 	}
 	if err != nil {
 		s.logger.Warn("failed to get drift entry", "key", key, "error", err)
-		return false, nil, nil // Graceful degradation
+		return false, nil, nil, nil // Graceful degradation
 	}
 
 	var entry DriftEntry
 	if err := json.Unmarshal(data, &entry); err != nil {
 		s.logger.Warn("failed to unmarshal drift entry", "key", key, "error", err)
-		return false, nil, nil
+		return false, nil, nil, nil
 	}
 
 	liveHash, err := HashSpec(liveSpec)
 	if err != nil {
-		return false, nil, nil
+		return false, nil, nil, nil
 	}
 
 	if liveHash == entry.DesiredSpecHash {
-		// Reconciled — clean up
-		_ = s.ClearDrift(ctx, namespace, kind, name)
-		return false, nil, nil
+		// Reconciled but not cleared here — callers use CheckAndClearIfReconciled
+		// or ClearDrift explicitly so that the clear event can be broadcast via WebSocket.
+		return false, nil, nil, nil
 	}
 
-	return true, entry.DesiredSpec, nil
+	var driftedAt *time.Time
+	if entry.PushedAt != "" {
+		if t, err := time.Parse(time.RFC3339, entry.PushedAt); err == nil {
+			driftedAt = &t
+		}
+	}
+
+	return true, entry.DesiredSpec, driftedAt, nil
+}
+
+// DriftCheckInput identifies a single instance to check for drift.
+type DriftCheckInput struct {
+	Namespace string
+	Kind      string
+	Name      string
+	LiveSpec  map[string]interface{}
+}
+
+// DriftCheckResult contains the drift state for a single instance.
+type DriftCheckResult struct {
+	IsDrifted   bool
+	DesiredSpec map[string]interface{}
+	DriftedAt   *time.Time
+}
+
+// BatchCheckDrift checks multiple instances for drift in a single Redis MGET round-trip.
+// Returns a slice of results corresponding 1:1 with the inputs.
+// Gracefully degrades: returns all-false on Redis errors.
+func (s *Service) BatchCheckDrift(ctx context.Context, inputs []DriftCheckInput) []DriftCheckResult {
+	results := make([]DriftCheckResult, len(inputs))
+	if s.client == nil || len(inputs) == 0 {
+		return results
+	}
+
+	keys := make([]string, len(inputs))
+	for i, in := range inputs {
+		keys[i] = s.driftKey(in.Namespace, in.Kind, in.Name)
+	}
+
+	vals, err := s.client.MGet(ctx, keys...).Result()
+	if err != nil {
+		s.logger.Warn("BatchCheckDrift MGet failed", "error", err)
+		return results // graceful degradation
+	}
+
+	for i, val := range vals {
+		if val == nil {
+			continue
+		}
+
+		str, ok := val.(string)
+		if !ok {
+			continue
+		}
+
+		var entry DriftEntry
+		if err := json.Unmarshal([]byte(str), &entry); err != nil {
+			s.logger.Debug("BatchCheckDrift: unmarshal failed", "key", keys[i], "error", err)
+			continue
+		}
+
+		liveHash, err := HashSpec(inputs[i].LiveSpec)
+		if err != nil {
+			s.logger.Debug("BatchCheckDrift: hash failed", "key", keys[i], "error", err)
+			continue
+		}
+
+		if liveHash != entry.DesiredSpecHash {
+			res := DriftCheckResult{
+				IsDrifted:   true,
+				DesiredSpec: entry.DesiredSpec,
+			}
+			if entry.PushedAt != "" {
+				if t, err := time.Parse(time.RFC3339, entry.PushedAt); err == nil {
+					res.DriftedAt = &t
+				}
+			}
+			results[i] = res
+		}
+		// If hashes match: reconciled but not cleared here (same as CheckDrift)
+	}
+
+	return results
 }
 
 // ClearDrift removes the drift entry for an instance (reconciliation complete).
@@ -193,7 +281,7 @@ func (s *Service) ClearDrift(ctx context.Context, namespace, kind, name string) 
 		return nil
 	}
 
-	key := driftKey(namespace, kind, name)
+	key := s.driftKey(namespace, kind, name)
 	if err := s.client.Del(ctx, key).Err(); err != nil {
 		s.logger.Warn("failed to clear drift entry", "key", key, "error", err)
 		return fmt.Errorf("redis del drift: %w", err)
@@ -203,22 +291,26 @@ func (s *Service) ClearDrift(ctx context.Context, namespace, kind, name string) 
 	return nil
 }
 
+// checkAndDeleteScript atomically reads, compares desiredSpecHash, and deletes if matched.
+// KEYS[1] = drift key, ARGV[1] = expected desiredSpecHash
+// Returns 1 if deleted (reconciled), 0 if not matched or key absent.
+const checkAndDeleteScript = `
+local data = redis.call('GET', KEYS[1])
+if not data then return 0 end
+local entry = cjson.decode(data)
+if entry.desiredSpecHash == ARGV[1] then
+    redis.call('DEL', KEYS[1])
+    return 1
+end
+return 0
+`
+
 // CheckAndClearIfReconciled checks if the live spec matches the desired spec
-// and clears the drift entry if reconciliation is complete.
+// and atomically clears the drift entry if reconciliation is complete.
+// Uses a Lua script to eliminate the TOCTOU race between check and delete.
 // Returns true if drift was cleared (reconciliation detected).
 func (s *Service) CheckAndClearIfReconciled(ctx context.Context, namespace, kind, name string, liveSpec map[string]interface{}) bool {
 	if s.client == nil {
-		return false
-	}
-
-	key := driftKey(namespace, kind, name)
-	data, err := s.client.Get(ctx, key).Bytes()
-	if err != nil {
-		return false // No drift entry or Redis unavailable
-	}
-
-	var entry DriftEntry
-	if err := json.Unmarshal(data, &entry); err != nil {
 		return false
 	}
 
@@ -227,8 +319,13 @@ func (s *Service) CheckAndClearIfReconciled(ctx context.Context, namespace, kind
 		return false
 	}
 
-	if liveHash == entry.DesiredSpecHash {
-		_ = s.ClearDrift(ctx, namespace, kind, name)
+	key := s.driftKey(namespace, kind, name)
+	result, err := s.client.Eval(ctx, checkAndDeleteScript, []string{key}, liveHash).Int()
+	if err != nil {
+		return false // Redis unavailable or script error
+	}
+
+	if result == 1 {
 		s.logger.Info("drift reconciled",
 			"namespace", namespace,
 			"kind", kind,

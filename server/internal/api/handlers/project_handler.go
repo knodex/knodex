@@ -337,7 +337,6 @@ func (h *ProjectHandler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		}
 		createDetails["roles"] = roleNames
 	}
-
 	audit.RecordEvent(h.recorder, ctx, audit.Event{
 		UserID:    userCtx.UserID,
 		UserEmail: userCtx.Email,
@@ -618,7 +617,7 @@ func (h *ProjectHandler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fetch project state before deletion for audit snapshot
+	// Fetch project state before deletion for audit snapshot and reaping
 	projectSnapshot, snapshotErr := h.projectService.GetProject(ctx, name)
 	var deleteDescription string
 	var deleteDestsCount, deleteRolesCount int
@@ -628,6 +627,8 @@ func (h *ProjectHandler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 		deleteRolesCount = len(projectSnapshot.Spec.Roles)
 	}
 
+	// STORY-414: Reap namespaces on bound clusters before project deletion.
+	// Never blocks deletion — failures are logged and project proceeds to deletion.
 	// Remove project policies from enforcer before deletion
 	if h.policyEnforcer != nil {
 		if err := h.policyEnforcer.RemoveProjectPolicies(ctx, name); err != nil {
@@ -696,6 +697,7 @@ func validateCreateProjectRequest(req *CreateProjectRequest) map[string]string {
 		errors["name"] = "name must be a valid DNS-1123 subdomain (lowercase alphanumeric with hyphens, 1-63 chars)"
 	}
 
+	// Validate type if provided (AC#4: invalid type returns 400)
 	// Validate destinations if provided
 	for i, dest := range req.Destinations {
 		if dest.Namespace == "" {

@@ -1,0 +1,33 @@
+{{- if .Values.dex.enabled }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "knodex.fullname" . }}-dex-server
+  labels:
+    {{- include "knodex.dex.labels" . | nindent 4 }}
+rules:
+  # Read SSO provider config and credentials for Dex config generation
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["knodex-sso-providers", "knodex-dex-static-clients"]
+    verbs: ["get", "watch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["knodex-sso-secrets"]
+    verbs: ["get", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "knodex.fullname" . }}-dex-server
+  labels:
+    {{- include "knodex.dex.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "knodex.fullname" . }}-dex-server
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "knodex.fullname" . }}-dex-server
+    namespace: {{ .Release.Namespace }}
+{{- end }}

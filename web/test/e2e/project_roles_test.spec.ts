@@ -63,7 +63,7 @@ test.describe('Project Roles Tab - Add and Delete Role', () => {
   test.describe('Add Role Flow', () => {
     test('can navigate to Roles tab and see Add Role button', async ({ page }) => {
       // Navigate to project detail page
-      await page.goto(`/settings/projects/${TEST_PROJECT_NAME}`);
+      await page.goto(`/projects/${TEST_PROJECT_NAME}`);
       await page.waitForLoadState('networkidle', { timeout: 15000 });
 
       // Click on Roles tab
@@ -88,7 +88,7 @@ test.describe('Project Roles Tab - Add and Delete Role', () => {
 
     test('can open Add Role form and fill in details', async ({ page }) => {
       // Navigate to project detail page
-      await page.goto(`/settings/projects/${TEST_PROJECT_NAME}`);
+      await page.goto(`/projects/${TEST_PROJECT_NAME}`);
       await page.waitForLoadState('networkidle', { timeout: 15000 });
 
       // Click on Roles tab
@@ -136,7 +136,7 @@ test.describe('Project Roles Tab - Add and Delete Role', () => {
       const uniqueRoleName = `custom-role-${Date.now()}`;
 
       // Navigate to project detail page
-      await page.goto(`/settings/projects/${TEST_PROJECT_NAME}`);
+      await page.goto(`/projects/${TEST_PROJECT_NAME}`);
       await page.waitForLoadState('networkidle', { timeout: 15000 });
 
       // Click on Roles tab
@@ -183,7 +183,7 @@ test.describe('Project Roles Tab - Add and Delete Role', () => {
       const persistRoleName = `persist-role-${Date.now()}`;
 
       // Navigate to project detail page
-      await page.goto(`/settings/projects/${TEST_PROJECT_NAME}`);
+      await page.goto(`/projects/${TEST_PROJECT_NAME}`);
       await page.waitForLoadState('networkidle', { timeout: 15000 });
 
       // Click on Roles tab
@@ -237,7 +237,7 @@ test.describe('Project Roles Tab - Add and Delete Role', () => {
   test.describe('Role Name Uniqueness Validation', () => {
     test('shows error when adding role with duplicate name', async ({ page }) => {
       // Navigate to project detail page
-      await page.goto(`/settings/projects/${TEST_PROJECT_NAME}`);
+      await page.goto(`/projects/${TEST_PROJECT_NAME}`);
       await page.waitForLoadState('networkidle', { timeout: 15000 });
 
       // Click on Roles tab
@@ -276,7 +276,7 @@ test.describe('Project Roles Tab - Add and Delete Role', () => {
 
     test('form does not close on validation error', async ({ page }) => {
       // Navigate to project detail page
-      await page.goto(`/settings/projects/${TEST_PROJECT_NAME}`);
+      await page.goto(`/projects/${TEST_PROJECT_NAME}`);
       await page.waitForLoadState('networkidle', { timeout: 15000 });
 
       // Click on Roles tab
@@ -327,7 +327,7 @@ test.describe('Project Roles Tab - Add and Delete Role', () => {
       const deleteRoleName = `delete-test-${Date.now()}`;
 
       // Navigate to project detail page
-      await page.goto(`/settings/projects/${TEST_PROJECT_NAME}`);
+      await page.goto(`/projects/${TEST_PROJECT_NAME}`);
       await page.waitForLoadState('networkidle', { timeout: 15000 });
 
       // Click on Roles tab
@@ -411,7 +411,7 @@ test.describe('Project Roles Tab - Add and Delete Role', () => {
       const deleteRefreshRoleName = `delete-refresh-${Date.now()}`;
 
       // Navigate to project detail page
-      await page.goto(`/settings/projects/${TEST_PROJECT_NAME}`);
+      await page.goto(`/projects/${TEST_PROJECT_NAME}`);
       await page.waitForLoadState('networkidle', { timeout: 15000 });
 
       // Click on Roles tab - wait for it to be visible first
@@ -536,7 +536,7 @@ test.describe('Project Roles Tab - Add and Delete Role', () => {
       const cancelDeleteRoleName = `cancel-delete-${Date.now()}`;
 
       // Navigate to project detail page
-      await page.goto(`/settings/projects/${TEST_PROJECT_NAME}`);
+      await page.goto(`/projects/${TEST_PROJECT_NAME}`);
       await page.waitForLoadState('networkidle', { timeout: 15000 });
 
       // Click on Roles tab - wait for it to be visible first
@@ -621,7 +621,7 @@ test.describe('Project Roles Tab - Add and Delete Role', () => {
   test.describe('Built-in Role Protection', () => {
     test('built-in roles have "Built-in" badge', async ({ page }) => {
       // Navigate to project detail page
-      await page.goto(`/settings/projects/${TEST_PROJECT_NAME}`);
+      await page.goto(`/projects/${TEST_PROJECT_NAME}`);
       await page.waitForLoadState('networkidle', { timeout: 15000 });
 
       // Click on Roles tab
@@ -655,7 +655,7 @@ test.describe('Project Roles Tab - Add and Delete Role', () => {
 
     test('built-in roles do NOT show delete button', async ({ page }) => {
       // Navigate to project detail page
-      await page.goto(`/settings/projects/${TEST_PROJECT_NAME}`);
+      await page.goto(`/projects/${TEST_PROJECT_NAME}`);
       await page.waitForLoadState('networkidle', { timeout: 15000 });
 
       // Wait for and click on Roles tab
@@ -702,7 +702,7 @@ test.describe('Project Roles Tab - Add and Delete Role', () => {
       const customRoleName = `custom-with-delete-${Date.now()}`;
 
       // Navigate to project detail page
-      await page.goto(`/settings/projects/${TEST_PROJECT_NAME}`);
+      await page.goto(`/projects/${TEST_PROJECT_NAME}`);
       await page.waitForLoadState('networkidle', { timeout: 15000 });
 
       // Click on Roles tab
@@ -757,7 +757,7 @@ test.describe('Project Roles Tab - Viewer Cannot Manage', () => {
     });
 
     // Navigate to project detail page
-    await page.goto(`/settings/projects/${TEST_PROJECT_NAME}`);
+    await page.goto(`/projects/${TEST_PROJECT_NAME}`);
     await page.waitForLoadState('networkidle', { timeout: 15000 });
 
     // Click on Roles tab
@@ -793,7 +793,7 @@ test.describe('Project Roles Tab - Viewer Cannot Manage', () => {
     });
 
     // Navigate to project detail page
-    await page.goto(`/settings/projects/${TEST_PROJECT_NAME}`);
+    await page.goto(`/projects/${TEST_PROJECT_NAME}`);
     await page.waitForLoadState('networkidle', { timeout: 15000 });
 
     // Click on Roles tab

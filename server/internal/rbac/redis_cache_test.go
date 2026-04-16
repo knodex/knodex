@@ -288,3 +288,53 @@ func TestRedisCache_InvalidateByPrefixInDegradedMode(t *testing.T) {
 	_, found = cache.Get("user:bob", "projects/eng", "get")
 	assert.True(t, found)
 }
+
+func TestSubscribeInvalidation_ReconnectsOnChannelClose(t *testing.T) {
+	t.Parallel()
+
+	_, client := testutil.NewRedis(t)
+	cache := NewRedisAuthorizationCache(client, 5*time.Minute, slog.Default())
+	t.Cleanup(func() { cache.Stop() })
+
+	// Give the subscription time to establish
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify initial pub/sub is established
+	cache.mu.RLock()
+	initialPubsub := cache.pubsub
+	cache.mu.RUnlock()
+	require.NotNil(t, initialPubsub, "initial pub/sub should be established")
+
+	// Close the pubsub to simulate channel close / Redis disconnect
+	initialPubsub.Close()
+
+	// Poll for reconnection instead of fixed sleep (backoff starts at 1s)
+	require.Eventually(t, func() bool {
+		cache.mu.RLock()
+		defer cache.mu.RUnlock()
+		return cache.pubsub != nil && cache.pubsub != initialPubsub
+	}, 5*time.Second, 100*time.Millisecond, "pub/sub should be re-established after reconnection")
+}
+
+func TestSubscribeInvalidation_StopsOnStopCh(t *testing.T) {
+	t.Parallel()
+
+	_, client := testutil.NewRedis(t)
+	cache := NewRedisAuthorizationCache(client, 5*time.Minute, slog.Default())
+
+	// Give the subscription time to establish
+	time.Sleep(100 * time.Millisecond)
+
+	// Close the pub/sub to trigger reconnection attempt
+	cache.mu.RLock()
+	pubsub := cache.pubsub
+	cache.mu.RUnlock()
+	require.NotNil(t, pubsub)
+	pubsub.Close()
+
+	// Immediately stop the cache — reconnection loop should exit cleanly
+	cache.Stop()
+
+	// If Stop() doesn't cause the reconnection loop to exit, this test will hang/leak.
+	// The fact that it completes is the verification.
+}

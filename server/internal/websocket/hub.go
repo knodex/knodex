@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/knodex/knodex/server/internal/util/env"
 )
 
 const (
@@ -20,6 +22,9 @@ const (
 
 	// DebounceInterval is the minimum time between updates for the same resource
 	DebounceInterval = 100 * time.Millisecond
+
+	// CleanupInterval is how often the debounce map is swept for stale entries
+	CleanupInterval = 5 * time.Second
 )
 
 // CountFunc computes RBAC-filtered RGD and instance counts for a specific user.
@@ -40,8 +45,18 @@ type Hub struct {
 	// Unregister requests from clients
 	unregister chan *Client
 
-	// Stop signal for graceful shutdown
-	stop chan struct{}
+	// countRequest receives clients that need an initial counts push.
+	// Processed within the Run() event loop to avoid unmanaged goroutines.
+	countRequest chan *Client
+
+	// ctxMu protects ctx from concurrent read/write between Run() and SendCountsToClients().
+	ctxMu sync.RWMutex
+	// ctx is the hub's lifecycle context, set when Run() is called.
+	// Used to derive contexts for RBAC checks and count computations.
+	ctx context.Context
+
+	// logger is the hub's structured logger. Set via NewHub; nil falls back to slog.Default().
+	logger *slog.Logger
 
 	// Mutex for thread-safe client access
 	mu sync.RWMutex
@@ -53,6 +68,10 @@ type Hub struct {
 	// Count function for initial-connect push
 	countFn CountFunc
 
+	// maxConnections is the maximum number of concurrent WebSocket connections.
+	// Configurable via WEBSOCKET_MAX_CONNECTIONS env var; defaults to MaxConnections (100).
+	maxConnections int
+
 	// Metrics
 	totalConnections  int64
 	totalMessages     int64
@@ -60,27 +79,55 @@ type Hub struct {
 	connectionsMu     sync.RWMutex
 }
 
-// NewHub creates a new Hub instance
-func NewHub() *Hub {
+// NewHub creates a new Hub instance with the given logger.
+// Pass nil to use slog.Default(). The hub ctx defaults to context.Background()
+// and is replaced by Run's argument.
+func NewHub(logger *slog.Logger) *Hub {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &Hub{
-		clients:    make(map[*Client]bool),
-		broadcast:  make(chan *Message, BroadcastBufferSize),
-		register:   make(chan *Client),
-		unregister: make(chan *Client),
-		stop:       make(chan struct{}),
-		lastUpdate: make(map[string]time.Time),
+		clients:        make(map[*Client]bool),
+		broadcast:      make(chan *Message, BroadcastBufferSize),
+		register:       make(chan *Client),
+		unregister:     make(chan *Client),
+		countRequest:   make(chan *Client, 16),
+		ctx:            context.Background(),
+		logger:         logger,
+		lastUpdate:     make(map[string]time.Time),
+		maxConnections: validatedMaxConnections(logger, env.GetInt("WEBSOCKET_MAX_CONNECTIONS", MaxConnections)),
 	}
 }
 
-// Run starts the hub's main event loop
-func (h *Hub) Run() {
-	slog.Info("WebSocket hub started")
+// validatedMaxConnections ensures maxConnections is at least 1.
+// Returns the default MaxConnections if the value is invalid.
+func validatedMaxConnections(logger *slog.Logger, n int) int {
+	if n < 1 {
+		logger.Warn("WEBSOCKET_MAX_CONNECTIONS must be >= 1, using default",
+			"configured", n,
+			"default", MaxConnections,
+		)
+		return MaxConnections
+	}
+	return n
+}
+
+// Run starts the hub's main event loop. The provided context controls the hub's
+// lifecycle: when ctx is canceled, the hub closes all clients and returns.
+// Callers use the context's cancel function instead of a separate Stop method.
+func (h *Hub) Run(ctx context.Context) {
+	h.ctxMu.Lock()
+	h.ctx = ctx
+	h.ctxMu.Unlock()
+	h.logger.Info("WebSocket hub started")
+	cleanupTicker := time.NewTicker(CleanupInterval)
+	defer cleanupTicker.Stop()
 
 	for {
 		select {
-		case <-h.stop:
+		case <-ctx.Done():
 			h.closeAllClients()
-			slog.Info("WebSocket hub stopped")
+			h.logger.Info("WebSocket hub stopped")
 			return
 
 		case client := <-h.register:
@@ -91,14 +138,14 @@ func (h *Hub) Run() {
 
 		case message := <-h.broadcast:
 			h.handleBroadcast(message)
+
+		case client := <-h.countRequest:
+			h.handleCountRequest(client)
+
+		case <-cleanupTicker.C:
+			h.cleanLastUpdate()
 		}
 	}
-}
-
-// Stop signals the hub to shut down gracefully.
-// It closes all client connections and stops the event loop.
-func (h *Hub) Stop() {
-	close(h.stop)
 }
 
 // clientAddr returns the remote address of the client for logging.
@@ -125,7 +172,7 @@ func (h *Hub) closeAllClients() {
 	h.activeConnections = 0
 	h.connectionsMu.Unlock()
 
-	slog.Info("WebSocket hub closed all clients", "count", clientCount)
+	h.logger.Info("WebSocket hub closed all clients", "count", clientCount)
 }
 
 // handleRegister handles client registration
@@ -134,9 +181,9 @@ func (h *Hub) handleRegister(client *Client) {
 	defer h.mu.Unlock()
 
 	// Check connection limit
-	if len(h.clients) >= MaxConnections {
-		slog.Warn("WebSocket connection limit reached",
-			"limit", MaxConnections,
+	if len(h.clients) >= h.maxConnections {
+		h.logger.Warn("WebSocket connection limit reached",
+			"limit", h.maxConnections,
 			"clientAddr", clientAddr(client))
 
 		// Send error message and close
@@ -153,43 +200,52 @@ func (h *Hub) handleRegister(client *Client) {
 	h.totalConnections++
 	h.connectionsMu.Unlock()
 
-	slog.Info("WebSocket client registered",
+	h.logger.Info("WebSocket client registered",
 		"clientAddr", clientAddr(client),
 		"activeConnections", len(h.clients))
 
-	// Send initial counts to newly connected client (AC: #1, #6)
+	// Queue initial counts push to be processed within the event loop.
+	// Non-blocking: if the channel is full, skip (client will get counts on next broadcast).
 	if h.countFn != nil {
-		countFn := h.countFn
-		go func() {
-			// Recover from panic if client disconnects and send channel is closed
-			// between goroutine spawn and the send operation.
-			defer func() {
-				if r := recover(); r != nil {
-					slog.Warn("Recovered panic in initial count push", "error", r)
-				}
-			}()
+		select {
+		case h.countRequest <- client:
+		default:
+			h.logger.Warn("Count request buffer full, skipping initial counts",
+				"clientAddr", clientAddr(client))
+		}
+	}
+}
 
-			ctx := context.Background()
-			userID, projects, groups := client.GetUserContext()
+// handleCountRequest computes and sends initial RBAC-filtered counts to a newly
+// registered client. Runs within the event loop — no goroutine or panic recovery needed.
+func (h *Hub) handleCountRequest(client *Client) {
+	// Verify client is still registered (may have disconnected between register and now)
+	h.mu.RLock()
+	registered := h.clients[client]
+	h.mu.RUnlock()
+	if !registered {
+		return
+	}
 
-			if client.HasGlobalAccess(ctx) {
-				projects = nil
-			}
+	ctx := h.ctx
+	userID, projects, groups := client.GetUserContext()
 
-			rgdCount, instanceCount := countFn(ctx, userID, projects, groups)
+	if client.CachedHasGlobalAccess(ctx) {
+		projects = nil
+	}
 
-			msg, err := NewCountsUpdateMessage(rgdCount, instanceCount)
-			if err != nil {
-				slog.Error("Failed to create initial counts message", "error", err, "userID", userID)
-				return
-			}
+	rgdCount, instanceCount := h.countFn(ctx, userID, projects, groups)
 
-			select {
-			case client.send <- msg:
-			default:
-				slog.Warn("Client send buffer full, skipping initial counts", "userID", userID)
-			}
-		}()
+	msg, err := NewCountsUpdateMessage(rgdCount, instanceCount)
+	if err != nil {
+		h.logger.Error("Failed to create initial counts message", "error", err, "userID", userID)
+		return
+	}
+
+	select {
+	case client.send <- msg:
+	default:
+		h.logger.Warn("Client send buffer full, skipping initial counts", "userID", userID)
 	}
 }
 
@@ -206,7 +262,7 @@ func (h *Hub) handleUnregister(client *Client) {
 		h.activeConnections = len(h.clients)
 		h.connectionsMu.Unlock()
 
-		slog.Info("WebSocket client unregistered",
+		h.logger.Info("WebSocket client unregistered",
 			"clientAddr", clientAddr(client),
 			"activeConnections", len(h.clients))
 	}
@@ -221,21 +277,68 @@ func (h *Hub) handleBroadcast(message *Message) {
 	h.totalMessages++
 	h.connectionsMu.Unlock()
 
+	// Extract projectID once before iterating clients to avoid N×JSON deserialization
+	projectID := h.extractProjectID(message)
+
 	for client := range h.clients {
-		if h.shouldSendToClient(client, message) {
+		if h.shouldSendToClient(client, message, projectID) {
 			select {
 			case client.send <- message:
 			default:
 				// Client buffer full, skip this message
-				slog.Warn("Client send buffer full, skipping message",
+				h.logger.Warn("Client send buffer full, skipping message",
 					"clientAddr", clientAddr(client))
 			}
 		}
 	}
 }
 
-// shouldSendToClient checks if a message should be sent to a specific client
-func (h *Hub) shouldSendToClient(client *Client, message *Message) bool {
+// extractProjectID extracts the project ID from a message's data payload.
+// Called once per broadcast to avoid repeated JSON deserialization per client.
+func (h *Hub) extractProjectID(message *Message) string {
+	var projectID string
+	var err error
+
+	switch message.Type {
+	case MessageTypeInstanceUpdate:
+		var data InstanceUpdateData
+		if err = json.Unmarshal(message.Data, &data); err == nil {
+			projectID = data.ProjectID
+		}
+	case MessageTypeRGDUpdate:
+		var data RGDUpdateData
+		if err = json.Unmarshal(message.Data, &data); err == nil {
+			projectID = data.ProjectID
+		}
+	case MessageTypeDriftUpdate:
+		var data DriftUpdateData
+		if err = json.Unmarshal(message.Data, &data); err == nil {
+			projectID = data.ProjectID
+		}
+	case MessageTypeRevisionUpdate:
+		var data RevisionUpdateData
+		if err = json.Unmarshal(message.Data, &data); err == nil {
+			projectID = data.ProjectID
+		}
+	case MessageTypeResourceEvent:
+		var data ResourceEventData
+		if err = json.Unmarshal(message.Data, &data); err == nil {
+			projectID = data.ProjectID
+		}
+	}
+
+	if err != nil {
+		h.logger.Warn("failed to unmarshal message data for project ID extraction",
+			"messageType", message.Type,
+			"error", err)
+	}
+
+	return projectID
+}
+
+// shouldSendToClient checks if a message should be sent to a specific client.
+// projectID is pre-extracted from the message to avoid per-client JSON deserialization.
+func (h *Hub) shouldSendToClient(client *Client, message *Message, projectID string) bool {
 	// Always send error messages and pong
 	if message.Type == MessageTypeError || message.Type == MessageTypePong {
 		return true
@@ -255,7 +358,7 @@ func (h *Hub) shouldSendToClient(client *Client, message *Message) bool {
 		if !hasViolationSubscription {
 			return false
 		}
-	case MessageTypeInstanceUpdate, MessageTypeRGDUpdate:
+	case MessageTypeInstanceUpdate, MessageTypeRGDUpdate, MessageTypeDriftUpdate, MessageTypeRevisionUpdate, MessageTypeResourceEvent:
 		if !hasResourceSubscription {
 			return false
 		}
@@ -269,8 +372,7 @@ func (h *Hub) shouldSendToClient(client *Client, message *Message) bool {
 
 	// ArgoCD-aligned: Check global admin access via Casbin, not a boolean flag
 	// Users with "*:*" permission have global admin access to all resources
-	ctx := context.Background()
-	if client.HasGlobalAccess(ctx) {
+	if client.CachedHasGlobalAccess(h.ctx) {
 		return true
 	}
 
@@ -279,31 +381,15 @@ func (h *Hub) shouldSendToClient(client *Client, message *Message) bool {
 	if message.Type == MessageTypeViolationUpdate || message.Type == MessageTypeTemplateUpdate || message.Type == MessageTypeConstraintUpdate {
 		// Only global admins receive compliance updates (handled above)
 		// Non-admin users should not see compliance data
-		slog.Debug("Compliance message not sent to non-admin user",
+		h.logger.Debug("Compliance message not sent to non-admin user",
 			"userID", userID,
 			"messageType", message.Type)
 		return false
 	}
 
-	// Extract project ID from message data for instance/RGD messages
-	var projectID string
-	switch message.Type {
-	case MessageTypeInstanceUpdate:
-		var data InstanceUpdateData
-		if err := json.Unmarshal(message.Data, &data); err == nil {
-			projectID = data.ProjectID
-		}
-
-	case MessageTypeRGDUpdate:
-		var data RGDUpdateData
-		if err := json.Unmarshal(message.Data, &data); err == nil {
-			projectID = data.ProjectID
-		}
-	}
-
 	// If no project ID in message, don't send (safety default)
 	if projectID == "" {
-		slog.Debug("Message has no project ID, not sending to client",
+		h.logger.Debug("Message has no project ID, not sending to client",
 			"userID", userID,
 			"messageType", message.Type)
 		return false
@@ -320,33 +406,71 @@ func (h *Hub) shouldSendToClient(client *Client, message *Message) bool {
 	return false
 }
 
-// BroadcastInstanceUpdate sends an instance update to all subscribed clients
-// projectNamespace is the project's namespace name (e.g., "acme"), used for RBAC filtering
-func (h *Hub) BroadcastInstanceUpdate(action Action, namespace, name string, instance interface{}, projectNamespace string) {
-	// Apply debouncing
-	key := "instance:" + namespace + "/" + name
+// enqueue sends a message to the broadcast channel, logging a warning if the buffer is full.
+func (h *Hub) enqueue(msg *Message, dropLogAttrs ...any) {
+	select {
+	case h.broadcast <- msg:
+	default:
+		h.logger.Warn("Broadcast buffer full, dropping message", dropLogAttrs...)
+	}
+}
+
+// BroadcastInstanceUpdate sends an instance update to all subscribed clients.
+// kind is the resource kind (e.g., "WebApp") used for client-side cache key matching.
+// projectNamespace is the project's namespace name (e.g., "acme"), used for RBAC filtering.
+func (h *Hub) BroadcastInstanceUpdate(action Action, namespace, kind, name string, instance interface{}, projectNamespace string) {
+	key := "instance:" + namespace + "/" + kind + "/" + name
 	if !h.shouldBroadcast(key) {
 		return
 	}
 
-	msg, err := NewInstanceUpdateMessage(action, namespace, name, instance, projectNamespace)
+	msg, err := NewInstanceUpdateMessage(action, namespace, kind, name, instance, projectNamespace)
 	if err != nil {
-		slog.Error("Failed to create instance update message", "error", err)
+		h.logger.Error("Failed to create instance update message", "error", err)
 		return
 	}
 
-	select {
-	case h.broadcast <- msg:
-	default:
-		slog.Warn("Broadcast buffer full, dropping instance update",
-			"namespace", namespace, "name", name, "projectNamespace", projectNamespace)
-	}
+	h.enqueue(msg, "type", "instance", "namespace", namespace, "kind", kind, "name", name)
 }
 
-// BroadcastRGDUpdate sends an RGD update to all subscribed clients
-// projectNamespace is the project's namespace name (e.g., "acme"), used for RBAC filtering
+// BroadcastInstanceEventUpdate sends a per-resource deploy event to all subscribed clients.
+// This is used for K8s Event notifications via the EventAdapter.
+// projectNamespace is the project's namespace name (e.g., "acme"), used for RBAC filtering.
+func (h *Hub) BroadcastInstanceEventUpdate(instanceID, resourceKind, resourceName, status, message, projectNamespace string) {
+	key := "event:" + instanceID
+	if !h.shouldBroadcast(key) {
+		return
+	}
+
+	msg, err := NewResourceEventMessage(instanceID, resourceKind, resourceName, status, message, projectNamespace)
+	if err != nil {
+		h.logger.Error("Failed to create resource event message", "error", err)
+		return
+	}
+
+	h.enqueue(msg, "type", "resource_event", "instanceID", instanceID, "resourceKind", resourceKind, "resourceName", resourceName)
+}
+
+// BroadcastDriftUpdate sends a drift state change to all subscribed clients.
+// projectNamespace is the project's namespace name (e.g., "acme"), used for RBAC filtering.
+func (h *Hub) BroadcastDriftUpdate(namespace, kind, name string, drifted bool, projectNamespace string) {
+	key := "drift:" + namespace + "/" + kind + "/" + name
+	if !h.shouldBroadcast(key) {
+		return
+	}
+
+	msg, err := NewDriftUpdateMessage(namespace, kind, name, drifted, projectNamespace)
+	if err != nil {
+		h.logger.Error("Failed to create drift update message", "error", err)
+		return
+	}
+
+	h.enqueue(msg, "type", "drift", "namespace", namespace, "kind", kind, "name", name)
+}
+
+// BroadcastRGDUpdate sends an RGD update to all subscribed clients.
+// projectNamespace is the project's namespace name (e.g., "acme"), used for RBAC filtering.
 func (h *Hub) BroadcastRGDUpdate(action Action, name string, rgd interface{}, projectNamespace string) {
-	// Apply debouncing
 	key := "rgd:" + name
 	if !h.shouldBroadcast(key) {
 		return
@@ -354,22 +478,17 @@ func (h *Hub) BroadcastRGDUpdate(action Action, name string, rgd interface{}, pr
 
 	msg, err := NewRGDUpdateMessage(action, name, rgd, projectNamespace)
 	if err != nil {
-		slog.Error("Failed to create RGD update message", "error", err)
+		h.logger.Error("Failed to create RGD update message", "error", err)
 		return
 	}
 
-	select {
-	case h.broadcast <- msg:
-	default:
-		slog.Warn("Broadcast buffer full, dropping RGD update", "name", name, "projectNamespace", projectNamespace)
-	}
+	h.enqueue(msg, "type", "rgd", "name", name, "projectNamespace", projectNamespace)
 }
 
 // BroadcastViolationUpdate sends a violation update to all subscribed clients (admin-only).
 // action should be ActionAdd for newly detected violations, or ActionDelete for resolved violations.
 // This is an enterprise-only feature for OPA Gatekeeper compliance monitoring.
 func (h *Hub) BroadcastViolationUpdate(action Action, constraintKind, constraintName string, resource ViolationResourceData, message, enforcementAction string) {
-	// Apply debouncing using a unique key for the violation
 	key := "violation:" + constraintKind + "/" + constraintName + "/" + resource.Kind + "/" + resource.Namespace + "/" + resource.Name
 	if !h.shouldBroadcast(key) {
 		return
@@ -377,31 +496,17 @@ func (h *Hub) BroadcastViolationUpdate(action Action, constraintKind, constraint
 
 	msg, err := NewViolationUpdateMessage(action, constraintKind, constraintName, resource, message, enforcementAction)
 	if err != nil {
-		slog.Error("Failed to create violation update message", "error", err)
+		h.logger.Error("Failed to create violation update message", "error", err)
 		return
 	}
 
-	select {
-	case h.broadcast <- msg:
-		slog.Debug("Broadcast violation update",
-			"action", action,
-			"constraintKind", constraintKind,
-			"constraintName", constraintName,
-			"resourceKind", resource.Kind,
-			"resourceNamespace", resource.Namespace,
-			"resourceName", resource.Name)
-	default:
-		slog.Warn("Broadcast buffer full, dropping violation update",
-			"constraintKind", constraintKind,
-			"constraintName", constraintName)
-	}
+	h.enqueue(msg, "type", "violation", "constraintKind", constraintKind, "constraintName", constraintName)
 }
 
 // BroadcastTemplateUpdate sends a constraint template update to all subscribed clients (admin-only).
 // action should be ActionAdd, ActionUpdate, or ActionDelete.
 // This is an enterprise-only feature for OPA Gatekeeper compliance monitoring.
 func (h *Hub) BroadcastTemplateUpdate(action Action, name, kind, description string) {
-	// Apply debouncing using a unique key for the template
 	key := "template:" + name
 	if !h.shouldBroadcast(key) {
 		return
@@ -409,27 +514,17 @@ func (h *Hub) BroadcastTemplateUpdate(action Action, name, kind, description str
 
 	msg, err := NewTemplateUpdateMessage(action, name, kind, description)
 	if err != nil {
-		slog.Error("Failed to create template update message", "error", err)
+		h.logger.Error("Failed to create template update message", "error", err)
 		return
 	}
 
-	select {
-	case h.broadcast <- msg:
-		slog.Debug("Broadcast template update",
-			"action", action,
-			"name", name,
-			"kind", kind)
-	default:
-		slog.Warn("Broadcast buffer full, dropping template update",
-			"name", name)
-	}
+	h.enqueue(msg, "type", "template", "name", name, "kind", kind)
 }
 
 // BroadcastConstraintUpdate sends a constraint update to all subscribed clients (admin-only).
 // action should be ActionAdd, ActionUpdate, or ActionDelete.
 // This is an enterprise-only feature for OPA Gatekeeper compliance monitoring.
 func (h *Hub) BroadcastConstraintUpdate(action Action, kind, name, enforcementAction string, violationCount int) {
-	// Apply debouncing using a unique key for the constraint
 	key := "constraint:" + kind + "/" + name
 	if !h.shouldBroadcast(key) {
 		return
@@ -437,23 +532,28 @@ func (h *Hub) BroadcastConstraintUpdate(action Action, kind, name, enforcementAc
 
 	msg, err := NewConstraintUpdateMessage(action, kind, name, enforcementAction, violationCount)
 	if err != nil {
-		slog.Error("Failed to create constraint update message", "error", err)
+		h.logger.Error("Failed to create constraint update message", "error", err)
 		return
 	}
 
-	select {
-	case h.broadcast <- msg:
-		slog.Debug("Broadcast constraint update",
-			"action", action,
-			"kind", kind,
-			"name", name,
-			"enforcementAction", enforcementAction,
-			"violationCount", violationCount)
-	default:
-		slog.Warn("Broadcast buffer full, dropping constraint update",
-			"kind", kind,
-			"name", name)
+	h.enqueue(msg, "type", "constraint", "kind", kind, "name", name)
+}
+
+// BroadcastRevisionUpdate sends a GraphRevision update to all subscribed clients.
+// projectNamespace is the project's namespace name (e.g., "acme"), used for RBAC filtering.
+func (h *Hub) BroadcastRevisionUpdate(action Action, rgdName string, revision int, projectNamespace string) {
+	key := "revision:" + rgdName
+	if !h.shouldBroadcast(key) {
+		return
 	}
+
+	msg, err := NewRevisionUpdateMessage(action, rgdName, revision, projectNamespace)
+	if err != nil {
+		h.logger.Error("Failed to create revision update message", "error", err)
+		return
+	}
+
+	h.enqueue(msg, "type", "revision", "rgdName", rgdName, "revision", revision)
 }
 
 // SetCountFunc sets the function used to compute per-user counts on initial connect.
@@ -461,25 +561,35 @@ func (h *Hub) SetCountFunc(fn CountFunc) {
 	h.countFn = fn
 }
 
+// clientSnapshot holds the data needed to compute and send counts to a single client.
+// Collected under h.mu.RLock() so the lock can be released before count computation.
+type clientSnapshot struct {
+	client        *Client
+	userID        string
+	projects      []string
+	groups        []string
+	isGlobalAdmin bool
+}
+
 // SendCountsToClients computes RBAC-filtered counts per-client and sends personalized
 // counts_update messages. Unlike standard broadcasts that send the same message to all,
 // each client receives different counts based on their project access.
-// Called from watcher goroutines (outside Hub event loop) - holds RLock for the entire
-// iteration to prevent handleUnregister from closing client.send channels mid-send.
-// This is safe because countFn uses in-memory caches only (no I/O).
+// Called from watcher goroutines (outside Hub event loop). Client references and their
+// cached admin status are collected under RLock, then the lock is released before count
+// computation begins.
 func (h *Hub) SendCountsToClients(countFn CountFunc) {
 	// Debounce rapid changes (e.g., 10 instances created in 500ms)
 	if !h.shouldBroadcast("counts") {
 		return
 	}
 
-	// Hold read lock for entire iteration to prevent concurrent handleUnregister
-	// from closing client.send channels (which would panic on send).
-	// This mirrors the handleBroadcast pattern.
-	h.mu.RLock()
-	defer h.mu.RUnlock()
+	h.ctxMu.RLock()
+	ctx := h.ctx
+	h.ctxMu.RUnlock()
 
-	ctx := context.Background()
+	// Collect client snapshots under read lock, then release before computation.
+	h.mu.RLock()
+	snapshots := make([]clientSnapshot, 0, len(h.clients))
 	for client := range h.clients {
 		// Check subscription - must have resource subscription
 		client.subMu.RLock()
@@ -492,29 +602,77 @@ func (h *Hub) SendCountsToClients(countFn CountFunc) {
 			continue
 		}
 
-		// Get user context for RBAC-filtered counts
 		userID, projects, groups := client.GetUserContext()
+		isAdmin := client.CachedHasGlobalAccess(ctx)
 
-		// Global admins see unfiltered counts (nil projects)
-		if client.HasGlobalAccess(ctx) {
+		snapshots = append(snapshots, clientSnapshot{
+			client:        client,
+			userID:        userID,
+			projects:      projects,
+			groups:        groups,
+			isGlobalAdmin: isAdmin,
+		})
+	}
+	h.mu.RUnlock()
+
+	// Compute counts and send outside the lock.
+	for _, snap := range snapshots {
+		projects := snap.projects
+		if snap.isGlobalAdmin {
 			projects = nil
 		}
 
-		rgdCount, instanceCount := countFn(ctx, userID, projects, groups)
+		rgdCount, instanceCount := countFn(ctx, snap.userID, projects, snap.groups)
 
 		msg, err := NewCountsUpdateMessage(rgdCount, instanceCount)
 		if err != nil {
-			slog.Error("Failed to create counts update message", "error", err, "userID", userID)
+			h.logger.Error("Failed to create counts update message", "error", err, "userID", snap.userID)
 			continue
 		}
 
-		// Non-blocking send
-		select {
-		case client.send <- msg:
-		default:
-			slog.Warn("Client send buffer full, skipping counts update",
-				"userID", userID)
+		// Safe non-blocking send: client may have been unregistered after snapshot,
+		// which closes client.send. trySend recovers from the closed-channel panic.
+		if !trySend(snap.client, msg) {
+			h.logger.Warn("Client send buffer full or disconnected, skipping counts update",
+				"userID", snap.userID)
 		}
+	}
+}
+
+// trySend attempts a non-blocking send on the client's send channel.
+// Returns true if sent, false if the buffer was full or channel was closed.
+// Safe to call after releasing h.mu.RLock() — handles the race where
+// handleUnregister closes client.send between snapshot and send.
+func trySend(client *Client, msg *Message) (sent bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			sent = false
+		}
+	}()
+	select {
+	case client.send <- msg:
+		return true
+	default:
+		return false
+	}
+}
+
+// cleanLastUpdate removes stale entries from the lastUpdate debounce map.
+// Entries older than 10*DebounceInterval (1s) have served their debounce purpose
+// and can be safely evicted to prevent unbounded map growth.
+func (h *Hub) cleanLastUpdate() {
+	cutoff := time.Now().Add(-10 * DebounceInterval)
+	h.lastUpdateLock.Lock()
+	defer h.lastUpdateLock.Unlock()
+	evicted := 0
+	for key, t := range h.lastUpdate {
+		if t.Before(cutoff) {
+			delete(h.lastUpdate, key)
+			evicted++
+		}
+	}
+	if evicted > 0 {
+		h.logger.Debug("Cleaned stale debounce entries", "evicted", evicted, "remaining", len(h.lastUpdate))
 	}
 }
 
@@ -542,7 +700,7 @@ func (h *Hub) GetMetrics() map[string]interface{} {
 		"activeConnections":  h.activeConnections,
 		"totalConnections":   h.totalConnections,
 		"totalMessages":      h.totalMessages,
-		"maxConnections":     MaxConnections,
+		"maxConnections":     h.maxConnections,
 		"broadcastQueueSize": len(h.broadcast),
 	}
 }

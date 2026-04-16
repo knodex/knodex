@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { useState, useCallback, useEffect, useRef } from "react";
-import { X } from "lucide-react";
+import { Search, X } from "@/lib/icons";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,11 +13,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useProjects } from "@/hooks/useProjects";
+import { filterSelectClasses } from "@/components/ui/filter-bar";
+import { cn } from "@/lib/utils";
 
 const RESULT_OPTIONS = ["success", "denied", "error"] as const;
 
-// TODO: Consider fetching available actions/resources from a /facets API endpoint
-// to avoid drift when new action or resource types are added to the backend.
 const ACTION_OPTIONS = [
   "login",
   "login_failed",
@@ -67,19 +67,15 @@ export function AuditFilters({
   onFilterChange,
   onClearFilters,
 }: AuditFiltersProps) {
-  // Fetch projects for dropdown
   const { data: projects, isLoading: projectsLoading } = useProjects();
 
-  // Local state for debounced text inputs
   const [localUserId, setLocalUserId] = useState(userId);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
 
-  // Sync local state when props change (e.g. clear filters)
   useEffect(() => { setLocalUserId(userId); }, [userId]);
 
   const hasFilters = userId || action || resource || project || result || from || to;
 
-  // Debounced update for text inputs
   const updateFilterDebounced = useCallback(
     (key: string, value: string) => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -90,7 +86,6 @@ export function AuditFilters({
     [onFilterChange]
   );
 
-  // Cleanup debounce timer on unmount
   useEffect(() => {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -98,10 +93,10 @@ export function AuditFilters({
   }, []);
 
   return (
-    <div className="flex flex-wrap items-end gap-3">
-      {/* User filter */}
-      <div className="space-y-1">
-        <label className="text-xs font-medium text-muted-foreground">User</label>
+    <div className="flex flex-wrap items-center gap-2">
+      {/* User search */}
+      <div className="relative">
+        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
         <Input
           placeholder="Filter by user..."
           value={localUserId}
@@ -109,132 +104,108 @@ export function AuditFilters({
             setLocalUserId(e.target.value);
             updateFilterDebounced("userId", e.target.value);
           }}
-          className="h-9 w-[160px]"
+          className={cn("pl-8 pr-3 h-8 w-[150px] text-xs bg-transparent border border-[var(--border-default)] hover:border-[var(--border-hover)] transition-colors focus-visible:ring-1 focus-visible:ring-[var(--brand-primary)]/30 placeholder:text-muted-foreground")}
         />
       </div>
 
-      {/* Action filter */}
-      <div className="space-y-1">
-        <label className="text-xs font-medium text-muted-foreground">Action</label>
-        <Select
-          value={action || "__all__"}
-          onValueChange={(v) => onFilterChange("action", v === "__all__" ? "" : v)}
-        >
-          <SelectTrigger className="h-9 w-[140px]">
-            <SelectValue placeholder="All actions" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__all__">All actions</SelectItem>
-            {ACTION_OPTIONS.map((a) => (
-              <SelectItem key={a} value={a}>
-                {a}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
+      {/* Action */}
+      <Select
+        value={action || "__all__"}
+        onValueChange={(v) => onFilterChange("action", v === "__all__" ? "" : v)}
+      >
+        <SelectTrigger className={cn(filterSelectClasses(!!action), "h-8 w-[120px] text-xs")}>
+          <SelectValue placeholder="Action" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="__all__">All actions</SelectItem>
+          {ACTION_OPTIONS.map((a) => (
+            <SelectItem key={a} value={a}>{a}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
 
-      {/* Resource filter */}
-      <div className="space-y-1">
-        <label className="text-xs font-medium text-muted-foreground">Resource</label>
-        <Select
-          value={resource || "__all__"}
-          onValueChange={(v) => onFilterChange("resource", v === "__all__" ? "" : v)}
-        >
-          <SelectTrigger className="h-9 w-[140px]">
-            <SelectValue placeholder="All resources" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__all__">All resources</SelectItem>
-            {RESOURCE_OPTIONS.map((r) => (
-              <SelectItem key={r} value={r}>
-                {r}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
+      {/* Resource */}
+      <Select
+        value={resource || "__all__"}
+        onValueChange={(v) => onFilterChange("resource", v === "__all__" ? "" : v)}
+      >
+        <SelectTrigger className={cn(filterSelectClasses(!!resource), "h-8 w-[130px] text-xs")}>
+          <SelectValue placeholder="Resource" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="__all__">All resources</SelectItem>
+          {RESOURCE_OPTIONS.map((r) => (
+            <SelectItem key={r} value={r}>{r}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
 
-      {/* Project filter */}
-      <div className="space-y-1">
-        <label className="text-xs font-medium text-muted-foreground">Project</label>
-        <Select
-          value={project || "__all__"}
-          onValueChange={(v) => onFilterChange("project", v === "__all__" ? "" : v)}
-          disabled={projectsLoading}
-        >
-          <SelectTrigger className="h-9 w-[160px]">
-            <SelectValue placeholder={projectsLoading ? "Loading..." : "All projects"} />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__all__">All projects</SelectItem>
-            {projects?.items?.map((p) => (
-              <SelectItem key={p.name} value={p.name}>
-                {p.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
+      {/* Project */}
+      <Select
+        value={project || "__all__"}
+        onValueChange={(v) => onFilterChange("project", v === "__all__" ? "" : v)}
+        disabled={projectsLoading}
+      >
+        <SelectTrigger className={cn(filterSelectClasses(!!project), "h-8 w-[140px] text-xs")}>
+          <SelectValue placeholder={projectsLoading ? "Loading..." : "Project"} />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="__all__">All projects</SelectItem>
+          {projects?.items?.map((p) => (
+            <SelectItem key={p.name} value={p.name}>{p.name}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
 
-      {/* Result filter */}
-      <div className="space-y-1">
-        <label className="text-xs font-medium text-muted-foreground">Result</label>
-        <Select
-          value={result || "__all__"}
-          onValueChange={(v) => onFilterChange("result", v === "__all__" ? "" : v)}
-        >
-          <SelectTrigger className="h-9 w-[130px]">
-            <SelectValue placeholder="All results" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__all__">All results</SelectItem>
-            {RESULT_OPTIONS.map((r) => (
-              <SelectItem key={r} value={r}>
-                {r}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
+      {/* Result */}
+      <Select
+        value={result || "__all__"}
+        onValueChange={(v) => onFilterChange("result", v === "__all__" ? "" : v)}
+      >
+        <SelectTrigger className={cn(filterSelectClasses(!!result), "h-8 w-[110px] text-xs")}>
+          <SelectValue placeholder="Result" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="__all__">All results</SelectItem>
+          {RESULT_OPTIONS.map((r) => (
+            <SelectItem key={r} value={r}>{r}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
 
-      {/* Date range: from */}
-      <div className="space-y-1">
-        <label className="text-xs font-medium text-muted-foreground">From</label>
-        <Input
-          type="datetime-local"
-          value={from ? isoToLocalDatetime(from) : ""}
-          onChange={(e) => {
-            const v = e.target.value;
-            onFilterChange("from", v ? new Date(v).toISOString() : "");
-          }}
-          className="h-9 w-[180px]"
-        />
-      </div>
+      {/* From */}
+      <Input
+        type="datetime-local"
+        value={from ? isoToLocalDatetime(from) : ""}
+        onChange={(e) => {
+          const v = e.target.value;
+          onFilterChange("from", v ? new Date(v).toISOString() : "");
+        }}
+        className="h-8 w-[160px] text-xs bg-transparent border border-[var(--border-default)] hover:border-[var(--border-hover)] transition-colors focus-visible:ring-1 focus-visible:ring-[var(--brand-primary)]/30"
+        aria-label="From date"
+      />
 
-      {/* Date range: to */}
-      <div className="space-y-1">
-        <label className="text-xs font-medium text-muted-foreground">To</label>
-        <Input
-          type="datetime-local"
-          value={to ? isoToLocalDatetime(to) : ""}
-          onChange={(e) => {
-            const v = e.target.value;
-            onFilterChange("to", v ? new Date(v).toISOString() : "");
-          }}
-          className="h-9 w-[180px]"
-        />
-      </div>
+      {/* To */}
+      <Input
+        type="datetime-local"
+        value={to ? isoToLocalDatetime(to) : ""}
+        onChange={(e) => {
+          const v = e.target.value;
+          onFilterChange("to", v ? new Date(v).toISOString() : "");
+        }}
+        className="h-8 w-[160px] text-xs bg-transparent border border-[var(--border-default)] hover:border-[var(--border-hover)] transition-colors focus-visible:ring-1 focus-visible:ring-[var(--brand-primary)]/30"
+        aria-label="To date"
+      />
 
-      {/* Clear filters */}
+      {/* Clear */}
       {hasFilters && (
         <Button
           variant="ghost"
           size="sm"
           onClick={onClearFilters}
-          className="h-9"
+          className="h-8 px-2 text-xs"
         >
-          <X className="h-4 w-4 mr-1" />
+          <X className="h-3.5 w-3.5 mr-1" />
           Clear
         </Button>
       )}

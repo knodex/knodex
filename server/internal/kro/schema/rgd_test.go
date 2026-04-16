@@ -620,6 +620,62 @@ func TestBuildFormSchemaFromRGD_NoValidationConstraints(t *testing.T) {
 	}
 }
 
+func TestBuildFormSchemaFromRGD_IsClusterScoped(t *testing.T) {
+	t.Run("cluster-scoped RGD propagates to FormSchema", func(t *testing.T) {
+		rgd := &models.CatalogRGD{
+			Name:            "tenant-provisioner",
+			Namespace:       "default",
+			APIVersion:      "example.io/v1alpha1",
+			Kind:            "TenantProvisioner",
+			IsClusterScoped: true,
+			RawSpec: map[string]interface{}{
+				"schema": map[string]interface{}{
+					"apiVersion": "example.io/v1alpha1",
+					"kind":       "TenantProvisioner",
+					"spec": map[string]interface{}{
+						"tenantName": "string",
+					},
+				},
+			},
+		}
+
+		schema, err := BuildFormSchemaFromRGD(rgd)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !schema.IsClusterScoped {
+			t.Error("expected IsClusterScoped=true in FormSchema for cluster-scoped RGD")
+		}
+	})
+
+	t.Run("namespace-scoped RGD has IsClusterScoped false", func(t *testing.T) {
+		rgd := &models.CatalogRGD{
+			Name:            "webapp",
+			Namespace:       "default",
+			APIVersion:      "example.io/v1alpha1",
+			Kind:            "WebApp",
+			IsClusterScoped: false,
+			RawSpec: map[string]interface{}{
+				"schema": map[string]interface{}{
+					"apiVersion": "example.io/v1alpha1",
+					"kind":       "WebApp",
+					"spec": map[string]interface{}{
+						"name": "string",
+					},
+				},
+			},
+		}
+
+		schema, err := BuildFormSchemaFromRGD(rgd)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if schema.IsClusterScoped {
+			t.Error("expected IsClusterScoped=false in FormSchema for namespace-scoped RGD")
+		}
+	})
+}
+
 func TestParseDefault(t *testing.T) {
 	tests := []struct {
 		name      string

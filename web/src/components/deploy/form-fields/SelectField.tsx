@@ -1,7 +1,7 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useFormContext } from "react-hook-form";
+import { memo } from "react";
 import { cn } from "@/lib/utils";
 import type { SelectFieldProps } from "./types";
 import { inputBaseClasses, getInputBorderClass } from "./utils";
@@ -9,7 +9,7 @@ import { inputBaseClasses, getInputBorderClass } from "./utils";
 /**
  * Dropdown select field for enum values
  */
-export function SelectField({
+export const SelectField = memo(function SelectField({
   name,
   label,
   description,
@@ -17,8 +17,8 @@ export function SelectField({
   required,
   error,
   defaultValue,
+  register,
 }: SelectFieldProps) {
-  const { register } = useFormContext();
 
   return (
     <div className="space-y-1.5" data-testid={`field-${name}`}>
@@ -37,6 +37,8 @@ export function SelectField({
         defaultValue={defaultValue}
         {...register(name)}
         data-testid={`input-${name}`}
+        aria-invalid={!!error}
+        aria-describedby={error ? `error-${name}` : undefined}
         className={cn(inputBaseClasses, getInputBorderClass(!!error))}
       >
         <option value="">Select {label.toLowerCase()}...</option>
@@ -46,7 +48,7 @@ export function SelectField({
           </option>
         ))}
       </select>
-      {error && <p className="text-xs text-destructive">{error}</p>}
+      {error && <p id={`error-${name}`} className="text-xs text-destructive" role="alert">{error}</p>}
     </div>
   );
-}
+});

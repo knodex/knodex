@@ -122,7 +122,7 @@ func setupAuthTestServer(t *testing.T) (*httptest.Server, *auth.Service) {
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme)
 
 	// Create real RBAC services
-	projectService := rbac.NewProjectService(k8sClient, dynamicClient)
+	projectService := rbac.NewProjectService(k8sClient, dynamicClient, "knodex-system")
 
 	// Create ConfigMap and Secret for AccountStore
 	namespace := "default"
@@ -185,10 +185,15 @@ func setupAuthTestServer(t *testing.T) (*httptest.Server, *auth.Service) {
 		AuthService: authSvc,
 	}
 
-	router := NewRouterWithConfig(nil, nil, nil, nil, routerConfig)
+	routerResult := NewRouterWithConfig(nil, nil, nil, nil, routerConfig)
+	t.Cleanup(func() {
+		for _, rl := range routerResult.UserRateLimiters {
+			rl.Stop()
+		}
+	})
 
 	// Create test server
-	server := httptest.NewServer(router)
+	server := httptest.NewServer(routerResult.Handler)
 
 	return server, authSvc
 }

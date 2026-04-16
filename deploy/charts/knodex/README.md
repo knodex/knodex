@@ -15,7 +15,7 @@ A Helm chart for deploying Knodex - a Kubernetes-native UI for browsing and depl
 | Repository | Name | Version |
 |------------|------|---------|
 | https://charts.bitnami.com/bitnami | redis | 18.19.4 |
-| oci://registry.k8s.io/kro/charts | kro | 0.8.5 |
+| oci://registry.k8s.io/kro/charts | kro | 0.9.0 |
 
 ## Installation
 

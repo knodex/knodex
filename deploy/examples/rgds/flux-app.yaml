@@ -1,0 +1,86 @@
+# Flux Application RGD (applications category)
+# Deploys an application to a remote cluster using Flux HelmRelease.
+#
+# Flow:
+#   1. Developer deploys this to eng-shared or eng-applications namespace
+#   2. Picks the kubeconfig Secret via the externalRef Secret picker UI
+#   3. Creates a HelmRepository + HelmRelease pointing at the remote cluster
+#
+# Requires: A kubeconfig Secret created by the cluster-provisioner RGD
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: flux-app
+  annotations:
+    knodex.io/catalog: "true"
+    knodex.io/title: "Flux Application"
+    knodex.io/description: "Deploy a Helm application to a remote cluster via Flux, using a shared kubeconfig Secret from the Cluster Provisioner"
+    knodex.io/tags: "flux,helm,gitops,application,multi-cluster"
+    knodex.io/category: "applications"
+    knodex.io/icon: "app-window"
+    kro.run/allow-breaking-changes: "true"
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: FluxApp
+    spec:
+      name: string | description="Application name"
+      chart: string | default="nginx" description="Helm chart name"
+      chartVersion: string | default="*" description="Helm chart version constraint"
+      repoUrl: string | default="https://charts.bitnami.com/bitnami" description="Helm repository URL"
+      targetNamespace: string | default="default" description="Namespace on the remote cluster to deploy into"
+      externalRef:
+        kubeconfig:
+          name: string | default="" description="Kubeconfig Secret for the target cluster"
+          namespace: string | default="" description="Namespace of the kubeconfig Secret"
+    status:
+      repositoryName: ${helmRepo.metadata.name}
+      releaseName: ${helmRelease.metadata.name}
+      clusterSecretRef: ${kubeconfig.metadata.name}
+
+  resources:
+    # External reference to the kubeconfig Secret (created by cluster-provisioner)
+    # The deploy UI shows a Secret picker so the developer can select it
+    - id: kubeconfig
+      externalRef:
+        apiVersion: v1
+        kind: Secret
+        metadata:
+          name: ${schema.spec.externalRef.kubeconfig.name}
+          namespace: ${schema.spec.externalRef.kubeconfig.namespace}
+
+    # Flux HelmRepository source
+    - id: helmRepo
+      template:
+        apiVersion: source.toolkit.fluxcd.io/v1
+        kind: HelmRepository
+        metadata:
+          name: ${schema.spec.name}-repo
+          labels:
+            app.kubernetes.io/managed-by: knodex
+        spec:
+          interval: 1h
+          url: ${schema.spec.repoUrl}
+
+    # Flux HelmRelease targeting the remote cluster via kubeconfig
+    - id: helmRelease
+      template:
+        apiVersion: helm.toolkit.fluxcd.io/v2
+        kind: HelmRelease
+        metadata:
+          name: ${schema.spec.name}
+          labels:
+            app.kubernetes.io/managed-by: knodex
+        spec:
+          interval: 5m
+          chart:
+            spec:
+              chart: ${schema.spec.chart}
+              version: ${schema.spec.chartVersion}
+              sourceRef:
+                kind: HelmRepository
+                name: ${helmRepo.metadata.name}
+          kubeConfig:
+            secretRef:
+              name: ${kubeconfig.metadata.name}
+          targetNamespace: ${schema.spec.targetNamespace}

@@ -192,7 +192,7 @@ func setupTestServices() (*ProjectService, *PermissionService, *mockPermissionPo
 	policyEnforcer := newMockPermissionPolicyEnforcer()
 
 	// Create services
-	projectService := NewProjectService(k8sClient, dynamicClient)
+	projectService := NewProjectService(k8sClient, dynamicClient, "knodex-system")
 	permService := NewPermissionService(PermissionServiceConfig{
 		ProjectService: projectService,
 		PolicyEnforcer: policyEnforcer,

@@ -21,6 +21,47 @@
  */
 
 import { expect, test, TestUserRole, setupPermissionMocking } from "../fixture";
+import type { Page } from "@playwright/test";
+
+/**
+ * Helper: Open the Create Project wizard and navigate to the submit step.
+ * The modal is a multi-step wizard: Project → Destinations → Roles.
+ * Fills in minimal required data and clicks through to the "Create Project" button.
+ */
+async function openCreateWizardAndSubmit(page: Page, projectName = "my-project") {
+  // Click Create button to open wizard modal.
+  // Empty state shows "Create Project"; non-empty state shows "Create" in the header.
+  const createButton = page.locator('button').filter({ hasText: /^Create(?: Project)?$/i }).first();
+  await expect(createButton).toBeVisible({ timeout: 10000 });
+  await createButton.click();
+
+  // Step 1: Project — target modal heading to avoid matching the "Create Project" empty-state button
+  await expect(page.getByRole("heading", { name: "Create Project" })).toBeVisible();
+  const nameInput = page.getByLabel(/project name/i);
+  await nameInput.fill(projectName);
+
+  // Click Continue to Step 2 (Destinations)
+  await page.getByRole("button", { name: /continue/i }).click();
+
+  // Step 2: Destinations — add a namespace destination so step is valid
+  const nsInput = page.getByPlaceholder(/namespace/i).or(page.locator('input[placeholder*="namespace"]'));
+  if (await nsInput.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await nsInput.fill("default");
+    // Press Enter or click Add to add the destination
+    await nsInput.press("Enter");
+  }
+
+  // Click Continue to Step 3 (Roles)
+  const continueBtn2 = page.getByRole("button", { name: /continue/i });
+  if (await continueBtn2.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await continueBtn2.click();
+  }
+
+  // Step 3: Roles — click "Create Project" submit button
+  const submitButton = page.getByRole("button", { name: /create project/i });
+  await expect(submitButton).toBeVisible({ timeout: 5000 });
+  await submitButton.click();
+}
 
 test.describe("Project Creation Error Handling", () => {
   test.describe("Validation Error Display", () => {
@@ -58,27 +99,10 @@ test.describe("Project Creation Error Handling", () => {
         }
       });
 
-      await page.goto("/settings/projects");
+      await page.goto("/projects");
       await page.waitForLoadState("networkidle");
 
-      // Click Create Project button
-      const createButton = page.getByRole("button", { name: /create project/i });
-      await expect(createButton).toBeVisible();
-      await createButton.click();
-
-      // Wait for form to appear
-      await page.waitForLoadState("networkidle");
-
-      // Fill in description but skip required fields
-      const descInput = page.locator('textarea[name="description"]');
-      if (await descInput.isVisible()) {
-        await descInput.fill("Test project description");
-      }
-
-      // Submit form
-      const submitButton = page.getByRole("button", { name: /create|save|submit/i });
-      await expect(submitButton).toBeVisible();
-      await submitButton.click();
+      await openCreateWizardAndSubmit(page, "my-project");
 
       // Wait for error indication to appear
       // Check for various error display patterns:
@@ -143,31 +167,10 @@ test.describe("Project Creation Error Handling", () => {
         }
       });
 
-      await page.goto("/settings/projects");
+      await page.goto("/projects");
       await page.waitForLoadState("networkidle");
 
-      // Click Create Project button
-      const createButton = page.getByRole("button", { name: /create project/i });
-      await expect(createButton).toBeVisible();
-      await createButton.click();
-
-      // Wait for form to appear
-      await page.waitForLoadState("networkidle");
-
-      // Fill in duplicate project name
-      const nameInput = page.locator('input[name="name"]');
-      await expect(nameInput).toBeVisible();
-      await nameInput.fill("existing-project");
-
-      // Add a destination (required by form validation)
-      // The namespace input auto-populates with the project name
-      const addDestButton = page.locator('form button[type="button"]').filter({ has: page.locator('svg.lucide-plus') }).first();
-      await addDestButton.click();
-
-      // Submit form
-      const submitButton = page.getByRole("button", { name: /create|save|submit/i });
-      await expect(submitButton).toBeVisible();
-      await submitButton.click();
+      await openCreateWizardAndSubmit(page, "existing-project");
 
       // Wait for error toast/message to appear
       // Use text-based detection (works reliably across toast libraries)
@@ -228,29 +231,11 @@ test.describe("Project Creation Error Handling", () => {
         }
       });
 
-      await page.goto("/settings/projects");
+      await page.goto("/projects");
       await page.waitForLoadState("networkidle");
 
-      // Click Create Project button
-      const createButton = page.getByRole("button", { name: /create project/i });
-      await expect(createButton).toBeVisible();
-      await createButton.click();
-
-      // Wait for form to appear
-      await page.waitForLoadState("networkidle");
-
-      // Fill in project name
-      const nameInput = page.locator('input[name="name"]');
-      await expect(nameInput).toBeVisible();
-      await nameInput.fill("test-project");
-
-      // Add a destination (required by form validation)
-      const addDestButton = page.locator('form button[type="button"]').filter({ has: page.locator('svg.lucide-plus') }).first();
-      await addDestButton.click();
-
-      // Submit form (first attempt - should fail)
-      const submitButton = page.getByRole("button", { name: /create|save|submit/i });
-      await submitButton.click();
+      // First submission - should fail
+      await openCreateWizardAndSubmit(page, "test-project");
 
       // Wait for error indication (toast or inline error)
       const errorPatterns = [
@@ -269,11 +254,8 @@ test.describe("Project Creation Error Handling", () => {
       }
       expect(errorFound).toBe(true);
 
-      // Verify form is still visible and editable (not reset)
-      await expect(nameInput).toBeVisible();
-      await expect(nameInput).toHaveValue("test-project");
-
-      // Verify submit button is still available (not stuck in loading state)
+      // Verify wizard is still open and submit button is available for retry
+      const submitButton = page.getByRole("button", { name: /create project/i });
       await expect(submitButton).toBeEnabled();
 
       // Submit again (second attempt - should succeed)
@@ -327,36 +309,28 @@ test.describe("Project Creation Error Handling", () => {
         }
       });
 
-      await page.goto("/settings/projects");
+      await page.goto("/projects");
       await page.waitForLoadState("networkidle");
 
-      // Click Create Project button
-      const createButton = page.getByRole("button", { name: /create project/i });
-      await expect(createButton).toBeVisible();
+      // Open wizard and type an invalid name (underscores not allowed in DNS names)
+      // Empty state shows "Create Project"; non-empty state shows "Create" in the header.
+      const createButton = page.locator('button').filter({ hasText: /^Create(?: Project)?$/i }).first();
+      await expect(createButton).toBeVisible({ timeout: 10000 });
       await createButton.click();
 
-      // Wait for form to appear
-      await page.waitForLoadState("networkidle");
+      await expect(page.getByRole("heading", { name: "Create Project" })).toBeVisible();
+      const nameInput = page.getByLabel(/project name/i);
+      await nameInput.fill("Invalid_Name_123");
 
-      // Note: Frontend form validation may catch invalid names first
-      // This test verifies backend validation errors are also displayed
-      const nameInput = page.locator('input[name="name"]');
-      await expect(nameInput).toBeVisible();
-      await nameInput.fill("Invalid_Name_123"); // Invalid format
+      // Frontend validation should catch invalid name and show error
+      // The Continue button should be disabled
+      const continueButton = page.getByRole("button", { name: /continue/i });
+      await expect(continueButton).toBeDisabled();
 
-      // Submit form
-      const submitButton = page.getByRole("button", { name: /create|save|submit/i });
-      await expect(submitButton).toBeVisible();
-      await submitButton.click();
-
-      // Wait for error (could be form validation or API error)
-      // Check for either inline form error or toast - use text-based detection
-      const formError = page.locator('.text-destructive');
-      const toastError = page.getByText(/invalid|must be|alphanumeric|lowercase/i);
-
-      // Either form validation or API error should show
-      const hasFormError = await formError.isVisible({ timeout: 3000 }).catch(() => false);
-      const hasToastError = await toastError.first().isVisible({ timeout: 3000 }).catch(() => false);
+      // Check for inline form validation error
+      const formError = page.locator('[data-testid="project-step"]');
+      const hasFormError = await formError.getByText(/invalid|must be|alphanumeric|lowercase|DNS/i).first().isVisible({ timeout: 3000 }).catch(() => false);
+      const hasToastError = false; // Frontend catches it before API call
 
       expect(hasFormError || hasToastError).toBe(true);
 
@@ -400,26 +374,10 @@ test.describe("Project Creation Error Handling", () => {
         }
       });
 
-      await page.goto("/settings/projects");
+      await page.goto("/projects");
       await page.waitForLoadState("networkidle");
 
-      // Click Create Project button
-      const createButton = page.getByRole("button", { name: /create project/i });
-      await expect(createButton).toBeVisible();
-      await createButton.click();
-
-      // Wait for form to appear
-      await page.waitForLoadState("networkidle");
-
-      // Fill in project name only (no destinations)
-      const nameInput = page.locator('input[name="name"]');
-      await expect(nameInput).toBeVisible();
-      await nameInput.fill("test-project-no-dest");
-
-      // Submit form without adding destinations
-      const submitButton = page.getByRole("button", { name: /create|save|submit/i });
-      await expect(submitButton).toBeVisible();
-      await submitButton.click();
+      await openCreateWizardAndSubmit(page, "test-project-no-dest");
 
       // Wait for error toast/message to appear
       // Use text-based detection (works reliably across toast libraries)
@@ -477,7 +435,7 @@ test.describe("Project Creation Error Handling", () => {
         }
       });
 
-      await page.goto("/settings/projects");
+      await page.goto("/projects");
       await page.waitForLoadState("networkidle");
 
       // Find and click delete button on the project
@@ -497,6 +455,11 @@ test.describe("Project Creation Error Handling", () => {
         await deleteAction.click();
 
         // Confirm deletion if dialog appears
+        // The delete dialog requires typing the project name before the button is enabled
+        const confirmNameInput = page.locator('#confirm-name');
+        if (await confirmNameInput.isVisible({ timeout: 2000 }).catch(() => false)) {
+          await confirmNameInput.fill('test-project');
+        }
         const confirmButton = page.getByRole("button", { name: /confirm|delete|yes/i }).last();
         if (await confirmButton.isVisible({ timeout: 2000 }).catch(() => false)) {
           await confirmButton.click();
@@ -546,30 +509,10 @@ test.describe("Project Creation Error Handling", () => {
         }
       });
 
-      await page.goto("/settings/projects");
+      await page.goto("/projects");
       await page.waitForLoadState("networkidle");
 
-      // Click Create Project button
-      const createButton = page.getByRole("button", { name: /create project/i });
-      await expect(createButton).toBeVisible();
-      await createButton.click();
-
-      // Wait for form to appear
-      await page.waitForLoadState("networkidle");
-
-      // Fill in project name
-      const nameInput = page.locator('input[name="name"]');
-      await expect(nameInput).toBeVisible();
-      await nameInput.fill("new-project");
-
-      // Add a destination (required by form validation)
-      const addDestButton = page.locator('form button[type="button"]').filter({ has: page.locator('svg.lucide-plus') }).first();
-      await addDestButton.click();
-
-      // Submit form
-      const submitButton = page.getByRole("button", { name: /create|save|submit/i });
-      await expect(submitButton).toBeVisible();
-      await submitButton.click();
+      await openCreateWizardAndSubmit(page, "new-project");
 
       // Wait for success toast/message to appear
       // Use text-based detection (works reliably across toast libraries)

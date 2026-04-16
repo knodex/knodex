@@ -63,7 +63,10 @@ func (p *ResourceParser) ParseRGDResources(rgdName, rgdNamespace string, rgdSpec
 			continue
 		}
 
-		resDef := p.parseResource(i, resMap)
+		resDef, parseErr := p.parseResource(i, resMap)
+		if parseErr != nil {
+			graph.ParseErrors = append(graph.ParseErrors, *parseErr)
+		}
 		if resDef != nil {
 			graph.Resources = append(graph.Resources, *resDef)
 			entries = append(entries, resourceEntry{
@@ -100,7 +103,9 @@ func (p *ResourceParser) ParseRGDResources(rgdName, rgdNamespace string, rgdSpec
 }
 
 // parseResource parses a single resource from the spec.resources array.
-func (p *ResourceParser) parseResource(index int, resMap map[string]interface{}) *ResourceDefinition {
+// Returns the parsed definition and an optional non-fatal parse error (e.g., invalid forEach+externalRef).
+// A non-nil error does not prevent the resource from being returned; callers accumulate errors in graph.ParseErrors.
+func (p *ResourceParser) parseResource(index int, resMap map[string]interface{}) (*ResourceDefinition, *ParseError) {
 	res := &ResourceDefinition{
 		DependsOn: make([]string, 0),
 	}
@@ -121,7 +126,7 @@ func (p *ResourceParser) parseResource(index int, resMap map[string]interface{})
 		}
 	} else {
 		// Unknown resource type
-		return nil
+		return nil, nil
 	}
 
 	// Generate ID
@@ -151,7 +156,27 @@ func (p *ResourceParser) parseResource(index int, resMap map[string]interface{})
 		}
 	}
 
-	return res
+	// Parse forEach collection iterators (mutually exclusive with externalRef per KRO spec)
+	hasExternalRef := !res.IsTemplate && res.ExternalRef != nil
+	iterators, parseErr := p.parseForEach(resMap, hasExternalRef)
+	if parseErr != nil {
+		parseErr.Path = res.ID
+		// Still return the resource; caller accumulates the error
+		return res, parseErr
+	}
+	res.ForEach = iterators
+	res.IsCollection = len(iterators) > 0
+
+	// Parse readyWhen - store raw strings, including "each.*" for collections
+	if readyWhenSlice, err := k8sparser.GetSlice(resMap, "readyWhen"); err == nil {
+		for _, rw := range readyWhenSlice {
+			if s, ok := rw.(string); ok && s != "" {
+				res.ReadyWhen = append(res.ReadyWhen, s)
+			}
+		}
+	}
+
+	return res, nil
 }
 
 // parseExternalRef parses an externalRef section.
@@ -198,20 +223,25 @@ func (p *ResourceParser) parseExternalRef(extRef map[string]interface{}) *Extern
 func extractSchemaSpecFromExpr(expr string, usesSchema *bool, fieldOut *string) {
 	exprs := extractExpressionsFromValue(expr)
 	for _, e := range exprs {
-		if strings.HasPrefix(e, schemaSpecExprPrefix) {
-			fieldPath := strings.TrimPrefix(e, "schema.")
+		// Use extractBareSchemaFields (substring-aware) instead of HasPrefix because
+		// KRO v0.9.0 compiles embedded templates into concatenation expressions where
+		// schema.spec.* no longer appears at position 0.
+		fields := extractBareSchemaFields(e)
+		if len(fields) > 0 {
 			if usesSchema != nil {
 				*usesSchema = true
 			}
-			*fieldOut = fieldPath
+			*fieldOut = fields[0]
 			return
 		}
 	}
 }
 
 // extractExpressionsFromValue extracts CEL expression contents from a string value
-// using KRO's parser. Returns the inner expression strings (without ${} wrapper).
-// For example, "${schema.spec.name}" returns ["schema.spec.name"].
+// using KRO's parser. Returns the Expression.Original strings from each FieldDescriptor.
+// For standalone expressions, e.g., "${schema.spec.name}" returns ["schema.spec.name"].
+// For embedded templates (KRO v0.9.0+), e.g., "prefix-${schema.spec.name}-suffix",
+// returns a single concatenated CEL expression like ["\"prefix-\" + (schema.spec.name) + \"-suffix\""].
 func extractExpressionsFromValue(value string) []string {
 	if !strings.Contains(value, "${") {
 		return nil
@@ -225,8 +255,8 @@ func extractExpressionsFromValue(value string) []string {
 
 	var exprs []string
 	for _, fd := range descriptors {
-		for _, expr := range fd.Expressions {
-			exprs = append(exprs, expr.Original)
+		if fd.Expression != nil {
+			exprs = append(exprs, fd.Expression.Original)
 		}
 	}
 	return exprs
@@ -471,11 +501,14 @@ func (p *ResourceParser) findInternalReferences(data interface{}, idByInternalID
 	}
 
 	for _, fd := range descriptors {
-		for _, expr := range fd.Expressions {
-			inner := expr.Original
+		if fd.Expression != nil {
+			inner := fd.Expression.Original
 			// Check if this references another resource (not schema.*, spec.*, etc.)
+			// Use isResourceRef instead of HasPrefix because KRO v0.9.0 compiles
+			// string templates into single concatenation expressions, e.g.,
+			// "${a.b}-${c.d}" becomes '(a.b) + "-" + (c.d)'.
 			for internalID, resID := range idByInternalID {
-				if strings.HasPrefix(inner, internalID+".") {
+				if isResourceRef(inner, internalID) {
 					refs[resID] = true
 				}
 			}
@@ -507,7 +540,7 @@ func (p *ResourceParser) traverseForReferences(data interface{}, idByInternalID 
 		exprs := extractExpressionsFromValue(v)
 		for _, inner := range exprs {
 			for internalID, resID := range idByInternalID {
-				if strings.HasPrefix(inner, internalID+".") {
+				if isResourceRef(inner, internalID) {
 					refs[resID] = true
 				}
 			}
@@ -563,8 +596,8 @@ func extractSchemaFieldRefs(data interface{}) []string {
 
 	seen := make(map[string]bool)
 	for _, fd := range descriptors {
-		for _, expr := range fd.Expressions {
-			inner := expr.Original
+		if fd.Expression != nil {
+			inner := fd.Expression.Original
 			// Extract schema.spec.* references from the expression
 			for _, field := range extractBareSchemaFields(inner) {
 				seen[field] = true
@@ -602,6 +635,166 @@ func collectSchemaRefs(data interface{}, seen map[string]bool, depth int) {
 			}
 		}
 	}
+}
+
+// isResourceRef reports whether expr contains a top-level reference to internalID
+// (i.e., internalID followed immediately by ".") as a root CEL identifier.
+//
+// A plain strings.Contains would produce false positives: for example, resource ID "a"
+// would match "schema.spec.a" because "a." appears as a substring at the field-access
+// boundary ("spec.a"). This function avoids that by requiring that the character
+// immediately before internalID is NOT an identifier character or a dot — both of which
+// indicate that internalID is a field accessor rather than a root identifier.
+//
+// This is necessary because KRO v0.9.0 compiles string templates into single CEL
+// concatenation expressions (e.g., "${a.b}-${c.d}" → `(a.b) + "-" + (c.d)`),
+// so HasPrefix is insufficient; we need Contains with boundary awareness.
+func isResourceRef(expr, internalID string) bool {
+	target := internalID + "."
+	searchFrom := 0
+	for {
+		pos := strings.Index(expr[searchFrom:], target)
+		if pos == -1 {
+			return false
+		}
+		pos += searchFrom
+		if pos == 0 {
+			return true // at start of expression — definitely a root reference
+		}
+		prev := expr[pos-1]
+		// Reject if preceded by an identifier char or '.':
+		// - identifier char  → internalID is a sub-identifier (e.g., "schema.myResource")
+		// - '.'              → internalID is a field access  (e.g., "schema.spec.myResource")
+		isIdentOrDot := (prev >= 'a' && prev <= 'z') || (prev >= 'A' && prev <= 'Z') ||
+			(prev >= '0' && prev <= '9') || prev == '_' || prev == '.'
+		if !isIdentOrDot {
+			return true
+		}
+		searchFrom = pos + 1
+	}
+}
+
+// stripForEachDelimiters removes the ${...} wrapper from a KRO CEL expression.
+// Returns the inner expression unchanged if no delimiters are present.
+// Mirrors the unexported stripDelimiters in the cel package to avoid a cross-package dependency.
+func stripForEachDelimiters(expr string) string {
+	expr = strings.TrimSpace(expr)
+	if strings.HasPrefix(expr, "${") && strings.HasSuffix(expr, "}") {
+		return strings.TrimSpace(expr[2 : len(expr)-1])
+	}
+	return expr
+}
+
+// isForEachIdentifier reports whether s is a valid CEL root identifier
+// (letter or underscore start, followed by letters, digits, or underscores).
+func isForEachIdentifier(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	for i, c := range s {
+		if i == 0 {
+			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_') {
+				return false
+			}
+		} else {
+			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// analyzeForEachSource determines the SourceType and field path for a forEach CEL expression.
+//
+// Classification rules:
+//   - "schema.spec.*"           → SchemaSource,   SourcePath = "spec.<rest>"
+//   - "<identifier>.<rest>"     → ResourceSource, SourcePath = "<rest>" (identifier is the resource ID)
+//   - anything else (literals)  → LiteralSource,  SourcePath = ""
+func analyzeForEachSource(expr string) (SourceType, string) {
+	bare := stripForEachDelimiters(expr)
+	if bare == "" {
+		return LiteralSource, ""
+	}
+
+	// Schema source: schema.spec.fieldPath
+	if strings.HasPrefix(bare, schemaSpecExprPrefix) {
+		fieldPath := "spec." + bare[len(schemaSpecExprPrefix):]
+		// Trim at the first non-identifier/non-dot character (operators, spaces, etc.)
+		if end := strings.IndexAny(fieldPath, " \t()[]{}!=<>+-*/,"); end != -1 {
+			fieldPath = fieldPath[:end]
+		}
+		fieldPath = strings.TrimRight(fieldPath, ".")
+		return SchemaSource, fieldPath
+	}
+
+	// Literals start with '[', '{', '"', or a digit — not a root identifier
+	if len(bare) > 0 {
+		first := bare[0]
+		if first == '[' || first == '{' || first == '"' || (first >= '0' && first <= '9') {
+			return LiteralSource, ""
+		}
+
+		// Resource source: <resourceID>.<rest>  (where resourceID != "schema")
+		dotIdx := strings.Index(bare, ".")
+		if dotIdx > 0 {
+			prefix := bare[:dotIdx]
+			rest := bare[dotIdx+1:]
+			if isForEachIdentifier(prefix) && prefix != "schema" {
+				// Trim rest at non-identifier/non-dot characters
+				if end := strings.IndexAny(rest, " \t()[]{}!=<>+-*/,"); end != -1 {
+					rest = rest[:end]
+				}
+				rest = strings.TrimRight(rest, ".")
+				return ResourceSource, rest
+			}
+		}
+	}
+
+	return LiteralSource, ""
+}
+
+// parseForEach extracts and analyzes forEach iterator definitions from a resource map.
+// Returns a non-fatal ParseError if forEach is combined with externalRef (mutually exclusive per KRO spec).
+// Returns nil iterators (not an error) when no forEach field is present.
+func (p *ResourceParser) parseForEach(resMap map[string]interface{}, hasExternalRef bool) ([]Iterator, *ParseError) {
+	rawSlice, err := k8sparser.GetSlice(resMap, "forEach")
+	if err != nil {
+		// No forEach field — not a collection resource
+		return nil, nil
+	}
+
+	if hasExternalRef {
+		return nil, &ParseError{
+			Expression: "forEach",
+			Message:    "forEach and externalRef are mutually exclusive per KRO spec",
+		}
+	}
+
+	iterators := make([]Iterator, 0, len(rawSlice))
+	for i, raw := range rawSlice {
+		dimMap, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		// ForEachDimension has exactly one key-value pair (enforced by KRO kubebuilder validation)
+		for varName, rawExpr := range dimMap {
+			exprStr, ok := rawExpr.(string)
+			if !ok {
+				continue
+			}
+			source, sourcePath := analyzeForEachSource(exprStr)
+			iterators = append(iterators, Iterator{
+				Name:           varName,
+				Expression:     exprStr,
+				Source:         source,
+				SourcePath:     sourcePath,
+				DimensionIndex: i,
+			})
+		}
+	}
+
+	return iterators, nil
 }
 
 // mapToSlice converts a map[string]bool to a sorted string slice.

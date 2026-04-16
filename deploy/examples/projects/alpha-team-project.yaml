@@ -1,5 +1,6 @@
 # Alpha Team Project - Restricted to specific namespace
 # This project allows developers to deploy only to ns-alpha-team namespace
+# Apply with: kubectl apply -f <this-file> -n <knodex-namespace>
 apiVersion: knodex.io/v1alpha1
 kind: Project
 metadata:

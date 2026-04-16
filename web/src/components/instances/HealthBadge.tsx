@@ -9,7 +9,7 @@ import {
   XCircle,
   Loader2,
   HelpCircle,
-} from "lucide-react";
+} from "@/lib/icons";
 
 const HEALTH_CONFIG: Record<
   InstanceHealth,

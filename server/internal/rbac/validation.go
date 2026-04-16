@@ -11,7 +11,6 @@ import (
 	"unicode/utf8"
 
 	utilhash "github.com/knodex/knodex/server/internal/util/hash"
-	"github.com/knodex/knodex/server/internal/util/sanitize"
 )
 
 // Validation constraints
@@ -82,45 +81,6 @@ func ValidateEmail(email string) error {
 		return fmt.Errorf("email local part and domain cannot be empty")
 	}
 
-	return nil
-}
-
-// ValidateDisplayName validates project display name
-func ValidateDisplayName(displayName string) error {
-	if displayName == "" {
-		return fmt.Errorf("displayName cannot be empty")
-	}
-	if len(displayName) > MaxDisplayNameLength {
-		return fmt.Errorf("displayName exceeds maximum length of %d characters", MaxDisplayNameLength)
-	}
-	// Check for control characters
-	for _, r := range displayName {
-		if r < 32 || r == 127 {
-			return fmt.Errorf("displayName contains invalid control characters")
-		}
-	}
-	return nil
-}
-
-// ValidateUserID validates user ID format
-func ValidateUserID(userID string) error {
-	if userID == "" {
-		return fmt.Errorf("userID cannot be empty")
-	}
-	if len(userID) > MaxUserIDLength {
-		return fmt.Errorf("userID exceeds maximum length of %d characters", MaxUserIDLength)
-	}
-	// User IDs should be valid Kubernetes resource names
-	// Allow alphanumeric, hyphens, and periods
-	for i, char := range userID {
-		if !((char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') || char == '-' || char == '.') {
-			return fmt.Errorf("userID contains invalid character at position %d", i)
-		}
-		// Cannot start or end with hyphen or period
-		if (char == '-' || char == '.') && (i == 0 || i == len(userID)-1) {
-			return fmt.Errorf("userID cannot start or end with hyphen or period")
-		}
-	}
 	return nil
 }
 
@@ -198,12 +158,6 @@ func MatchNamespaceInList(namespace string, allowedPatterns []string) bool {
 	return false
 }
 
-// IsDenyRule checks if a string is a deny pattern
-// Deny patterns start with "!" and take precedence over allow rules
-func IsDenyRule(pattern string) bool {
-	return len(pattern) > 0 && pattern[0] == '!'
-}
-
 // ValidateProjectName validates a project name follows DNS-1123 subdomain rules
 // Rules: lowercase alphanumeric, hyphens, max 253 chars, starts/ends with alphanumeric
 func ValidateProjectName(name string) error {
@@ -264,8 +218,69 @@ func (r *ProjectRole) Validate() error {
 	return nil
 }
 
+// ValidateRoleDestinations validates that each destination in a role's Destinations
+// list matches at least one of the project's spec.destinations[].namespace patterns.
+func ValidateRoleDestinations(role ProjectRole, projectDestinations []Destination) error {
+	seen := make(map[string]bool, len(role.Destinations))
+	for i, roleDest := range role.Destinations {
+		if roleDest == "" {
+			return fmt.Errorf("roles[%s].destinations[%d]: destination cannot be empty", role.Name, i)
+		}
+		if seen[roleDest] {
+			return fmt.Errorf("roles[%s].destinations[%d]: duplicate destination %q", role.Name, i, roleDest)
+		}
+		seen[roleDest] = true
+		matched := false
+		for _, projDest := range projectDestinations {
+			if roleDest == projDest.Namespace {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return fmt.Errorf("roles[%s].destinations[%d]: %q does not match any project destination namespace", role.Name, i, roleDest)
+		}
+	}
+	return nil
+}
+
 // ValidateProjectSpec validates the entire ProjectSpec for ArgoCD-aligned structure
 func ValidateProjectSpec(spec ProjectSpec) error {
+	// Validate type: empty defaults to app, platform/app are valid, anything else is an error
+	switch spec.Type {
+	case "", ProjectTypeApp, ProjectTypePlatform:
+		// valid
+	default:
+		return fmt.Errorf("invalid project type %q: must be %q or %q", spec.Type, ProjectTypePlatform, ProjectTypeApp)
+	}
+
+	// Validate cluster bindings (App Projects only)
+	if len(spec.Clusters) > 0 {
+		effectiveType := spec.Type
+		if effectiveType == "" {
+			effectiveType = ProjectTypeApp
+		}
+		if effectiveType == ProjectTypePlatform {
+			return fmt.Errorf("spec.clusters is only valid on app projects, not platform projects")
+		}
+		if spec.Namespace == "" {
+			return fmt.Errorf("spec.namespace is required when spec.clusters is set")
+		}
+		if err := ValidateNamespace(spec.Namespace); err != nil {
+			return fmt.Errorf("spec.namespace: %w", err)
+		}
+		seen := make(map[string]bool)
+		for i, cb := range spec.Clusters {
+			if cb.ClusterRef == "" {
+				return fmt.Errorf("clusters[%d].clusterRef is required", i)
+			}
+			if seen[cb.ClusterRef] {
+				return fmt.Errorf("clusters[%d].clusterRef %q is duplicated", i, cb.ClusterRef)
+			}
+			seen[cb.ClusterRef] = true
+		}
+	}
+
 	// Validate destinations
 	if len(spec.Destinations) == 0 {
 		return fmt.Errorf("project must specify at least one destination")
@@ -314,19 +329,16 @@ func ValidateProjectSpec(spec ProjectSpec) error {
 			return fmt.Errorf("roles[%d]: duplicate role name '%s'", i, role.Name)
 		}
 		roleNames[role.Name] = true
+
+		// Validate role destinations against project destinations
+		if len(role.Destinations) > 0 {
+			if err := ValidateRoleDestinations(role, spec.Destinations); err != nil {
+				return fmt.Errorf("roles[%d]: %w", i, err)
+			}
+		}
 	}
 
 	return nil
-}
-
-// SanitizeInput removes potentially dangerous characters from string inputs.
-// Reserved for future use in input sanitization for security best practices.
-// Use this function when accepting user-provided strings that will be:
-//   - Displayed in logs or UI (prevent log injection/XSS)
-//   - Used in system commands (prevent command injection)
-//   - Stored in databases (defense in depth against injection attacks)
-func SanitizeInput(input string) string {
-	return sanitize.RemoveControlChars(input)
 }
 
 // GenerateProjectID generates a deterministic project ID from display name

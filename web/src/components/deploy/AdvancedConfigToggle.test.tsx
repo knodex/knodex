@@ -170,7 +170,7 @@ describe("AdvancedConfigToggle", () => {
 
     const button = screen.getByRole("button");
     expect(button).toHaveAttribute("aria-expanded", "false");
-    expect(button).toHaveAttribute("aria-controls", "advanced-config-section");
+    expect(button).toHaveAttribute("aria-controls", "advanced-config-advanced");
   });
 
   it("updates aria-expanded when expanded", () => {

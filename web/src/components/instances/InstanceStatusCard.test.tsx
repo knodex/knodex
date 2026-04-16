@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { describe, it, expect } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, within, fireEvent } from '@testing-library/react';
 import { InstanceStatusCard } from './InstanceStatusCard';
 import type { InstanceCondition } from '@/types/rgd';
 
@@ -44,10 +44,9 @@ describe('InstanceStatusCard', () => {
       expect(screen.getByText('10.96.0.15')).toBeInTheDocument();
       expect(screen.getByText('3')).toBeInTheDocument();
 
-      // Conditions section
+      // Conditions section present (collapsed since all True)
       expect(screen.getByTestId('conditions-section')).toBeInTheDocument();
-      expect(screen.getByText('InstanceSynced')).toBeInTheDocument();
-      expect(screen.getByText('Ready')).toBeInTheDocument();
+      expect(screen.getByText('2/2')).toBeInTheDocument();
     });
   });
 
@@ -265,31 +264,38 @@ describe('InstanceStatusCard', () => {
   });
 
   describe('Conditions rendering preserved - AC-7', () => {
-    it('renders condition with colored dot, type, reason, message, and status badge', () => {
+    it('shows conditions collapsed with summary when all True', () => {
       render(<InstanceStatusCard conditions={mockConditions} />);
 
       const section = screen.getByTestId('conditions-section');
-
-      // Type
-      expect(within(section).getByText('InstanceSynced')).toBeInTheDocument();
-      // Reason in parens
-      expect(within(section).getByText('(ReconciliationSucceeded)')).toBeInTheDocument();
-      // Message
-      expect(within(section).getByText('All resources are synced')).toBeInTheDocument();
-      // Status badge
-      const trueBadges = within(section).getAllByText('True');
-      expect(trueBadges.length).toBeGreaterThanOrEqual(1);
+      // Shows count summary
+      expect(within(section).getByText('2/2')).toBeInTheDocument();
+      // Conditions are collapsed by default when all True
+      expect(within(section).queryByText('InstanceSynced')).not.toBeInTheDocument();
     });
 
-    it('renders condition with False status in destructive color', () => {
+    it('expands conditions on click to show details', async () => {
+      const user = (await import('@testing-library/user-event')).default.setup();
+      render(<InstanceStatusCard conditions={mockConditions} />);
+
+      const section = screen.getByTestId('conditions-section');
+      await user.click(within(section).getByRole('button'));
+
+      expect(within(section).getByText('InstanceSynced')).toBeInTheDocument();
+      expect(within(section).getByText('(ReconciliationSucceeded)')).toBeInTheDocument();
+      expect(within(section).getByText('All resources are synced')).toBeInTheDocument();
+    });
+
+    it('auto-expands conditions when any is False', () => {
       const conditions: InstanceCondition[] = [
         { type: 'Ready', status: 'False', reason: 'NotReady', message: 'Not ready yet' },
       ];
 
       render(<InstanceStatusCard conditions={conditions} />);
 
-      const statusBadge = screen.getByText('False');
-      expect(statusBadge).toBeInTheDocument();
+      // Auto-expanded — condition details visible immediately
+      expect(screen.getByText('Ready')).toBeInTheDocument();
+      expect(screen.getByText('False')).toBeInTheDocument();
     });
 
     it('renders condition without reason', () => {
@@ -299,6 +305,8 @@ describe('InstanceStatusCard', () => {
 
       render(<InstanceStatusCard conditions={conditions} />);
 
+      // Click to expand (all True = collapsed)
+      fireEvent.click(screen.getByRole('button', { expanded: false }));
       expect(screen.getByText('Available')).toBeInTheDocument();
       expect(screen.queryByText(/\(/)).not.toBeInTheDocument();
     });
@@ -310,7 +318,9 @@ describe('InstanceStatusCard', () => {
 
       render(<InstanceStatusCard conditions={conditions} />);
 
-      expect(screen.getByText('Synced')).toBeInTheDocument();
+      // Click to expand (all True = collapsed)
+      fireEvent.click(screen.getByRole('button', { expanded: false }));
+      expect(screen.getByText('(Synced)')).toBeInTheDocument();
     });
 
     it('renders Conditions sub-header', () => {

@@ -5,7 +5,7 @@ import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { EmptyState } from "./EmptyState";
-import { Shield } from "lucide-react";
+import { Shield } from "@/lib/icons";
 
 describe("EmptyState", () => {
   it("renders title (AC-SHARED-02)", () => {

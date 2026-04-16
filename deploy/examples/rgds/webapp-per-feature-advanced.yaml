@@ -1,0 +1,109 @@
+# Test RGD for per-feature nested advanced sections (STORY-296)
+# Each feature object (bastion, dns) has its own "advanced" sub-key
+# rendered as an inline AdvancedConfigToggle inside ObjectField.
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: webapp-per-feature-advanced
+  annotations:
+    knodex.io/catalog: "true"
+    knodex.io/category: infrastructure
+    knodex.io/description: "Web app with per-feature advanced sections (bastion, DNS, monitoring)"
+    knodex.io/tags: "webapp,advanced,per-feature,test"
+    knodex.io/title: "Web App (Per-Feature Advanced)"
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: PerFeatureApp
+    spec:
+      name: "string"
+      image: "string | default=\"nginx:latest\""
+      replicas: "integer | default=1"
+      bastion:
+        enabled: "boolean | default=false"
+        subnetPrefix: "string | default=\"10.0.0.64/26\""
+        advanced:
+          asoCredentialSecretName: "string | default=\"aso-credential\""
+          sshKeyPath: "string | default=\"/home/azureuser/.ssh/authorized_keys\""
+      dns:
+        enabled: "boolean | default=false"
+        zoneName: "string | default=\"example.com\""
+        advanced:
+          ttl: "integer | default=300"
+          recordType: "string | default=\"A\""
+      monitoring:
+        enabled: "boolean | default=true"
+        advanced:
+          scrapeInterval: "string | default=\"30s\""
+          retentionDays: "integer | default=15"
+          alertmanagerUrl: "string | default=\"http://alertmanager:9093\""
+  resources:
+    - id: app
+      template:
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: ${schema.spec.name}
+        spec:
+          replicas: ${schema.spec.replicas}
+          selector:
+            matchLabels:
+              app: ${schema.spec.name}
+          template:
+            metadata:
+              labels:
+                app: ${schema.spec.name}
+            spec:
+              containers:
+                - name: app
+                  image: ${schema.spec.image}
+                  ports:
+                    - containerPort: 80
+    - id: bastion
+      includeWhen:
+        - ${schema.spec.bastion.enabled == true}
+      template:
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: ${schema.spec.name}-bastion
+        spec:
+          replicas: 1
+          selector:
+            matchLabels:
+              app: ${schema.spec.name}
+              component: bastion
+          template:
+            metadata:
+              labels:
+                app: ${schema.spec.name}
+                component: bastion
+            spec:
+              containers:
+                - name: bastion
+                  image: alpine:latest
+                  command: ["/bin/sh", "-c", "sleep infinity"]
+    - id: dns
+      includeWhen:
+        - ${schema.spec.dns.enabled == true}
+      template:
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: ${schema.spec.name}-dns
+        data:
+          zoneName: ${schema.spec.dns.zoneName}
+          ttl: "${schema.spec.dns.advanced.ttl}"
+          recordType: ${schema.spec.dns.advanced.recordType}
+    - id: monitoring
+      includeWhen:
+        - ${schema.spec.monitoring.enabled == true}
+      template:
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: ${schema.spec.name}-monitoring
+        data:
+          scrapeInterval: ${schema.spec.monitoring.advanced.scrapeInterval}
+          retentionDays: "${schema.spec.monitoring.advanced.retentionDays}"
+          alertmanagerUrl: ${schema.spec.monitoring.advanced.alertmanagerUrl}

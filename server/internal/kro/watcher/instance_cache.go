@@ -54,6 +54,18 @@ func (c *InstanceCache) Delete(namespace, kind, name string) {
 	delete(c.instances, key)
 }
 
+// GetByUID returns the first instance matching the given UID.
+func (c *InstanceCache) GetByUID(uid string) (*models.Instance, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	for _, inst := range c.instances {
+		if inst.UID == uid {
+			return inst, true
+		}
+	}
+	return nil, false
+}
+
 // List returns all instances matching the given options
 func (c *InstanceCache) List(opts models.InstanceListOptions) models.InstanceList {
 	c.mu.RLock()
@@ -119,18 +131,18 @@ func (c *InstanceCache) CountByRGD(rgdNamespace, rgdName string) int {
 
 // CountByNamespaces returns the count of instances in the given namespaces.
 // Uses namespace pattern matching (supports wildcards like "team-*").
-// If namespaces is nil, returns total count (all instances).
-// If namespaces is empty slice, returns 0.
+// ["*"] matches all namespaces (global admin). Empty slice returns 0 (no access).
+//
+// NOTE: This method only counts namespace-scoped instances. Cluster-scoped
+// instances (IsClusterScoped=true) require project-based filtering which this
+// method cannot provide. Use CountFiltered for project-aware counting that
+// includes cluster-scoped instances (see GetCount handler for an example).
 func (c *InstanceCache) CountByNamespaces(namespaces []string, matchFunc func(namespace string, patterns []string) bool) int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	// nil means no filtering - return all
-	if namespaces == nil {
-		return len(c.instances)
-	}
-
-	// Empty slice means no access
+	// Empty slice means no access (fail-closed).
+	// ["*"] matches all namespaces via matchFunc (MatchNamespaceInList).
 	if len(namespaces) == 0 {
 		return 0
 	}
@@ -147,14 +159,18 @@ func (c *InstanceCache) CountByNamespaces(namespaces []string, matchFunc func(na
 // CountByRGDAndNamespaces returns the count of instances for a specific RGD
 // filtered by the user's accessible namespaces.
 // Uses namespace pattern matching (supports wildcards like "team-*").
-// If namespaces is nil, returns total count for the RGD (global admin).
-// If namespaces is empty slice, returns 0 (no access).
+// ["*"] matches all namespaces (global admin). Empty slice returns 0 (no access).
+//
+// NOTE: This method only counts namespace-scoped instances. Cluster-scoped
+// instances (IsClusterScoped=true) require project-based filtering which this
+// method cannot provide. Use CountFiltered for project-aware counting.
 func (c *InstanceCache) CountByRGDAndNamespaces(rgdNamespace, rgdName string, namespaces []string, matchFunc func(namespace string, patterns []string) bool) int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	// Empty slice means no access
-	if namespaces != nil && len(namespaces) == 0 {
+	// Empty slice means no access (fail-closed).
+	// ["*"] matches all namespaces via matchFunc (MatchNamespaceInList).
+	if len(namespaces) == 0 {
 		return 0
 	}
 
@@ -164,13 +180,21 @@ func (c *InstanceCache) CountByRGDAndNamespaces(rgdNamespace, rgdName string, na
 		if instance.RGDName != rgdName || instance.RGDNamespace != rgdNamespace {
 			continue
 		}
-		// nil namespaces means no filtering (global admin) - count all for this RGD
-		if namespaces == nil {
-			count++
-			continue
-		}
-		// Check namespace access
 		if matchFunc(instance.Namespace, namespaces) {
+			count++
+		}
+	}
+	return count
+}
+
+// CountFiltered returns the count of instances matching the given predicate.
+// The predicate receives a pointer to each instance; returning true includes it in the count.
+func (c *InstanceCache) CountFiltered(filter func(*models.Instance) bool) int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	count := 0
+	for _, instance := range c.instances {
+		if filter(instance) {
 			count++
 		}
 	}
@@ -295,6 +319,20 @@ func (c *InstanceCache) DeleteByRGD(rgdNamespace, rgdName string) []*models.Inst
 		}
 	}
 	return removed
+}
+
+// GetByTargetCluster returns all instances targeting a specific remote cluster.
+func (c *InstanceCache) GetByTargetCluster(clusterRef string) []*models.Instance {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	var result []*models.Instance
+	for _, instance := range c.instances {
+		if instance.TargetCluster == clusterRef {
+			result = append(result, instance)
+		}
+	}
+	return result
 }
 
 // GetByRGD returns all instances for a specific RGD

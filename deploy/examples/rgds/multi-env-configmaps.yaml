@@ -1,0 +1,37 @@
+# Example RGD: Multi-Environment ConfigMaps (forEach Collection)
+# Demonstrates: forEach collection that creates one ConfigMap per environment
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: multi-env-configmaps
+  namespace: default
+  labels:
+    knodex.io/package: examples
+  annotations:
+    knodex.io/catalog: "true"
+    knodex.io/description: "Creates a ConfigMap for each environment in a list — demonstrates forEach collections"
+    knodex.io/tags: "collection,foreach,example"
+    knodex.io/category: "examples"
+    knodex.io/property-order: '{"": ["appName", "environments"]}'
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: MultiEnvConfigMaps
+    spec:
+      appName: string
+      environments: "[]string | default=[\"dev\",\"staging\",\"prod\"]"
+      maxReplicas: "integer | default=3 minimum=1 maximum=100"
+
+  resources:
+    # One ConfigMap per environment (forEach collection)
+    - id: envConfig
+      forEach:
+        - env: "${schema.spec.environments}"
+      template:
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: "${schema.spec.appName}-${env}"
+        data:
+          environment: "${env}"
+          app: "${schema.spec.appName}"

@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/knodex/knodex/server/internal/rbac"
+	"github.com/knodex/knodex/server/internal/services"
 )
 
 func TestIsNotFoundError(t *testing.T) {
@@ -24,8 +25,8 @@ func TestIsNotFoundError(t *testing.T) {
 			expected: false,
 		},
 		{
-			name:     "rbac.ErrNotFound",
-			err:      rbac.ErrNotFound,
+			name:     "services.ErrNotFound",
+			err:      services.ErrNotFound,
 			expected: true,
 		},
 		{
@@ -34,8 +35,8 @@ func TestIsNotFoundError(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:     "wrapped rbac.ErrNotFound",
-			err:      errors.Join(errors.New("context"), rbac.ErrNotFound),
+			name:     "wrapped services.ErrNotFound",
+			err:      errors.Join(errors.New("context"), services.ErrNotFound),
 			expected: true,
 		},
 		{

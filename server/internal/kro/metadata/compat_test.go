@@ -87,6 +87,33 @@ func TestCompat_LabelConstants_MatchUpstream(t *testing.T) {
 	}
 }
 
+// TestCompat_InternalPrefix_MatchesUpstreamSuffix verifies that each
+// Knodex-defined "internal.kro.run/" constant uses the same suffix as the
+// upstream "kro.run/" constant. If KRO renames a suffix in a future release,
+// this test will catch the divergence.
+func TestCompat_InternalPrefix_MatchesUpstreamSuffix(t *testing.T) {
+	pairs := []struct {
+		name     string
+		internal string
+		upstream string
+	}{
+		{"ResourceGraphDefinitionNameLabel", InternalResourceGraphDefinitionNameLabel, krometa.ResourceGraphDefinitionNameLabel},
+		{"InstanceLabel", InternalInstanceLabel, krometa.InstanceLabel},
+		{"InstanceIDLabel", InternalInstanceIDLabel, krometa.InstanceIDLabel},
+	}
+
+	for _, p := range pairs {
+		t.Run(p.name, func(t *testing.T) {
+			// Strip each prefix and compare suffixes
+			internalSuffix := p.internal[len(LabelInternalKROPrefix):]
+			upstreamSuffix := p.upstream[len(LabelKROPrefix):]
+			if internalSuffix != upstreamSuffix {
+				t.Errorf("internal suffix %q != upstream suffix %q — KRO may have renamed the label", internalSuffix, upstreamSuffix)
+			}
+		})
+	}
+}
+
 // TestCompat_IsKROOwned_Behavior verifies the behavioral contract of
 // KRO's IsKROOwned function: it returns true only when the managed-by
 // label is set to "kro".

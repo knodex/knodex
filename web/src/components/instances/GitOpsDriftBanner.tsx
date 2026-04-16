@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { useState } from "react";
-import { AlertTriangle, ChevronDown, ChevronUp, RefreshCw } from "lucide-react";
+import { ChevronDown, ChevronUp, RefreshCw } from "@/lib/icons";
 import type { Instance } from "@/types/rgd";
+import { formatDistanceToNow } from "@/lib/date";
 
 interface GitOpsDriftBannerProps {
   instance: Instance;
@@ -22,16 +23,18 @@ export function GitOpsDriftBanner({ instance }: GitOpsDriftBannerProps) {
       <div className="flex items-start gap-3">
         <RefreshCw className="h-5 w-5 text-status-warning shrink-0 mt-0.5 animate-spin" style={{ animationDuration: "3s" }} />
         <div className="flex-1">
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4 text-status-warning" />
-            <h4 className="text-sm font-medium text-status-warning">
-              GitOps Drift Detected
-            </h4>
-          </div>
+          <h4 className="text-sm font-medium text-status-warning">
+            GitOps Drift Detected
+          </h4>
           <p className="text-sm text-muted-foreground mt-1">
             Waiting for ArgoCD/Flux to reconcile — the live instance has not yet been updated
             to match the desired spec pushed to Git.
           </p>
+          {instance.driftedAt && (
+            <p className="text-xs text-muted-foreground mt-1">
+              Drift detected {formatDistanceToNow(instance.driftedAt)}
+            </p>
+          )}
         </div>
       </div>
 

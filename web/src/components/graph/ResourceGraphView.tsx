@@ -9,19 +9,21 @@ import {
   MiniMap,
   useNodesState,
   useEdgesState,
-  MarkerType,
   Position,
   Handle,
 } from "@xyflow/react";
-import type { Node, Edge, NodeProps } from "@xyflow/react";
+import type { Node, NodeProps } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
   ExternalLink,
   AlertCircle,
   FileCode2,
-} from "lucide-react";
+} from "@/lib/icons";
 import type { ResourceGraph, ResourceNode } from "@/types/rgd";
 import { cn } from "@/lib/utils";
+import { CollectionDefinitionNode } from "./CollectionDefinitionNode";
+import type { CollectionNodeType } from "./CollectionDefinitionNode";
+import { computeGraphLayout } from "./useGraphLayout";
 
 interface ResourceGraphViewProps {
   resourceGraph: ResourceGraph;
@@ -138,106 +140,26 @@ function ResourceNodeComponent({ data }: NodeProps<ResourceNodeType>) {
 
 const nodeTypes = {
   resource: ResourceNodeComponent,
+  collection: CollectionDefinitionNode,
 };
 
 export function ResourceGraphView({ resourceGraph }: ResourceGraphViewProps) {
   const { nodes: flowNodes, edges: flowEdges } = useMemo(() => {
-    const nodes: ResourceNodeType[] = [];
-    const edges: Edge[] = [];
-
-    // Layout constants
-    const NODE_WIDTH = 200;
-    const NODE_HEIGHT = 100;
-    const HORIZONTAL_GAP = 100;
-    const VERTICAL_GAP = 40;
-
-    // Build dependency map to calculate levels
-    const dependencyCount: Record<string, number> = {};
-    const dependents: Record<string, string[]> = {};
-
-    resourceGraph.resources.forEach((res) => {
-      dependencyCount[res.id] = res.dependsOn.length;
-      dependents[res.id] = [];
+    const { positions, flowEdges } = computeGraphLayout({
+      resources: resourceGraph.resources,
+      edges: resourceGraph.edges,
+      topologicalOrder: resourceGraph.topologicalOrder,
     });
 
-    resourceGraph.edges.forEach((edge) => {
-      if (dependents[edge.to]) {
-        dependents[edge.to].push(edge.from);
-      }
-    });
-
-    // Topological sort to arrange nodes by level
-    const levels: string[][] = [];
-    const assigned = new Set<string>();
-    const queue: string[] = [];
-
-    // Start with nodes that have no dependencies
-    resourceGraph.resources.forEach((res) => {
-      if (res.dependsOn.length === 0) {
-        queue.push(res.id);
-      }
-    });
-
-    while (queue.length > 0 || assigned.size < resourceGraph.resources.length) {
-      const currentLevel: string[] = [];
-
-      // Process all nodes in the queue
-      while (queue.length > 0) {
-        const nodeId = queue.shift()!;
-        if (!assigned.has(nodeId)) {
-          currentLevel.push(nodeId);
-          assigned.add(nodeId);
-        }
-      }
-
-      if (currentLevel.length > 0) {
-        levels.push(currentLevel);
-      }
-
-      // Add nodes whose dependencies are all assigned
-      resourceGraph.resources.forEach((res) => {
-        if (!assigned.has(res.id)) {
-          const allDepsAssigned = res.dependsOn.every((dep) =>
-            assigned.has(dep)
-          );
-          if (allDepsAssigned) {
-            queue.push(res.id);
-          }
-        }
-      });
-
-      // Break infinite loops (circular dependencies)
-      if (
-        queue.length === 0 &&
-        assigned.size < resourceGraph.resources.length
-      ) {
-        const unassigned = resourceGraph.resources.find(
-          (res) => !assigned.has(res.id)
-        );
-        if (unassigned) {
-          queue.push(unassigned.id);
-        }
-      }
-    }
-
-    // Position nodes by level
-    levels.forEach((levelNodes, levelIndex) => {
-      const startY =
-        -((levelNodes.length - 1) * (NODE_HEIGHT + VERTICAL_GAP)) / 2;
-
-      levelNodes.forEach((nodeId, nodeIndex) => {
+    const nodes: (ResourceNodeType | CollectionNodeType)[] = positions.map(
+      ({ id, x, y, isCollection }) => {
         const resource = resourceGraph.resources.find(
-          (r) => r.id === nodeId
+          (r) => r.id === id
         ) as ResourceNode;
-        if (!resource) return;
-
-        nodes.push({
+        return {
           id: resource.id,
-          type: "resource",
-          position: {
-            x: levelIndex * (NODE_WIDTH + HORIZONTAL_GAP),
-            y: startY + nodeIndex * (NODE_HEIGHT + VERTICAL_GAP),
-          },
+          type: isCollection ? "collection" : "resource",
+          position: { x, y },
           data: {
             label: resource.kind,
             apiVersion: resource.apiVersion,
@@ -246,36 +168,16 @@ export function ResourceGraphView({ resourceGraph }: ResourceGraphViewProps) {
             isConditional: resource.isConditional,
             conditionExpr: resource.conditionExpr,
             hasExternalRef: !!resource.externalRef,
+            isCollection,
+            forEach: resource.forEach ?? [],
+            readyWhen: resource.readyWhen,
+            resourceId: resource.id,
           },
-        });
-      });
-    });
+        };
+      }
+    );
 
-    // Create edges - using CSS variables for theming
-    resourceGraph.edges.forEach((edge, index) => {
-      edges.push({
-        id: `edge-${index}`,
-        source: edge.to, // Edge goes from dependency to dependent
-        target: edge.from,
-        type: "smoothstep",
-        animated: true,
-        style: {
-          stroke: "hsl(var(--graph-edge))",
-          strokeWidth: 2,
-        },
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          color: "hsl(var(--graph-edge))",
-        },
-        label: edge.type !== "reference" ? edge.type : undefined,
-        labelStyle: {
-          fontSize: 10,
-          fill: "hsl(var(--muted-foreground))",
-        },
-      });
-    });
-
-    return { nodes, edges };
+    return { nodes, edges: flowEdges };
   }, [resourceGraph]);
 
   const [nodes, , onNodesChange] = useNodesState(flowNodes);
@@ -302,13 +204,16 @@ export function ResourceGraphView({ resourceGraph }: ResourceGraphViewProps) {
   }
 
   const templateCount = resourceGraph.resources.filter(
-    (r) => r.isTemplate
+    (r) => r.isTemplate && !r.isCollection
   ).length;
   const externalRefCount = resourceGraph.resources.filter(
     (r) => !r.isTemplate
   ).length;
   const conditionalCount = resourceGraph.resources.filter(
     (r) => r.isConditional
+  ).length;
+  const collectionCount = resourceGraph.resources.filter(
+    (r) => r.isCollection
   ).length;
 
   return (
@@ -324,6 +229,11 @@ export function ResourceGraphView({ resourceGraph }: ResourceGraphViewProps) {
         {externalRefCount > 0 && (
           <span>
             <strong className="text-graph-external">{externalRefCount}</strong> external refs
+          </span>
+        )}
+        {collectionCount > 0 && (
+          <span>
+            <strong className="text-graph-collection">{collectionCount}</strong> collections
           </span>
         )}
         {conditionalCount > 0 && (
@@ -357,6 +267,7 @@ export function ResourceGraphView({ resourceGraph }: ResourceGraphViewProps) {
             nodeColor={(node) => {
               const data = node.data as ResourceNodeData;
               // MiniMap requires hex colors for canvas rendering
+              if (data.isCollection) return "#8b5cf6"; // purple for collections
               return data.isTemplate
                 ? KIND_COLORS.Deployment.hex
                 : KIND_COLORS.Job.hex;
@@ -374,6 +285,12 @@ export function ResourceGraphView({ resourceGraph }: ResourceGraphViewProps) {
         <div className="flex items-center gap-2">
           <div className="w-3 h-3 rounded border-2 border-graph-external bg-graph-external/10" />
           <span>ExternalRef</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-3 h-3 rounded border-2 border-graph-collection bg-graph-collection/10 relative">
+            <div className="absolute inset-0 translate-x-[2px] translate-y-[2px] w-3 h-3 rounded border border-graph-collection/40 -z-10" />
+          </div>
+          <span>Collection (forEach)</span>
         </div>
         <div className="flex items-center gap-2">
           <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-graph-conditional/20 text-graph-conditional">

@@ -40,10 +40,7 @@ test.describe("RBAC: Catalog Feature Tests", () => {
       await loginAs(page, tokens.users.global_admin, "/catalog");
 
       // Wait for the catalog page to fully load
-      await page.waitForSelector('text=/\\d+ available/', {
-        timeout: 10000,
-      });
-      await page.waitForLoadState('networkidle'); // Wait for data to load
+      await page.waitForLoadState('networkidle', { timeout: 10000 });
 
       // Global Admin should see all RGDs (including test data)
       // RGDCard renders as <div role="button" aria-label="View details for {name}">
@@ -52,10 +49,10 @@ test.describe("RBAC: Catalog Feature Tests", () => {
       );
       const rgdCount = await rgdCards.count();
 
-      // Get the count text from the header
+      // Get the count text from the header (short timeout — text may not be present)
       const countText = await page
         .locator("text=/\\d+ available/")
-        .textContent()
+        .textContent({ timeout: 3000 })
         .catch(() => "");
 
       console.log(
@@ -89,7 +86,7 @@ test.describe("RBAC: Catalog Feature Tests", () => {
       await page.waitForLoadState("load");
 
       // Should see Deploy button
-      const deployButton = page.getByRole("button", { name: "Deploy" });
+      const deployButton = page.getByRole("button", { name: "Deploy" }).first();
       await expect(deployButton).toBeVisible();
 
       await page.screenshot({
@@ -107,15 +104,12 @@ test.describe("RBAC: Catalog Feature Tests", () => {
       await loginAs(page, tokens.users.alpha_viewer, "/catalog");
 
       // Wait for the catalog page to fully load
-      await page.waitForSelector('text=/\\d+ available/', {
-        timeout: 10000,
-      });
-      await page.waitForLoadState('networkidle'); // Wait for data to load
+      await page.waitForLoadState('networkidle', { timeout: 10000 });
 
       // Viewer should see filtered RGDs based on org membership
       const countText = await page
         .locator("text=/\\d+ available/")
-        .textContent()
+        .textContent({ timeout: 3000 })
         .catch(() => "0 available");
       console.log(`Alpha Viewer sees: ${countText}`);
 
@@ -187,7 +181,7 @@ test.describe("RBAC: Catalog Feature Tests", () => {
         await page.waitForLoadState("load");
 
         // Click Deploy button if visible
-        const deployButton = page.getByRole("button", { name: "Deploy" });
+        const deployButton = page.getByRole("button", { name: "Deploy" }).first();
         if (await deployButton.isVisible()) {
           await deployButton.click();
           await page.waitForLoadState("load");
@@ -235,7 +229,7 @@ test.describe("RBAC: Catalog Feature Tests", () => {
         await rgdButtons.first().click();
         await page.waitForLoadState("load");
 
-        const deployButton = page.getByRole("button", { name: "Deploy" });
+        const deployButton = page.getByRole("button", { name: "Deploy" }).first();
         if (await deployButton.isVisible()) {
           await deployButton.click();
           await page.waitForLoadState("load");
@@ -280,7 +274,7 @@ test.describe("RBAC: Catalog Feature Tests", () => {
       await rgdButtons.first().click();
       await page.waitForLoadState("load");
 
-      const deployButton = page.getByRole("button", { name: "Deploy" });
+      const deployButton = page.getByRole("button", { name: "Deploy" }).first();
       await deployButton.click();
       await page.waitForLoadState("load");
 
@@ -321,7 +315,7 @@ test.describe("RBAC: Catalog Feature Tests", () => {
         await rgdButtons.first().click();
         await page.waitForLoadState("load");
 
-        const deployButton = page.getByRole("button", { name: "Deploy" });
+        const deployButton = page.getByRole("button", { name: "Deploy" }).first();
         if (await deployButton.isVisible()) {
           await deployButton.click();
           await page.waitForLoadState("load");
@@ -355,7 +349,7 @@ test.describe("RBAC: Catalog Feature Tests", () => {
       await rgdButtons.first().click();
       await page.waitForLoadState("load");
 
-      const deployButton = page.getByRole("button", { name: "Deploy" });
+      const deployButton = page.getByRole("button", { name: "Deploy" }).first();
       await deployButton.click();
       await page.waitForLoadState("load");
 
@@ -391,10 +385,7 @@ test.describe("RBAC: Catalog Feature Tests", () => {
       await loginAs(page, tokens.users.alpha_viewer, "/catalog");
 
       // Wait for page to load
-      await page.waitForSelector('text=/\\d+ available/', {
-        timeout: 10000,
-      });
-      await page.waitForLoadState('networkidle');
+      await page.waitForLoadState('networkidle', { timeout: 10000 });
 
       // Count visible RGDs
       const rgdCards = page.locator('[data-testid="rgd-card"], .grid > button');
@@ -411,7 +402,7 @@ test.describe("RBAC: Catalog Feature Tests", () => {
       // Verify filtering is working (may see 0 or limited RGDs based on RBAC)
       const countText = await page
         .locator("text=/\\d+ available/")
-        .textContent()
+        .textContent({ timeout: 3000 })
         .catch(() => "");
       console.log(`Catalog count text: ${countText}`);
 

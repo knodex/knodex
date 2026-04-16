@@ -52,6 +52,8 @@ type RoleRequest struct {
 	Policies []string `json:"policies,omitempty"`
 	// Groups is the list of OIDC groups assigned to this role
 	Groups []string `json:"groups,omitempty"`
+	// Destinations is an optional list of namespace patterns scoping this role
+	Destinations []string `json:"destinations,omitempty"`
 }
 
 // ProjectResponse represents a project in API responses
@@ -94,6 +96,8 @@ type RoleResponse struct {
 	Policies []string `json:"policies,omitempty"`
 	// Groups is the list of OIDC groups assigned to this role
 	Groups []string `json:"groups,omitempty"`
+	// Destinations is the list of namespace patterns this role is scoped to
+	Destinations []string `json:"destinations,omitempty"`
 }
 
 // ProjectListResponse represents a list of projects in API responses
@@ -126,10 +130,11 @@ func toProjectResponse(p *rbac.Project) ProjectResponse {
 	// Convert roles
 	for _, r := range p.Spec.Roles {
 		resp.Roles = append(resp.Roles, RoleResponse{
-			Name:        r.Name,
-			Description: r.Description,
-			Policies:    r.Policies,
-			Groups:      r.Groups,
+			Name:         r.Name,
+			Description:  r.Description,
+			Policies:     r.Policies,
+			Groups:       r.Groups,
+			Destinations: r.Destinations,
 		})
 	}
 
@@ -168,24 +173,30 @@ func toProjectSpec(req *CreateProjectRequest) rbac.ProjectSpec {
 
 	for _, r := range req.Roles {
 		spec.Roles = append(spec.Roles, rbac.ProjectRole{
-			Name:        r.Name,
-			Description: r.Description,
-			Policies:    r.Policies,
-			Groups:      r.Groups,
+			Name:         r.Name,
+			Description:  r.Description,
+			Policies:     r.Policies,
+			Groups:       r.Groups,
+			Destinations: r.Destinations,
 		})
 	}
 
 	return spec
 }
 
-// applyUpdateToProject applies an UpdateProjectRequest to an existing Project
-// Only updates fields that are explicitly provided in the request (partial update pattern)
+// applyUpdateToProject applies an UpdateProjectRequest to an existing Project.
+// This follows a partial update pattern: only non-empty fields are applied.
+//
+// NOTE: Sending an empty array for Destinations or Roles is a no-op — the existing
+// values are preserved. This is intentional (validators require at least one destination)
+// but means callers cannot use this API to clear all roles. To remove all roles,
+// the project must be deleted and recreated.
 func applyUpdateToProject(project *rbac.Project, req *UpdateProjectRequest) {
 	// Update description if provided (empty string is a valid update)
 	// Note: Description is always updated as it can legitimately be empty
 	project.Spec.Description = req.Description
 
-	// Update destinations only if provided
+	// Update destinations only if provided (empty array is a no-op)
 	if len(req.Destinations) > 0 {
 		project.Spec.Destinations = make([]rbac.Destination, 0, len(req.Destinations))
 		for _, d := range req.Destinations {
@@ -196,17 +207,17 @@ func applyUpdateToProject(project *rbac.Project, req *UpdateProjectRequest) {
 		}
 	}
 
-	// Update roles if provided
-	// Note: Only updates roles that are provided in the request
-	// Project admins can update role policies and groups
+	// Update roles if provided (empty array is a no-op — cannot clear all roles via API)
+	// Project admins can update role policies, groups, and destinations
 	if len(req.Roles) > 0 {
 		project.Spec.Roles = make([]rbac.ProjectRole, 0, len(req.Roles))
 		for _, r := range req.Roles {
 			project.Spec.Roles = append(project.Spec.Roles, rbac.ProjectRole{
-				Name:        r.Name,
-				Description: r.Description,
-				Policies:    r.Policies,
-				Groups:      r.Groups,
+				Name:         r.Name,
+				Description:  r.Description,
+				Policies:     r.Policies,
+				Groups:       r.Groups,
+				Destinations: r.Destinations,
 			})
 		}
 	}

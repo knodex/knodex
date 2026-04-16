@@ -434,3 +434,46 @@ func TestNewSSOWatcher_NilLogger(t *testing.T) {
 		t.Error("expected default logger when nil passed")
 	}
 }
+
+func TestSSOWatcher_LoadProviders_UsesContextWithTimeout(t *testing.T) {
+	// Create a watcher with a valid ConfigMap so loadProviders actually makes K8s API calls
+	w, cs := newTestWatcherWithObjects(
+		&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: ConfigMapName, Namespace: testNamespace},
+			Data: map[string]string{
+				ConfigMapKey: makeProviderConfigJSON(providerConfig{
+					Name:      "test-provider",
+					IssuerURL: "https://issuer.example.com",
+				}),
+			},
+		},
+		nil,
+	)
+
+	// Simulate Start() storing ctx — use a cancellable context to verify it propagates
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	w.ctx = ctx
+
+	// loadProviders should succeed using the stored ctx
+	providers := w.loadProviders()
+	if len(providers) != 1 {
+		t.Fatalf("expected 1 provider, got %d", len(providers))
+	}
+
+	// Cancel the context and verify loadProviders returns last valid (since API call fails/times out)
+	cancel()
+
+	// Store last valid providers first
+	w.mu.Lock()
+	w.lastValidProviders = providers
+	w.mu.Unlock()
+
+	// With cancelled context, the K8s API call should fail and return last valid
+	result := w.loadProviders()
+	if len(result) != 1 {
+		t.Fatalf("expected 1 provider from last valid after cancelled ctx, got %d", len(result))
+	}
+
+	_ = cs // keep reference
+}

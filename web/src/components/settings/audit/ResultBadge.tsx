@@ -11,7 +11,7 @@ export function ResultBadge({ result }: { result: string }) {
       : result === "denied"
         ? "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400"
         : result === "error"
-          ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400"
+          ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400"
           : "";
 
   return (

@@ -3,11 +3,11 @@
 
 import {
   ComplianceSummaryCards,
-  ViolationsByEnforcement,
   RecentViolations,
   EnterpriseRequired,
   GatekeeperUnavailable,
 } from "@/components/compliance";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { useComplianceSummary, isEnterprise } from "@/hooks/useCompliance";
 import { isEnterpriseRequired, isGatekeeperUnavailable } from "@/api/compliance";
 import { useIsFeatureEnabled } from "@/hooks/useLicense";
@@ -87,28 +87,15 @@ export function ComplianceDashboard() {
   return (
     <div className="space-y-6 p-6">
       {/* Page Header */}
-      <div>
-        <h2 className="text-sm font-medium text-foreground">Policy Compliance</h2>
-        <p className="text-muted-foreground">
-          Monitor OPA Gatekeeper policy compliance across your clusters
-        </p>
-      </div>
+      <PageHeader
+        title="Policy Compliance"
+      />
 
       {/* Summary Cards */}
       <ComplianceSummaryCards summary={summary} isLoading={isLoading} />
 
-      {/* Main Content Grid */}
-      <div className="grid gap-6 lg:grid-cols-3">
-        {/* Violations by Enforcement - Takes 1 column */}
-        <div className="lg:col-span-1">
-          <ViolationsByEnforcement summary={summary} isLoading={isLoading} />
-        </div>
-
-        {/* Recent Violations Table - Takes 2 columns */}
-        <div className="lg:col-span-2">
-          <RecentViolations limit={10} />
-        </div>
-      </div>
+      {/* Recent Violations */}
+      <RecentViolations limit={10} />
     </div>
   );
 }

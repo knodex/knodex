@@ -392,7 +392,7 @@ paths:
   /api/v1/rgds/filters:
     get:
       summary: Get available filter values
-      description: Returns distinct categories, tags, and namespaces for filtering.
+      description: Returns distinct categories, tags, and projects available for filtering. Categories are filtered by the user's Casbin authorization — only categories the user has `rgds/{category}/*` access to are included.
       tags: [rgds]
       operationId: getRGDFilters
       security:
@@ -572,16 +572,68 @@ paths:
                 $ref: '#/components/schemas/ListInstancesResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/namespaces/{namespace}/instances/{kind}:
     post:
-      summary: Deploy a new instance
+      summary: Deploy a new namespaced instance
       description: |
-        Creates a new instance of an RGD. Supports direct, GitOps, and hybrid
+        Creates a new namespaced instance of an RGD. Supports direct, GitOps, and hybrid
         deployment modes. Protected by DeploymentValidator middleware that checks
         project existence, user deploy permission, and destination policies.
+        Namespace is taken from the URL path. Kind must match the RGD's CRD Kind.
       tags: [instances]
-      operationId: createInstance
+      operationId: createNamespacedInstance
       security:
         - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/InstanceNamespace'
+        - $ref: '#/components/parameters/InstanceKind'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateInstanceRequest'
+      responses:
+        '201':
+          description: Instance created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateInstanceResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Instance already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Deployment mode not allowed for this RGD
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/instances/{kind}:
+    post:
+      summary: Deploy a new cluster-scoped instance
+      description: |
+        Creates a new cluster-scoped instance of an RGD. Supports direct, GitOps, and hybrid
+        deployment modes. Protected by DeploymentValidator middleware that checks
+        project existence, user deploy permission, and destination policies.
+        Kind must match the RGD's CRD Kind. No namespace segment (cluster-scoped).
+      tags: [instances]
+      operationId: createClusterScopedInstance
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/InstanceKind'
       requestBody:
         required: true
         content:
@@ -633,7 +685,74 @@ paths:
                   count:
                     type: integer
 
-  /api/v1/instances/{namespace}/{kind}/{name}:
+  /api/v1/instances/{kind}/{name}:
+    get:
+      summary: Get cluster-scoped instance details
+      description: Returns details for a specific cluster-scoped instance (no namespace).
+      tags: [instances]
+      operationId: getClusterScopedInstance
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/InstanceKind'
+        - $ref: '#/components/parameters/InstanceName'
+      responses:
+        '200':
+          description: Instance details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstanceDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      summary: Update a cluster-scoped instance
+      description: Updates labels/annotations on a cluster-scoped instance.
+      tags: [instances]
+      operationId: updateClusterScopedInstance
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/InstanceKind'
+        - $ref: '#/components/parameters/InstanceName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateInstanceRequest'
+      responses:
+        '200':
+          description: Instance updated
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      summary: Delete a cluster-scoped instance
+      description: Deletes a deployed cluster-scoped instance from the cluster.
+      tags: [instances]
+      operationId: deleteClusterScopedInstance
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/InstanceKind'
+        - $ref: '#/components/parameters/InstanceName'
+      responses:
+        '200':
+          description: Instance deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: deleted
+                  name:
+                    type: string
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/namespaces/{namespace}/instances/{kind}/{name}:
     get:
       summary: Get instance details
       description: Returns details for a specific instance.
@@ -731,32 +850,10 @@ paths:
                   total:
                     type: integer
 
-  /api/v1/instances/timeline/{instanceId}:
-    get:
-      summary: Get GitOps status timeline
-      description: Returns the status transition history for a GitOps-deployed instance.
-      tags: [instances]
-      operationId: getStatusTimeline
-      security:
-        - bearerAuth: []
-      parameters:
-        - name: instanceId
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          description: Status timeline
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/StatusTimelineResponse'
-
   # -------------------------------------------------------------------------
   # Deployment History
   # -------------------------------------------------------------------------
-  /api/v1/instances/{namespace}/{kind}/{name}/history:
+  /api/v1/namespaces/{namespace}/instances/{kind}/{name}/history:
     get:
       summary: Get deployment history
       description: Returns the deployment history for an instance.
@@ -778,7 +875,7 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
-  /api/v1/instances/{namespace}/{kind}/{name}/history/export:
+  /api/v1/namespaces/{namespace}/instances/{kind}/{name}/history/export:
     get:
       summary: Export deployment history
       description: Exports deployment history in JSON or CSV format.
@@ -808,7 +905,7 @@ paths:
               schema:
                 type: string
 
-  /api/v1/instances/{namespace}/{kind}/{name}/timeline:
+  /api/v1/namespaces/{namespace}/instances/{kind}/{name}/timeline:
     get:
       summary: Get deployment timeline
       description: Returns a timeline view of deployment events for an instance.
@@ -818,6 +915,75 @@ paths:
         - bearerAuth: []
       parameters:
         - $ref: '#/components/parameters/InstanceNamespace'
+        - $ref: '#/components/parameters/InstanceKind'
+        - $ref: '#/components/parameters/InstanceName'
+      responses:
+        '200':
+          description: Deployment timeline
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/v1/instances/{kind}/{name}/history:
+    get:
+      summary: Get cluster-scoped instance deployment history
+      description: Returns the deployment history for a cluster-scoped instance.
+      tags: [history]
+      operationId: getClusterScopedHistory
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/InstanceKind'
+        - $ref: '#/components/parameters/InstanceName'
+      responses:
+        '200':
+          description: Deployment history
+          content:
+            application/json:
+              schema:
+                type: object
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/instances/{kind}/{name}/history/export:
+    get:
+      summary: Export cluster-scoped instance deployment history
+      description: Exports deployment history for a cluster-scoped instance in JSON or CSV format.
+      tags: [history]
+      operationId: exportClusterScopedHistory
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/InstanceKind'
+        - $ref: '#/components/parameters/InstanceName'
+        - name: format
+          in: query
+          description: Export format
+          schema:
+            type: string
+            enum: [json, csv]
+            default: json
+      responses:
+        '200':
+          description: Exported history
+          content:
+            application/json:
+              schema:
+                type: object
+            text/csv:
+              schema:
+                type: string
+
+  /api/v1/instances/{kind}/{name}/timeline:
+    get:
+      summary: Get cluster-scoped instance deployment timeline
+      description: Returns a timeline view of deployment events for a cluster-scoped instance.
+      tags: [history]
+      operationId: getClusterScopedTimeline
+      security:
+        - bearerAuth: []
+      parameters:
         - $ref: '#/components/parameters/InstanceKind'
         - $ref: '#/components/parameters/InstanceName'
       responses:
@@ -2625,6 +2791,25 @@ components:
           type: string
           format: date-time
 
+    UpdateInstanceRequest:
+      type: object
+      properties:
+        spec:
+          type: object
+          description: Updated spec values
+        resourceVersion:
+          type: string
+          description: Resource version for optimistic concurrency control
+        repositoryId:
+          type: string
+          description: Git repository config ID (required for gitops/hybrid mode updates)
+        gitBranch:
+          type: string
+          description: Override the repository's default branch for this update
+        gitPath:
+          type: string
+          description: Override the auto-generated semantic path for this update
+
     CreateInstanceRequest:
       type: object
       required: [name, namespace, rgdName]
@@ -2709,37 +2894,6 @@ components:
           type: string
         isStuck:
           type: boolean
-
-    StatusTimelineResponse:
-      type: object
-      properties:
-        instanceId:
-          type: string
-        name:
-          type: string
-        currentStatus:
-          type: string
-        deploymentMode:
-          type: string
-        pushedAt:
-          type: string
-          format: date-time
-        isStuck:
-          type: boolean
-        timeline:
-          type: array
-          items:
-            type: object
-            properties:
-              fromStatus:
-                type: string
-              toStatus:
-                type: string
-              timestamp:
-                type: string
-                format: date-time
-              reason:
-                type: string
 
     # --- Projects ---
     ProjectListResponse:

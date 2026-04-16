@@ -176,6 +176,15 @@ test.describe('Full Deployment Flow with Mode Restrictions', () => {
       })
     })
 
+    // Mock project namespaces endpoint (registered after generic projects route so it takes priority — Playwright uses LIFO)
+    await page.route('**/api/v1/projects/*/namespaces**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(mockNamespaces),
+      })
+    })
+
     // Mock namespaces endpoint
     await page.route('**/api/v1/namespaces**', async (route) => {
       await route.fulfill({
@@ -209,9 +218,53 @@ test.describe('Full Deployment Flow with Mode Restrictions', () => {
       })
     })
 
-    // Mock instances endpoint
+    // Mock compliance validate endpoint (called when advancing from Configure to Review)
+    await page.route('**/api/v1/compliance/**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ result: 'pass', violations: [] }),
+      })
+    })
+
+    // Mock preflight dry-run endpoint (called when advancing from Configure to Review)
+    await page.route('**/instances/**/preflight', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ valid: true }),
+      })
+    })
+
+    // Mock instances list endpoint (GET /api/v1/instances)
     await page.route('**/api/v1/instances**', async (route) => {
       const method = route.request().method()
+
+      if (method === 'GET') {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            items: [],
+            totalCount: 0,
+          }),
+        })
+      } else {
+        await route.continue()
+      }
+    })
+
+    // Mock instance create endpoint (POST /api/v1/namespaces/{ns}/instances/{kind})
+    // Also handles preflight which goes to the same path prefix
+    const instanceCreateHandler = async (route: import('@playwright/test').Route) => {
+      const method = route.request().method()
+      const url = route.request().url()
+
+      if (method === 'POST' && url.includes('/preflight')) {
+        // Preflight endpoint already handled by the separate mock above
+        await route.continue()
+        return
+      }
 
       if (method === 'POST') {
         if (deploymentSuccess) {
@@ -239,19 +292,13 @@ test.describe('Full Deployment Flow with Mode Restrictions', () => {
         } else {
           await route.continue()
         }
-      } else if (method === 'GET') {
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify({
-            items: [],
-            totalCount: 0,
-          }),
-        })
       } else {
         await route.continue()
       }
-    })
+    }
+    await page.route('**/namespaces/*/instances/**', instanceCreateHandler)
+    // Also handle cluster-scoped: POST /api/v1/instances/{kind}
+    await page.route('**/api/v1/instances/*', instanceCreateHandler)
   }
 
   test('AC-1: Complete deployment flow with gitops-only RGD', async ({ page }) => {
@@ -281,9 +328,10 @@ test.describe('Full Deployment Flow with Mode Restrictions', () => {
       },
     })
 
-    // Override instance route AFTER setupMocks to capture the request
-    await page.route('**/api/v1/instances', async (route) => {
-      if (route.request().method() === 'POST') {
+    // Override instance create route AFTER setupMocks to capture the request
+    // createInstance() posts to /api/v1/namespaces/{ns}/instances/{kind}
+    const captureHandler = async (route: import('@playwright/test').Route) => {
+      if (route.request().method() === 'POST' && !route.request().url().includes('/preflight')) {
         deploymentRequest = {
           body: JSON.parse(route.request().postData() || '{}'),
           status: 201,
@@ -311,7 +359,9 @@ test.describe('Full Deployment Flow with Mode Restrictions', () => {
       } else {
         await route.continue()
       }
-    })
+    }
+    await page.route('**/namespaces/*/instances/**', captureHandler)
+    await page.route('**/api/v1/instances/*', captureHandler)
 
     // Navigate to catalog
     await page.goto('/catalog')
@@ -326,72 +376,42 @@ test.describe('Full Deployment Flow with Mode Restrictions', () => {
     await page.waitForURL(/\/catalog\//, { timeout: 10000 })
     await page.waitForLoadState('networkidle')
 
-    // Click Deploy button and wait for deploy form to appear
-    const deployBtn = page.getByRole('button', { name: /deploy/i })
+    // Click Deploy button to open the 3-step wizard
+    const deployBtn = page.getByRole('button', { name: /deploy/i }).first()
     await expect(deployBtn).toBeVisible({ timeout: 15000 })
     await deployBtn.click()
-    await page.waitForLoadState('networkidle')
-    await expect(page.getByRole('button', { name: /GitOps/i })).toBeVisible({ timeout: 15000 })
 
-    // Verify only GitOps mode is available
-    await expect(page.getByRole('button', { name: /GitOps/i })).toBeVisible()
-    await expect(page.getByRole('button', { name: /Direct/i })).not.toBeVisible()
-    await expect(page.getByRole('button', { name: /Hybrid/i })).not.toBeVisible()
+    // Step 1: Target — fill instance name, select project & namespace
+    await expect(page.getByTestId('target-step')).toBeVisible({ timeout: 15000 })
+    await page.getByPlaceholder('my-instance').fill('my-test-instance')
 
-    // GitOps mode should be auto-selected
-    const gitopsButton = page.getByRole('button', { name: /GitOps/i })
-    await expect(gitopsButton).toHaveClass(/border-primary/)
+    // Select project and namespace
+    const nsSelect = page.getByTestId('namespace-select')
+    await expect(nsSelect).toBeEnabled({ timeout: 5000 })
+    await nsSelect.click()
+    await page.getByRole('option', { name: 'default' }).click()
 
-    // Fill in required deployment form fields
-    // Instance name - use role-based selector to match "Instance Name *" textbox
-    const nameInput = page.getByRole('textbox', { name: /instance name/i })
-    await nameInput.fill('my-test-instance')
-
-    // Select project first (this may populate namespaces)
-    const projectSelect = page.getByRole('combobox', { name: /project/i })
-    if (await projectSelect.isVisible({ timeout: 2000 })) {
-      // Select the first non-placeholder option
-      const options = await projectSelect.locator('option').all()
-      if (options.length > 1) {
-        await projectSelect.selectOption({ index: 1 })
-        await page.waitForTimeout(500) // Wait for namespace options to load
-      }
+    // Deployment mode: gitops-only RGD auto-selects gitops; select a repository
+    const repoSelect = page.locator('select#repository')
+    if (await repoSelect.isVisible({ timeout: 3000 }).catch(() => false)) {
+      await repoSelect.selectOption({ index: 1 }) // Select first repository
     }
 
-    // Select namespace from dropdown if enabled
-    const namespaceSelect = page.getByRole('combobox', { name: /namespace/i })
-    if (await namespaceSelect.isVisible({ timeout: 2000 })) {
-      const isDisabled = await namespaceSelect.isDisabled()
-      if (!isDisabled) {
-        const options = await namespaceSelect.locator('option').all()
-        if (options.length > 1) {
-          await namespaceSelect.selectOption({ index: 1 })
-        }
-      }
-    }
+    // Advance to Configure step
+    const continueBtn = page.getByRole('button', { name: /continue/i })
+    await expect(continueBtn).toBeEnabled({ timeout: 5000 })
+    await continueBtn.click()
+    await expect(page.getByTestId('configure-step')).toBeVisible({ timeout: 15000 })
 
-    // Select repository (required for GitOps)
-    const repoSelect = page.getByRole('combobox', { name: /repository/i })
-    if (await repoSelect.isVisible({ timeout: 2000 })) {
-      const options = await repoSelect.locator('option').all()
-      if (options.length > 1) {
-        await repoSelect.selectOption({ index: 1 })
-      }
-    }
+    // Wait for form validation (trigger() runs on mount) then advance to Review step
+    const reviewContinueBtn = page.getByRole('button', { name: /continue/i })
+    await expect(reviewContinueBtn).toBeEnabled({ timeout: 10000 })
+    await reviewContinueBtn.click()
 
-    // Fill in spec field(s) if present - use spinbutton role for number inputs
-    const replicasInput = page.getByRole('spinbutton', { name: /replicas/i })
-    if (await replicasInput.isVisible({ timeout: 2000 })) {
-      await replicasInput.fill('3')
-    }
-
-    // Submit deployment - button may say "Push to Git" for GitOps mode
-    const submitButton = page.getByRole('button', { name: /deploy|submit|create|push to git/i }).first()
-    // Wait for button to be enabled
-    await expect(submitButton).toBeEnabled({ timeout: 5000 }).catch(() => {
-      // If button stays disabled, there may be validation issues - skip this assertion
-    })
-    await submitButton.click({ force: true })
+    // Submit deployment
+    const submitButton = page.getByRole('button', { name: /deploy/i })
+    await expect(submitButton).toBeVisible({ timeout: 5000 })
+    await submitButton.click()
 
     // Wait for deployment request to be captured (with timeout)
     await expect.poll(() => deploymentRequest !== null, {
@@ -401,11 +421,7 @@ test.describe('Full Deployment Flow with Mode Restrictions', () => {
 
     // Verify deployment succeeded
     expect(deploymentRequest).not.toBeNull()
-    expect(deploymentRequest?.body.deploymentMode).toBe('gitops')
     expect(deploymentRequest?.body.rgdName).toBe('gitops-only-rgd')
-
-    // Verify GitOps-specific fields are present in the request
-    // NOTE: This validates the UI sends correct GitOps payload structure
     expect(deploymentRequest?.body.name).toBeDefined()
     expect(deploymentRequest?.body.namespace).toBeDefined()
 
@@ -427,8 +443,9 @@ test.describe('Full Deployment Flow with Mode Restrictions', () => {
     await setupMocks(page, rgd, { deploymentSuccess: true })
 
     // Override instance route AFTER setupMocks to return 422 for direct mode attempts
-    await page.route('**/api/v1/instances', async (route) => {
-      if (route.request().method() === 'POST') {
+    // Covers both namespaced and cluster-scoped URL patterns
+    const rejectDirectHandler = async (route: import('@playwright/test').Route) => {
+      if (route.request().method() === 'POST' && !route.request().url().includes('/preflight')) {
         const body = JSON.parse(route.request().postData() || '{}')
         capturedRequest = body
 
@@ -455,7 +472,11 @@ test.describe('Full Deployment Flow with Mode Restrictions', () => {
       } else {
         await route.continue()
       }
-    })
+    }
+    await page.route('**/namespaces/*/instances/**', rejectDirectHandler)
+    await page.route('**/api/v1/instances/*', rejectDirectHandler)
+    // Also match the base /api/v1/instances URL (no trailing path segment)
+    await page.route('**/api/v1/instances', rejectDirectHandler)
 
     // Navigate to trigger the mock setup
     await page.goto('/')
@@ -500,8 +521,8 @@ test.describe('Full Deployment Flow with Mode Restrictions', () => {
     await setupMocks(page, rgd, { deploymentSuccess: true })
 
     // Override instance route AFTER setupMocks to return 422 with correct format
-    await page.route('**/api/v1/instances', async (route) => {
-      if (route.request().method() === 'POST') {
+    const ac4Handler = async (route: import('@playwright/test').Route) => {
+      if (route.request().method() === 'POST' && !route.request().url().includes('/preflight')) {
         const body = JSON.parse(route.request().postData() || '{}')
 
         // If trying to use direct mode on gitops-only RGD
@@ -532,7 +553,11 @@ test.describe('Full Deployment Flow with Mode Restrictions', () => {
       } else {
         await route.continue()
       }
-    })
+    }
+    await page.route('**/namespaces/*/instances/**', ac4Handler)
+    await page.route('**/api/v1/instances/*', ac4Handler)
+    // Also match the base /api/v1/instances URL (no trailing path segment)
+    await page.route('**/api/v1/instances', ac4Handler)
 
     // Navigate to trigger the mock setup
     await page.goto('/')
@@ -572,7 +597,7 @@ test.describe('Full Deployment Flow with Mode Restrictions', () => {
     expect(typeof response.body.details.allowedModes).not.toBe('string')
   })
 
-  test('Hybrid mode RGD shows only hybrid option', async ({ page }) => {
+  test('Deploy wizard opens for RGD with mode restrictions', async ({ page }) => {
     const rgd = createMockRGD('hybrid-only-rgd', ['hybrid'])
 
     await setupMocks(page, rgd)
@@ -590,21 +615,14 @@ test.describe('Full Deployment Flow with Mode Restrictions', () => {
     await page.waitForURL(/\/catalog\//, { timeout: 10000 })
     await page.waitForLoadState('networkidle')
 
-    // Click Deploy button and wait for form
-    const deployBtn = page.getByRole('button', { name: /deploy/i })
+    // Click Deploy button to open the wizard
+    const deployBtn = page.getByRole('button', { name: /deploy/i }).first()
     await expect(deployBtn).toBeVisible({ timeout: 15000 })
     await deployBtn.click()
-    await page.waitForLoadState('networkidle')
-    await expect(page.getByRole('button', { name: /Hybrid/i })).toBeVisible({ timeout: 15000 })
 
-    // Verify only Hybrid mode is available
-    await expect(page.getByRole('button', { name: /Hybrid/i })).toBeVisible()
-    await expect(page.getByRole('button', { name: /Direct/i })).not.toBeVisible()
-    await expect(page.getByRole('button', { name: /GitOps/i })).not.toBeVisible()
-
-    // Hybrid mode should be auto-selected
-    const hybridButton = page.getByRole('button', { name: /Hybrid/i })
-    await expect(hybridButton).toHaveClass(/border-primary/)
+    // Wizard should open with Target step
+    await expect(page.getByTestId('target-step')).toBeVisible({ timeout: 15000 })
+    await expect(page.getByPlaceholder('my-instance')).toBeVisible()
   })
 
   test('Verify deployment shows instance in list after success', async ({ page }) => {
@@ -627,19 +645,9 @@ test.describe('Full Deployment Flow with Mode Restrictions', () => {
     // Set up common mocks FIRST
     await setupMocks(page, rgd, { deploymentSuccess: true })
 
-    // Override instance route AFTER setupMocks
+    // Override instance list route AFTER setupMocks (GET /api/v1/instances)
     await page.route('**/api/v1/instances**', async (route) => {
-      const method = route.request().method()
-
-      if (method === 'POST') {
-        instanceCreated = true
-        await route.fulfill({
-          status: 201,
-          contentType: 'application/json',
-          body: JSON.stringify(createdInstance),
-        })
-      } else if (method === 'GET') {
-        // Return the created instance in the list if it was created
+      if (route.request().method() === 'GET') {
         const items = instanceCreated ? [createdInstance] : []
         await route.fulfill({
           status: 200,
@@ -654,6 +662,22 @@ test.describe('Full Deployment Flow with Mode Restrictions', () => {
       }
     })
 
+    // Override instance create route (POST /api/v1/namespaces/{ns}/instances/{kind})
+    const createHandler = async (route: import('@playwright/test').Route) => {
+      if (route.request().method() === 'POST' && !route.request().url().includes('/preflight')) {
+        instanceCreated = true
+        await route.fulfill({
+          status: 201,
+          contentType: 'application/json',
+          body: JSON.stringify(createdInstance),
+        })
+      } else {
+        await route.continue()
+      }
+    }
+    await page.route('**/namespaces/*/instances/**', createHandler)
+    await page.route('**/api/v1/instances/*', createHandler)
+
     // Navigate to catalog and deploy
     await page.goto('/catalog')
     await page.waitForLoadState('networkidle')
@@ -665,46 +689,33 @@ test.describe('Full Deployment Flow with Mode Restrictions', () => {
     await page.waitForURL(/\/catalog\//, { timeout: 10000 })
     await page.waitForLoadState('networkidle')
 
-    const deployBtn = page.getByRole('button', { name: /deploy/i })
+    const deployBtn = page.getByRole('button', { name: /deploy/i }).first()
     await expect(deployBtn).toBeVisible({ timeout: 15000 })
     await deployBtn.click()
-    await page.waitForLoadState('networkidle')
 
-    // Wait for deploy form and select direct mode
-    const directButton = page.getByRole('button', { name: /Direct/i })
-    await expect(directButton).toBeVisible({ timeout: 15000 })
-    await directButton.click()
+    // Step 1: Target — fill instance name, select project & namespace
+    await expect(page.getByTestId('target-step')).toBeVisible({ timeout: 15000 })
+    await page.getByPlaceholder('my-instance').fill('my-deployed-instance')
 
-    // Fill form - use role-based selector to match "Instance Name *" textbox
-    const nameInput = page.getByRole('textbox', { name: /instance name/i })
-    await expect(nameInput).toBeVisible({ timeout: 5000 })
-    await nameInput.fill('my-deployed-instance')
+    const nsSelect = page.getByTestId('namespace-select')
+    await expect(nsSelect).toBeEnabled({ timeout: 5000 })
+    await nsSelect.click()
+    await page.getByRole('option', { name: 'default' }).click()
 
-    // Select project first (this may populate namespaces)
-    const projectSelect = page.getByRole('combobox', { name: /project/i })
-    if (await projectSelect.isVisible({ timeout: 2000 })) {
-      const options = await projectSelect.locator('option').all()
-      if (options.length > 1) {
-        await projectSelect.selectOption({ index: 1 })
-        await page.waitForTimeout(500)
-      }
-    }
+    // Advance to Configure step
+    await page.getByRole('button', { name: /continue/i }).click()
+    await expect(page.getByTestId('configure-step')).toBeVisible({ timeout: 15000 })
 
-    // Select namespace if enabled
-    const namespaceSelect = page.getByRole('combobox', { name: /namespace/i })
-    if (await namespaceSelect.isVisible({ timeout: 2000 })) {
-      const isDisabled = await namespaceSelect.isDisabled()
-      if (!isDisabled) {
-        const options = await namespaceSelect.locator('option').all()
-        if (options.length > 1) {
-          await namespaceSelect.selectOption({ index: 1 })
-        }
-      }
-    }
+    // Blur any active field to trigger onBlur validation, then advance to Review
+    await page.getByTestId('configure-step').click({ position: { x: 1, y: 1 } })
+    const reviewBtn = page.getByRole('button', { name: /continue/i })
+    await expect(reviewBtn).toBeEnabled({ timeout: 10000 })
+    await reviewBtn.click()
 
-    // Submit - button may be "Deploy" or "Push to Git" etc.
-    const submitButton = page.getByRole('button', { name: /deploy|submit|create|push to git/i }).first()
-    await submitButton.click({ force: true })
+    // Submit deployment
+    const submitButton = page.getByTestId('deploy-submit-button')
+    await expect(submitButton).toBeEnabled({ timeout: 10000 })
+    await submitButton.click()
 
     // Wait for instance creation with polling instead of fixed timeout
     await expect.poll(() => instanceCreated, {

@@ -33,13 +33,17 @@ test.describe('Catalog View', () => {
   })
 
   test('displays RGD cards in the catalog', async ({ page }) => {
-    // Wait for RGD cards to load
-    await expect(page.getByText('postgres-database')).toBeVisible()
-    await expect(page.getByText('redis-cache')).toBeVisible()
-    await expect(page.getByText('nginx-ingress')).toBeVisible()
+    // Wait for RGD names to appear (may appear in both "Recently Used" card and table row)
+    await expect(page.getByText('postgres-database').first()).toBeVisible()
+    await expect(page.getByText('redis-cache').first()).toBeVisible()
+    await expect(page.getByText('nginx-ingress').first()).toBeVisible()
   })
 
   test('shows RGD descriptions', async ({ page }) => {
+    // Default view is list/table mode which doesn't show descriptions.
+    // Switch to grid view to see card descriptions.
+    await page.getByRole('button', { name: /grid view/i }).click()
+
     await expect(
       page.getByText('PostgreSQL database with automated backups and monitoring')
     ).toBeVisible()
@@ -59,11 +63,14 @@ test.describe('Catalog View', () => {
   })
 
   test('shows instance count on RGD cards', async ({ page }) => {
-    // Wait for cards to load
+    // Wait for table to load
     await expect(page.getByText('postgres-database')).toBeVisible()
 
-    // Instance counts should be visible (may be displayed as badges or text)
-    await expect(page.getByText(/5\s*instance/i)).toBeVisible()
+    // In list/table view, instance count is shown as a plain number in the Instances column.
+    // Columns: name+icon(0), category(1), instances(2)
+    const postgresRow = page.getByRole('button', { name: /view details for postgres-database/i })
+    await expect(postgresRow).toBeVisible()
+    await expect(postgresRow.locator('td').nth(2)).toHaveText('5')
   })
 
   test('can search for RGDs', async ({ page }) => {
@@ -105,7 +112,7 @@ test.describe('Catalog View', () => {
     })
     await setupPermissionMocking(page, { '*:*': true })
 
-    // Click on the first RGD card using the role-based selector
+    // Click on the first RGD card/row using the role-based selector
     const firstCard = page.getByRole('button', { name: /view details for/i }).first()
     await expect(firstCard).toBeVisible()
     await firstCard.click()
@@ -114,12 +121,16 @@ test.describe('Catalog View', () => {
     await page.waitForURL(/\/catalog\//, { timeout: 10000 })
     await page.waitForLoadState('networkidle')
 
-    // Should show detail view with back button
-    await expect(page.getByRole('button', { name: /back/i })).toBeVisible()
+    // Should show detail view with Instances tab (confirms navigation to detail page)
+    await expect(page.getByRole('tab', { name: /Instances/i })).toBeVisible()
   })
 
   test('shows Documentation link in sidebar', async ({ page }) => {
-    // Verify documentation link exists in sidebar (external link to docs)
+    // On the catalog route the sidebar shows category sub-navigation.
+    // Navigate to a non-catalog route (e.g., instances) to see the main sidebar
+    // which contains the Documentation link.
+    await page.goto('/instances')
+    await page.waitForLoadState('networkidle')
     await expect(page.locator('a[href="https://knodex.io/docs"]')).toBeVisible()
   })
 })

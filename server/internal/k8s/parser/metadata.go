@@ -67,12 +67,6 @@ func GetAnnotation(obj *unstructured.Unstructured, key string) (string, bool) {
 	return value, ok
 }
 
-// HasAnnotation returns true if the object has the specified annotation.
-func HasAnnotation(obj *unstructured.Unstructured, key string) bool {
-	_, ok := GetAnnotation(obj, key)
-	return ok
-}
-
 // GetAnnotationOrDefault returns the value of a specific annotation, or a default
 // value if the annotation doesn't exist.
 func GetAnnotationOrDefault(obj *unstructured.Unstructured, key, defaultVal string) string {
@@ -150,60 +144,4 @@ func GetKind(obj *unstructured.Unstructured) string {
 		return ""
 	}
 	return obj.GetKind()
-}
-
-// GetDeletionTimestamp returns the deletion timestamp of a Kubernetes object.
-// Returns nil if the object is nil or not being deleted.
-func GetDeletionTimestamp(obj *unstructured.Unstructured) *time.Time {
-	if obj == nil {
-		return nil
-	}
-	ts := obj.GetDeletionTimestamp()
-	if ts == nil {
-		return nil
-	}
-	t := ts.Time
-	return &t
-}
-
-// IsBeingDeleted returns true if the object has a deletion timestamp set.
-func IsBeingDeleted(obj *unstructured.Unstructured) bool {
-	return GetDeletionTimestamp(obj) != nil
-}
-
-// GetFinalizers returns the finalizers of a Kubernetes object.
-// Returns an empty slice (not nil) if the object is nil or has no finalizers.
-func GetFinalizers(obj *unstructured.Unstructured) []string {
-	if obj == nil {
-		return []string{}
-	}
-	finalizers := obj.GetFinalizers()
-	if finalizers == nil {
-		return []string{}
-	}
-	return finalizers
-}
-
-// HasFinalizer returns true if the object has the specified finalizer.
-func HasFinalizer(obj *unstructured.Unstructured, finalizer string) bool {
-	for _, f := range GetFinalizers(obj) {
-		if f == finalizer {
-			return true
-		}
-	}
-	return false
-}
-
-// NamespacedName returns the namespaced name of a Kubernetes object in
-// "namespace/name" format, or just "name" for cluster-scoped resources.
-func NamespacedName(obj *unstructured.Unstructured) string {
-	if obj == nil {
-		return ""
-	}
-	ns := obj.GetNamespace()
-	name := obj.GetName()
-	if ns == "" {
-		return name
-	}
-	return ns + "/" + name
 }

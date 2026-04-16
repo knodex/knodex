@@ -1,21 +1,77 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useEffect, useState, useCallback } from "react";
-import { Outlet } from "react-router-dom";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { Outlet, useLocation } from "react-router-dom";
 import { Sidebar, TopBar, Breadcrumbs } from "@/components/layout";
+import { SidebarDrawer } from "@/components/layout/SidebarDrawer";
 import { ProtectedRoute } from "@/components/auth";
 import { WebSocketProvider, useWebSocketContext } from "@/context";
 import { Announcer } from "@/components/accessibility";
 import { useAnnouncements } from "@/hooks/useAnnouncements";
+import { usePrefetchAfterIdle } from "@/hooks/usePrefetchAfterIdle";
+import { useIsTablet } from "@/hooks/useIsTablet";
+import { useIsMobile } from "@/hooks/useIsMobile";
+import { BottomNav } from "@/components/layout/BottomNav";
+import { routePreloads } from "@/lib/route-preloads";
 import { useSessionStatus, useSessionError } from "@/hooks/useAuth";
 import { useUserStore } from "@/stores/userStore";
-import { Loader2, RefreshCw } from "lucide-react";
+import { CommandPalette } from "@/components/command-palette/command-palette";
+import { useCommandPaletteShortcut } from "@/components/command-palette/use-command-palette-shortcut";
+import { Loader2, RefreshCw } from "@/lib/icons";
+import { cn } from "@/lib/utils";
 
 function DashboardLayoutInner() {
   const sessionStatus = useSessionStatus();
   const sessionError = useSessionError();
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
+  const location = useLocation();
+  const [isDrawerOpen, setIsDrawerOpen] = useState<boolean>(false);
+  const isTablet = useIsTablet();
+  const isMobile = useIsMobile();
+  const { open: commandPaletteOpen, setOpen: setCommandPaletteOpen } = useCommandPaletteShortcut();
+
+  // Set data-layout attribute on body for CSS targeting
+  useEffect(() => {
+    if (isMobile) {
+      document.body.setAttribute("data-layout", "mobile");
+    } else if (isTablet) {
+      document.body.setAttribute("data-layout", "tablet");
+    } else {
+      document.body.removeAttribute("data-layout");
+    }
+    return () => document.body.removeAttribute("data-layout");
+  }, [isTablet, isMobile]);
+
+  // Focus management: move focus to page h1 on route change for keyboard/screen reader users
+  const isFirstRender = useRef(true);
+  useEffect(() => {
+    // Skip initial mount — don't steal focus on first page load
+    if (isFirstRender.current) {
+      isFirstRender.current = false;
+      return;
+    }
+    // Small delay to let the new route render its h1
+    const timer = setTimeout(() => {
+      const h1 = document.querySelector('h1');
+      if (h1 instanceof HTMLElement) {
+        h1.focus();
+      } else {
+        // Fallback: focus main content area when no h1 exists
+        const main = document.getElementById('main-content');
+        if (main instanceof HTMLElement) {
+          main.focus();
+        }
+      }
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [location.pathname]);
+
+  // Prefetch most common routes after idle (Catalog + Instances)
+  const idlePreloads = useMemo(
+    () => [routePreloads["/catalog"], routePreloads["/instances"]].filter(Boolean),
+    []
+  );
+  usePrefetchAfterIdle(idlePreloads);
 
   // Accessibility: announcements
   const { announcements, announce, handleAnnouncementRead } = useAnnouncements();
@@ -90,20 +146,35 @@ function DashboardLayoutInner() {
         Skip to main content
       </a>
 
-      <Sidebar
-        isMobileOpen={isMobileMenuOpen}
-        onMobileClose={() => setIsMobileMenuOpen(false)}
-      />
+      {!isMobile && <Sidebar />}
 
-      <TopBar onMobileMenuToggle={() => setIsMobileMenuOpen(!isMobileMenuOpen)} />
+      {!isMobile && <SidebarDrawer open={isDrawerOpen} onOpenChange={setIsDrawerOpen} />}
 
-      <div className="transition-all duration-300 pt-16 ml-0 lg:ml-16">
-        <Breadcrumbs />
+      <CommandPalette open={commandPaletteOpen} onOpenChange={setCommandPaletteOpen} />
 
-        <main id="main-content" className="container mx-auto min-h-[calc(100vh-4rem)] px-4 sm:px-6 lg:px-8 py-6">
+      {!isMobile && <TopBar onMobileMenuToggle={() => setIsDrawerOpen(true)} />}
+
+      <div className={cn(
+        "transition-all duration-300",
+        isMobile ? "pt-0 pb-16" : "pt-14 ml-0 lg:ml-[260px]"
+      )}>
+        {!isMobile && <Breadcrumbs />}
+
+        <main
+          key={location.pathname}
+          id="main-content"
+          tabIndex={-1}
+          className={cn(
+            "outline-none",
+            "animate-token-fade-in mx-auto min-h-[calc(100vh-4rem)] max-w-[1280px]",
+            isMobile ? "px-4 py-4 overflow-x-hidden" : "px-6 pt-4 pb-8 lg:px-10"
+          )}
+        >
           {content}
         </main>
       </div>
+
+      {isMobile && <BottomNav />}
     </div>
   );
 }

@@ -165,6 +165,7 @@ func (h *AccountHandler) CanI(w http.ResponseWriter, r *http.Request) {
 		"users":        true,
 		"applications": true,
 		"secrets":      true,
+		"clusters":     true,
 	}
 	for r := range h.enterpriseResources {
 		validResources[r] = true

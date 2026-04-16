@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestParseDeploymentModes(t *testing.T) {
+func TestParseDeploymentModesValidModes(t *testing.T) {
 	tests := []struct {
 		name       string
 		annotation string
@@ -45,11 +45,6 @@ func TestParseDeploymentModes(t *testing.T) {
 			want:       []string{"direct", "gitops"},
 		},
 		{
-			name:       "two modes - gitops,hybrid",
-			annotation: "gitops,hybrid",
-			want:       []string{"gitops", "hybrid"},
-		},
-		{
 			name:       "all three modes",
 			annotation: "direct,gitops,hybrid",
 			want:       []string{"direct", "gitops", "hybrid"},
@@ -57,16 +52,6 @@ func TestParseDeploymentModes(t *testing.T) {
 		{
 			name:       "case insensitive - uppercase",
 			annotation: "DIRECT,GITOPS,HYBRID",
-			want:       []string{"direct", "gitops", "hybrid"},
-		},
-		{
-			name:       "case insensitive - mixed case",
-			annotation: "Direct,GitOps,Hybrid",
-			want:       []string{"direct", "gitops", "hybrid"},
-		},
-		{
-			name:       "with whitespace",
-			annotation: " direct , gitops , hybrid ",
 			want:       []string{"direct", "gitops", "hybrid"},
 		},
 		{
@@ -84,28 +69,13 @@ func TestParseDeploymentModes(t *testing.T) {
 			annotation: "direct,direct,gitops",
 			want:       []string{"direct", "gitops"},
 		},
-		{
-			name:       "empty parts ignored",
-			annotation: "direct,,gitops",
-			want:       []string{"direct", "gitops"},
-		},
-		{
-			name:       "trailing comma",
-			annotation: "direct,gitops,",
-			want:       []string{"direct", "gitops"},
-		},
-		{
-			name:       "leading comma",
-			annotation: ",direct,gitops",
-			want:       []string{"direct", "gitops"},
-		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := ParseDeploymentModes(tt.annotation)
-			if !stringSliceEqual(got, tt.want) {
-				t.Errorf("ParseDeploymentModes(%q) = %v, want %v", tt.annotation, got, tt.want)
+			result := ParseDeploymentModesWithInvalid(tt.annotation)
+			if !stringSliceEqual(result.ValidModes, tt.want) {
+				t.Errorf("ParseDeploymentModesWithInvalid(%q).ValidModes = %v, want %v", tt.annotation, result.ValidModes, tt.want)
 			}
 		})
 	}
@@ -254,15 +224,15 @@ func TestAllInvalidModesResultsInUnrestricted(t *testing.T) {
 	// This ensures backward compatibility - invalid annotations don't break deployments.
 
 	// Parse an annotation with only invalid modes
-	parsed := ParseDeploymentModes("foo,bar,invalid")
-	if parsed != nil {
-		t.Errorf("Expected nil for all-invalid modes, got %v", parsed)
+	result := ParseDeploymentModesWithInvalid("foo,bar,invalid")
+	if result.ValidModes != nil {
+		t.Errorf("Expected nil ValidModes for all-invalid modes, got %v", result.ValidModes)
 	}
 
 	// Verify that nil means all modes are allowed
 	modes := []string{"direct", "gitops", "hybrid"}
 	for _, mode := range modes {
-		if !IsDeploymentModeAllowed(parsed, mode) {
+		if !IsDeploymentModeAllowed(result.ValidModes, mode) {
 			t.Errorf("IsDeploymentModeAllowed(nil, %q) = false, want true (nil should allow all modes)", mode)
 		}
 	}

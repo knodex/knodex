@@ -5,7 +5,6 @@ package netutil
 
 import (
 	"context"
-	"net"
 	"strings"
 	"testing"
 	"time"
@@ -154,32 +153,6 @@ func TestNewSSRFSafeDialer_MixedPublicPrivateIPs(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "private/reserved") {
 		t.Fatalf("expected private/reserved block error, got: %v", err)
-	}
-}
-
-func TestIsPrivateIP_Exported(t *testing.T) {
-	// Verify the exported wrapper works
-	tests := []struct {
-		ip      string
-		private bool
-	}{
-		{"127.0.0.1", true},
-		{"10.0.0.1", true},
-		{"8.8.8.8", false},
-		{"169.254.169.254", true},
-		{"::1", true},
-		{"2607:f8b0::1", false},
-	}
-
-	for _, tt := range tests {
-		ip := net.ParseIP(tt.ip)
-		if ip == nil {
-			t.Fatalf("failed to parse IP %q", tt.ip)
-		}
-		got := IsPrivateIP(ip)
-		if got != tt.private {
-			t.Errorf("IsPrivateIP(%s) = %v, want %v", tt.ip, got, tt.private)
-		}
 	}
 }
 

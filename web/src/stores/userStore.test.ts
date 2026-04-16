@@ -56,7 +56,7 @@ describe('useUserStore', () => {
         name: 'Test User',
       });
       expect(result.current.projects).toEqual(['org-1', 'org-2']);
-      expect(result.current.currentProject).toBe('org-1');
+      expect(result.current.currentProject).toBeNull(); // Defaults to All Projects
     });
 
     it('should handle admin user (permissions via Casbin)', () => {
@@ -84,7 +84,7 @@ describe('useUserStore', () => {
       expect(result.current.sessionStatus).toBe('valid');
     });
 
-    it('should use first project as currentProject (generic fallback)', () => {
+    it('should default to All Projects (null) on fresh login', () => {
       const userInfo = makeUserInfo({
         projects: ['org-alpha', 'org-beta'],
       });
@@ -96,13 +96,11 @@ describe('useUserStore', () => {
       });
 
       expect(result.current.isAuthenticated).toBe(true);
-      expect(result.current.currentProject).toBe('org-alpha');
+      expect(result.current.currentProject).toBeNull();
       expect(result.current.projects).toEqual(['org-alpha', 'org-beta']);
     });
 
-    it('should ignore defaultProject hint and use generic projects[0] fallback', () => {
-      // Server sets defaultProject, but the store treats all projects equally
-      // and falls back to projects[0] when no persisted project exists
+    it('should default to All Projects regardless of defaultProject hint', () => {
       const userInfo = makeUserInfo({
         projects: ['org-1', 'org-2'],
         defaultProject: 'org-2',
@@ -114,8 +112,8 @@ describe('useUserStore', () => {
         result.current.login(userInfo);
       });
 
-      // Uses projects[0], NOT defaultProject — no special-casing
-      expect(result.current.currentProject).toBe('org-1');
+      // Fresh login always starts on All Projects
+      expect(result.current.currentProject).toBeNull();
     });
 
     it('should set currentProject to null when no projects', () => {
@@ -205,15 +203,16 @@ describe('useUserStore', () => {
       expect(result.current.currentProject).toBe('org-2');
     });
 
-    it('should fall back to projects[0] when current project not in list', () => {
+    it('should fall back to All Projects when current project not in list', () => {
       const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
       const { result } = renderHook(() => useUserStore());
 
-      // Set up persisted project
+      // Login and explicitly select a project
       act(() => {
         result.current.login(makeUserInfo({
           projects: ['org-old'],
         }));
+        result.current.setCurrentProject('org-old');
       });
 
       // Restore with different projects (user removed from org-old)
@@ -223,7 +222,7 @@ describe('useUserStore', () => {
         }));
       });
 
-      expect(result.current.currentProject).toBe('org-new');
+      expect(result.current.currentProject).toBeNull();
       consoleSpy.mockRestore();
     });
 
@@ -368,7 +367,7 @@ describe('useUserStore', () => {
     beforeEach(() => {
       const userInfo = makeUserInfo({
         projects: ['org-1', 'org-2', 'org-3'],
-        // defaultProject not used by store — generic projects[0] fallback applies
+        // Fresh login defaults to All Projects (null)
       });
 
       const { result } = renderHook(() => useUserStore());
@@ -387,16 +386,39 @@ describe('useUserStore', () => {
       expect(result.current.currentProject).toBe('org-2');
     });
 
-    it('should not set current project if user is not member', () => {
+    it('should set any project (backend enforces access)', () => {
       const { result } = renderHook(() => useUserStore());
-      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
       act(() => {
         result.current.setCurrentProject('org-999');
       });
 
-      expect(result.current.currentProject).toBe('org-1');
-      consoleSpy.mockRestore();
+      expect(result.current.currentProject).toBe('org-999');
+    });
+
+    it('should set currentProject to null for "All Projects"', () => {
+      const { result } = renderHook(() => useUserStore());
+
+      act(() => {
+        result.current.setCurrentProject(null);
+      });
+
+      expect(result.current.currentProject).toBeNull();
+    });
+
+    it('should persist null currentProject to localStorage', () => {
+      const { result } = renderHook(() => useUserStore());
+
+      act(() => {
+        result.current.setCurrentProject(null);
+      });
+
+      const storage = localStorage.getItem('user-storage');
+      expect(storage).toBeTruthy();
+      if (storage) {
+        const parsed = JSON.parse(storage);
+        expect(parsed.state.currentProject).toBeNull();
+      }
     });
   });
 
@@ -404,7 +426,7 @@ describe('useUserStore', () => {
     it('should persist only hasSession and currentProject to localStorage', () => {
       const userInfo = makeUserInfo({
         projects: ['org-1', 'org-2'],
-        // defaultProject not used by store — generic projects[0] fallback applies
+        // Fresh login defaults to All Projects (null)
       });
 
       const { result } = renderHook(() => useUserStore());
@@ -420,7 +442,7 @@ describe('useUserStore', () => {
         const parsed = JSON.parse(storage);
         // Only hasSession and currentProject should be persisted
         expect(parsed.state.hasSession).toBe(true);
-        expect(parsed.state.currentProject).toBe('org-1');
+        expect(parsed.state.currentProject).toBeNull();
         // These should NOT be persisted
         expect(parsed.state.user).toBeUndefined();
         expect(parsed.state.roles).toBeUndefined();
@@ -433,7 +455,7 @@ describe('useUserStore', () => {
     it('should persist currentProject changes', () => {
       const userInfo = makeUserInfo({
         projects: ['org-1', 'org-2'],
-        // defaultProject not used by store — generic projects[0] fallback applies
+        // Fresh login defaults to All Projects (null)
       });
 
       const { result } = renderHook(() => useUserStore());

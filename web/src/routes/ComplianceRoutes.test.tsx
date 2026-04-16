@@ -1,6 +1,7 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -167,21 +168,13 @@ describe("ComplianceDashboard", () => {
     it("renders page header with correct title (AC-LAYOUT-02)", () => {
       render(<ComplianceDashboard />, { wrapper: createWrapper() });
 
-      expect(
-        screen.getByText("Monitor OPA Gatekeeper policy compliance across your clusters")
-      ).toBeInTheDocument();
+      expect(screen.getByText("Policy Compliance")).toBeInTheDocument();
     });
 
     it("renders summary cards section (AC-LAYOUT-03)", () => {
       render(<ComplianceDashboard />, { wrapper: createWrapper() });
 
       expect(screen.getByTestId("summary-cards")).toBeInTheDocument();
-    });
-
-    it("renders violations by enforcement breakdown (AC-LAYOUT-04)", () => {
-      render(<ComplianceDashboard />, { wrapper: createWrapper() });
-
-      expect(screen.getByTestId("violations-by-enforcement")).toBeInTheDocument();
     });
 
     it("renders recent violations table (AC-LAYOUT-05)", () => {
@@ -205,7 +198,6 @@ describe("ComplianceDashboard", () => {
 
       // Components should still render (they handle loading internally)
       expect(screen.getByTestId("summary-cards")).toBeInTheDocument();
-      expect(screen.getByTestId("violations-by-enforcement")).toBeInTheDocument();
       expect(screen.getByTestId("recent-violations")).toBeInTheDocument();
     });
   });

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { Link } from "react-router-dom";
-import { AlertCircle, ExternalLink, Loader2, Puzzle } from "lucide-react";
+import { AlertCircle, ExternalLink, Loader2, Puzzle } from "@/lib/icons";
 import { useRGDList } from "@/hooks/useRGDs";
 import { Button } from "@/components/ui/button";
 import { RGDMiniCard } from "@/components/shared/RGDMiniCard";
@@ -17,7 +17,7 @@ interface InstanceAddOnsProps {
   instanceNamespace: string;
 }
 
-export function InstanceAddOns({ kind, instanceName, instanceNamespace }: InstanceAddOnsProps) {
+export function InstanceAddOns({ kind, instanceName: _instanceName, instanceNamespace: _instanceNamespace }: InstanceAddOnsProps) {
   const { data, isLoading, error } = useRGDList({ extendsKind: kind, pageSize: ADDONS_PAGE_SIZE });
 
   if (isLoading) {
@@ -71,7 +71,7 @@ export function InstanceAddOns({ kind, instanceName, instanceNamespace }: Instan
             action={
               <Button asChild size="sm" variant="outline" className="w-full gap-1.5">
                 <Link
-                  to={`/catalog/${encodeURIComponent(addon.name)}/deploy?prefillRef=${encodeURIComponent(instanceName)}&prefillRefNs=${encodeURIComponent(instanceNamespace)}`}
+                  to={`/catalog/${encodeURIComponent(addon.name)}`}
                 >
                   <ExternalLink className="h-3.5 w-3.5" />
                   Deploy

@@ -102,7 +102,44 @@ patches:
         value: "true"
       - op: add
         path: /data/KNODEX_LICENSE_TEXT
-        value: "${KNODEX_LICENSE_TEXT:-replace-with-dev-license-jwt}"
+        value: "eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJsaWNlbnNlLmtub2RleC5pbyIsInN1YiI6ImUyZS10ZXN0LWN1c3RvbWVyIiwiZXhwIjoyMDg5NDAzNzk3LCJpYXQiOjE3NzQwNDAxOTcsImZlYXR1cmVzIjpbImNvbXBsaWFuY2UiLCJ2aWV3cyIsInNlY3JldHMiXSwibWF4VXNlcnMiOjk5OTksImxpY2Vuc2VJZCI6ImxpY19lMmVfdGVzdCIsImVkaXRpb24iOiJlbnRlcnByaXNlIn0.Cwe2cyuRZBi-fAq3Ii7GPDI1nw2Cyy1Ts22uo4cYl52HQa1kiFM4XmqVzPhh3n0iTOksOpxLcNxlHc1mswAkpw"
+
+  # Populate views configuration with categories matching example RGDs
+  - target:
+      kind: ConfigMap
+      name: knodex-views
+    patch: |
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: knodex-views
+      data:
+        views.yaml: |
+          views:
+            - name: Applications
+              slug: applications
+              icon: app-window
+              category: applications
+              order: 1
+              description: Application deployment templates
+            - name: Infrastructure
+              slug: infrastructure
+              icon: server
+              category: infrastructure
+              order: 2
+              description: Infrastructure provisioning templates
+            - name: Observability
+              slug: observability
+              icon: activity
+              category: observability
+              order: 3
+              description: Monitoring and observability resources
+            - name: Examples
+              slug: examples
+              icon: flask-conical
+              category: examples
+              order: 4
+              description: Example and tutorial RGDs
 
 # Use labels instead of deprecated commonLabels
 labels:

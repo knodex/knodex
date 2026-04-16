@@ -20,6 +20,7 @@ type RGDCache struct {
 	projectIndex       map[string]map[string]bool    // project -> set of cache keys (namespace/name)
 	extendsKindIndex   map[string]map[string]bool    // kind -> set of cache keys for RGDs that extend that kind
 	dependsOnKindIndex map[string]map[string]bool    // kind -> set of cache keys for RGDs that depend on that kind
+	producesKindIndex  map[string]map[string]bool    // kind -> set of cache keys for RGDs that produce that kind
 }
 
 // NewRGDCache creates a new RGD cache
@@ -30,6 +31,7 @@ func NewRGDCache() *RGDCache {
 		projectIndex:       make(map[string]map[string]bool),
 		extendsKindIndex:   make(map[string]map[string]bool),
 		dependsOnKindIndex: make(map[string]map[string]bool),
+		producesKindIndex:  make(map[string]map[string]bool),
 	}
 }
 
@@ -90,6 +92,16 @@ func (c *RGDCache) Set(rgd *models.CatalogRGD) {
 				}
 			}
 		}
+
+		// Remove old produces-kind index entries
+		for _, gvk := range oldRGD.ProducesKinds {
+			if keys, ok := c.producesKindIndex[gvk.Kind]; ok {
+				delete(keys, key)
+				if len(keys) == 0 {
+					delete(c.producesKindIndex, gvk.Kind)
+				}
+			}
+		}
 	}
 
 	// Add/update the RGD in the main cache
@@ -128,6 +140,14 @@ func (c *RGDCache) Set(rgd *models.CatalogRGD) {
 			c.dependsOnKindIndex[kind] = make(map[string]bool)
 		}
 		c.dependsOnKindIndex[kind][key] = true
+	}
+
+	// Add new produces-kind index entries (keyed by Kind string for O(1) lookup)
+	for _, gvk := range rgd.ProducesKinds {
+		if c.producesKindIndex[gvk.Kind] == nil {
+			c.producesKindIndex[gvk.Kind] = make(map[string]bool)
+		}
+		c.producesKindIndex[gvk.Kind][key] = true
 	}
 }
 
@@ -189,6 +209,16 @@ func (c *RGDCache) Delete(namespace, name string) {
 				delete(keys, key)
 				if len(keys) == 0 {
 					delete(c.dependsOnKindIndex, kind)
+				}
+			}
+		}
+
+		// Remove produces-kind index entries
+		for _, gvk := range oldRGD.ProducesKinds {
+			if keys, ok := c.producesKindIndex[gvk.Kind]; ok {
+				delete(keys, key)
+				if len(keys) == 0 {
+					delete(c.producesKindIndex, gvk.Kind)
 				}
 			}
 		}
@@ -262,6 +292,7 @@ func (c *RGDCache) getCandidateKeys(opts models.ListOptions) map[string]bool {
 	var projectCandidates map[string]bool
 	var extendsKindCandidates map[string]bool
 	var dependsOnKindCandidates map[string]bool
+	var producesKindCandidates map[string]bool
 
 	// Use extends-kind index if filter is present
 	if opts.ExtendsKind != "" {
@@ -276,6 +307,14 @@ func (c *RGDCache) getCandidateKeys(opts models.ListOptions) map[string]bool {
 		dependsOnKindCandidates = c.dependsOnKindIndex[opts.DependsOnKind]
 		if dependsOnKindCandidates == nil {
 			return make(map[string]bool) // No RGDs depend on this kind
+		}
+	}
+
+	// Use produces-kind index if filter is present
+	if opts.ProducesKind != "" {
+		producesKindCandidates = c.producesKindIndex[opts.ProducesKind]
+		if producesKindCandidates == nil {
+			return make(map[string]bool) // No RGDs produce this kind
 		}
 	}
 
@@ -335,6 +374,9 @@ func (c *RGDCache) getCandidateKeys(opts models.ListOptions) map[string]bool {
 	}
 	if dependsOnKindCandidates != nil {
 		candidateSets = append(candidateSets, dependsOnKindCandidates)
+	}
+	if producesKindCandidates != nil {
+		candidateSets = append(candidateSets, producesKindCandidates)
 	}
 
 	if len(candidateSets) == 0 {
@@ -428,6 +470,7 @@ func (c *RGDCache) Clear() {
 	c.projectIndex = make(map[string]map[string]bool)
 	c.extendsKindIndex = make(map[string]map[string]bool)
 	c.dependsOnKindIndex = make(map[string]map[string]bool)
+	c.producesKindIndex = make(map[string]map[string]bool)
 }
 
 // matchesFilter checks if an RGD matches the filter options
@@ -465,6 +508,21 @@ func (c *RGDCache) matchesFilter(rgd *models.CatalogRGD, opts models.ListOptions
 	// When active: shared RGDs (empty org) pass, matching org passes, mismatching org filtered
 	if opts.Organization != "" {
 		if rgd.Organization != "" && rgd.Organization != opts.Organization {
+			return false
+		}
+	}
+
+	// Catalog tier filter: restrict RGDs by project type visibility.
+	// nil CatalogTiers = no filtering (admin/backward compat); non-nil = RGD's tier must be in the set.
+	if opts.CatalogTiers != nil {
+		found := false
+		for _, tier := range opts.CatalogTiers {
+			if rgd.CatalogTier == tier {
+				found = true
+				break
+			}
+		}
+		if !found {
 			return false
 		}
 	}
@@ -571,6 +629,27 @@ func (c *RGDCache) matchesFilter(rgd *models.CatalogRGD, opts models.ListOptions
 		if !found {
 			return false
 		}
+	}
+
+	// ProducesKind filter (defense-in-depth: also checked via index in getCandidateKeys)
+	if opts.ProducesKind != "" {
+		found := false
+		for _, gvk := range rgd.ProducesKinds {
+			if gvk.Kind == opts.ProducesKind {
+				if opts.ProducesGroup == "" || gvk.Group == opts.ProducesGroup {
+					found = true
+					break
+				}
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+
+	// Status filter (e.g., "Active", "Inactive")
+	if opts.Status != "" && rgd.Status != opts.Status {
+		return false
 	}
 
 	// Search filter (case-insensitive contains on name, title, and description)

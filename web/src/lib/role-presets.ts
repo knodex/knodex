@@ -17,16 +17,27 @@ export interface RolePreset {
 
 const ADMIN_POLICIES = [
   'p, proj:{project}:{role}, projects, *, {project}, allow',
-  'p, proj:{project}:{role}, instances, *, {project}/*, allow',
+  'p, proj:{project}:{role}, instances, *, */{project}/*, allow',
   'p, proj:{project}:{role}, rgds, get, *, allow',
   'p, proj:{project}:{role}, rgds, list, *, allow',
   'p, proj:{project}:{role}, repositories, *, {project}/*, allow',
-  ...(isEnterprise() ? ['p, proj:{project}:{role}, compliance, get, {project}/*, allow'] : []),
+];
+
+/**
+ * Enterprise-only admin policies injected at resolution time via resolvePresetPolicies.
+ * Kept separate so isEnterprise() is evaluated per-call, not frozen at module load.
+ */
+const ENTERPRISE_ADMIN_POLICIES = [
+  'p, proj:{project}:{role}, compliance, get, {project}/*, allow',
 ];
 
 /**
  * Preset role templates with {project} and {role} placeholders.
  * Each policy is a full Casbin string: p, proj:{project}:{role}, {resource}, {action}, {object}, {effect}
+ *
+ * IMPORTANT: Instance policies use category-scoped paths (e.g. instances, *, {cat}/{project}/*, allow).
+ * This requires the server-side Casbin model to support mid-pattern wildcards (EPIC-047b server changes).
+ * With the default keyMatch, the first wildcard matches greedily — deploy only alongside server RBAC updates.
  */
 export const ROLE_PRESETS: RolePreset[] = [
   {
@@ -40,7 +51,8 @@ export const ROLE_PRESETS: RolePreset[] = [
     label: 'Developer',
     description: 'Deploy and manage instances',
     policies: [
-      'p, proj:{project}:{role}, instances, *, {project}/*, allow',
+      'p, proj:{project}:{role}, projects, get, {project}, allow',
+      'p, proj:{project}:{role}, instances, *, */{project}/*, allow',
       'p, proj:{project}:{role}, rgds, get, *, allow',
       'p, proj:{project}:{role}, rgds, list, *, allow',
       'p, proj:{project}:{role}, repositories, get, {project}/*, allow',
@@ -53,8 +65,8 @@ export const ROLE_PRESETS: RolePreset[] = [
     description: 'View-only access to project resources',
     policies: [
       'p, proj:{project}:{role}, projects, get, {project}, allow',
-      'p, proj:{project}:{role}, instances, get, {project}/*, allow',
-      'p, proj:{project}:{role}, instances, list, {project}/*, allow',
+      'p, proj:{project}:{role}, instances, get, */{project}/*, allow',
+      'p, proj:{project}:{role}, instances, list, */{project}/*, allow',
       'p, proj:{project}:{role}, rgds, get, *, allow',
       'p, proj:{project}:{role}, rgds, list, *, allow',
       'p, proj:{project}:{role}, repositories, get, {project}/*, allow',
@@ -64,10 +76,16 @@ export const ROLE_PRESETS: RolePreset[] = [
 ];
 
 /**
- * Resolve placeholders in preset policy strings
+ * Resolve placeholders in preset policy strings.
+ * Enterprise-only policies (e.g. compliance) are injected here based on current runtime state,
+ * not at module load time — ensuring isEnterprise() is evaluated per-call.
  */
 export function resolvePresetPolicies(preset: RolePreset, projectName: string): string[] {
-  return preset.policies.map((p) =>
+  const policies = [
+    ...preset.policies,
+    ...(preset.name === 'admin' && isEnterprise() ? ENTERPRISE_ADMIN_POLICIES : []),
+  ];
+  return policies.map((p) =>
     p.replaceAll('{project}', projectName).replaceAll('{role}', preset.name)
   );
 }

@@ -67,6 +67,14 @@ vi.mock('@/stores/userStore', () => ({
   ),
 }));
 
+// Mock command palette (uses React Query which isn't in test tree)
+vi.mock('@/components/command-palette/command-palette', () => ({
+  CommandPalette: () => null,
+}));
+vi.mock('@/components/command-palette/use-command-palette-shortcut', () => ({
+  useCommandPaletteShortcut: () => ({ open: false, setOpen: vi.fn() }),
+}));
+
 // Import after mocks
 import { DashboardLayout } from './DashboardLayout';
 
@@ -166,5 +174,54 @@ describe('DashboardLayout', () => {
     renderDashboard();
 
     expect(screen.getByText('Login Page')).toBeInTheDocument();
+  });
+
+  describe('Accessibility - Skip Link', () => {
+    it('renders skip link with correct href', () => {
+      renderDashboard();
+
+      const skipLink = screen.getByText('Skip to main content');
+      expect(skipLink).toBeInTheDocument();
+      expect(skipLink.tagName).toBe('A');
+      expect(skipLink).toHaveAttribute('href', '#main-content');
+    });
+
+    it('skip link is the first focusable element in the DOM', () => {
+      renderDashboard();
+
+      const allFocusable = document.querySelectorAll<HTMLElement>(
+        'a[href], button, input, textarea, select, [tabindex]:not([tabindex="-1"])'
+      );
+      expect(allFocusable.length).toBeGreaterThan(0);
+      expect(allFocusable[0]).toHaveTextContent('Skip to main content');
+    });
+
+    it('skip link targets main content area', () => {
+      renderDashboard();
+
+      const main = document.getElementById('main-content');
+      expect(main).toBeInTheDocument();
+      expect(main?.tagName).toBe('MAIN');
+    });
+  });
+
+  describe('Accessibility - Focus management setup', () => {
+    it('main content has tabIndex=-1 for programmatic focus', () => {
+      renderDashboard();
+
+      const main = document.getElementById('main-content');
+      expect(main).toHaveAttribute('tabindex', '-1');
+    });
+
+    it('does not steal focus on initial page load', async () => {
+      renderDashboard();
+
+      // Wait past the 100ms timeout — focus should NOT move on initial render
+      await new Promise((r) => setTimeout(r, 200));
+
+      // Focus should not be on main (isFirstRender ref prevents it)
+      const main = document.getElementById('main-content');
+      expect(document.activeElement).not.toBe(main);
+    });
   });
 });

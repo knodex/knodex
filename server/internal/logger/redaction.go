@@ -145,18 +145,3 @@ func RedactSensitiveData(s string) string {
 	}
 	return result
 }
-
-// AddRedactionPattern adds a custom redaction pattern
-func AddRedactionPattern(name string, pattern *regexp.Regexp) {
-	redactionMutex.Lock()
-	defer redactionMutex.Unlock()
-
-	// Create new slice to avoid race with readers
-	newPatterns := make([]redactionPattern, len(redactionPatterns), len(redactionPatterns)+1)
-	copy(newPatterns, redactionPatterns)
-	newPatterns = append(newPatterns, redactionPattern{
-		name:    name,
-		pattern: pattern,
-	})
-	redactionPatterns = newPatterns
-}

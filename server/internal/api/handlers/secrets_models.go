@@ -18,6 +18,7 @@ type SecretResponse struct {
 	Namespace string            `json:"namespace"`
 	Keys      []string          `json:"keys"`
 	CreatedAt time.Time         `json:"createdAt"`
+	UpdatedAt *time.Time        `json:"updatedAt,omitempty"`
 	Labels    map[string]string `json:"labels,omitempty"`
 }
 
@@ -27,6 +28,7 @@ type SecretDetailResponse struct {
 	Namespace string            `json:"namespace"`
 	Data      map[string]string `json:"data"`
 	CreatedAt time.Time         `json:"createdAt"`
+	UpdatedAt *time.Time        `json:"updatedAt,omitempty"`
 	Labels    map[string]string `json:"labels,omitempty"`
 }
 
@@ -44,10 +46,10 @@ type DeleteSecretResponse struct {
 
 // SecretListResponse represents a list of secrets
 type SecretListResponse struct {
-	Items      []SecretResponse `json:"items"`
-	TotalCount int              `json:"totalCount"`
-	Continue   string           `json:"continue,omitempty"`
-	HasMore    bool             `json:"hasMore"`
+	Items     []SecretResponse `json:"items"`
+	PageCount int              `json:"pageCount"`
+	Continue  string           `json:"continue,omitempty"`
+	HasMore   bool             `json:"hasMore"`
 }
 
 // Pagination defaults and limits for secret list operations.

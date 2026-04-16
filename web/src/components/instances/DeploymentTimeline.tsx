@@ -1,7 +1,7 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useState } from "react";
+import { useState, useRef, useEffect, useMemo, Fragment } from "react";
 import {
   Clock,
   CheckCircle2,
@@ -21,7 +21,8 @@ import {
   Activity,
   AlertTriangle,
   ExternalLink,
-} from "lucide-react";
+  GitBranch,
+} from "@/lib/icons";
 import { Button } from "@/components/ui/button";
 import { useInstanceTimeline, useExportHistory } from "@/hooks/useHistory";
 import type { TimelineEntry, DeploymentEventType, HistoryExportFormat } from "@/types/history";
@@ -51,6 +52,7 @@ const EVENT_ICONS: Record<DeploymentEventType, React.ComponentType<{ className?:
   Deleted: Trash2,
   Updated: Edit,
   StatusChanged: Activity,
+  RevisionChanged: GitBranch,
 };
 
 const EVENT_COLORS: Record<DeploymentEventType, string> = {
@@ -66,6 +68,7 @@ const EVENT_COLORS: Record<DeploymentEventType, string> = {
   Deleted: "text-muted-foreground bg-secondary border-border",
   Updated: "text-status-info bg-status-info/10 border-status-info/20",
   StatusChanged: "text-primary bg-primary/10 border-primary/20",
+  RevisionChanged: "text-primary bg-primary/10 border-primary/20",
 };
 
 function getEventLabel(eventType: DeploymentEventType): string {
@@ -82,6 +85,7 @@ function getEventLabel(eventType: DeploymentEventType): string {
     case "Deleted": return "Deleted";
     case "Updated": return "Updated";
     case "StatusChanged": return "Status Changed";
+    case "RevisionChanged": return "Revision Changed";
     default: return eventType;
   }
 }
@@ -107,97 +111,229 @@ function getRelativeTime(timestamp: string): string {
   return "just now";
 }
 
-function TimelineItem({ entry, isLast }: { entry: TimelineEntry; isLast: boolean }) {
+/**
+ * Compute proportional gap weights for ALL connectors including the "Now" gap.
+ * Returns { eventGaps: number[], nowGap: number } where all weights share the
+ * same scale so time proportions are visually accurate across the full rail.
+ */
+function computeAllGapWeights(timeline: TimelineEntry[]): { eventGaps: number[]; nowGap: number } {
+  if (timeline.length === 0) return { eventGaps: [], nowGap: 0 };
+
+  const timestamps = timeline.map((e) => new Date(e.timestamp).getTime());
+  const now = Date.now();
+
+  // Collect ALL gaps: between events + to "now"
+  const allGaps: number[] = [];
+  for (let i = 1; i < timestamps.length; i++) {
+    allGaps.push(Math.max(timestamps[i] - timestamps[i - 1], 0));
+  }
+  const nowGapMs = Math.max(now - timestamps[timestamps.length - 1], 0);
+  allGaps.push(nowGapMs);
+
+  // Normalize all gaps together, with a floor of 0.05 so even near-zero gaps are visible
+  const maxGap = Math.max(...allGaps, 1);
+  const normalized = allGaps.map((g) => Math.max(g / maxGap, 0.05));
+
+  return {
+    eventGaps: normalized.slice(0, -1),
+    nowGap: normalized[normalized.length - 1],
+  };
+}
+
+// Minimum connector width in px
+const MIN_GAP_PX = 20;
+
+function TimelineNode({
+  entry,
+  index,
+  isSelected,
+  onSelect,
+  nodeRef,
+}: {
+  entry: TimelineEntry;
+  index: number;
+  isSelected: boolean;
+  onSelect: (index: number) => void;
+  nodeRef?: React.Ref<HTMLButtonElement>;
+}) {
   const Icon = EVENT_ICONS[entry.eventType] || Activity;
   const colorClass = EVENT_COLORS[entry.eventType] || EVENT_COLORS.StatusChanged;
 
   return (
-    <div className="relative flex gap-4 pb-6 last:pb-0">
-      {/* Connector line */}
-      {!isLast && (
-        <div className="absolute left-[17px] top-10 bottom-0 w-px bg-border" />
-      )}
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          ref={nodeRef}
+          type="button"
+          onClick={() => onSelect(index)}
+          className="flex flex-col items-center shrink-0 gap-1.5 group focus:outline-none"
+          style={{ width: 72 }}
+          aria-label={`${getEventLabel(entry.eventType)}${entry.isCurrent ? " (current)" : ""}`}
+        >
+          {/* Node circle */}
+          <div
+            className={cn(
+              "relative flex h-9 w-9 items-center justify-center rounded-full border-2 transition-all",
+              colorClass,
+              isSelected && "ring-2 ring-offset-2 ring-offset-background ring-primary scale-110",
+              entry.isCurrent && !isSelected && "ring-2 ring-primary/50 ring-offset-1 ring-offset-background",
+              !isSelected && "group-hover:scale-105",
+            )}
+          >
+            <Icon
+              className={cn(
+                "h-4 w-4",
+                entry.eventType === "Creating" && "animate-spin",
+              )}
+            />
+          </div>
 
-      {/* Icon */}
-      <div
-        className={cn(
-          "relative z-10 flex h-9 w-9 shrink-0 items-center justify-center rounded-full border",
-          colorClass,
-          entry.isCurrent && "ring-2 ring-primary ring-offset-2 ring-offset-background"
-        )}
-      >
-        <Icon className={cn(
-          "h-4 w-4",
-          entry.eventType === "Creating" && "animate-spin"
-        )} />
-      </div>
-
-      {/* Content */}
-      <div className="flex-1 min-w-0 pt-0.5">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="font-medium text-sm text-foreground">
+          {/* Label */}
+          <span className={cn(
+            "text-[10px] leading-tight text-center max-w-full truncate",
+            isSelected ? "text-foreground font-medium" : "text-muted-foreground",
+          )}>
             {getEventLabel(entry.eventType)}
           </span>
-          {entry.isCurrent && (
-            <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-primary/10 text-primary">
-              Current
-            </span>
-          )}
-          {entry.isCompleted && !entry.isCurrent && (
-            <CheckCircle2 className="h-3.5 w-3.5 text-muted-foreground" />
-          )}
-        </div>
 
-        <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
-          <Clock className="h-3 w-3" />
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span className="cursor-default">
-                {getRelativeTime(entry.timestamp)}
-              </span>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>{formatTimestamp(entry.timestamp)}</p>
-            </TooltipContent>
-          </Tooltip>
-          {entry.user && (
-            <>
-              <span className="text-border">|</span>
-              <User className="h-3 w-3" />
-              <span>{entry.user}</span>
-            </>
-          )}
-        </div>
+          {/* Relative time */}
+          <span className="text-[9px] text-muted-foreground/70 leading-none">
+            {getRelativeTime(entry.timestamp)}
+          </span>
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="top" className="max-w-xs">
+        <p className="font-medium">{getEventLabel(entry.eventType)}</p>
+        <p className="text-xs text-muted-foreground">{formatTimestamp(entry.timestamp)}</p>
+        {entry.user && <p className="text-xs">by {entry.user}</p>}
+        {entry.message && <p className="text-xs mt-1">{entry.message}</p>}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
 
-        {entry.message && (
-          <p className="mt-1.5 text-sm text-muted-foreground">
-            {entry.message}
-          </p>
-        )}
+function TimelineConnector({ weight, dashed }: { weight: number; dashed?: boolean }) {
+  return (
+    <div
+      className="self-start flex items-center"
+      style={{ flexGrow: weight, flexShrink: 0, flexBasis: MIN_GAP_PX, marginTop: 16 /* center on the 36px node circle */ }}
+    >
+      <div className={cn("h-px w-full", dashed ? "border-t border-dashed border-muted-foreground/30" : "bg-border")} />
+    </div>
+  );
+}
 
-        {entry.gitCommitUrl && (
-          <a
-            href={entry.gitCommitUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 mt-2 text-xs text-primary hover:underline"
-          >
-            <GitCommit className="h-3 w-3" />
-            View commit
-            <ExternalLink className="h-3 w-3" />
-          </a>
-        )}
+function NowMarker() {
+  return (
+    <div className="flex flex-col items-center shrink-0 gap-1.5" style={{ width: 40 }}>
+      {/* Pulsing "now" dot */}
+      <div className="relative flex h-9 w-9 items-center justify-center">
+        <div className="absolute h-3 w-3 rounded-full bg-primary/20 animate-ping" />
+        <div className="h-2.5 w-2.5 rounded-full bg-primary" />
       </div>
+      <span className="text-[10px] font-medium text-primary leading-tight">Now</span>
+    </div>
+  );
+}
+
+function DetailCard({ entry }: { entry: TimelineEntry }) {
+  const Icon = EVENT_ICONS[entry.eventType] || Activity;
+  const colorClass = EVENT_COLORS[entry.eventType] || EVENT_COLORS.StatusChanged;
+
+  return (
+    <div className="mt-3 mx-4 rounded-lg border border-border bg-secondary/30 p-3 animate-in fade-in-0 slide-in-from-top-1 duration-150">
+      <div className="flex items-center gap-3">
+        <div
+          className={cn(
+            "flex h-7 w-7 shrink-0 items-center justify-center rounded-full border",
+            colorClass,
+          )}
+        >
+          <Icon className={cn("h-3.5 w-3.5", entry.eventType === "Creating" && "animate-spin")} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-medium text-sm text-foreground">
+              {getEventLabel(entry.eventType)}
+            </span>
+            {entry.isCompleted && (
+              <CheckCircle2 className="h-3.5 w-3.5 text-muted-foreground" />
+            )}
+          </div>
+          <div className="flex items-center gap-2 mt-0.5 text-xs text-muted-foreground">
+            <Clock className="h-3 w-3" />
+            <span>{formatTimestamp(entry.timestamp)}</span>
+            {entry.user && (
+              <>
+                <span className="text-border">|</span>
+                <User className="h-3 w-3" />
+                <span>{entry.user}</span>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {entry.message && (
+        <p className="mt-2 text-sm text-muted-foreground pl-10">
+          {entry.message}
+        </p>
+      )}
+
+      {entry.gitCommitUrl && (
+        <a
+          href={entry.gitCommitUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1.5 mt-2 pl-10 text-xs text-primary hover:underline"
+        >
+          <GitCommit className="h-3 w-3" />
+          View commit
+          <ExternalLink className="h-3 w-3" />
+        </a>
+      )}
     </div>
   );
 }
 
 export function DeploymentTimeline({ namespace, kind, name }: DeploymentTimelineProps) {
   const [isExpanded, setIsExpanded] = useState(true);
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [exportFormat, setExportFormat] = useState<HistoryExportFormat>("json");
 
   const { data: timelineData, isLoading, error, refetch } = useInstanceTimeline(namespace, kind, name);
   const exportHistory = useExportHistory();
+
+  const timeline = useMemo(() => timelineData?.timeline ?? [], [timelineData?.timeline]);
+
+  const { eventGaps: gapWeights, nowGap: nowWeight } = useMemo(
+    () => computeAllGapWeights(timeline),
+    [timeline],
+  );
+
+  // Derive the default selected index without a setState-in-effect
+  const defaultIndex = useMemo(() => {
+    if (timeline.length === 0) return null;
+    const idx = timeline.findIndex((e) => e.isCurrent);
+    return idx >= 0 ? idx : timeline.length - 1;
+  }, [timeline]);
+  const resolvedIndex = selectedIndex ?? defaultIndex;
+
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const selectedNodeRef = useRef<HTMLButtonElement>(null);
+
+  // Auto-scroll to the selected node
+  useEffect(() => {
+    if (selectedNodeRef.current && scrollContainerRef.current) {
+      const container = scrollContainerRef.current;
+      const node = selectedNodeRef.current;
+      const nodeLeft = node.offsetLeft;
+      const nodeWidth = node.offsetWidth;
+      const containerWidth = container.clientWidth;
+      const scrollTarget = nodeLeft - containerWidth / 2 + nodeWidth / 2;
+      container.scrollTo?.({ left: scrollTarget, behavior: "smooth" });
+    }
+  }, [resolvedIndex]);
 
   const handleExport = async () => {
     try {
@@ -243,7 +379,7 @@ export function DeploymentTimeline({ namespace, kind, name }: DeploymentTimeline
     );
   }
 
-  const timeline = timelineData?.timeline || [];
+  const selectedEntry = resolvedIndex !== null ? timeline[resolvedIndex] : null;
 
   return (
     <div className="rounded-lg border border-border bg-card overflow-hidden">
@@ -267,29 +403,47 @@ export function DeploymentTimeline({ namespace, kind, name }: DeploymentTimeline
 
       {isExpanded && (
         <>
-          {/* Timeline */}
-          <div className="p-4">
-            {timeline.length === 0 ? (
-              <div className="text-center py-6 text-muted-foreground">
-                <Clock className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                <p className="text-sm">No deployment history available</p>
+          {timeline.length === 0 ? (
+            <div className="text-center py-6 text-muted-foreground">
+              <Clock className="h-8 w-8 mx-auto mb-2 opacity-50" />
+              <p className="text-sm">No deployment history available</p>
+            </div>
+          ) : (
+            <>
+              {/* Horizontal timeline rail */}
+              <div
+                ref={scrollContainerRef}
+                className="overflow-x-auto py-4"
+              >
+                <div className="flex items-start px-6" style={{ minWidth: "min-content" }}>
+                  {timeline.map((entry, index) => (
+                    <Fragment key={`${entry.timestamp}-${entry.eventType}-${index}`}>
+                      <TimelineNode
+                        entry={entry}
+                        index={index}
+                        isSelected={resolvedIndex === index}
+                        onSelect={setSelectedIndex}
+                        nodeRef={resolvedIndex === index ? selectedNodeRef : undefined}
+                      />
+                      {index < timeline.length - 1 && (
+                        <TimelineConnector weight={gapWeights[index]} />
+                      )}
+                    </Fragment>
+                  ))}
+                  {/* "Now" marker at the end of the rail */}
+                  <TimelineConnector weight={nowWeight} dashed />
+                  <NowMarker />
+                </div>
               </div>
-            ) : (
-              <div className="space-y-0">
-                {timeline.map((entry, index) => (
-                  <TimelineItem
-                    key={`${entry.timestamp}-${entry.eventType}`}
-                    entry={entry}
-                    isLast={index === timeline.length - 1}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
+
+              {/* Detail card for selected event */}
+              {selectedEntry && <DetailCard entry={selectedEntry} />}
+            </>
+          )}
 
           {/* Export section */}
           {timeline.length > 0 && (
-            <div className="px-4 py-3 border-t border-border bg-secondary/30 flex items-center justify-between gap-4">
+            <div className="px-4 py-3 mt-2 border-t border-border bg-secondary/30 flex items-center justify-between gap-4">
               <div className="flex items-center gap-2">
                 <span className="text-xs text-muted-foreground">Export as:</span>
                 <select

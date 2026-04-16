@@ -1,0 +1,79 @@
+# Dev project seeded by Tilt for local development.
+# Creates 3 namespaces with 2 roles (operator, developer) demonstrating
+# category-scoped RGD catalog filtering.
+#
+# Namespaces:
+#   eng-infra:        operator deploys infra here
+#   eng-shared:       both roles can deploy
+#   eng-applications: developer deploys apps here
+#
+# Catalog visibility (Casbin category-scoped):
+#   operator:  infrastructure + observability categories
+#   developer: applications + examples categories
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: eng-infra
+  labels:
+    app.kubernetes.io/managed-by: tilt
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: eng-shared
+  labels:
+    app.kubernetes.io/managed-by: tilt
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: eng-applications
+  labels:
+    app.kubernetes.io/managed-by: tilt
+---
+apiVersion: knodex.io/v1alpha1
+kind: Project
+metadata:
+  name: engineering
+  labels:
+    team: engineering
+    app.kubernetes.io/managed-by: tilt
+spec:
+  description: "Engineering team — infra, shared, and application namespaces"
+
+  destinations:
+    - namespace: eng-infra
+      name: Infrastructure
+    - namespace: eng-shared
+      name: Shared
+    - namespace: eng-applications
+      name: Applications
+
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+
+  roles:
+    - name: operator
+      description: "Infrastructure operations — infrastructure + observability catalog categories"
+      policies:
+        - "projects/engineering, *, allow"
+        - "instances/engineering/*, *, allow"
+        - "repositories/engineering/*, *, allow"
+        - "rgds/infrastructure/*, get, allow"
+        - "rgds/observability/*, get, allow"
+      groups:
+        - eng-operators
+
+    - name: developer
+      description: "Application development — applications + examples catalog categories"
+      policies:
+        - "projects/engineering, get, allow"
+        - "instances/engineering/*, create, allow"
+        - "instances/engineering/*, get, allow"
+        - "instances/engineering/*, delete, allow"
+        - "rgds/applications/*, get, allow"
+        - "rgds/examples/*, get, allow"
+      groups:
+        - eng-developers

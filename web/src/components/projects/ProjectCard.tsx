@@ -4,7 +4,7 @@
 /**
  * Project card component for displaying project information in a list
  */
-import { Users, Shield, Edit, Trash2 } from "lucide-react";
+import { Users, Shield, Edit, Trash2 } from "@/lib/icons";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -34,8 +34,11 @@ export function ProjectCard({
 
   return (
     <div
+      role="button"
+      tabIndex={0}
       className="flex items-center justify-between p-4 rounded-lg border border-border hover:bg-secondary/50 transition-colors cursor-pointer"
       onClick={() => onClick?.(project)}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick?.(project); } }}
       data-testid="project-card"
     >
       <div className="flex items-center gap-4 flex-1 min-w-0">
@@ -91,6 +94,8 @@ export function ProjectCard({
         <div
           className="flex items-center gap-2 ml-4"
           onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+          role="toolbar"
         >
           {onEdit && (
             <Tooltip>

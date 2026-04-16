@@ -79,15 +79,21 @@ export async function captureFormSubmission<T = Record<string, unknown>>(
   submitAction: () => Promise<void>
 ): Promise<T> {
   let submittedData: T | null = null
-  const responsePromise = page.waitForResponse('**/api/v1/instances')
+  // Instance creation endpoint: POST /api/v1/namespaces/{ns}/instances/{kind}
+  const instancePattern = '**/api/v1/namespaces/*/instances/**'
+  const responsePromise = page.waitForResponse(instancePattern)
 
-  await page.route('**/api/v1/instances', async (route) => {
-    submittedData = await route.request().postDataJSON()
-    await route.fulfill({
-      status: 201,
-      contentType: 'application/json',
-      body: JSON.stringify({ success: true }),
-    })
+  await page.route(instancePattern, async (route) => {
+    if (route.request().method() === 'POST') {
+      submittedData = await route.request().postDataJSON()
+      await route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true }),
+      })
+    } else {
+      await route.continue()
+    }
   })
 
   await submitAction()

@@ -64,16 +64,6 @@ func GetMap(obj map[string]interface{}, path ...string) (map[string]interface{},
 	return m, nil
 }
 
-// GetMapOrDefault retrieves a map value at the specified path, returning
-// defaultVal if the path doesn't exist or the value is not a map.
-func GetMapOrDefault(obj map[string]interface{}, defaultVal map[string]interface{}, path ...string) map[string]interface{} {
-	m, err := GetMap(obj, path...)
-	if err != nil {
-		return defaultVal
-	}
-	return m
-}
-
 // GetSlice retrieves a slice value at the specified path in a nested map.
 // Returns ErrFieldNotFound if any part of the path doesn't exist.
 // Returns ErrTypeMismatch if the value exists but is not a []interface{}.
@@ -97,16 +87,6 @@ func GetSlice(obj map[string]interface{}, path ...string) ([]interface{}, error)
 	}
 
 	return slice, nil
-}
-
-// GetSliceOrDefault retrieves a slice value at the specified path, returning
-// defaultVal if the path doesn't exist or the value is not a slice.
-func GetSliceOrDefault(obj map[string]interface{}, defaultVal []interface{}, path ...string) []interface{} {
-	slice, err := GetSlice(obj, path...)
-	if err != nil {
-		return defaultVal
-	}
-	return slice
 }
 
 // GetInt64 retrieves an int64 value at the specified path in a nested map.
@@ -153,84 +133,6 @@ func GetInt64OrDefault(obj map[string]interface{}, defaultVal int64, path ...str
 	return n
 }
 
-// GetBool retrieves a bool value at the specified path in a nested map.
-// Returns ErrFieldNotFound if any part of the path doesn't exist.
-// Returns ErrTypeMismatch if the value exists but is not a bool.
-// Returns ErrNilObject if obj is nil.
-func GetBool(obj map[string]interface{}, path ...string) (bool, error) {
-	if obj == nil {
-		return false, newPathError("GetBool", path, "bool", "", ErrNilObject)
-	}
-	if len(path) == 0 {
-		return false, newPathError("GetBool", path, "bool", "", ErrEmptyPath)
-	}
-
-	val, err := getNestedValue(obj, path)
-	if err != nil {
-		return false, newPathError("GetBool", path, "bool", "", err)
-	}
-
-	b, ok := val.(bool)
-	if !ok {
-		return false, newPathError("GetBool", path, "bool", typeName(val), ErrTypeMismatch)
-	}
-
-	return b, nil
-}
-
-// GetBoolOrDefault retrieves a bool value at the specified path, returning
-// defaultVal if the path doesn't exist or the value is not a bool.
-func GetBoolOrDefault(obj map[string]interface{}, defaultVal bool, path ...string) bool {
-	b, err := GetBool(obj, path...)
-	if err != nil {
-		return defaultVal
-	}
-	return b
-}
-
-// GetFloat64 retrieves a float64 value at the specified path in a nested map.
-// Returns ErrFieldNotFound if any part of the path doesn't exist.
-// Returns ErrTypeMismatch if the value exists but is not a numeric type.
-// Returns ErrNilObject if obj is nil.
-func GetFloat64(obj map[string]interface{}, path ...string) (float64, error) {
-	if obj == nil {
-		return 0, newPathError("GetFloat64", path, "float64", "", ErrNilObject)
-	}
-	if len(path) == 0 {
-		return 0, newPathError("GetFloat64", path, "float64", "", ErrEmptyPath)
-	}
-
-	val, err := getNestedValue(obj, path)
-	if err != nil {
-		return 0, newPathError("GetFloat64", path, "float64", "", err)
-	}
-
-	switch v := val.(type) {
-	case float64:
-		return v, nil
-	case float32:
-		return float64(v), nil
-	case int64:
-		return float64(v), nil
-	case int:
-		return float64(v), nil
-	case int32:
-		return float64(v), nil
-	default:
-		return 0, newPathError("GetFloat64", path, "float64", typeName(val), ErrTypeMismatch)
-	}
-}
-
-// GetFloat64OrDefault retrieves a float64 value at the specified path, returning
-// defaultVal if the path doesn't exist or the value is not numeric.
-func GetFloat64OrDefault(obj map[string]interface{}, defaultVal float64, path ...string) float64 {
-	f, err := GetFloat64(obj, path...)
-	if err != nil {
-		return defaultVal
-	}
-	return f
-}
-
 // GetValue retrieves any value at the specified path in a nested map.
 // Returns ErrFieldNotFound if any part of the path doesn't exist.
 // Returns ErrNilObject if obj is nil.
@@ -248,12 +150,6 @@ func GetValue(obj map[string]interface{}, path ...string) (interface{}, error) {
 	}
 
 	return val, nil
-}
-
-// HasField returns true if a field exists at the specified path.
-func HasField(obj map[string]interface{}, path ...string) bool {
-	_, err := GetValue(obj, path...)
-	return err == nil
 }
 
 // getNestedValue traverses a nested map structure and returns the value at the path.
@@ -275,68 +171,4 @@ func getNestedValue(obj map[string]interface{}, path []string) (interface{}, err
 	}
 
 	return current, nil
-}
-
-// SetNestedValue sets a value at the specified path in a nested map, creating
-// intermediate maps as needed. Returns an error if the path is empty or if
-// an intermediate value exists but is not a map.
-func SetNestedValue(obj map[string]interface{}, value interface{}, path ...string) error {
-	if obj == nil {
-		return newPathError("SetNestedValue", path, "", "", ErrNilObject)
-	}
-	if len(path) == 0 {
-		return newPathError("SetNestedValue", path, "", "", ErrEmptyPath)
-	}
-
-	current := obj
-	for i := 0; i < len(path)-1; i++ {
-		key := path[i]
-		val, exists := current[key]
-
-		if !exists {
-			// Create intermediate map
-			newMap := make(map[string]interface{})
-			current[key] = newMap
-			current = newMap
-		} else {
-			// Traverse existing map
-			m, ok := val.(map[string]interface{})
-			if !ok {
-				return newPathError("SetNestedValue", path[:i+1], "map[string]interface{}", typeName(val), ErrTypeMismatch)
-			}
-			current = m
-		}
-	}
-
-	current[path[len(path)-1]] = value
-	return nil
-}
-
-// DeleteNestedValue removes a value at the specified path in a nested map.
-// Returns true if the value was deleted, false if the path didn't exist.
-func DeleteNestedValue(obj map[string]interface{}, path ...string) bool {
-	if obj == nil || len(path) == 0 {
-		return false
-	}
-
-	current := obj
-	for i := 0; i < len(path)-1; i++ {
-		val, exists := current[path[i]]
-		if !exists {
-			return false
-		}
-		m, ok := val.(map[string]interface{})
-		if !ok {
-			return false
-		}
-		current = m
-	}
-
-	key := path[len(path)-1]
-	if _, exists := current[key]; !exists {
-		return false
-	}
-
-	delete(current, key)
-	return true
 }

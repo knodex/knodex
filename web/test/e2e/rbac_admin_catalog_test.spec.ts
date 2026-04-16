@@ -206,14 +206,9 @@ test.describe('Global Admin - RGD Catalog Access', () => {
     await firstRGD.click();
 
     // Verify detail page loaded
-    // Look for detail page indicators: Back to catalog link, tabs, details section
-    const backLink = page.getByText('Back to catalog');
-    const overviewTab = page.getByText('Overview');
-    const detailsSection = page.getByText('Details');
-
-    await expect(backLink).toBeVisible({ timeout: 10000 });
-    await expect(overviewTab).toBeVisible();
-    await expect(detailsSection).toBeVisible();
+    // Look for detail page indicators: Instances tab is always rendered on the detail view
+    const instancesTab = page.getByRole('tab', { name: /instances/i });
+    await expect(instancesTab).toBeVisible({ timeout: 10000 });
 
     await page.screenshot({
       path: '../test-results/e2e/screenshots/catalog-rgd-detail-page.png',

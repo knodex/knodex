@@ -11,6 +11,7 @@ import {
 } from "@/api/audit";
 import { isEnterprise } from "@/hooks/useCompliance";
 import type { AuditEventFilter, AuditConfig } from "@/types/audit";
+import { STALE_TIME } from "@/lib/query-client";
 
 /**
  * Hook for fetching paginated audit events with optional filtering.
@@ -22,7 +23,7 @@ export function useAuditEvents(params?: AuditEventFilter) {
     queryFn: () => getAuditEvents(params),
     enabled: isEnterprise(),
     placeholderData: keepPreviousData,
-    staleTime: 30 * 1000,
+    staleTime: STALE_TIME.FREQUENT,
     retry: (failureCount, error) => {
       if (is403(error)) return false;
       return failureCount < 2;
@@ -38,7 +39,7 @@ export function useAuditEvent(id: string | null) {
     queryKey: ["audit", "event", id],
     queryFn: () => getAuditEvent(id!),
     enabled: isEnterprise() && !!id,
-    staleTime: 60 * 1000,
+    staleTime: STALE_TIME.STANDARD,
     retry: (failureCount, error) => {
       if (is403(error)) return false;
       return failureCount < 2;
@@ -55,8 +56,8 @@ export function useAuditStats() {
     queryKey: ["audit", "stats"],
     queryFn: getAuditStats,
     enabled: isEnterprise(),
-    staleTime: 30 * 1000,
-    refetchInterval: 30 * 1000,
+    staleTime: STALE_TIME.FREQUENT,
+    refetchInterval: 30_000, // polling interval — independent of staleTime
     retry: (failureCount, error) => {
       if (is403(error)) return false;
       return failureCount < 2;
@@ -72,7 +73,7 @@ export function useAuditConfig() {
     queryKey: ["audit", "config"],
     queryFn: getAuditConfig,
     enabled: isEnterprise(),
-    staleTime: 60 * 1000,
+    staleTime: STALE_TIME.STANDARD,
     retry: (failureCount, error) => {
       if (is403(error)) return false;
       return failureCount < 2;

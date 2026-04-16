@@ -24,7 +24,7 @@ func newTestRedis(t *testing.T) (*redis.Client, *miniredis.Miniredis) {
 func TestStoreDrift(t *testing.T) {
 	client, mr := newTestRedis(t)
 	defer mr.Close()
-	svc := NewService(client, nil)
+	svc := NewService(client, nil, "")
 
 	spec := map[string]interface{}{"replicas": float64(3)}
 	err := svc.StoreDrift(context.Background(), "default", "WebApp", "my-app", spec)
@@ -32,8 +32,8 @@ func TestStoreDrift(t *testing.T) {
 		t.Fatalf("StoreDrift failed: %v", err)
 	}
 
-	// Verify key exists in Redis
-	key := "drift:default/WebApp/my-app"
+	// Verify key exists in Redis (org defaults to "default")
+	key := "drift:default/default/WebApp/my-app"
 	data, err := client.Get(context.Background(), key).Bytes()
 	if err != nil {
 		t.Fatalf("Redis GET failed: %v", err)
@@ -58,7 +58,7 @@ func TestStoreDrift(t *testing.T) {
 func TestCheckDrift_Drifted(t *testing.T) {
 	client, mr := newTestRedis(t)
 	defer mr.Close()
-	svc := NewService(client, nil)
+	svc := NewService(client, nil, "")
 
 	desiredSpec := map[string]interface{}{"replicas": float64(5)}
 	if err := svc.StoreDrift(context.Background(), "ns", "Kind", "app", desiredSpec); err != nil {
@@ -67,7 +67,7 @@ func TestCheckDrift_Drifted(t *testing.T) {
 
 	// Live spec differs
 	liveSpec := map[string]interface{}{"replicas": float64(3)}
-	isDrifted, gotDesired, err := svc.CheckDrift(context.Background(), "ns", "Kind", "app", liveSpec)
+	isDrifted, gotDesired, driftedAt, err := svc.CheckDrift(context.Background(), "ns", "Kind", "app", liveSpec)
 	if err != nil {
 		t.Fatalf("CheckDrift: %v", err)
 	}
@@ -77,20 +77,23 @@ func TestCheckDrift_Drifted(t *testing.T) {
 	if gotDesired["replicas"] != float64(5) {
 		t.Errorf("expected desired replicas=5, got %v", gotDesired["replicas"])
 	}
+	if driftedAt == nil {
+		t.Error("expected non-nil driftedAt")
+	}
 }
 
 func TestCheckDrift_Reconciled(t *testing.T) {
 	client, mr := newTestRedis(t)
 	defer mr.Close()
-	svc := NewService(client, nil)
+	svc := NewService(client, nil, "")
 
 	spec := map[string]interface{}{"replicas": float64(3)}
 	if err := svc.StoreDrift(context.Background(), "ns", "Kind", "app", spec); err != nil {
 		t.Fatalf("StoreDrift: %v", err)
 	}
 
-	// Live spec matches desired → reconciled
-	isDrifted, desiredSpec, err := svc.CheckDrift(context.Background(), "ns", "Kind", "app", spec)
+	// Live spec matches desired → reconciled (but key is NOT auto-deleted)
+	isDrifted, desiredSpec, driftedAt, err := svc.CheckDrift(context.Background(), "ns", "Kind", "app", spec)
 	if err != nil {
 		t.Fatalf("CheckDrift: %v", err)
 	}
@@ -100,21 +103,25 @@ func TestCheckDrift_Reconciled(t *testing.T) {
 	if desiredSpec != nil {
 		t.Error("expected nil desired spec after reconciliation")
 	}
+	if driftedAt != nil {
+		t.Error("expected nil driftedAt when not drifted")
+	}
 
-	// Verify key was cleaned up
-	exists, _ := client.Exists(context.Background(), "drift:ns/Kind/app").Result()
-	if exists != 0 {
-		t.Error("expected drift key to be deleted after reconciliation")
+	// Verify key still exists — CheckDrift no longer auto-clears.
+	// Callers must use CheckAndClearIfReconciled or ClearDrift explicitly.
+	exists, _ := client.Exists(context.Background(), "drift:default/ns/Kind/app").Result()
+	if exists != 1 {
+		t.Error("expected drift key to still exist after CheckDrift (no auto-clear)")
 	}
 }
 
 func TestCheckDrift_NoDriftEntry(t *testing.T) {
 	client, mr := newTestRedis(t)
 	defer mr.Close()
-	svc := NewService(client, nil)
+	svc := NewService(client, nil, "")
 
 	liveSpec := map[string]interface{}{"replicas": float64(3)}
-	isDrifted, desiredSpec, err := svc.CheckDrift(context.Background(), "ns", "Kind", "app", liveSpec)
+	isDrifted, desiredSpec, driftedAt, err := svc.CheckDrift(context.Background(), "ns", "Kind", "app", liveSpec)
 	if err != nil {
 		t.Fatalf("CheckDrift: %v", err)
 	}
@@ -124,12 +131,15 @@ func TestCheckDrift_NoDriftEntry(t *testing.T) {
 	if desiredSpec != nil {
 		t.Error("expected nil desired spec")
 	}
+	if driftedAt != nil {
+		t.Error("expected nil driftedAt")
+	}
 }
 
 func TestClearDrift(t *testing.T) {
 	client, mr := newTestRedis(t)
 	defer mr.Close()
-	svc := NewService(client, nil)
+	svc := NewService(client, nil, "")
 
 	spec := map[string]interface{}{"key": "value"}
 	if err := svc.StoreDrift(context.Background(), "ns", "Kind", "app", spec); err != nil {
@@ -140,7 +150,7 @@ func TestClearDrift(t *testing.T) {
 		t.Fatalf("ClearDrift: %v", err)
 	}
 
-	exists, _ := client.Exists(context.Background(), "drift:ns/Kind/app").Result()
+	exists, _ := client.Exists(context.Background(), "drift:default/ns/Kind/app").Result()
 	if exists != 0 {
 		t.Error("expected drift key to be deleted")
 	}
@@ -149,7 +159,7 @@ func TestClearDrift(t *testing.T) {
 func TestCheckAndClearIfReconciled(t *testing.T) {
 	client, mr := newTestRedis(t)
 	defer mr.Close()
-	svc := NewService(client, nil)
+	svc := NewService(client, nil, "")
 
 	spec := map[string]interface{}{"replicas": float64(3)}
 	if err := svc.StoreDrift(context.Background(), "ns", "Kind", "app", spec); err != nil {
@@ -169,14 +179,14 @@ func TestCheckAndClearIfReconciled(t *testing.T) {
 	}
 
 	// Verify key was cleaned up
-	exists, _ := client.Exists(context.Background(), "drift:ns/Kind/app").Result()
+	exists, _ := client.Exists(context.Background(), "drift:default/ns/Kind/app").Result()
 	if exists != 0 {
 		t.Error("expected drift key to be deleted")
 	}
 }
 
 func TestGracefulDegradation_NilClient(t *testing.T) {
-	svc := NewService(nil, nil)
+	svc := NewService(nil, nil, "")
 
 	// All operations should be no-ops with nil client
 	err := svc.StoreDrift(context.Background(), "ns", "Kind", "app", map[string]interface{}{"key": "val"})
@@ -184,7 +194,7 @@ func TestGracefulDegradation_NilClient(t *testing.T) {
 		t.Errorf("StoreDrift with nil client should return nil, got: %v", err)
 	}
 
-	isDrifted, desiredSpec, err := svc.CheckDrift(context.Background(), "ns", "Kind", "app", map[string]interface{}{})
+	isDrifted, desiredSpec, driftedAt, err := svc.CheckDrift(context.Background(), "ns", "Kind", "app", map[string]interface{}{})
 	if err != nil {
 		t.Errorf("CheckDrift with nil client should return nil err, got: %v", err)
 	}
@@ -193,6 +203,9 @@ func TestGracefulDegradation_NilClient(t *testing.T) {
 	}
 	if desiredSpec != nil {
 		t.Error("desired spec should be nil with nil client")
+	}
+	if driftedAt != nil {
+		t.Error("driftedAt should be nil with nil client")
 	}
 
 	err = svc.ClearDrift(context.Background(), "ns", "Kind", "app")
@@ -203,6 +216,98 @@ func TestGracefulDegradation_NilClient(t *testing.T) {
 	cleared := svc.CheckAndClearIfReconciled(context.Background(), "ns", "Kind", "app", map[string]interface{}{})
 	if cleared {
 		t.Error("should return false with nil client")
+	}
+}
+
+func TestBatchCheckDrift(t *testing.T) {
+	client, mr := newTestRedis(t)
+	defer mr.Close()
+	svc := NewService(client, nil, "")
+
+	// Store drift entries for 3 instances
+	spec1 := map[string]interface{}{"replicas": float64(3)}
+	spec2 := map[string]interface{}{"replicas": float64(5)}
+	spec3 := map[string]interface{}{"image": "nginx:latest"}
+
+	if err := svc.StoreDrift(context.Background(), "ns1", "WebApp", "app1", spec1); err != nil {
+		t.Fatalf("StoreDrift app1: %v", err)
+	}
+	if err := svc.StoreDrift(context.Background(), "ns2", "WebApp", "app2", spec2); err != nil {
+		t.Fatalf("StoreDrift app2: %v", err)
+	}
+	if err := svc.StoreDrift(context.Background(), "ns3", "DB", "app3", spec3); err != nil {
+		t.Fatalf("StoreDrift app3: %v", err)
+	}
+
+	inputs := []DriftCheckInput{
+		{Namespace: "ns1", Kind: "WebApp", Name: "app1", LiveSpec: map[string]interface{}{"replicas": float64(1)}}, // drifted
+		{Namespace: "ns2", Kind: "WebApp", Name: "app2", LiveSpec: spec2},                                          // reconciled
+		{Namespace: "ns3", Kind: "DB", Name: "app3", LiveSpec: map[string]interface{}{"image": "nginx:latest"}},    // reconciled
+		{Namespace: "ns4", Kind: "WebApp", Name: "app4", LiveSpec: map[string]interface{}{"replicas": float64(1)}}, // no entry
+	}
+
+	results := svc.BatchCheckDrift(context.Background(), inputs)
+	if len(results) != 4 {
+		t.Fatalf("expected 4 results, got %d", len(results))
+	}
+
+	// app1: drifted (live!=desired)
+	if !results[0].IsDrifted {
+		t.Error("app1: expected drifted")
+	}
+	if results[0].DesiredSpec["replicas"] != float64(3) {
+		t.Errorf("app1: expected desired replicas=3, got %v", results[0].DesiredSpec["replicas"])
+	}
+	if results[0].DriftedAt == nil {
+		t.Error("app1: expected non-nil DriftedAt")
+	}
+
+	// app2: reconciled (live==desired)
+	if results[1].IsDrifted {
+		t.Error("app2: expected not drifted (reconciled)")
+	}
+	if results[1].DriftedAt != nil {
+		t.Error("app2: expected nil DriftedAt when reconciled")
+	}
+
+	// app3: reconciled
+	if results[2].IsDrifted {
+		t.Error("app3: expected not drifted (reconciled)")
+	}
+	if results[2].DriftedAt != nil {
+		t.Error("app3: expected nil DriftedAt when reconciled")
+	}
+
+	// app4: no drift entry
+	if results[3].IsDrifted {
+		t.Error("app4: expected not drifted (no entry)")
+	}
+	if results[3].DriftedAt != nil {
+		t.Error("app4: expected nil DriftedAt when no entry")
+	}
+}
+
+func TestBatchCheckDrift_NilClient(t *testing.T) {
+	svc := NewService(nil, nil, "")
+	results := svc.BatchCheckDrift(context.Background(), []DriftCheckInput{
+		{Namespace: "ns", Kind: "Kind", Name: "app", LiveSpec: map[string]interface{}{}},
+	})
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].IsDrifted {
+		t.Error("expected not drifted with nil client")
+	}
+}
+
+func TestBatchCheckDrift_Empty(t *testing.T) {
+	client, mr := newTestRedis(t)
+	defer mr.Close()
+	svc := NewService(client, nil, "")
+
+	results := svc.BatchCheckDrift(context.Background(), nil)
+	if len(results) != 0 {
+		t.Errorf("expected 0 results for nil inputs, got %d", len(results))
 	}
 }
 
@@ -231,5 +336,95 @@ func TestHashSpec_Deterministic(t *testing.T) {
 	}
 	if h1 == h3 {
 		t.Error("expected different hash for different spec")
+	}
+}
+
+func TestNewService_EmptyOrg(t *testing.T) {
+	client, mr := newTestRedis(t)
+	defer mr.Close()
+
+	svc := NewService(client, nil, "")
+	if svc.organization != "default" {
+		t.Errorf("expected organization 'default' for empty string, got %q", svc.organization)
+	}
+
+	svc2 := NewService(client, nil, "my-org")
+	if svc2.organization != "my-org" {
+		t.Errorf("expected organization 'my-org', got %q", svc2.organization)
+	}
+
+	// Verify keys use the org prefix
+	spec := map[string]interface{}{"key": "value"}
+	if err := svc.StoreDrift(context.Background(), "ns", "Kind", "app", spec); err != nil {
+		t.Fatalf("StoreDrift: %v", err)
+	}
+	if err := svc2.StoreDrift(context.Background(), "ns", "Kind", "app", spec); err != nil {
+		t.Fatalf("StoreDrift: %v", err)
+	}
+
+	// Both keys should exist with different prefixes
+	exists1, _ := client.Exists(context.Background(), "drift:default/ns/Kind/app").Result()
+	if exists1 != 1 {
+		t.Error("expected key with default org prefix to exist")
+	}
+	exists2, _ := client.Exists(context.Background(), "drift:my-org/ns/Kind/app").Result()
+	if exists2 != 1 {
+		t.Error("expected key with my-org prefix to exist")
+	}
+}
+
+// TestCheckAndClearIfReconciled_AtomicNoRace verifies that the Lua-based atomic
+// check-and-delete does NOT incorrectly delete a newer drift entry.
+//
+// Scenario: StoreDrift(specA) stores H_A. Then StoreDrift(specB) overwrites with H_B.
+// CheckAndClearIfReconciled(specA) compares H_A against the stored H_B — they differ,
+// so the key must NOT be deleted and false must be returned.
+//
+// This mirrors the TOCTOU race fixed in STORY-363: without atomicity, a GET+compare+DEL
+// sequence could delete the new entry (H_B) after comparing against the old one (H_A).
+func TestCheckAndClearIfReconciled_AtomicNoRace(t *testing.T) {
+	client, mr := newTestRedis(t)
+	defer mr.Close()
+	svc := NewService(client, nil, "test-org")
+
+	ctx := context.Background()
+	specA := map[string]interface{}{"version": "1"}
+	specB := map[string]interface{}{"version": "2"}
+
+	// Store initial drift with specA
+	if err := svc.StoreDrift(ctx, "ns", "Kind", "app", specA); err != nil {
+		t.Fatalf("StoreDrift(specA): %v", err)
+	}
+
+	// Simulate a new push that overwrites the drift entry with specB
+	if err := svc.StoreDrift(ctx, "ns", "Kind", "app", specB); err != nil {
+		t.Fatalf("StoreDrift(specB): %v", err)
+	}
+
+	// Attempt to reconcile with specA — should NOT match H_B and must return false
+	reconciled := svc.CheckAndClearIfReconciled(ctx, "ns", "Kind", "app", specA)
+	if reconciled {
+		t.Error("expected false: specA hash should not match the stored specB hash")
+	}
+
+	// The key must still exist (specB drift entry must not be deleted)
+	key := svc.driftKey("ns", "Kind", "app")
+	exists, err := client.Exists(ctx, key).Result()
+	if err != nil {
+		t.Fatalf("Exists: %v", err)
+	}
+	if exists != 1 {
+		t.Error("drift entry for specB was incorrectly deleted")
+	}
+
+	// Now reconcile with specB — should match and delete the key
+	reconciled = svc.CheckAndClearIfReconciled(ctx, "ns", "Kind", "app", specB)
+	if !reconciled {
+		t.Error("expected true: specB hash should match the stored hash")
+	}
+
+	exists, _ = client.Exists(ctx, key).Result()
+	if exists != 0 {
+		t.Error("expected drift entry to be deleted after reconciliation with specB")
 	}
 }

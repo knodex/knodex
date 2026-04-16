@@ -119,6 +119,14 @@ func (m *mockProjectService) Exists(ctx context.Context, name string) (bool, err
 	return exists, nil
 }
 
+func (m *mockProjectService) UpdateProjectStatus(ctx context.Context, project *rbac.Project) (*rbac.Project, error) {
+	if _, exists := m.projects[project.Name]; !exists {
+		return nil, rbac.ErrProjectNotFound
+	}
+	m.projects[project.Name] = project
+	return project, nil
+}
+
 func (m *mockProjectService) addProject(name string, spec rbac.ProjectSpec) *rbac.Project {
 	project := &rbac.Project{
 		ObjectMeta: metav1.ObjectMeta{
@@ -149,6 +157,9 @@ type mockPolicyEnforcer struct {
 
 	// getUserRolesResult returns these roles for any GetUserRoles call
 	getUserRolesResult []string
+
+	// Track groups passed to CanAccessWithGroups for verification
+	lastCanAccessGroups []string
 
 	// AC-7: Track policy reload calls for testing immediate policy effect
 	loadProjectPoliciesCalls    []*rbac.Project
@@ -230,6 +241,7 @@ func (m *mockPolicyEnforcer) CacheStats() rbac.CacheStats {
 // CanAccessWithGroups implements rbac.PolicyEnforcer
 // For testing, delegates to CanAccess with the user - groups/roles are not used in these tests
 func (m *mockPolicyEnforcer) CanAccessWithGroups(ctx context.Context, user string, groups []string, object, action string) (bool, error) {
+	m.lastCanAccessGroups = groups
 	return m.CanAccess(ctx, user, object, action)
 }
 

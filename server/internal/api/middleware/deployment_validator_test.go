@@ -63,6 +63,10 @@ func (m *mockProjectService) DeleteProject(ctx context.Context, name string) err
 	return errors.New("not implemented")
 }
 
+func (m *mockProjectService) UpdateProjectStatus(ctx context.Context, project *rbac.Project) (*rbac.Project, error) {
+	return project, nil
+}
+
 func (m *mockProjectService) Exists(ctx context.Context, name string) (bool, error) {
 	if m.existsFunc != nil {
 		return m.existsFunc(ctx, name)
@@ -218,7 +222,7 @@ func TestDeploymentValidator_NonPostRequest_Passthrough(t *testing.T) {
 	}
 }
 
-func TestDeploymentValidator_NoProjectID_Passthrough(t *testing.T) {
+func TestDeploymentValidator_NoProjectID_Rejected(t *testing.T) {
 	t.Parallel()
 
 	middleware := DeploymentValidator(DeploymentValidatorConfig{
@@ -231,7 +235,7 @@ func TestDeploymentValidator_NoProjectID_Passthrough(t *testing.T) {
 
 	handler := middleware(testHandler)
 
-	// Test POST request with no projectId - should pass through
+	// Test POST request with no projectId - should be rejected with 400
 	body := `{"name":"test-instance","namespace":"default","rgdName":"test-rgd"}`
 	req := httptest.NewRequest("POST", "/api/v1/instances", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -239,8 +243,8 @@ func TestDeploymentValidator_NoProjectID_Passthrough(t *testing.T) {
 
 	handler.ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("expected status 200 for request without projectId, got %d", w.Code)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status 400 for request without projectId, got %d", w.Code)
 	}
 }
 
@@ -402,12 +406,8 @@ func TestDeploymentValidator_ProjectNotFound(t *testing.T) {
 		t.Fatalf("failed to unmarshal response: %v", err)
 	}
 
-	errObj, ok := response["error"].(map[string]interface{})
-	if !ok {
-		t.Fatal("expected error object in response")
-	}
-	if errObj["code"] != ErrCodeProjectNotFound {
-		t.Errorf("expected error code '%s', got '%s'", ErrCodeProjectNotFound, errObj["code"])
+	if response["code"] != ErrCodeProjectNotFound {
+		t.Errorf("expected error code '%s', got '%s'", ErrCodeProjectNotFound, response["code"])
 	}
 }
 
@@ -474,12 +474,8 @@ func TestDeploymentValidator_PermissionDenied(t *testing.T) {
 		t.Fatalf("failed to unmarshal response: %v", err)
 	}
 
-	errObj, ok := response["error"].(map[string]interface{})
-	if !ok {
-		t.Fatal("expected error object in response")
-	}
-	if errObj["code"] != ErrCodePermissionDenied {
-		t.Errorf("expected error code '%s', got '%s'", ErrCodePermissionDenied, errObj["code"])
+	if response["code"] != ErrCodePermissionDenied {
+		t.Errorf("expected error code '%s', got '%s'", ErrCodePermissionDenied, response["code"])
 	}
 }
 
@@ -507,15 +503,20 @@ func TestDeploymentValidator_DestinationNotAllowed(t *testing.T) {
 	}
 
 	mockEnforcer := &mockPolicyEnforcer{
-		canAccessFunc: func(ctx context.Context, user, object, action string) (bool, error) {
-			// Return false for admin check - user is NOT admin
+		canAccessWithGroupsFunc: func(ctx context.Context, user string, groups []string, object, action string) (bool, error) {
+			// Admin wildcard check — user is NOT admin
 			if object == "*" && action == "*" {
 				return false, nil
 			}
-			// Allow deploy permission for specific project
-			if object == "instances/engineering/*" && action == "create" {
+			// Allow deploy permission for project destinations (production, staging)
+			// but deny for kube-system (namespace-scoped Casbin check)
+			if object == "instances/engineering/production/*" && action == "create" {
 				return true, nil
 			}
+			if object == "instances/engineering/staging/*" && action == "create" {
+				return true, nil
+			}
+			// Deny for kube-system — namespace not in role's destinations
 			return false, nil
 		},
 	}
@@ -533,7 +534,7 @@ func TestDeploymentValidator_DestinationNotAllowed(t *testing.T) {
 
 	handler := middleware(testHandler)
 
-	// Request with disallowed namespace
+	// Request with disallowed namespace — denied at Casbin layer (namespace-scoped policy)
 	body := `{"name":"test-instance","namespace":"kube-system","rgdName":"test-rgd","projectId":"engineering"}`
 	req := httptest.NewRequest("POST", "/api/v1/instances", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -558,12 +559,11 @@ func TestDeploymentValidator_DestinationNotAllowed(t *testing.T) {
 		t.Fatalf("failed to unmarshal response: %v", err)
 	}
 
-	errObj, ok := response["error"].(map[string]interface{})
-	if !ok {
-		t.Fatal("expected error object in response")
-	}
-	if errObj["code"] != ErrCodeDestinationNotAllowed {
-		t.Errorf("expected error code '%s', got '%s'", ErrCodeDestinationNotAllowed, errObj["code"])
+	// With namespace-scoped Casbin policies, disallowed namespaces are denied at
+	// the Casbin permission check (PERMISSION_DENIED) rather than the destination
+	// allowlist (DESTINATION_NOT_ALLOWED)
+	if response["code"] != ErrCodePermissionDenied {
+		t.Errorf("expected error code '%s', got '%s'", ErrCodePermissionDenied, response["code"])
 	}
 }
 
@@ -968,13 +968,17 @@ func TestDeploymentValidator_FullValidation_Success(t *testing.T) {
 		},
 
 		canAccessWithGroupsFunc: func(ctx context.Context, user string, groups []string, object, action string) (bool, error) {
-			// Verify correct parameters
-			// Fixed to check instances/{projectId}/* with create action (matching Casbin policy)
+			// Admin wildcard check — user is NOT admin
+			if object == "*" && action == "*" {
+				return false, nil
+			}
+			// Verify correct parameters for instance access check
+			// Uses namespace-scoped format: instances/{projectId}/{namespace}/*
 			if user != "user-123" {
 				t.Errorf("expected user 'user-123', got '%s'", user)
 			}
-			if object != "instances/engineering/*" {
-				t.Errorf("expected object 'instances/engineering/*', got '%s'", object)
+			if object != "instances/engineering/production/*" {
+				t.Errorf("expected object 'instances/engineering/production/*', got '%s'", object)
 			}
 			if action != "create" {
 				t.Errorf("expected action 'create', got '%s'", action)

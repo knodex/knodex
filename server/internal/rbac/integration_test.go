@@ -776,7 +776,7 @@ func setupIntegrationTestServices(t *testing.T) *integrationTestServices {
 	}))
 
 	// Create services (no UserService)
-	projectService := NewProjectService(k8sClient, dynamicClient)
+	projectService := NewProjectService(k8sClient, dynamicClient, "knodex-system")
 
 	policyEnforcer := newMockIntegrationPolicyEnforcer()
 	policyEnforcer.SetProjectLister(projectService)

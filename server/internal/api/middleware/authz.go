@@ -5,43 +5,18 @@ package middleware
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"path"
 	"strings"
+
+	"github.com/knodex/knodex/server/internal/api/response"
 )
 
 // Legacy Authz middleware and related types removed.
 // All authorization now uses CasbinAuthz middleware exclusively.
 // See CasbinAuthz below for the unified authorization implementation.
-
-// writeJSONError writes a JSON error response
-func writeJSONError(w http.ResponseWriter, statusCode int, code, message string, details map[string]interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusCode)
-
-	errorResponse := map[string]interface{}{
-		"error": map[string]interface{}{
-			"code":    code,
-			"message": message,
-		},
-	}
-
-	if details != nil {
-		errorResponse["error"].(map[string]interface{})["details"] = details
-	}
-
-	// Add request ID if available
-	if requestID := w.Header().Get("X-Request-ID"); requestID != "" {
-		errorResponse["error"].(map[string]interface{})["request_id"] = requestID
-	}
-
-	if err := json.NewEncoder(w).Encode(errorResponse); err != nil {
-		slog.Error("failed to write error response", "error", err)
-	}
-}
 
 // containsControlChars returns true if s contains any ASCII control character
 // (0x00–0x1F or DEL 0x7F) that could cause string truncation attacks.
@@ -133,7 +108,7 @@ type CasbinAuthzConfig struct {
 }
 
 // CasbinAuthz returns middleware that enforces Casbin policies
-// This middleware uses PolicyEnforcer.CanAccess() for authorization decisions
+// This middleware uses PolicyEnforcer.CanAccessWithGroups() for authorization decisions
 func CasbinAuthz(config CasbinAuthzConfig) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -146,7 +121,7 @@ func CasbinAuthz(config CasbinAuthzConfig) func(http.Handler) http.Handler {
 						slog.String("method", r.Method),
 					)
 				}
-				writeJSONError(w, http.StatusUnauthorized, "UNAUTHORIZED", "authentication required", nil)
+				response.Unauthorized(w, "authentication required")
 				return
 			}
 
@@ -159,8 +134,7 @@ func CasbinAuthz(config CasbinAuthzConfig) func(http.Handler) http.Handler {
 						slog.String("user_id", userCtx.UserID),
 					)
 				}
-				writeJSONError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE",
-					"authorization service initializing, please retry", nil)
+				response.ServiceUnavailable(w, "authorization service initializing, please retry")
 				return
 			}
 
@@ -175,7 +149,7 @@ func CasbinAuthz(config CasbinAuthzConfig) func(http.Handler) http.Handler {
 						slog.String("method", r.Method),
 					)
 				}
-				writeJSONError(w, http.StatusBadRequest, "BAD_REQUEST", "invalid path", nil)
+				response.BadRequest(w, "invalid path", nil)
 				return
 			}
 
@@ -188,14 +162,14 @@ func CasbinAuthz(config CasbinAuthzConfig) func(http.Handler) http.Handler {
 						slog.String("method", r.Method),
 					)
 				}
-				writeJSONError(w, http.StatusBadRequest, "BAD_REQUEST",
-					"invalid path parameter: contains null byte or control character", nil)
+				response.BadRequest(w, "invalid path parameter: contains null byte or control character", nil)
 				return
 			}
 
 			// Users with "*, *" permission (granted via role:serveradmin policies) can access all resources
+			// Uses CanAccessWithGroups to also detect admin via OIDC group → role mapping
 			if config.Enforcer != nil {
-				hasAdminPermission, err := config.Enforcer.CanAccess(r.Context(), userCtx.UserID, "*", "*")
+				hasAdminPermission, err := config.Enforcer.CanAccessWithGroups(r.Context(), userCtx.UserID, userCtx.Groups, "*", "*")
 				if err != nil {
 					if config.Logger != nil {
 						config.Logger.Warn("failed to check admin permissions",
@@ -248,6 +222,21 @@ func CasbinAuthz(config CasbinAuthzConfig) func(http.Handler) http.Handler {
 			if isProjectListRequest(cleanPath, r.Method) {
 				if config.Logger != nil {
 					config.Logger.Debug("authorization granted: project list access (hybrid model)",
+						slog.String("user_id", userCtx.UserID),
+						slog.String("path", cleanPath),
+						slog.String("method", r.Method),
+					)
+				}
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// Categories Hybrid Authorization Model (similar to RGD Catalog)
+			// All authenticated users can list categories via GET /api/v1/categories.
+			// The categories handler filters per-category using Casbin rgds/{category}/* policies.
+			if isCategoryListRequest(cleanPath, r.Method) {
+				if config.Logger != nil {
+					config.Logger.Debug("authorization granted: category list access (hybrid model)",
 						slog.String("user_id", userCtx.UserID),
 						slog.String("path", cleanPath),
 						slog.String("method", r.Method),
@@ -364,6 +353,39 @@ func CasbinAuthz(config CasbinAuthzConfig) func(http.Handler) http.Handler {
 				return
 			}
 
+			// Search Hybrid Authorization Model
+			// GET /api/v1/search is accessible to ALL authenticated users.
+			// The search handler filters results by the user's accessible projects and
+			// namespaces (via authService.GetUserAuthContext). Users with no access see
+			// empty results. This is the same hybrid model as instances and RGDs.
+			if isSearchRequest(cleanPath, r.Method) {
+				if config.Logger != nil {
+					config.Logger.Debug("authorization granted: search access (hybrid model)",
+						slog.String("user_id", userCtx.UserID),
+						slog.String("path", cleanPath),
+						slog.String("method", r.Method),
+					)
+				}
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// K8s Resource Listing - accessible to ALL authenticated users.
+			// GET /api/v1/resources is used by ExternalRef selectors in deploy forms
+			// to list Secrets, ConfigMaps, etc. Security is enforced by K8s RBAC
+			// (service account permissions), not Casbin policies.
+			if isK8sResourceListRequest(cleanPath, r.Method) {
+				if config.Logger != nil {
+					config.Logger.Debug("authorization granted: K8s resource listing (all authenticated users)",
+						slog.String("user_id", userCtx.UserID),
+						slog.String("path", cleanPath),
+						slog.String("method", r.Method),
+					)
+				}
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			// SECURITY: Deny access if enforcer not configured (fail-safe)
 			if config.Enforcer == nil {
 				if config.Logger != nil {
@@ -372,46 +394,29 @@ func CasbinAuthz(config CasbinAuthzConfig) func(http.Handler) http.Handler {
 						slog.String("path", cleanPath),
 					)
 				}
-				writeJSONError(w, http.StatusForbidden, "FORBIDDEN",
-					"authorization system not available", nil)
+				response.Forbidden(w, "authorization system not available")
 				return
 			}
 
 			// Determine resource object and action from request
 			object, action := inferCasbinObjectAndAction(r, cleanPath)
 
-			// Extract user's OIDC groups from JWT claims in context
-			// This enables Project CRD spec.roles.groups to grant access
-			groups, err := GetUserGroupsFromContext(r.Context())
-			if err != nil {
-				// Groups extraction failure is not fatal - continue with empty groups
-				// This maintains backward compatibility for non-OIDC users
-				if config.Logger != nil {
-					config.Logger.Debug("could not extract groups from context",
-						slog.String("user_id", userCtx.UserID),
-						slog.String("error", err.Error()),
-					)
-				}
-				groups = []string{}
-			}
-
 			// Check authorization using Casbin PolicyEnforcer with groups and roles
+			// Groups come from userCtx (populated by Auth middleware from JWT claims)
 			// CanAccessWithGroups enables Project CRD spec.roles.groups to grant access
 			// via runtime group evaluation (ArgoCD-style)
-
-			allowed, err := config.Enforcer.CanAccessWithGroups(r.Context(), userCtx.UserID, groups, object, action)
+			allowed, err := config.Enforcer.CanAccessWithGroups(r.Context(), userCtx.UserID, userCtx.Groups, object, action)
 			if err != nil {
 				if config.Logger != nil {
 					config.Logger.Error("casbin authorization check failed",
 						slog.String("user_id", userCtx.UserID),
 						slog.String("object", object),
 						slog.String("action", action),
-						slog.Int("groups_count", len(groups)),
+						slog.Int("groups_count", len(userCtx.Groups)),
 						slog.String("error", err.Error()),
 					)
 				}
-				writeJSONError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-					"failed to check permissions", nil)
+				response.InternalError(w, "failed to check permissions")
 				return
 			}
 
@@ -423,9 +428,9 @@ func CasbinAuthz(config CasbinAuthzConfig) func(http.Handler) http.Handler {
 						slog.String("action", action),
 					)
 				}
-				writeJSONError(w, http.StatusForbidden, "FORBIDDEN",
+				response.WriteError(w, http.StatusForbidden, response.ErrCodeForbidden,
 					"insufficient permissions",
-					map[string]interface{}{
+					map[string]string{
 						"object": object,
 						"action": action,
 					})
@@ -468,6 +473,16 @@ type jwtClaimsKey struct{}
 
 var jwtClaimsContextKey = jwtClaimsKey{}
 
+// instanceCollectionEndpoints lists path segments that are collection endpoints
+// under /api/v1/instances/{segment}, NOT instance kinds. Any new collection
+// endpoint added to the router must be added here so isInstanceCreateRequest
+// does not misclassify POST requests to it as instance creation.
+var instanceCollectionEndpoints = map[string]bool{
+	"count":   true,
+	"pending": true,
+	"stuck":   true,
+}
+
 // GetUserGroupsFromContext extracts user groups from JWT claims in context
 func GetUserGroupsFromContext(ctx context.Context) ([]string, error) {
 	claims, ok := ctx.Value(jwtClaimsContextKey).(map[string]interface{})
@@ -501,15 +516,31 @@ func GetUserGroupsFromContext(ctx context.Context) ([]string, error) {
 // inferCasbinObjectAndAction extracts resource object and action from HTTP request
 // Object format: {resource_type}/{resource_name} (e.g., "projects/engineering")
 // Action: HTTP method mapped to action (get, list, create, update, delete)
+//
+// K8s-aligned routes (STORY-327): Paths like /api/v1/namespaces/{ns}/instances/...
+// are normalized to instances/{ns}/... so Casbin policies match unchanged.
 func inferCasbinObjectAndAction(r *http.Request, cleanPath string) (object, action string) {
 	// Strip API prefix to get resource path
 	resourcePath := strings.TrimPrefix(cleanPath, "/api/v1/")
+
+	// Normalize K8s-aligned namespace paths: namespaces/{ns}/{resource}/... → {resource}/{ns}/...
+	// This ensures Casbin objects remain in the format "instances/{ns}/{kind}/{name}"
+	// regardless of whether the HTTP path uses /namespaces/{ns}/instances/ convention.
+	pathParts := strings.Split(resourcePath, "/")
+	if len(pathParts) >= 3 && pathParts[0] == "namespaces" {
+		namespace := pathParts[1]
+		resource := pathParts[2]
+		remaining := pathParts[3:]
+		newParts := make([]string, 0, 2+len(remaining))
+		newParts = append(newParts, resource, namespace)
+		newParts = append(newParts, remaining...)
+		pathParts = newParts
+	}
 
 	// Determine action from HTTP method
 	switch r.Method {
 	case http.MethodGet:
 		// Distinguish between get (single resource) and list (collection)
-		pathParts := strings.Split(resourcePath, "/")
 		if len(pathParts) > 1 && pathParts[len(pathParts)-1] != "" {
 			action = "get"
 		} else {
@@ -529,9 +560,9 @@ func inferCasbinObjectAndAction(r *http.Request, cleanPath string) (object, acti
 	// Examples:
 	//   /api/v1/projects -> projects/*
 	//   /api/v1/projects/engineering -> projects/engineering
-	//   /api/v1/instances/default/WebApp/my-app -> instances/default/WebApp/my-app
+	//   /api/v1/namespaces/default/instances/WebApp/my-app -> instances/default/WebApp/my-app
+	//   /api/v1/instances/WebApp/my-app -> instances/WebApp/my-app (cluster-scoped)
 	//   /api/v1/rgds -> rgds/*
-	pathParts := strings.Split(resourcePath, "/")
 	if len(pathParts) > 0 && pathParts[0] != "" {
 		resource := pathParts[0] // "projects", "instances", "rgds"
 		if len(pathParts) > 1 && pathParts[1] != "" {
@@ -569,6 +600,16 @@ func isRGDCatalogRequest(path, method string) bool {
 	return strings.HasPrefix(path, "/api/v1/rgds")
 }
 
+// isCategoryListRequest checks if the request is for listing or getting categories.
+// Categories use hybrid authorization: the middleware lets all authenticated users
+// through, and the handler filters per-category using Casbin rgds/{category}/* policies.
+func isCategoryListRequest(path, method string) bool {
+	if method != http.MethodGet {
+		return false
+	}
+	return strings.HasPrefix(path, "/api/v1/categories")
+}
+
 // isProjectListRequest checks if the request is for listing projects
 // Similar to RGD Catalog, all authenticated users can list projects.
 // The project handler filters which specific projects each user can see based on their roles.
@@ -601,7 +642,7 @@ func isInstanceListRequest(path, method string) bool {
 	// - /api/v1/instances/count (count)
 	// - /api/v1/instances/pending (pending instances)
 	// - /api/v1/instances/stuck (stuck instances)
-	// Note: /api/v1/instances/{namespace}/{kind}/{name} requires specific instance access
+	// Note: /api/v1/namespaces/{ns}/instances/{kind}/{name} and /api/v1/instances/{kind}/{name} require specific instance access
 	return cleanPath == "/api/v1/instances" ||
 		cleanPath == "/api/v1/instances/count" ||
 		cleanPath == "/api/v1/instances/pending" ||
@@ -613,13 +654,31 @@ func isInstanceListRequest(path, method string) bool {
 // DeploymentValidator middleware which has access to the request body (projectId).
 // The DeploymentValidator checks project-scoped permissions using "instances/{projectId}/*"
 // which matches both built-in roles (instances/*) and project roles (instances/proj-name/*).
+//
+// K8s-aligned routes (STORY-327):
+//
+//	POST /api/v1/namespaces/{ns}/instances/{kind} (namespaced)
+//	POST /api/v1/instances/{kind} (cluster-scoped)
 func isInstanceCreateRequest(path, method string) bool {
 	if method != http.MethodPost {
 		return false
 	}
 
 	cleanPath := strings.TrimRight(path, "/")
-	return cleanPath == "/api/v1/instances"
+	parts := strings.Split(strings.TrimPrefix(cleanPath, "/api/v1/"), "/")
+
+	// Pattern 1: namespaces/{ns}/instances/{kind}
+	if len(parts) == 4 && parts[0] == "namespaces" && parts[2] == "instances" {
+		return true
+	}
+	// Pattern 2: instances/{kind} (cluster-scoped create)
+	// Guard against collection endpoints that share the /instances/{segment} shape.
+	// This is an allow-by-exclusion: any new collection endpoint added to the router
+	// must also be added here to prevent it being misclassified as instance create.
+	if len(parts) == 2 && parts[0] == "instances" && !instanceCollectionEndpoints[parts[1]] {
+		return true
+	}
+	return false
 }
 
 // isProjectNamespaceRequest checks if the request is for listing namespaces in a project
@@ -697,4 +756,27 @@ func isWSTicketRequest(path, method string) bool {
 	}
 	cleanPath := strings.TrimRight(path, "/")
 	return cleanPath == "/api/v1/ws/ticket"
+}
+
+// isK8sResourceListRequest checks if this is a GET /api/v1/resources request.
+// This endpoint lists K8s resources for ExternalRef selectors in deploy forms.
+// Security is enforced by K8s RBAC (service account), not Casbin.
+func isK8sResourceListRequest(path, method string) bool {
+	if method != http.MethodGet {
+		return false
+	}
+	cleanPath := strings.TrimRight(path, "/")
+	return cleanPath == "/api/v1/resources"
+}
+
+// isSearchRequest checks if this is a GET /api/v1/search request.
+// The search handler filters results by the user's accessible projects/namespaces
+// using the hybrid authorization model (all authenticated users can call the endpoint;
+// the handler enforces what each user can see).
+func isSearchRequest(path, method string) bool {
+	if method != http.MethodGet {
+		return false
+	}
+	cleanPath := strings.TrimRight(path, "/")
+	return cleanPath == "/api/v1/search"
 }

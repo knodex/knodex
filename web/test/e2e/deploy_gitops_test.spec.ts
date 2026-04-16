@@ -43,7 +43,7 @@ test.describe('GitOps Path Configuration', () => {
     // Note: This may fail if backend doesn't support DELETE, which is okay
     for (const instance of createdInstances) {
       try {
-        await request.delete(`${BASE_URL}/api/v1/instances/${instance.namespace}/${instance.kind}/${instance.name}`, {
+        await request.delete(`${BASE_URL}/api/v1/namespaces/${instance.namespace}/instances/${instance.kind}/${instance.name}`, {
           failOnStatusCode: false
         });
       } catch {
@@ -63,7 +63,7 @@ test.describe('GitOps Path Configuration', () => {
     await page.waitForURL('/catalog/**');
 
     // Click Deploy to open deploy dialog/page
-    const deployButton = page.locator('button:has-text("Deploy")');
+    const deployButton = page.locator('button:has-text("Deploy")').first();
     await deployButton.click();
     await page.waitForTimeout(1000);
 
@@ -149,7 +149,7 @@ test.describe('GitOps Path Configuration', () => {
     await page.waitForURL('/catalog/**');
 
     // Click Deploy
-    const deployButton = page.locator('button:has-text("Deploy")');
+    const deployButton = page.locator('button:has-text("Deploy")').first();
     await deployButton.click();
     await page.waitForTimeout(1000);
 
@@ -221,7 +221,7 @@ test.describe('GitOps Path Configuration', () => {
     await page.waitForURL('/catalog/**');
 
     // Click Deploy
-    const deployButton = page.locator('button:has-text("Deploy")');
+    const deployButton = page.locator('button:has-text("Deploy")').first();
     await deployButton.click();
     await page.waitForTimeout(1000);
 
@@ -312,7 +312,7 @@ test.describe('GitOps Path Configuration', () => {
     await page.waitForURL('/catalog/**');
 
     // Click Deploy
-    const deployButton = page.locator('button:has-text("Deploy")');
+    const deployButton = page.locator('button:has-text("Deploy")').first();
     await deployButton.click();
     await page.waitForTimeout(1000);
 

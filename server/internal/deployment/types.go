@@ -61,11 +61,6 @@ func (m DeploymentMode) String() string {
 	return string(m)
 }
 
-// IsValidDeploymentMode checks if a deployment mode is valid
-func IsValidDeploymentMode(mode DeploymentMode) bool {
-	return mode.IsValid()
-}
-
 // ParseDeploymentMode converts a string to DeploymentMode, defaults to Direct
 func ParseDeploymentMode(s string) DeploymentMode {
 	mode := DeploymentMode(s)
@@ -95,6 +90,9 @@ const (
 type GitInfo struct {
 	// RepositoryID is the ID of the configured repository
 	RepositoryID string `json:"repositoryId,omitempty"`
+	// RepositoryURL is the human-readable repository reference (e.g., "owner/repo")
+	// Populated from the knodex.io/git-repository annotation on the cluster object.
+	RepositoryURL string `json:"repositoryUrl,omitempty"`
 	// CommitSHA is the Git commit SHA if pushed successfully
 	CommitSHA string `json:"commitSha,omitempty"`
 	// CommitURL is the URL to view the commit in the Git provider
@@ -149,11 +147,17 @@ type DeployRequest struct {
 	Kind         string                 `json:"kind"`
 	Spec         map[string]interface{} `json:"spec"`
 
+	// IsClusterScoped indicates the target RGD produces cluster-scoped instances (no namespace)
+	IsClusterScoped bool `json:"isClusterScoped,omitempty"`
+
 	// Deployment configuration
 	DeploymentMode DeploymentMode `json:"deploymentMode"`
 
 	// Project context (optional, for future project-based deployments)
 	ProjectID string `json:"projectId,omitempty"`
+
+	// ClusterRef is the target cluster for multi-cluster deployments
+	ClusterRef string `json:"clusterRef,omitempty"`
 
 	// Repository configuration (required for GitOps/Hybrid modes)
 	Repository *RepositoryConfig `json:"repository,omitempty"`
@@ -458,7 +462,7 @@ func ValidateBasePath(path string) error {
 type ManifestMetadata struct {
 	InstanceID     string         `yaml:"instanceId" json:"instanceId"`
 	Name           string         `yaml:"name" json:"name"`
-	Namespace      string         `yaml:"namespace" json:"namespace"`
+	Namespace      string         `yaml:"namespace,omitempty" json:"namespace,omitempty"`
 	RGDName        string         `yaml:"rgdName" json:"rgdName"`
 	RGDNamespace   string         `yaml:"rgdNamespace" json:"rgdNamespace"`
 	ProjectID      string         `yaml:"projectId,omitempty" json:"projectId,omitempty"`

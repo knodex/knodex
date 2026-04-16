@@ -9,6 +9,10 @@ rules:
   - apiGroups: ["kro.run"]
     resources: ["resourcegraphdefinitions"]
     verbs: ["get", "list", "watch"]
+  # Watch GraphRevisions (KRO internal API for RGD revision history)
+  - apiGroups: ["internal.kro.run"]
+    resources: ["graphrevisions"]
+    verbs: ["get", "list", "watch"]
   # Read CRDs to extract schemas and install RBAC CRDs
   - apiGroups: ["apiextensions.k8s.io"]
     resources: ["customresourcedefinitions"]
@@ -36,6 +40,11 @@ rules:
   # Note: Specific child resource permissions (pods, deployments, etc.) removed
   # after managed resources feature was deleted. The wildcard rule below
   # already covers get/list for all resources via API discovery.
+  # Watch core/v1 Events for K8s Event Adapter (STORY-405)
+  # The EventAdapter watches cluster-wide Events and matches by involvedObject.uid
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
   # API discovery for listing available API groups and resources
   # Required for the searchable API group/kind selectors
   - nonResourceURLs: ["/api", "/api/*", "/apis", "/apis/*"]

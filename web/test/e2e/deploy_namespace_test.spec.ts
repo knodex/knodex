@@ -476,23 +476,24 @@ test.describe('Note: Namespace Dropdown Shows Real Cluster Namespaces', () => {
   })
 
   test.describe('RBAC Tests - Namespace Access Control', () => {
-    test('Non-admin user gets 403 when accessing project namespaces (requires project get permission)', async ({ page }) => {
+    test('Org developer can access namespaces for their own project (project view policy grants access)', async ({ page }) => {
       // Test with org developer role
       const token = await getAuthToken(TestUserRole.ORG_DEVELOPER)
 
-      // Developer role has project membership but may not have explicit "get" permission on the project
-      // The namespace endpoint requires Casbin policy: projects/proj-alpha-team, get
-      // Developers typically only have application-level permissions, not project-level get
+      // Developer role has "project, view, proj-alpha-team, allow" in Casbin policy
+      // which maps to projects/get — needed to list namespaces for deployment
       const response = await page.request.get(`${BASE_URL}/api/v1/projects/proj-alpha-team/namespaces`, {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
       })
 
-      // Expect 403 Forbidden since developer role doesn't have "get" on projects in default policy
-      // This is correct RBAC behavior - only admins and those with explicit project get access can list
-      expect(response.status()).toBe(403)
-      console.log('Org developer correctly denied access (403) to project namespaces')
+      // Expect 200 OK since developer role has project view permission
+      expect(response.status()).toBe(200)
+      const body = await response.json()
+      expect(body.namespaces).toBeDefined()
+      expect(Array.isArray(body.namespaces)).toBe(true)
+      console.log(`Org developer sees ${body.namespaces.length} namespaces for proj-alpha-team`)
     })
 
     test('User cannot access namespaces for projects they have no access to', async ({ page }) => {
@@ -816,7 +817,7 @@ test.describe('Note: Namespace Dropdown Shows Real Cluster Namespaces', () => {
         })
 
         // Click Deploy button
-        const deployButton = page.getByRole('button', { name: 'Deploy' })
+        const deployButton = page.getByRole('button', { name: 'Deploy' }).first()
         if (await deployButton.isVisible({ timeout: 5000 })) {
           await deployButton.click()
 
@@ -886,7 +887,7 @@ test.describe('Note: Namespace Dropdown Shows Real Cluster Namespaces', () => {
       if (await firstRGD.isVisible({ timeout: 5000 })) {
         await firstRGD.click()
 
-        const deployButton = page.getByRole('button', { name: 'Deploy' })
+        const deployButton = page.getByRole('button', { name: 'Deploy' }).first()
         if (await deployButton.isVisible({ timeout: 5000 })) {
           await deployButton.click()
 
@@ -933,7 +934,7 @@ test.describe('Note: Namespace Dropdown Shows Real Cluster Namespaces', () => {
       if (await firstRGD.isVisible({ timeout: 5000 })) {
         await firstRGD.click()
 
-        const deployButton = page.getByRole('button', { name: 'Deploy' })
+        const deployButton = page.getByRole('button', { name: 'Deploy' }).first()
         if (await deployButton.isVisible({ timeout: 5000 })) {
           await deployButton.click()
 

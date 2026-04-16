@@ -282,17 +282,17 @@ export interface CreateConstraintRequest {
 export const ENFORCEMENT_COLORS: Record<string, { bg: string; text: string; border: string }> = {
   deny: {
     bg: "bg-red-50 dark:bg-red-950/30",
-    text: "text-red-700 dark:text-red-400",
+    text: "text-red-800 dark:text-red-400",
     border: "border-red-200 dark:border-red-900",
   },
   warn: {
-    bg: "bg-yellow-50 dark:bg-yellow-950/30",
-    text: "text-yellow-700 dark:text-yellow-400",
-    border: "border-yellow-200 dark:border-yellow-900",
+    bg: "bg-amber-50 dark:bg-amber-950/30",
+    text: "text-amber-800 dark:text-amber-400",
+    border: "border-amber-200 dark:border-amber-900",
   },
   dryrun: {
     bg: "bg-blue-50 dark:bg-blue-950/30",
-    text: "text-blue-700 dark:text-blue-400",
+    text: "text-blue-800 dark:text-blue-400",
     border: "border-blue-200 dark:border-blue-900",
   },
 };
@@ -302,4 +302,13 @@ export const ENFORCEMENT_COLORS: Record<string, { bg: string; text: string; bord
  */
 export function getEnforcementColors(action: string): { bg: string; text: string; border: string } {
   return ENFORCEMENT_COLORS[action.toLowerCase()] || ENFORCEMENT_COLORS.dryrun;
+}
+
+/**
+ * Get combined className string for an enforcement action badge.
+ * Joins bg + text + border into a single string ready for className.
+ */
+export function getEnforcementClassName(action: string): string {
+  const c = getEnforcementColors(action);
+  return `${c.bg} ${c.text} ${c.border}`;
 }

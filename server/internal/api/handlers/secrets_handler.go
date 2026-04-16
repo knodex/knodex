@@ -6,8 +6,10 @@ package handlers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,8 +23,11 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/knodex/knodex/server/internal/api/helpers"
+	"github.com/knodex/knodex/server/internal/api/middleware"
 	"github.com/knodex/knodex/server/internal/api/response"
 	"github.com/knodex/knodex/server/internal/audit"
+	"github.com/knodex/knodex/server/internal/k8s/parser"
+	"github.com/knodex/knodex/server/internal/models"
 	"github.com/knodex/knodex/server/internal/rbac"
 	"github.com/knodex/knodex/server/internal/util/sanitize"
 )
@@ -41,6 +46,7 @@ type SecretsHandlerConfig struct {
 	DynamicClient dynamic.Interface
 	Enforcer      SecretsHandlerEnforcer
 	Recorder      audit.Recorder
+	NSAccess      NamespaceAccessProvider // Filters results to user's accessible namespaces
 }
 
 // SecretsHandler handles secret-related HTTP requests
@@ -49,6 +55,7 @@ type SecretsHandler struct {
 	dynamicClient dynamic.Interface
 	enforcer      SecretsHandlerEnforcer
 	recorder      audit.Recorder
+	nsAccess      NamespaceAccessProvider
 }
 
 // NewSecretsHandler creates a new secrets handler
@@ -58,7 +65,47 @@ func NewSecretsHandler(cfg SecretsHandlerConfig) *SecretsHandler {
 		dynamicClient: cfg.DynamicClient,
 		enforcer:      cfg.Enforcer,
 		recorder:      cfg.Recorder,
+		nsAccess:      cfg.NSAccess,
 	}
+}
+
+// checkNamespaceAccess verifies the user has access to the specified namespace.
+// Returns true if the user has access, false if denied (403 already written).
+// For admin users (nil accessible namespaces), always returns true.
+func (h *SecretsHandler) checkNamespaceAccess(w http.ResponseWriter, ctx context.Context, userCtx *middleware.UserContext, namespace string) bool {
+	if h.nsAccess == nil {
+		return true // No namespace access provider configured
+	}
+	accessibleNS, err := h.nsAccess.GetAccessibleNamespaces(ctx, userCtx)
+	if err != nil {
+		// Fail closed on error
+		response.Forbidden(w, "failed to determine namespace access")
+		return false
+	}
+	if accessibleNS == nil {
+		return true // Global admin
+	}
+	for _, ns := range accessibleNS {
+		if ns == namespace {
+			return true
+		}
+	}
+	response.Forbidden(w, "no access to namespace "+namespace)
+	return false
+}
+
+// getAccessibleNamespaces returns the user's accessible namespaces for filtering.
+// Returns nil for admins (no filtering needed), or a list of namespaces.
+func (h *SecretsHandler) getAccessibleNamespaces(ctx context.Context, userCtx *middleware.UserContext) []string {
+	if h.nsAccess == nil {
+		return nil // No provider = no filtering
+	}
+	accessibleNS, err := h.nsAccess.GetAccessibleNamespaces(ctx, userCtx)
+	if err != nil {
+		// Fail closed on error: empty list
+		return []string{}
+	}
+	return accessibleNS
 }
 
 // CreateSecret handles POST /api/v1/secrets
@@ -82,15 +129,37 @@ func (h *SecretsHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check Casbin permission
-	if !helpers.RequireAccess(w, ctx, h.enforcer, userCtx, "secrets/"+project, "create", requestID) {
-		return
-	}
-
+	// Parse request body before Casbin check — need namespace for namespace-scoped policies
 	req, err := helpers.DecodeJSON[CreateSecretRequest](r, w, 0)
 	if err != nil {
 		response.BadRequest(w, err.Error(), nil)
 		return
+	}
+
+	// Check Casbin permission — include namespace for namespace-scoped policies (roles[].destinations)
+	secretCreateObject := fmt.Sprintf("secrets/%s", project)
+	if req.Namespace != "" {
+		secretCreateObject = fmt.Sprintf("secrets/%s/%s/*", project, req.Namespace)
+	}
+	if !helpers.RequireAccess(w, ctx, h.enforcer, userCtx, secretCreateObject, "create", requestID) {
+		audit.RecordEvent(h.recorder, ctx, audit.Event{
+			UserID:    userCtx.UserID,
+			UserEmail: userCtx.Email,
+			SourceIP:  audit.SourceIP(r),
+			Action:    "create",
+			Resource:  "secrets",
+			Project:   project,
+			RequestID: requestID,
+			Result:    "denied",
+		})
+		return
+	}
+
+	// Verify user has access to the target namespace
+	if req.Namespace != "" {
+		if !h.checkNamespaceAccess(w, ctx, userCtx, req.Namespace) {
+			return
+		}
 	}
 
 	// Validate request
@@ -114,8 +183,8 @@ func (h *SecretsHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 			Name:      req.Name,
 			Namespace: req.Namespace,
 			Labels: map[string]string{
-				"knodex.io/project":    project,
-				"knodex.io/managed-by": "knodex",
+				models.ProjectLabel:   project,
+				models.ManagedByLabel: models.ManagedByValue,
 			},
 		},
 		StringData: req.Data,
@@ -125,7 +194,7 @@ func (h *SecretsHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 	created, err := h.k8sClient.CoreV1().Secrets(req.Namespace).Create(ctx, secret, metav1.CreateOptions{})
 	if err != nil {
 		if k8serrors.IsAlreadyExists(err) {
-			response.BadRequest(w, "Secret already exists: "+req.Name, nil)
+			response.Conflict(w, "secret", req.Name)
 			return
 		}
 		if k8serrors.IsForbidden(err) || k8serrors.IsUnauthorized(err) {
@@ -214,8 +283,19 @@ func (h *SecretsHandler) ListSecrets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check Casbin permission
-	if !helpers.RequireAccess(w, ctx, h.enforcer, userCtx, "secrets/"+project, "get", requestID) {
+	// Check Casbin permission — use wildcard for list (namespace filtering happens post-query).
+	// CanAccessWithGroups + getProjectScopedWildcards picks up namespace-scoped policies.
+	if !helpers.RequireAccess(w, ctx, h.enforcer, userCtx, "secrets/"+project+"/*", "list", requestID) {
+		audit.RecordEvent(h.recorder, ctx, audit.Event{
+			UserID:    userCtx.UserID,
+			UserEmail: userCtx.Email,
+			SourceIP:  audit.SourceIP(r),
+			Action:    "list",
+			Resource:  "secrets",
+			Project:   project,
+			RequestID: requestID,
+			Result:    "denied",
+		})
 		return
 	}
 
@@ -238,33 +318,78 @@ func (h *SecretsHandler) ListSecrets(w http.ResponseWriter, r *http.Request) {
 		"limit", limit,
 	)
 
-	// List secrets with project label selector and pagination
-	secretList, err := h.k8sClient.CoreV1().Secrets("").List(ctx, metav1.ListOptions{
-		LabelSelector: "knodex.io/project=" + project + ",knodex.io/managed-by=knodex",
-		Limit:         int64(limit),
-		Continue:      continueToken,
-	})
-	if err != nil {
-		if k8serrors.IsForbidden(err) || k8serrors.IsUnauthorized(err) {
-			response.Forbidden(w, "service account lacks permission to manage secrets")
+	labelSelector := models.ProjectLabel + "=" + project + "," + models.ManagedByLabel + "=" + models.ManagedByValue
+
+	// Determine which namespaces to query. Per-namespace queries avoid the
+	// pagination + post-filter anti-pattern where K8s Continue tokens become
+	// semantically incorrect after removing items from a page.
+	accessibleNS := h.getAccessibleNamespaces(ctx, userCtx)
+
+	var allSecrets []corev1.Secret
+	if accessibleNS != nil {
+		// Non-admin: query only accessible namespaces (no Continue token support
+		// in per-namespace mode — pagination is applied to the combined result)
+		for _, ns := range accessibleNS {
+			nsList, listErr := h.k8sClient.CoreV1().Secrets(ns).List(ctx, metav1.ListOptions{
+				LabelSelector: labelSelector,
+			})
+			if listErr != nil {
+				if k8serrors.IsForbidden(listErr) {
+					continue // Skip namespaces where SA lacks permissions
+				}
+				if k8serrors.IsTimeout(listErr) || errors.Is(listErr, context.DeadlineExceeded) {
+					continue
+				}
+				slog.Warn("failed to list secrets in namespace",
+					"requestId", requestID, "namespace", ns, "error", listErr)
+				continue
+			}
+			allSecrets = append(allSecrets, nsList.Items...)
+		}
+	} else {
+		// Admin: single cluster-wide query with K8s pagination
+		secretList, err := h.k8sClient.CoreV1().Secrets("").List(ctx, metav1.ListOptions{
+			LabelSelector: labelSelector,
+			Limit:         int64(limit),
+			Continue:      continueToken,
+		})
+		if err != nil {
+			if k8serrors.IsForbidden(err) || k8serrors.IsUnauthorized(err) {
+				response.Forbidden(w, "service account lacks permission to manage secrets")
+				return
+			}
+			if k8serrors.IsTimeout(err) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+				response.ServiceUnavailable(w, "secrets API timed out: K8s API server is slow or unreachable")
+				return
+			}
+			slog.Error("failed to list secrets",
+				"requestId", requestID,
+				"userId", userCtx.UserID,
+				"project", project,
+				"error", err,
+			)
+			response.InternalError(w, "Failed to list secrets")
 			return
 		}
-		if k8serrors.IsTimeout(err) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-			response.ServiceUnavailable(w, "secrets API timed out: K8s API server is slow or unreachable")
-			return
-		}
-		slog.Error("failed to list secrets",
-			"requestId", requestID,
-			"userId", userCtx.UserID,
-			"project", project,
-			"error", err,
-		)
-		response.InternalError(w, "Failed to list secrets")
-		return
+		allSecrets = secretList.Items
+		continueToken = secretList.Continue
 	}
 
-	items := make([]SecretResponse, 0, len(secretList.Items))
-	for _, s := range secretList.Items {
+	// Apply limit for non-admin queries (admin uses K8s-level pagination)
+	hasMore := false
+	if accessibleNS != nil {
+		sort.Slice(allSecrets, func(i, j int) bool {
+			return allSecrets[i].Name < allSecrets[j].Name
+		})
+		if len(allSecrets) > limit {
+			allSecrets = allSecrets[:limit]
+			hasMore = true
+		}
+		continueToken = "" // No K8s continue token for per-namespace queries
+	}
+
+	items := make([]SecretResponse, 0, len(allSecrets))
+	for _, s := range allSecrets {
 		keys := make([]string, 0, len(s.Data))
 		for k := range s.Data {
 			keys = append(keys, k)
@@ -276,23 +401,38 @@ func (h *SecretsHandler) ListSecrets(w http.ResponseWriter, r *http.Request) {
 			Namespace: s.Namespace,
 			Keys:      keys,
 			CreatedAt: s.CreationTimestamp.Time,
+			UpdatedAt: parseUpdatedAt(s.Annotations),
 			Labels:    s.Labels,
 		})
 	}
 
 	resp := SecretListResponse{
-		Items:      items,
-		TotalCount: len(items),
-		Continue:   secretList.Continue,
-		HasMore:    secretList.Continue != "",
+		Items:     items,
+		PageCount: len(items),
+		Continue:  continueToken,
+		HasMore:   continueToken != "" || hasMore,
 	}
 
 	slog.Info("secrets listed successfully",
 		"requestId", requestID,
 		"userId", userCtx.UserID,
 		"project", project,
-		"count", resp.TotalCount,
+		"count", resp.PageCount,
 	)
+
+	audit.RecordEvent(h.recorder, ctx, audit.Event{
+		UserID:    userCtx.UserID,
+		UserEmail: userCtx.Email,
+		SourceIP:  audit.SourceIP(r),
+		Action:    "list",
+		Resource:  "secrets",
+		Project:   project,
+		RequestID: requestID,
+		Result:    "success",
+		Details: map[string]any{
+			"count": resp.PageCount,
+		},
+	})
 
 	response.WriteJSON(w, http.StatusOK, resp)
 }
@@ -338,8 +478,28 @@ func (h *SecretsHandler) GetSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check Casbin permission
-	if !helpers.RequireAccess(w, ctx, h.enforcer, userCtx, "secrets/"+project, "get", requestID) {
+	// Check Casbin permission — include namespace for namespace-scoped policies (roles[].destinations)
+	secretObject := fmt.Sprintf("secrets/%s/%s/*", project, namespace)
+	if !helpers.RequireAccess(w, ctx, h.enforcer, userCtx, secretObject, "get", requestID) {
+		audit.RecordEvent(h.recorder, ctx, audit.Event{
+			UserID:    userCtx.UserID,
+			UserEmail: userCtx.Email,
+			SourceIP:  audit.SourceIP(r),
+			Action:    "get",
+			Resource:  "secrets",
+			Name:      name,
+			Project:   project,
+			RequestID: requestID,
+			Result:    "denied",
+			Details: map[string]any{
+				"namespace": namespace,
+			},
+		})
+		return
+	}
+
+	// Verify user has access to the requested namespace
+	if !h.checkNamespaceAccess(w, ctx, userCtx, namespace) {
 		return
 	}
 
@@ -377,7 +537,7 @@ func (h *SecretsHandler) GetSecret(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify the secret belongs to the requested project (prevent cross-project access)
-	if secret.Labels["knodex.io/project"] != project {
+	if secret.Labels[models.ProjectLabel] != project {
 		response.NotFound(w, "secret", name)
 		return
 	}
@@ -393,6 +553,7 @@ func (h *SecretsHandler) GetSecret(w http.ResponseWriter, r *http.Request) {
 		Namespace: secret.Namespace,
 		Data:      data,
 		CreatedAt: secret.CreationTimestamp.Time,
+		UpdatedAt: parseUpdatedAt(secret.Annotations),
 		Labels:    secret.Labels,
 	}
 
@@ -465,8 +626,14 @@ func (h *SecretsHandler) CheckSecretExists(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Reuse the same Casbin permission as GetSecret
-	if !helpers.RequireAccess(w, ctx, h.enforcer, userCtx, "secrets/"+project, "get", requestID) {
+	// Reuse the same Casbin permission as GetSecret — include namespace for roles[].destinations
+	secretExistObject := fmt.Sprintf("secrets/%s/%s/*", project, namespace)
+	if !helpers.RequireAccess(w, ctx, h.enforcer, userCtx, secretExistObject, "get", requestID) {
+		return
+	}
+
+	// Verify user has access to the requested namespace
+	if !h.checkNamespaceAccess(w, ctx, userCtx, namespace) {
 		return
 	}
 
@@ -496,7 +663,7 @@ func (h *SecretsHandler) CheckSecretExists(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Treat cross-project access as 404 (same as GetSecret) to avoid leaking secret names
-	if secret.Labels["knodex.io/project"] != project {
+	if secret.Labels[models.ProjectLabel] != project {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
@@ -535,34 +702,50 @@ func (h *SecretsHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check Casbin permission
-	if !helpers.RequireAccess(w, ctx, h.enforcer, userCtx, "secrets/"+project, "update", requestID) {
-		return
-	}
-
+	// Parse request body before Casbin check — need namespace for namespace-scoped policies
 	req, err := helpers.DecodeJSON[UpdateSecretRequest](r, w, 0)
 	if err != nil {
 		response.BadRequest(w, err.Error(), nil)
 		return
 	}
 
+	// Validate inputs before security checks
+	validationErrors := make(map[string]string)
 	if req.Namespace == "" {
-		response.BadRequest(w, "namespace is required", nil)
-		return
-	}
-	if !sanitize.IsValidDNS1123Label(req.Namespace) {
-		response.BadRequest(w, "namespace must be a valid DNS-1123 label (lowercase alphanumeric with hyphens, max 63 chars)", nil)
-		return
+		validationErrors["namespace"] = "namespace is required"
+	} else if !sanitize.IsValidDNS1123Label(req.Namespace) {
+		validationErrors["namespace"] = "namespace must be a valid DNS-1123 label (lowercase alphanumeric with hyphens, max 63 chars)"
 	}
 	if len(req.Data) == 0 {
-		response.BadRequest(w, "data must contain at least one key-value pair", nil)
+		validationErrors["data"] = "data must contain at least one key-value pair"
+	} else {
+		validationErrors = validateSecretData(req.Data, validationErrors)
+	}
+	if len(validationErrors) > 0 {
+		response.BadRequest(w, "Validation failed", validationErrors)
 		return
 	}
-	if dataErrors := validateSecretData(req.Data, make(map[string]string)); len(dataErrors) > 0 {
-		for _, msg := range dataErrors {
-			response.BadRequest(w, msg, nil)
-			return
-		}
+
+	// Check Casbin permission — include namespace for namespace-scoped policies (roles[].destinations)
+	secretUpdateObject := fmt.Sprintf("secrets/%s/%s/*", project, req.Namespace)
+	if !helpers.RequireAccess(w, ctx, h.enforcer, userCtx, secretUpdateObject, "update", requestID) {
+		audit.RecordEvent(h.recorder, ctx, audit.Event{
+			UserID:    userCtx.UserID,
+			UserEmail: userCtx.Email,
+			SourceIP:  audit.SourceIP(r),
+			Action:    "update",
+			Resource:  "secrets",
+			Name:      name,
+			Project:   project,
+			RequestID: requestID,
+			Result:    "denied",
+		})
+		return
+	}
+
+	// Verify user has access to the target namespace (after validation)
+	if !h.checkNamespaceAccess(w, ctx, userCtx, req.Namespace) {
+		return
 	}
 
 	slog.Info("updating secret",
@@ -600,13 +783,19 @@ func (h *SecretsHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify the secret belongs to the requested project (prevent cross-project access)
-	if existing.Labels["knodex.io/project"] != project {
+	if existing.Labels[models.ProjectLabel] != project {
 		response.NotFound(w, "secret", name)
 		return
 	}
 
 	// Update secret with new values via StringData
 	existing.StringData = req.Data
+
+	// Stamp updatedAt annotation for tracking last rotation time
+	if existing.Annotations == nil {
+		existing.Annotations = make(map[string]string)
+	}
+	existing.Annotations[updatedAtAnnotation] = time.Now().UTC().Format(time.RFC3339)
 
 	updated, err := h.k8sClient.CoreV1().Secrets(req.Namespace).Update(ctx, existing, metav1.UpdateOptions{})
 	if err != nil {
@@ -654,6 +843,7 @@ func (h *SecretsHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 		Namespace: updated.Namespace,
 		Keys:      keys,
 		CreatedAt: updated.CreationTimestamp.Time,
+		UpdatedAt: parseUpdatedAt(updated.Annotations),
 		Labels:    updated.Labels,
 	}
 
@@ -725,8 +915,28 @@ func (h *SecretsHandler) DeleteSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check Casbin permission
-	if !helpers.RequireAccess(w, ctx, h.enforcer, userCtx, "secrets/"+project, "delete", requestID) {
+	// Check Casbin permission — include namespace for namespace-scoped policies (roles[].destinations)
+	secretDelObject := fmt.Sprintf("secrets/%s/%s/*", project, namespace)
+	if !helpers.RequireAccess(w, ctx, h.enforcer, userCtx, secretDelObject, "delete", requestID) {
+		audit.RecordEvent(h.recorder, ctx, audit.Event{
+			UserID:    userCtx.UserID,
+			UserEmail: userCtx.Email,
+			SourceIP:  audit.SourceIP(r),
+			Action:    "delete",
+			Resource:  "secrets",
+			Name:      name,
+			Project:   project,
+			RequestID: requestID,
+			Result:    "denied",
+			Details: map[string]any{
+				"namespace": namespace,
+			},
+		})
+		return
+	}
+
+	// Verify user has access to the requested namespace
+	if !h.checkNamespaceAccess(w, ctx, userCtx, namespace) {
 		return
 	}
 
@@ -765,7 +975,7 @@ func (h *SecretsHandler) DeleteSecret(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify the secret belongs to the requested project (prevent cross-project access)
-	if existing.Labels["knodex.io/project"] != project {
+	if existing.Labels[models.ProjectLabel] != project {
 		response.NotFound(w, "secret", name)
 		return
 	}
@@ -871,12 +1081,12 @@ func (h *SecretsHandler) findSecretReferences(ctx context.Context, secretName, n
 			warnings = append(warnings, "could not complete reference scan (timeout)")
 			return warnings
 		}
-		specRaw := instance.Object["spec"]
-		if specRaw == nil {
+		spec := parser.GetSpecOrEmpty(&instance)
+		if len(spec) == 0 {
 			continue
 		}
 		// Check if any field in spec references the secret name
-		if containsSecretReference(specRaw, secretName) {
+		if containsSecretReference(spec, secretName) {
 			warnings = append(warnings, "Referenced by Instance "+instance.GetName())
 		}
 	}
@@ -939,6 +1149,30 @@ const maxSearchDepth = 50
 // referenceScanTimeout limits how long the delete reference scan can run.
 const referenceScanTimeout = 5 * time.Second
 
+// secretKeyRegexp validates K8s secret data keys: must contain only [-._a-zA-Z0-9].
+var secretKeyRegexp = regexp.MustCompile(`^[-._a-zA-Z0-9]+$`)
+
+// updatedAtAnnotation is the annotation key used to track when a secret was last updated via Knodex.
+const updatedAtAnnotation = "knodex.io/updated-at"
+
+// parseUpdatedAt extracts the updatedAt timestamp from secret annotations.
+// Returns nil for secrets that were never updated via Knodex.
+func parseUpdatedAt(annotations map[string]string) *time.Time {
+	if raw, ok := annotations[updatedAtAnnotation]; ok {
+		t, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			slog.Warn("malformed updatedAt annotation, ignoring",
+				"annotation", updatedAtAnnotation,
+				"value", raw,
+				"error", err,
+			)
+			return nil
+		}
+		return &t
+	}
+	return nil
+}
+
 // validateCreateSecretRequest validates the create secret request
 func validateCreateSecretRequest(req *CreateSecretRequest) map[string]string {
 	errors := make(map[string]string)
@@ -964,23 +1198,24 @@ func validateCreateSecretRequest(req *CreateSecretRequest) map[string]string {
 	return errors
 }
 
-// validateSecretData checks for empty keys, per-value size limits, and total size limits.
+// validateSecretData checks for empty keys, key character sets, per-value size limits, and total size limits.
+// All errors are collected before returning so callers see every issue in a single round trip.
 func validateSecretData(data map[string]string, errors map[string]string) map[string]string {
 	var totalSize int
 	for key, value := range data {
 		if key == "" {
-			errors["data"] = "secret keys must not be empty"
-			return errors
+			errors["data:emptyKey"] = "secret keys must not be empty"
+		} else if !secretKeyRegexp.MatchString(key) {
+			errors["data:"+key] = fmt.Sprintf("secret key %q contains invalid characters (must match [-._a-zA-Z0-9]+)", key)
 		}
 		valueSize := len(value)
 		if valueSize > MaxSecretValueSize {
-			errors["data"] = "secret value exceeds maximum size of 256KB for key: " + key
-			return errors
+			errors["data:"+key+":size"] = "secret value exceeds maximum size of 256KB for key: " + key
 		}
 		totalSize += valueSize
 	}
 	if totalSize > MaxSecretTotalSize {
-		errors["data"] = "total secret data exceeds maximum size of 512KB"
+		errors["data:totalSize"] = "total secret data exceeds maximum size of 512KB"
 	}
 	return errors
 }

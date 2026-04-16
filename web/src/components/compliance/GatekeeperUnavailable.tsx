@@ -1,7 +1,7 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { ServerOff, AlertTriangle, ExternalLink, CheckCircle } from "lucide-react";
+import { ServerOff, AlertTriangle, ExternalLink, CheckCircle } from "@/lib/icons";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 

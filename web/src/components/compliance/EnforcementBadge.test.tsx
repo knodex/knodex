@@ -35,12 +35,12 @@ describe("EnforcementBadge", () => {
     expect(badge.className).toMatch(/red/i);
   });
 
-  it("applies yellow styling for warn action (AC-VIO-05)", () => {
+  it("applies amber styling for warn action (AC-VIO-05)", () => {
     render(<EnforcementBadge action="warn" />);
 
     const badge = screen.getByText("warn");
-    // Should have yellow color classes
-    expect(badge.className).toMatch(/yellow/i);
+    // Should have amber color classes
+    expect(badge.className).toMatch(/amber/i);
   });
 
   it("applies blue styling for dryrun action (AC-VIO-05)", () => {

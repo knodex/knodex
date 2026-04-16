@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import * as React from "react";
-import { Check, ChevronsUpDown, X } from "lucide-react";
+import { Check, ChevronsUpDown, X } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -55,7 +55,7 @@ export function MultiSelect({
           role="combobox"
           aria-expanded={open}
           className={cn(
-            "min-w-[180px] h-10 justify-between",
+            "min-w-[180px] h-9 justify-between",
             selected.length > 0 ? "text-foreground font-medium" : "text-muted-foreground font-normal",
             className
           )}

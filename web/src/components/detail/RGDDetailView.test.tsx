@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RGDDetailView } from "./RGDDetailView";
@@ -20,13 +20,25 @@ vi.mock("@/hooks/useRGDs", () => ({
     isLoading: false,
     error: null,
   }),
+  useRGDRevisions: vi.fn().mockReturnValue({
+    data: { items: [], totalCount: 0 },
+    isLoading: false,
+  }),
+  useRGDInstances: vi.fn().mockReturnValue({
+    data: { items: [], totalCount: 0 },
+    isLoading: false,
+  }),
 }));
 
+// Mock useKindToRGDMap for catalog-aware depends-on count
 vi.mock("@/hooks/useKindToRGDMap", () => ({
-  useKindToRGDMap: vi.fn().mockReturnValue({ kindToRGD: new Map(), isLoading: false }),
+  useKindToRGDMap: vi.fn().mockReturnValue({
+    kindToRGD: new Map([["AKSCluster", { name: "aks-rgd" }]]),
+    isLoading: false,
+  }),
 }));
 
-// Mock DependsOnTab to isolate Overview tab tests
+// Mock DependsOnTab to isolate tests
 vi.mock("./DependsOnTab", () => ({
   DependsOnTab: () => <div data-testid="depends-on-tab">DependsOnTab</div>,
 }));
@@ -36,12 +48,18 @@ vi.mock("./AddOnsTab", () => ({
   AddOnsTab: () => <div data-testid="add-ons-tab">AddOnsTab</div>,
 }));
 
+// Mock StatusCard to isolate from its dependencies
+vi.mock("@/components/instances/StatusCard", () => ({
+  StatusCard: ({ instance }: { instance: { name: string } }) => (
+    <div data-testid="status-card">{instance.name}</div>
+  ),
+}));
+
 function createTestRGD(overrides: Partial<CatalogRGD> = {}): CatalogRGD {
   return {
     name: "test-rgd",
     namespace: "default",
     description: "A test RGD",
-    version: "v1",
     tags: [],
     category: "database",
     labels: {},
@@ -65,142 +83,18 @@ function renderWithProviders(ui: React.ReactElement) {
 }
 
 describe("RGDDetailView", () => {
-  it("shows Inactive badge when status is not Active", () => {
-    renderWithProviders(
-      <RGDDetailView rgd={createTestRGD({ status: "Inactive" })} onBack={vi.fn()} />
-    );
-    // Badge text + Overview Status value both show "Inactive"
-    const inactiveElements = screen.getAllByText("Inactive");
-    expect(inactiveElements.length).toBeGreaterThanOrEqual(1);
-  });
-
-  it("does not show Inactive badge for active RGDs", () => {
-    renderWithProviders(
-      <RGDDetailView rgd={createTestRGD({ status: "Active" })} onBack={vi.fn()} />
-    );
-    expect(screen.queryByText("Inactive")).not.toBeInTheDocument();
-  });
-
-  it("shows Status field in Overview tab", () => {
-    renderWithProviders(
-      <RGDDetailView rgd={createTestRGD({ status: "Inactive" })} onBack={vi.fn()} />
-    );
-    // The Overview tab shows Status as a label in the Details section
-    expect(screen.getByText("Status")).toBeInTheDocument();
-    // The value should show "Inactive" (in the details section, separate from the badge)
-    const statusValues = screen.getAllByText("Inactive");
-    // At least 2: one badge + one in Overview details
-    expect(statusValues.length).toBeGreaterThanOrEqual(2);
-  });
-
   it("renders Deploy button when onDeploy is provided", () => {
     renderWithProviders(
-      <RGDDetailView rgd={createTestRGD({ status: "Active" })} onBack={vi.fn()} onDeploy={vi.fn()} />
+      <RGDDetailView rgd={createTestRGD()} onBack={vi.fn()} onDeploy={vi.fn()} />
     );
-    expect(screen.getByText("Deploy")).toBeInTheDocument();
+    expect(screen.getAllByText("Deploy").length).toBeGreaterThanOrEqual(1);
   });
 
   it("does not render Deploy button when onDeploy is undefined", () => {
     renderWithProviders(
-      <RGDDetailView rgd={createTestRGD({ status: "Inactive" })} onBack={vi.fn()} />
+      <RGDDetailView rgd={createTestRGD()} onBack={vi.fn()} />
     );
     expect(screen.queryByText("Deploy")).not.toBeInTheDocument();
-  });
-
-  describe("Overview Tab - Depends On row", () => {
-    it("shows Depends On row when dependsOnKinds has entries", () => {
-      const rgd = createTestRGD({
-        dependsOnKinds: ["AKSCluster", "KeyVault"],
-      });
-      renderWithProviders(
-        <RGDDetailView rgd={rgd} onBack={vi.fn()} />
-      );
-
-      expect(screen.getByText("Depends On")).toBeInTheDocument();
-      expect(screen.getByText("AKSCluster")).toBeInTheDocument();
-      expect(screen.getByText("KeyVault")).toBeInTheDocument();
-    });
-
-    it("does not show Depends On row when dependsOnKinds is empty", () => {
-      const rgd = createTestRGD({ dependsOnKinds: [] });
-      renderWithProviders(
-        <RGDDetailView rgd={rgd} onBack={vi.fn()} />
-      );
-
-      expect(screen.queryByText("Depends On")).not.toBeInTheDocument();
-    });
-
-    it("does not show Depends On row when dependsOnKinds is undefined", () => {
-      const rgd = createTestRGD();
-      renderWithProviders(
-        <RGDDetailView rgd={rgd} onBack={vi.fn()} />
-      );
-
-      expect(screen.queryByText("Depends On")).not.toBeInTheDocument();
-    });
-
-    it("renders DependsOnKindLink as a link when parent RGD is found", async () => {
-      const { useKindToRGDMap } = await import("@/hooks/useKindToRGDMap");
-      const map = new Map();
-      map.set("AKSCluster", createTestRGD({ name: "aks-cluster-rgd", kind: "AKSCluster" }));
-      vi.mocked(useKindToRGDMap).mockReturnValue({ kindToRGD: map, isLoading: false });
-
-      const rgd = createTestRGD({ dependsOnKinds: ["AKSCluster"] });
-      renderWithProviders(
-        <RGDDetailView rgd={rgd} onBack={vi.fn()} />
-      );
-
-      const link = screen.getByRole("link", { name: "AKSCluster" });
-      expect(link).toBeInTheDocument();
-      expect(link).toHaveAttribute("href", "/catalog/aks-cluster-rgd");
-    });
-
-    it("renders DependsOnKindLink as plain text when parent RGD not found", async () => {
-      const { useKindToRGDMap } = await import("@/hooks/useKindToRGDMap");
-      vi.mocked(useKindToRGDMap).mockReturnValue({ kindToRGD: new Map(), isLoading: false });
-
-      const rgd = createTestRGD({ dependsOnKinds: ["UnknownKind"] });
-      renderWithProviders(
-        <RGDDetailView rgd={rgd} onBack={vi.fn()} />
-      );
-
-      expect(screen.getByText("UnknownKind")).toBeInTheDocument();
-      // Should be plain text, not a link
-      expect(screen.queryByRole("link", { name: "UnknownKind" })).not.toBeInTheDocument();
-    });
-  });
-
-  describe("Overview Tab - Extends row (ExtendsKindLink pure display)", () => {
-    it("renders ExtendsKindLink as a link when parent RGD is resolved via useKindToRGDMap", async () => {
-      const { useKindToRGDMap } = await import("@/hooks/useKindToRGDMap");
-      const map = new Map();
-      map.set("SimpleApp", createTestRGD({ name: "simple-app-rgd", kind: "SimpleApp" }));
-      vi.mocked(useKindToRGDMap).mockReturnValue({ kindToRGD: map, isLoading: false });
-
-      const rgd = createTestRGD({ extendsKinds: ["SimpleApp"] });
-      renderWithProviders(<RGDDetailView rgd={rgd} onBack={vi.fn()} />);
-
-      const link = screen.getByRole("link", { name: "SimpleApp" });
-      expect(link).toBeInTheDocument();
-      expect(link).toHaveAttribute("href", "/catalog/simple-app-rgd");
-    });
-
-    it("renders ExtendsKindLink as plain text when parent RGD is not found in catalog", async () => {
-      const { useKindToRGDMap } = await import("@/hooks/useKindToRGDMap");
-      vi.mocked(useKindToRGDMap).mockReturnValue({ kindToRGD: new Map(), isLoading: false });
-
-      const rgd = createTestRGD({ extendsKinds: ["UnknownParentKind"] });
-      renderWithProviders(<RGDDetailView rgd={rgd} onBack={vi.fn()} />);
-
-      expect(screen.getByText("UnknownParentKind")).toBeInTheDocument();
-      expect(screen.queryByRole("link", { name: "UnknownParentKind" })).not.toBeInTheDocument();
-    });
-
-    it("does not render Extends row when extendsKinds is empty", () => {
-      const rgd = createTestRGD({ extendsKinds: [] });
-      renderWithProviders(<RGDDetailView rgd={rgd} onBack={vi.fn()} />);
-      expect(screen.queryByText("Extends")).not.toBeInTheDocument();
-    });
   });
 
   describe("Secrets tab visibility", () => {
@@ -263,6 +157,132 @@ describe("RGDDetailView", () => {
       );
 
       expect(screen.queryByRole("tab", { name: /Depends On/i })).not.toBeInTheDocument();
+    });
+  });
+
+  describe("Instances tab", () => {
+    it("renders Instances tab by default", () => {
+      renderWithProviders(
+        <RGDDetailView rgd={createTestRGD()} />
+      );
+      expect(screen.getByRole("tab", { name: /Instances/i })).toHaveAttribute("aria-selected", "true");
+    });
+
+    it("shows loading state while instances load", async () => {
+      const { useRGDInstances } = await import("@/hooks/useRGDs");
+      vi.mocked(useRGDInstances).mockReturnValue({
+        data: undefined,
+        isLoading: true,
+      } as any);
+
+      renderWithProviders(
+        <RGDDetailView rgd={createTestRGD()} />
+      );
+      expect(screen.getByText("Loading instances...")).toBeInTheDocument();
+    });
+
+    it("shows empty state when no instances", async () => {
+      const { useRGDInstances } = await import("@/hooks/useRGDs");
+      vi.mocked(useRGDInstances).mockReturnValue({
+        data: { items: [], totalCount: 0 },
+        isLoading: false,
+      } as any);
+
+      renderWithProviders(
+        <RGDDetailView rgd={createTestRGD()} />
+      );
+      expect(screen.getByText("No instances deployed yet")).toBeInTheDocument();
+    });
+
+    it("shows Deploy button in empty state when onDeploy is provided", async () => {
+      const { useRGDInstances } = await import("@/hooks/useRGDs");
+      vi.mocked(useRGDInstances).mockReturnValue({
+        data: { items: [], totalCount: 0 },
+        isLoading: false,
+      } as any);
+
+      const onDeploy = vi.fn();
+      renderWithProviders(
+        <RGDDetailView rgd={createTestRGD()} onDeploy={onDeploy} />
+      );
+      expect(screen.getByText("No instances deployed yet")).toBeInTheDocument();
+      // Deploy button in both header and empty state
+      const deployButtons = screen.getAllByText("Deploy");
+      expect(deployButtons.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it("renders instance cards when instances exist", async () => {
+      const { useRGDInstances } = await import("@/hooks/useRGDs");
+      vi.mocked(useRGDInstances).mockReturnValue({
+        data: {
+          items: [
+            { name: "inst-1", namespace: "default", kind: "TestResource", uid: "uid-1", health: "Healthy", conditions: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), rgdName: "test-rgd", rgdNamespace: "default", apiVersion: "v1" },
+            { name: "inst-2", namespace: "default", kind: "TestResource", uid: "uid-2", health: "Healthy", conditions: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), rgdName: "test-rgd", rgdNamespace: "default", apiVersion: "v1" },
+          ],
+          totalCount: 2,
+        },
+        isLoading: false,
+      } as any);
+
+      renderWithProviders(
+        <RGDDetailView rgd={createTestRGD()} />
+      );
+      expect(screen.getAllByTestId("status-card")).toHaveLength(2);
+      expect(screen.getByText("inst-1")).toBeInTheDocument();
+      expect(screen.getByText("inst-2")).toBeInTheDocument();
+    });
+  });
+
+  describe("initialTab prop (STORY-400)", () => {
+    it("activates Revisions tab when initialTab='revisions' and revisions exist", async () => {
+      const { useRGDRevisions } = await import("@/hooks/useRGDs");
+      vi.mocked(useRGDRevisions).mockReturnValue({
+        data: { items: [{ revisionNumber: 1, rgdName: "test-rgd", namespace: "default", conditions: [], createdAt: new Date().toISOString() }], totalCount: 1 },
+        isLoading: false,
+      } as any);
+
+      renderWithProviders(
+        <RGDDetailView rgd={createTestRGD()} initialTab="revisions" />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByRole("tab", { name: /Revisions \(1\)/i })).toHaveAttribute("aria-selected", "true");
+      });
+    });
+
+    it("stays on Instances tab when initialTab='revisions' but no revisions exist", async () => {
+      // Explicitly reset to 0 to prevent pollution from sibling tests that set totalCount: 1
+      const { useRGDRevisions } = await import("@/hooks/useRGDs");
+      vi.mocked(useRGDRevisions).mockReturnValue({
+        data: { items: [], totalCount: 0 },
+        isLoading: false,
+      } as any);
+
+      renderWithProviders(
+        <RGDDetailView rgd={createTestRGD()} initialTab="revisions" />
+      );
+
+      // Revisions tab never appears — initialTab cannot activate it
+      expect(screen.queryByRole("tab", { name: /Revisions/i })).not.toBeInTheDocument();
+      expect(screen.getByRole("tab", { name: /Instances/i })).toHaveAttribute("aria-selected", "true");
+    });
+
+    it("stays on Instances tab when initialTab is not provided even with revisions", async () => {
+      const { useRGDRevisions } = await import("@/hooks/useRGDs");
+      vi.mocked(useRGDRevisions).mockReturnValue({
+        data: { items: [{ revisionNumber: 1, rgdName: "test-rgd", namespace: "default", conditions: [], createdAt: new Date().toISOString() }], totalCount: 1 },
+        isLoading: false,
+      } as any);
+
+      renderWithProviders(
+        <RGDDetailView rgd={createTestRGD()} />
+      );
+
+      // Revisions tab appears but Instances remains selected (no initialTab)
+      await waitFor(() => {
+        expect(screen.getByRole("tab", { name: /Revisions \(1\)/i })).toBeInTheDocument();
+      });
+      expect(screen.getByRole("tab", { name: /Instances/i })).toHaveAttribute("aria-selected", "true");
     });
   });
 });

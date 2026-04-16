@@ -100,51 +100,6 @@ func TestRecordCreation(t *testing.T) {
 	}
 }
 
-func TestRecordGitPush(t *testing.T) {
-	t.Parallel()
-
-	svc := NewService(nil)
-	ctx := context.Background()
-
-	// First create the instance
-	err := svc.RecordCreation(ctx, "test-ns", "TestKind", "test-instance", "test-rgd", "test-user", models.DeploymentModeGitOps)
-	if err != nil {
-		t.Fatalf("RecordCreation failed: %v", err)
-	}
-
-	// Record git push
-	err = svc.RecordGitPush(ctx, "test-ns", "TestKind", "test-instance", "abc123def", "https://github.com/org/repo", "main", "test-user")
-	if err != nil {
-		t.Fatalf("RecordGitPush failed: %v", err)
-	}
-
-	history, err := svc.GetHistory(ctx, "test-ns", "TestKind", "test-instance")
-	if err != nil {
-		t.Fatalf("GetHistory failed: %v", err)
-	}
-
-	if len(history.Events) != 2 {
-		t.Errorf("expected 2 events, got %d", len(history.Events))
-	}
-
-	pushEvent := history.Events[1]
-	if pushEvent.EventType != models.EventTypePushedToGit {
-		t.Errorf("expected EventTypePushedToGit, got %s", pushEvent.EventType)
-	}
-	if pushEvent.GitCommitSHA != "abc123def" {
-		t.Errorf("expected GitCommitSHA 'abc123def', got '%s'", pushEvent.GitCommitSHA)
-	}
-	if pushEvent.GitRepository != "https://github.com/org/repo" {
-		t.Errorf("expected GitRepository 'https://github.com/org/repo', got '%s'", pushEvent.GitRepository)
-	}
-	if pushEvent.GitBranch != "main" {
-		t.Errorf("expected GitBranch 'main', got '%s'", pushEvent.GitBranch)
-	}
-	if history.LastGitCommit != "abc123def" {
-		t.Errorf("expected LastGitCommit 'abc123def', got '%s'", history.LastGitCommit)
-	}
-}
-
 func TestRecordStatusChange(t *testing.T) {
 	t.Parallel()
 
@@ -311,9 +266,17 @@ func TestGetTimeline(t *testing.T) {
 		t.Fatalf("RecordCreation failed: %v", err)
 	}
 
-	err = svc.RecordGitPush(ctx, "test-ns", "TestKind", "test-instance", "abc123", "https://github.com/org/repo", "main", "test-user")
+	err = svc.RecordEvent(ctx, "test-ns", "TestKind", "test-instance", models.DeploymentEvent{
+		EventType:     models.EventTypePushedToGit,
+		Status:        "PushedToGit",
+		User:          "test-user",
+		GitCommitSHA:  "abc123",
+		GitRepository: "https://github.com/org/repo",
+		GitBranch:     "main",
+		Message:       "Manifest pushed to https://github.com/org/repo",
+	})
 	if err != nil {
-		t.Fatalf("RecordGitPush failed: %v", err)
+		t.Fatalf("RecordEvent failed: %v", err)
 	}
 
 	err = svc.RecordStatusChange(ctx, "test-ns", "TestKind", "test-instance", "PushedToGit", "Ready")
@@ -423,33 +386,6 @@ func TestCreateHistoryFromInstance(t *testing.T) {
 	}
 }
 
-func TestListAllHistories(t *testing.T) {
-	t.Parallel()
-
-	svc := NewService(nil)
-	ctx := context.Background()
-
-	// Create multiple instances
-	err := svc.RecordCreation(ctx, "ns1", "Kind1", "instance1", "rgd1", "user1", models.DeploymentModeDirect)
-	if err != nil {
-		t.Fatalf("RecordCreation failed: %v", err)
-	}
-
-	err = svc.RecordCreation(ctx, "ns2", "Kind2", "instance2", "rgd2", "user2", models.DeploymentModeGitOps)
-	if err != nil {
-		t.Fatalf("RecordCreation failed: %v", err)
-	}
-
-	histories, err := svc.ListAllHistories(ctx)
-	if err != nil {
-		t.Fatalf("ListAllHistories failed: %v", err)
-	}
-
-	if len(histories) != 2 {
-		t.Errorf("expected 2 histories, got %d", len(histories))
-	}
-}
-
 func TestEventsSortedByTimestamp(t *testing.T) {
 	t.Parallel()
 
@@ -499,4 +435,116 @@ func TestEventsSortedByTimestamp(t *testing.T) {
 				i-1, history.Events[i-1].Timestamp)
 		}
 	}
+}
+
+func TestGetFilteredTimeline(t *testing.T) {
+	t.Parallel()
+
+	svc := NewService(nil)
+	ctx := context.Background()
+	now := time.Now()
+
+	// Create history with mixed event types
+	events := []models.DeploymentEvent{
+		{
+			Timestamp: now.Add(-4 * time.Hour),
+			EventType: models.EventTypeCreated,
+			Status:    "Pending",
+			User:      "test-user",
+			Message:   "Instance created",
+		},
+		{
+			Timestamp: now.Add(-3 * time.Hour),
+			EventType: models.EventTypeKubernetesEvent,
+			Status:    "Normal",
+			User:      "system",
+			Message:   "Container started",
+			Details: map[string]interface{}{
+				"reason": "Started",
+			},
+		},
+		{
+			Timestamp: now.Add(-2 * time.Hour),
+			EventType: models.EventTypeReady,
+			Status:    "Ready",
+			User:      "system",
+			Message:   "Instance ready",
+		},
+		{
+			Timestamp: now.Add(-1 * time.Hour),
+			EventType: models.EventTypeKubernetesEvent,
+			Status:    "Warning",
+			User:      "system",
+			Message:   "Health check failed",
+			Details: map[string]interface{}{
+				"reason": "Unhealthy",
+			},
+		},
+	}
+
+	// Create history first
+	_ = svc.RecordCreation(ctx, "test-ns", "TestKind", "test-instance", "test-rgd", "test-user", models.DeploymentModeDirect)
+
+	// Record the mixed events
+	for _, e := range events {
+		_ = svc.RecordEvent(ctx, "test-ns", "TestKind", "test-instance", e)
+	}
+
+	t.Run("empty source returns all events", func(t *testing.T) {
+		timeline, err := svc.GetFilteredTimeline(ctx, "test-ns", "TestKind", "test-instance", "")
+		if err != nil {
+			t.Fatalf("GetFilteredTimeline failed: %v", err)
+		}
+		if len(timeline) != 5 { // Created (from RecordCreation) + 4 events above
+			t.Errorf("expected 5 timeline entries, got %d", len(timeline))
+		}
+	})
+
+	t.Run("source=kubernetes returns only K8s events", func(t *testing.T) {
+		timeline, err := svc.GetFilteredTimeline(ctx, "test-ns", "TestKind", "test-instance", "kubernetes")
+		if err != nil {
+			t.Fatalf("GetFilteredTimeline failed: %v", err)
+		}
+		if len(timeline) != 2 {
+			t.Errorf("expected 2 timeline entries, got %d", len(timeline))
+		}
+		for _, entry := range timeline {
+			if entry.EventType != models.EventTypeKubernetesEvent {
+				t.Errorf("expected EventTypeKubernetesEvent, got %v", entry.EventType)
+			}
+			if entry.Source != "kubernetes" {
+				t.Errorf("expected Source=kubernetes, got %s", entry.Source)
+			}
+		}
+	})
+
+	t.Run("source=deployment returns only deployment events", func(t *testing.T) {
+		timeline, err := svc.GetFilteredTimeline(ctx, "test-ns", "TestKind", "test-instance", "deployment")
+		if err != nil {
+			t.Fatalf("GetFilteredTimeline failed: %v", err)
+		}
+		// Should return Created, Ready, and the two Kubernetes events filtered out
+		for _, entry := range timeline {
+			if entry.EventType == models.EventTypeKubernetesEvent {
+				t.Errorf("expected non-Kubernetes event, got KubernetesEvent")
+			}
+		}
+	})
+
+	t.Run("unknown source returns nil", func(t *testing.T) {
+		timeline, err := svc.GetFilteredTimeline(ctx, "test-ns", "TestKind", "test-instance", "unknown")
+		if err != nil {
+			t.Fatalf("GetFilteredTimeline failed: %v", err)
+		}
+		if timeline != nil {
+			t.Errorf("expected nil timeline for unknown source, got %d entries", len(timeline))
+		}
+	})
+
+	t.Run("non-existent instance returns error", func(t *testing.T) {
+		_, err := svc.GetFilteredTimeline(ctx, "test-ns", "TestKind", "non-existent", "kubernetes")
+		if err == nil {
+			t.Error("expected error for non-existent instance")
+		}
+	})
 }

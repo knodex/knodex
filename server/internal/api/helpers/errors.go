@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/knodex/knodex/server/internal/rbac"
+	"github.com/knodex/knodex/server/internal/services"
 )
 
 // IsNotFoundError checks if an error indicates a resource was not found.
@@ -17,7 +18,7 @@ func IsNotFoundError(err error) bool {
 		return false
 	}
 	// Check specific error types first
-	if errors.Is(err, rbac.ErrNotFound) || errors.Is(err, rbac.ErrProjectNotFound) {
+	if errors.Is(err, services.ErrNotFound) || errors.Is(err, rbac.ErrProjectNotFound) {
 		return true
 	}
 	// Fall back to string matching for k8s errors

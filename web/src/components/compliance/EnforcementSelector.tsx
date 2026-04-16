@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { useState } from "react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown } from "@/lib/icons";
 import {
   Select,
   SelectContent,
@@ -146,7 +146,7 @@ export function EnforcementSelector({
                     className={cn(
                       "w-2 h-2 rounded-full",
                       option.value === "deny" && "bg-red-500",
-                      option.value === "warn" && "bg-yellow-500",
+                      option.value === "warn" && "bg-amber-500",
                       option.value === "dryrun" && "bg-blue-500"
                     )}
                   />

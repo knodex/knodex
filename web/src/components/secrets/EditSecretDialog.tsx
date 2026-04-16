@@ -17,15 +17,16 @@ import { Button } from "@/components/ui/button";
 import { KeyValueEditor } from "./KeyValueEditor";
 import { createPairId, type KeyValuePair } from "./keyValueTypes";
 import type { SecretDetail } from "@/types/secret";
+import { useCurrentProject } from "@/hooks/useAuth";
 
 interface EditSecretDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   secret: SecretDetail;
-  project: string;
 }
 
-export function EditSecretDialog({ open, onOpenChange, secret, project }: EditSecretDialogProps) {
+export function EditSecretDialog({ open, onOpenChange, secret }: EditSecretDialogProps) {
+  const project = useCurrentProject() ?? "";
   const [pairs, setPairs] = useState<KeyValuePair[]>([]);
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
 

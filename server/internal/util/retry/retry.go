@@ -21,10 +21,29 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"math"
 	"time"
 )
+
+// PermanentError wraps an error to indicate it should not be retried.
+// Use Permanent() to create one.
+type PermanentError struct {
+	Err error
+}
+
+func (e *PermanentError) Error() string { return e.Err.Error() }
+func (e *PermanentError) Unwrap() error { return e.Err }
+
+// Permanent wraps an error to signal that retry should stop immediately.
+// DoWithResult unwraps PermanentError and returns the inner error directly.
+func Permanent(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &PermanentError{Err: err}
+}
 
 // RetryConfig holds configuration for retry behavior.
 type RetryConfig struct {
@@ -87,6 +106,11 @@ func DoWithResult[T any](ctx context.Context, config RetryConfig, fn func() (T, 
 		result, err := fn()
 		if err == nil {
 			return result, nil
+		}
+		// Permanent error — stop retrying, return the inner error
+		var pe *PermanentError
+		if errors.As(err, &pe) {
+			return zero, pe.Err
 		}
 		lastErr = err
 

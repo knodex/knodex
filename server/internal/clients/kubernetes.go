@@ -24,7 +24,12 @@ const (
 
 // NewKubernetesClient creates a new Kubernetes client from configuration
 // Returns nil if client cannot be created
-func NewKubernetesClient(cfg *config.Kubernetes) kubernetes.Interface {
+func NewKubernetesClient(cfg *config.Kubernetes, logger *slog.Logger) kubernetes.Interface {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	logger = logger.With("component", "kubernetes-client")
+
 	var restConfig *rest.Config
 	var err error
 
@@ -32,20 +37,20 @@ func NewKubernetesClient(cfg *config.Kubernetes) kubernetes.Interface {
 		// Use in-cluster configuration
 		restConfig, err = rest.InClusterConfig()
 		if err != nil {
-			slog.Error("failed to create in-cluster kubernetes config", "error", err)
+			logger.Error("failed to create in-cluster kubernetes config", "error", err)
 			return nil
 		}
-		slog.Info("using in-cluster kubernetes configuration")
+		logger.Info("using in-cluster kubernetes configuration")
 	} else {
 		// Use kubeconfig file
 		restConfig, err = clientcmd.BuildConfigFromFlags("", cfg.Kubeconfig)
 		if err != nil {
-			slog.Warn("failed to load kubeconfig, continuing without kubernetes client",
+			logger.Warn("failed to load kubeconfig, continuing without kubernetes client",
 				"error", err,
 				"kubeconfig", cfg.Kubeconfig)
 			return nil
 		}
-		slog.Info("using kubeconfig", "path", cfg.Kubeconfig)
+		logger.Info("using kubeconfig", "path", cfg.Kubeconfig)
 	}
 
 	// Set timeout for requests to avoid hanging indefinitely
@@ -59,7 +64,7 @@ func NewKubernetesClient(cfg *config.Kubernetes) kubernetes.Interface {
 	// Create clientset
 	clientset, err := kubernetes.NewForConfig(restConfig)
 	if err != nil {
-		slog.Error("failed to create kubernetes clientset", "error", err)
+		logger.Error("failed to create kubernetes clientset", "error", err)
 		return nil
 	}
 
@@ -67,12 +72,12 @@ func NewKubernetesClient(cfg *config.Kubernetes) kubernetes.Interface {
 	// The watcher/tracker will handle connection errors gracefully
 	version, err := clientset.Discovery().ServerVersion()
 	if err != nil {
-		slog.Warn("failed to connect to kubernetes API, client will retry on use", "error", err)
+		logger.Warn("failed to connect to kubernetes API, client will retry on use", "error", err)
 		// Return client anyway - connection will be retried when actually used
 		return clientset
 	}
 
-	slog.Info("connected to kubernetes", "version", version.String())
+	logger.Info("connected to kubernetes", "version", version.String())
 	return clientset
 }
 

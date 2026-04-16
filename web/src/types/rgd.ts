@@ -8,6 +8,15 @@ import type { SecretRef } from "./secret";
  */
 
 /**
+ * GVKRef identifies a Kubernetes resource by Group, Version, and Kind.
+ */
+export interface GVKRef {
+  group: string;
+  version: string;
+  kind: string;
+}
+
+/**
  * CatalogRGD represents an RGD as returned by the catalog API
  */
 export interface CatalogRGD {
@@ -16,7 +25,6 @@ export interface CatalogRGD {
   title?: string;
   namespace: string;
   description: string;
-  version: string;
   tags: string[];
   category: string;
   icon?: string;
@@ -28,12 +36,18 @@ export interface CatalogRGD {
   kind?: string;
   /** Parent RGD Kinds this RGD extends (from knodex.io/extends-kind annotation) */
   extendsKinds?: string[];
-  /** KRO processing state (e.g., "Active", "Inactive") */
+  /** KRO processing state (e.g., "Active") */
   status?: string;
+  /** Most recently issued GraphRevision number (0 or absent = no revisions) */
+  lastIssuedRevision?: number;
   /** Kinds of external references this RGD depends on (populated from externalRef resources) */
   dependsOnKinds?: string[];
+  /** GVKs of non-external resources this RGD produces (populated from spec.resources[]) */
+  producesKinds?: GVKRef[];
   /** Allowed deployment modes for this RGD. If empty/undefined, all modes are allowed. */
   allowedDeploymentModes?: DeploymentMode[];
+  /** Whether this RGD produces cluster-scoped (non-namespaced) instances */
+  isClusterScoped?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -59,10 +73,26 @@ export interface RGDListParams {
   /** Filter RGDs that extend the specified Kind */
   extendsKind?: string;
   dependsOnKind?: string;
+  /** Filter RGDs that produce the specified Kind as a non-external resource */
+  producesKind?: string;
+  /** Narrows producesKind to a specific API group (optional) */
+  producesGroup?: string;
+  /** Filter by RGD status. Always "Active" in the frontend. */
+  status?: string;
   page?: number;
   pageSize?: number;
   sortBy?: "name" | "namespace" | "createdAt" | "updatedAt" | "category";
   sortOrder?: "asc" | "desc";
+}
+
+/**
+ * Filter options returned by the /api/v1/rgds/filters endpoint.
+ * Categories are already filtered by the user's Casbin authorization.
+ */
+export interface RGDFilterOptions {
+  projects: string[];
+  tags: string[];
+  categories: string[];
 }
 
 /**
@@ -103,6 +133,26 @@ export interface ExternalRefInfo {
 }
 
 /**
+ * Iterator describes a single forEach dimension on a collection resource
+ */
+export interface Iterator {
+  name: string;
+  expression: string;
+  source: "schema" | "resource" | "literal";
+  sourcePath: string;
+  dimensionIndex: number;
+}
+
+/**
+ * A parse error encountered during graph construction
+ */
+export interface ParseError {
+  resourceID: string;
+  field: string;
+  message: string;
+}
+
+/**
  * A resource node in the internal resource graph
  */
 export interface ResourceNode {
@@ -114,6 +164,9 @@ export interface ResourceNode {
   conditionExpr?: string;
   dependsOn: string[];
   externalRef?: ExternalRefInfo;
+  isCollection?: boolean;
+  forEach?: Iterator[];
+  readyWhen?: string[];
 }
 
 /**
@@ -133,6 +186,8 @@ export interface ResourceGraph {
   rgdNamespace: string;
   resources: ResourceNode[];
   edges: ResourceEdge[];
+  topologicalOrder?: string[];
+  parseErrors?: ParseError[];
 }
 
 /**
@@ -165,6 +220,8 @@ export interface FormProperty {
   maxLength?: number;
   pattern?: string;
   properties?: Record<string, FormProperty>;
+  /** Display order for nested object fields */
+  propertyOrder?: string[];
   required?: string[];
   items?: FormProperty;
   "x-kubernetes-preserve-unknown-fields"?: boolean;
@@ -229,10 +286,14 @@ export interface FormSchema {
   title?: string;
   description?: string;
   properties: Record<string, FormProperty>;
+  /** Display order for top-level form fields */
+  propertyOrder?: string[];
   required?: string[];
   conditionalSections?: ConditionalSection[];
-  /** Advanced configuration toggle for fields under spec.advanced */
-  advancedSection?: AdvancedSection;
+  /** Whether this RGD produces cluster-scoped instances (no namespace needed) */
+  isClusterScoped?: boolean;
+  /** Per-feature and global advanced configuration toggles */
+  advancedSections?: AdvancedSection[];
 }
 
 /**
@@ -280,6 +341,7 @@ export type GitPushStatus =
   | "pending"
   | "in_progress"
   | "completed"
+  | "success"
   | "failed";
 
 /**
@@ -287,6 +349,8 @@ export type GitPushStatus =
  */
 export interface GitInfo {
   repositoryId?: string;
+  /** Human-readable repository reference, e.g. "owner/repo" */
+  repositoryUrl?: string;
   commitSha?: string;
   commitUrl?: string;
   branch?: string;
@@ -302,11 +366,10 @@ export interface GitInfo {
 export type DeploymentMode = "direct" | "gitops" | "hybrid";
 
 /**
- * Represents a deployed instance of an RGD
+ * Shared fields for all instances (both namespaced and cluster-scoped)
  */
-export interface Instance {
+interface InstanceBase {
   name: string;
-  namespace: string;
   rgdName: string;
   rgdNamespace: string;
   apiVersion: string;
@@ -323,20 +386,55 @@ export interface Instance {
   gitInfo?: GitInfo;
   /** Kubernetes unique identifier */
   uid?: string;
-  /** KRO status of the parent RGD (e.g., "Active", "Inactive") */
+  /** KRO status of the parent RGD (e.g., "Active") */
   rgdStatus?: string;
+  /** Icon slug from the parent RGD's knodex.io/icon annotation */
+  rgdIcon?: string;
+  /** Category from the parent RGD's knodex.io/category annotation */
+  rgdCategory?: string;
   /** Kubernetes resource version for optimistic concurrency control */
   resourceVersion?: string;
+  /** True when kro.run/reconcile: suspended is set — KRO holds off creating child resources */
+  reconciliationSuspended?: boolean;
   /** True when live spec doesn't match the desired spec pushed to Git */
   gitopsDrift?: boolean;
   /** The desired spec that was pushed to Git (for drift comparison) */
   desiredSpec?: Record<string, unknown>;
+  /** ISO8601 timestamp of when drift was first detected (from Git push time) */
+  driftedAt?: string;
 }
 
 /**
- * Annotation key for GitOps instance ID (used for correlation)
+ * Represents a deployed instance of an RGD.
+ *
+ * Discriminated union enforcing that cluster-scoped instances (isClusterScoped: true)
+ * must have an empty namespace, preventing invalid state at compile time.
+ *
+ * Note: TypeScript's structural type system cannot statically prevent
+ * `{ isClusterScoped: false, namespace: "" }` without a branded NonEmptyString
+ * type, which would require invasive changes across all Instance-creating code.
+ * The union enforces the primary invariant: `isClusterScoped: true` ↔ `namespace: ""`.
+ * Use `hasValidNamespace()` for runtime validation at API boundaries.
  */
-export const INSTANCE_ID_ANNOTATION = "knodex.io/instance-id";
+export type Instance = InstanceBase &
+  (
+    | { isClusterScoped?: false | undefined; namespace: string }
+    | { isClusterScoped: true; namespace: "" }
+  );
+
+/**
+ * Runtime guard validating the namespace/isClusterScoped invariant.
+ * Cluster-scoped instances must have an empty namespace; namespaced instances
+ * must have a non-empty namespace.
+ *
+ * Use at API response boundaries to catch server-side inconsistencies.
+ */
+export function hasValidNamespace(
+  instance: Pick<Instance, "namespace" | "isClusterScoped">
+): boolean {
+  if (instance.isClusterScoped) return instance.namespace === "";
+  return instance.namespace.length > 0;
+}
 
 /**
  * GitOps location annotation keys
@@ -443,7 +541,7 @@ export interface InstanceListResponse {
  */
 export interface CreateInstanceRequest {
   name: string;
-  namespace: string; // Required: Namespace for deployment
+  namespace?: string; // Optional for cluster-scoped instances
   projectId?: string; // Project ID for RBAC and policy validation
   rgdName: string;
   rgdNamespace?: string;
@@ -452,6 +550,7 @@ export interface CreateInstanceRequest {
   repositoryId?: string;
   gitBranch?: string; // Optional: Override default branch for GitOps deployment
   gitPath?: string; // Optional: Override semantic path for GitOps deployment
+  clusterRef?: string; // Optional: Target CAPI cluster for multi-cluster deployments
 }
 
 /**
@@ -505,30 +604,6 @@ export type GitOpsInstanceStatus =
   | "GitOpsFailed";
 
 /**
- * Status transition in the instance timeline
- */
-export interface StatusTransition {
-  fromStatus: string;
-  toStatus: string;
-  timestamp: string;
-  message?: string;
-}
-
-/**
- * Response for status timeline API
- */
-export interface StatusTimelineResponse {
-  instanceId: string;
-  name?: string;
-  namespace?: string;
-  currentStatus?: string;
-  deploymentMode?: string;
-  pushedAt?: string;
-  isStuck: boolean;
-  timeline: StatusTransition[];
-}
-
-/**
  * Pending GitOps instance
  */
 export interface PendingInstance {
@@ -566,4 +641,121 @@ export interface StuckInstancesResponse {
  */
 export interface CountResponse {
   count: number;
+}
+
+/**
+ * GraphRevision condition (e.g., GraphVerified, Ready)
+ */
+export interface GraphRevisionCondition {
+  type: string;
+  status: string;
+  reason?: string;
+  message?: string;
+}
+
+/**
+ * GraphRevision represents a KRO GraphRevision CRD
+ */
+export interface GraphRevision {
+  revisionNumber: number;
+  rgdName: string;
+  namespace: string;
+  conditions: GraphRevisionCondition[];
+  contentHash?: string;
+  createdAt: string;
+  labels?: Record<string, string>;
+  annotations?: Record<string, string>;
+  resourceVersion?: string;
+  snapshot?: Record<string, unknown>;
+}
+
+/**
+ * Paginated list of GraphRevisions
+ */
+export interface GraphRevisionList {
+  items: GraphRevision[];
+  totalCount: number;
+}
+
+/**
+ * A single changed field in a revision diff
+ */
+export interface DiffField {
+  /** Dot-delimited field path (e.g., "spec.resources[0].apiVersion") */
+  path: string;
+  /** Value in the older revision (absent for added fields) */
+  oldValue?: unknown;
+  /** Value in the newer revision (absent for removed fields) */
+  newValue?: unknown;
+}
+
+/**
+ * Structured diff between two RGD revision snapshots
+ */
+export interface RevisionDiff {
+  rgdName: string;
+  /** Older (smaller) revision number */
+  rev1: number;
+  /** Newer (larger) revision number */
+  rev2: number;
+  /** Fields present in rev2 but not in rev1 */
+  added: DiffField[];
+  /** Fields present in rev1 but not in rev2 */
+  removed: DiffField[];
+  /** Fields that exist in both revisions but with different values */
+  modified: DiffField[];
+  /** True when there are no differences between the two revisions */
+  identical: boolean;
+}
+
+/**
+ * ChildResource represents a single Kubernetes resource created by KRO
+ * as part of an instance's resource graph.
+ */
+export interface ChildResource {
+  name: string;
+  namespace: string;
+  kind: string;
+  apiVersion: string;
+  nodeId: string;
+  health: string;
+  phase?: string;
+  /** Human-readable status message from status.message (e.g., condition details) */
+  status?: string;
+  createdAt: string;
+  labels?: Record<string, string>;
+  /** Cluster name where this child resource lives (empty = management cluster) */
+  cluster?: string;
+  /** Cluster connectivity status ("unreachable" when cluster is down) */
+  clusterStatus?: string;
+}
+
+/**
+ * ChildResourceGroup groups child resources by their node-id within
+ * the RGD resource graph.
+ */
+export interface ChildResourceGroup {
+  nodeId: string;
+  kind: string;
+  apiVersion: string;
+  count: number;
+  readyCount: number;
+  health: string;
+  resources: ChildResource[];
+}
+
+/**
+ * ChildResourceResponse is the API response for listing child resources
+ * of an instance, grouped by node-id.
+ */
+export interface ChildResourceResponse {
+  instanceName: string;
+  instanceNamespace: string;
+  instanceKind: string;
+  totalCount: number;
+  groups: ChildResourceGroup[];
+  /** True when one or more target clusters are unreachable */
+  clusterUnreachable?: boolean;
+  /** Names of clusters that are unreachable */
+  unreachableClusters?: string[];
 }

@@ -19,7 +19,7 @@ func TestUserRateLimit_AuthenticatedUser(t *testing.T) {
 		FallbackToIP:      false,
 	}
 
-	middleware := UserRateLimit(config)
+	middleware, _ := UserRateLimit(config)
 
 	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -64,7 +64,7 @@ func TestUserRateLimit_DifferentUsers(t *testing.T) {
 		FallbackToIP:      false,
 	}
 
-	middleware := UserRateLimit(config)
+	middleware, _ := UserRateLimit(config)
 
 	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -112,7 +112,7 @@ func TestUserRateLimit_UnauthenticatedNoFallback(t *testing.T) {
 		FallbackToIP:      false,
 	}
 
-	middleware := UserRateLimit(config)
+	middleware, _ := UserRateLimit(config)
 
 	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -140,7 +140,7 @@ func TestUserRateLimit_UnauthenticatedWithFallback(t *testing.T) {
 		FallbackToIP:      true,
 	}
 
-	middleware := UserRateLimit(config)
+	middleware, _ := UserRateLimit(config)
 
 	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -180,7 +180,7 @@ func TestUserRateLimit_BurstAllowance(t *testing.T) {
 		FallbackToIP:      false,
 	}
 
-	middleware := UserRateLimit(config)
+	middleware, _ := UserRateLimit(config)
 
 	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -308,7 +308,7 @@ func TestUserRateLimit_RateLimitErrorResponse(t *testing.T) {
 		FallbackToIP:      false,
 	}
 
-	middleware := UserRateLimit(config)
+	middleware, _ := UserRateLimit(config)
 
 	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -355,7 +355,7 @@ func TestUserRateLimit_RetryAfterHeader(t *testing.T) {
 		FallbackToIP:      false,
 	}
 
-	mw := UserRateLimit(config)
+	mw, _ := UserRateLimit(config)
 
 	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -401,7 +401,7 @@ func TestUserRateLimit_SSOBurstOf5(t *testing.T) {
 		FallbackToIP:      false,
 	}
 
-	mw := UserRateLimit(config)
+	mw, _ := UserRateLimit(config)
 
 	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -452,7 +452,7 @@ func TestUserRateLimit_SSOPerUserIndependent(t *testing.T) {
 		FallbackToIP:      false,
 	}
 
-	mw := UserRateLimit(config)
+	mw, _ := UserRateLimit(config)
 
 	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -527,4 +527,55 @@ func TestNewUserRateLimiter_WithoutIPFallback(t *testing.T) {
 	if limiter.ipLimiter != nil {
 		t.Error("expected ipLimiter to be nil when FallbackToIP is false")
 	}
+}
+
+func TestUserRateLimiter_StopCalledOnShutdown(t *testing.T) {
+	t.Parallel()
+
+	_, limiter := UserRateLimit(UserRateLimitConfig{
+		RequestsPerMinute: 100,
+		BurstSize:         10,
+		FallbackToIP:      false,
+	})
+
+	// Verify limiter is not nil and has a stop channel
+	if limiter == nil {
+		t.Fatal("expected non-nil UserRateLimiter from UserRateLimit")
+	}
+
+	// Stop should not panic and should close the cleanup goroutine
+	limiter.Stop()
+
+	// Calling Stop multiple times must not panic (sync.Once guard)
+	limiter.Stop()
+	limiter.Stop()
+}
+
+func TestUserRateLimit_ReturnsBothMiddlewareAndLimiter(t *testing.T) {
+	t.Parallel()
+
+	mw, limiter := UserRateLimit(UserRateLimitConfig{
+		RequestsPerMinute: 100,
+		BurstSize:         10,
+		FallbackToIP:      false,
+	})
+
+	if mw == nil {
+		t.Error("expected non-nil middleware function")
+	}
+	if limiter == nil {
+		t.Error("expected non-nil UserRateLimiter")
+	}
+
+	// Verify the middleware works
+	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler := mw(testHandler)
+	if handler == nil {
+		t.Error("expected non-nil handler from middleware")
+	}
+
+	defer limiter.Stop()
 }

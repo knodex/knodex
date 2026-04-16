@@ -12,9 +12,6 @@ const (
 	// FeatureCompliance is the feature key for OPA Gatekeeper compliance.
 	FeatureCompliance = "compliance"
 
-	// FeatureViews is the feature key for custom category views.
-	FeatureViews = "views"
-
 	// FeatureSecrets is the feature key for secrets management.
 	FeatureSecrets = "secrets"
 )

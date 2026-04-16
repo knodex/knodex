@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { initiateOIDCLogin } from '@/api/auth';
 import { EntraIDIcon } from './icons/EntraIDIcon';
 import { GoogleIcon } from './icons/GoogleIcon';
-import { KeyRound, Shield, Lock } from 'lucide-react';
+import { KeyRound, Shield, Lock } from '@/lib/icons';
 import type { ReactNode } from 'react';
 
 interface OIDCButtonProps {

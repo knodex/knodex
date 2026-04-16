@@ -11,6 +11,7 @@ import (
 	"github.com/kubernetes-sigs/kro/pkg/simpleschema"
 	"github.com/kubernetes-sigs/kro/pkg/simpleschema/types"
 
+	k8sparser "github.com/knodex/knodex/server/internal/k8s/parser"
 	"github.com/knodex/knodex/server/internal/models"
 )
 
@@ -49,13 +50,13 @@ func ParseRGDSchema(rawSpec map[string]interface{}) (*RGDSchemaIntent, error) {
 		return nil, nil
 	}
 
-	schemaMap, ok := rawSpec["schema"].(map[string]interface{})
-	if !ok {
+	schemaMap, err := k8sparser.GetMap(rawSpec, "schema")
+	if err != nil {
 		return nil, nil
 	}
 
-	specMap, ok := schemaMap["spec"].(map[string]interface{})
-	if !ok {
+	specMap, err := k8sparser.GetMap(schemaMap, "spec")
+	if err != nil {
 		return nil, nil
 	}
 
@@ -157,14 +158,15 @@ func BuildFormSchemaFromRGD(rgd *models.CatalogRGD) (*models.FormSchema, error) 
 	group, kind, version := extractAPIInfo(rgd)
 
 	schema := &models.FormSchema{
-		Name:        rgd.Name,
-		Namespace:   rgd.Namespace,
-		Group:       group,
-		Kind:        kind,
-		Version:     version,
-		Title:       rgd.Name,
-		Description: rgd.Description,
-		Properties:  make(map[string]models.FormProperty),
+		Name:            rgd.Name,
+		Namespace:       rgd.Namespace,
+		Group:           group,
+		Kind:            kind,
+		Version:         version,
+		Title:           rgd.Name,
+		Description:     rgd.Description,
+		IsClusterScoped: rgd.IsClusterScoped,
+		Properties:      make(map[string]models.FormProperty),
 	}
 
 	// Build form properties from field intents.
@@ -191,17 +193,17 @@ func extractAPIInfo(rgd *models.CatalogRGD) (group, kind, version string) {
 
 	// Fallback: parse from RawSpec
 	if rgd.RawSpec != nil {
-		if schemaMap, ok := rgd.RawSpec["schema"].(map[string]interface{}); ok {
-			if g, ok := schemaMap["group"].(string); ok && group == "" {
+		if schemaMap, err := k8sparser.GetMap(rgd.RawSpec, "schema"); err == nil {
+			if g := k8sparser.GetStringOrDefault(schemaMap, "", "group"); g != "" && group == "" {
 				group = g
 			}
-			if k, ok := schemaMap["kind"].(string); ok && kind == "" {
+			if k := k8sparser.GetStringOrDefault(schemaMap, "", "kind"); k != "" && kind == "" {
 				kind = k
 			}
-			if v, ok := schemaMap["version"].(string); ok && version == "" {
+			if v := k8sparser.GetStringOrDefault(schemaMap, "", "version"); v != "" && version == "" {
 				version = v
 			}
-			if apiVer, ok := schemaMap["apiVersion"].(string); ok && (group == "" || version == "") {
+			if apiVer := k8sparser.GetStringOrDefault(schemaMap, "", "apiVersion"); apiVer != "" && (group == "" || version == "") {
 				parts := strings.Split(apiVer, "/")
 				if len(parts) == 2 {
 					if group == "" {

@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import apiClient from "./client";
-import type { DeploymentHistory, TimelineResponse, HistoryExportFormat } from "@/types/history";
+import { instancePath } from "./rgd";
+import type { DeploymentHistory, TimelineResponse, HistoryExportFormat, InstanceEventsResponse } from "@/types/history";
 
 /**
  * Get deployment history for an instance
@@ -13,7 +14,7 @@ export async function getInstanceHistory(
   name: string
 ): Promise<DeploymentHistory> {
   const response = await apiClient.get<DeploymentHistory>(
-    `/v1/instances/${encodeURIComponent(namespace)}/${encodeURIComponent(kind)}/${encodeURIComponent(name)}/history`
+    `${instancePath(namespace, kind, name)}/history`
   );
   return response.data;
 }
@@ -27,7 +28,35 @@ export async function getInstanceTimeline(
   name: string
 ): Promise<TimelineResponse> {
   const response = await apiClient.get<TimelineResponse>(
-    `/v1/instances/${encodeURIComponent(namespace)}/${encodeURIComponent(kind)}/${encodeURIComponent(name)}/timeline`
+    `${instancePath(namespace, kind, name)}/timeline`
+  );
+  return response.data;
+}
+
+/**
+ * Get Kubernetes Events for an instance (filtered timeline with ?source=kubernetes)
+ */
+export async function getInstanceKubernetesEvents(
+  namespace: string,
+  kind: string,
+  name: string
+): Promise<TimelineResponse> {
+  const response = await apiClient.get<TimelineResponse>(
+    `${instancePath(namespace, kind, name)}/timeline?source=kubernetes`
+  );
+  return response.data;
+}
+
+/**
+ * Get Kubernetes Events for an instance and its child resources (on-demand from K8s API)
+ */
+export async function getInstanceEvents(
+  namespace: string,
+  kind: string,
+  name: string
+): Promise<InstanceEventsResponse> {
+  const response = await apiClient.get<InstanceEventsResponse>(
+    `${instancePath(namespace, kind, name)}/events`
   );
   return response.data;
 }
@@ -42,7 +71,7 @@ export async function exportInstanceHistory(
   format: HistoryExportFormat = "json"
 ): Promise<Blob> {
   const response = await apiClient.get(
-    `/v1/instances/${encodeURIComponent(namespace)}/${encodeURIComponent(kind)}/${encodeURIComponent(name)}/history/export`,
+    `${instancePath(namespace, kind, name)}/history/export`,
     {
       params: { format },
       responseType: "blob",

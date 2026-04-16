@@ -91,7 +91,7 @@ async function waitForCatalogReady(
       }
 
       // Quick check if page is ready
-      await page.waitForSelector('h2:has-text("Resource Definitions")', {
+      await page.waitForSelector('text=Catalog', {
         timeout: 3000,
       });
       console.log(`waitForCatalogReady: Page ready at ${page.url()}`);
@@ -245,11 +245,60 @@ async function navigateWithAuth(
 const EXPECTED_ADMIN_RGD_COUNT = 1; // Minimum for catalog to function
 const EXPECTED_PUBLIC_RGD_COUNT = 1; // Minimum for visibility tests
 
+const ACCOUNT_INFO_BY_ROLE: Record<TestUserRole, object> = {
+  [TestUserRole.GLOBAL_ADMIN]: {
+    userID: 'user-global-admin', email: 'admin@e2e-test.local', displayName: 'Global Administrator',
+    groups: [], casbinRoles: ['role:serveradmin'], projects: [], roles: {},
+    issuer: 'knodex',
+  },
+  [TestUserRole.ORG_ADMIN]: {
+    userID: 'user-alpha-admin', email: 'alpha-admin@e2e-test.local', displayName: 'Alpha Team Admin',
+    groups: [], casbinRoles: [], projects: ['proj-alpha-team'], roles: { 'proj-alpha-team': 'admin' },
+    issuer: 'knodex',
+  },
+  [TestUserRole.ORG_DEVELOPER]: {
+    userID: 'user-alpha-developer', email: 'alpha-dev@e2e-test.local', displayName: 'Alpha Developer',
+    groups: [], casbinRoles: [], projects: ['proj-alpha-team'], roles: { 'proj-alpha-team': 'developer' },
+    issuer: 'knodex',
+  },
+  [TestUserRole.ORG_VIEWER]: {
+    userID: 'user-alpha-viewer', email: 'alpha-viewer@e2e-test.local', displayName: 'Alpha Viewer',
+    groups: [], casbinRoles: [], projects: ['proj-alpha-team'], roles: { 'proj-alpha-team': 'viewer' },
+    issuer: 'knodex',
+  },
+  [TestUserRole.OIDC_WILDCARD_USER]: {
+    userID: 'user-oidc-wildcard-test', email: 'oidc-wildcard@e2e-test.local', displayName: 'OIDC Wildcard User',
+    groups: [], casbinRoles: [], projects: [], roles: {},
+    issuer: 'knodex',
+  },
+  [TestUserRole.UNAUTHENTICATED]: {
+    userID: '', email: '', displayName: '', groups: [], casbinRoles: [], projects: [], roles: {},
+    issuer: 'knodex',
+  },
+};
+
+/** Mock account/info to ensure session restore succeeds without a real backend */
+async function mockAccountInfo(page: Page, role: TestUserRole): Promise<void> {
+  const info = ACCOUNT_INFO_BY_ROLE[role] || ACCOUNT_INFO_BY_ROLE[TestUserRole.ORG_VIEWER];
+  await page.route('**/api/v1/account/info', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ...info,
+        tokenExpiresAt: Math.floor(Date.now() / 1000) + 3600,
+        tokenIssuedAt: Math.floor(Date.now() / 1000) - 60,
+      }),
+    })
+  })
+}
+
 test.describe("Note: RGD Catalog Visibility Filtering", () => {
   test.describe("Global Admin Visibility", () => {
     test.use({ authenticateAs: TestUserRole.GLOBAL_ADMIN });
 
     test.beforeEach(async ({ page }) => {
+      await mockAccountInfo(page, TestUserRole.GLOBAL_ADMIN);
       await setupPermissionMocking(page, { '*:*': true });
     });
 
@@ -265,7 +314,7 @@ test.describe("Note: RGD Catalog Visibility Filtering", () => {
       // Get count from the header (e.g., "5 available")
       const countText = await page
         .locator("text=/\\d+ available/")
-        .textContent()
+        .textContent({ timeout: 2000 })
         .catch(() => "0 available");
       console.log(`Global Admin catalog count: ${countText}`);
 
@@ -285,6 +334,10 @@ test.describe("Note: RGD Catalog Visibility Filtering", () => {
   test.describe("Project Viewer Visibility", () => {
     test.use({ authenticateAs: TestUserRole.ORG_VIEWER });
 
+    test.beforeEach(async ({ page }) => {
+      await mockAccountInfo(page, TestUserRole.ORG_VIEWER);
+    });
+
     test("AC-VISIBILITY-01: Viewer sees public RGDs", async ({ page }) => {
       await navigateWithAuth(page, "/catalog", TestUserRole.ORG_VIEWER);
 
@@ -295,7 +348,7 @@ test.describe("Note: RGD Catalog Visibility Filtering", () => {
       // Get count
       const countText = await page
         .locator("text=/\\d+ available/")
-        .textContent()
+        .textContent({ timeout: 2000 })
         .catch(() => "0 available");
       console.log(`Viewer catalog count: ${countText}`);
 
@@ -356,6 +409,7 @@ test.describe("Note: RGD Catalog Visibility Filtering", () => {
     test.use({ authenticateAs: TestUserRole.ORG_DEVELOPER });
 
     test.beforeEach(async ({ page }) => {
+      await mockAccountInfo(page, TestUserRole.ORG_DEVELOPER);
       // Mock permission API for developer - can deploy instances
       await setupPermissionMocking(page, { 'instances:create': true, 'rgds:get': true });
     });
@@ -405,13 +459,17 @@ test.describe("Note: RGD Catalog Visibility Filtering", () => {
       await page.waitForLoadState("load");
 
       // Developer should see deploy button on accessible RGDs
-      const deployButton = page.getByRole("button", { name: /deploy/i });
+      const deployButton = page.getByRole("button", { name: /deploy/i }).first();
       await expect(deployButton).toBeVisible({ timeout: 10000 });
     });
   });
 
   test.describe("Catalog Annotation as Gateway (Simplified Model)", () => {
     test.use({ authenticateAs: TestUserRole.ORG_VIEWER });
+
+    test.beforeEach(async ({ page }) => {
+      await mockAccountInfo(page, TestUserRole.ORG_VIEWER);
+    });
 
     test("Catalog annotation IS the gateway to visibility", async ({
       page,
@@ -457,6 +515,10 @@ test.describe("Note: RGD Catalog Visibility Filtering", () => {
   test.describe("API-Level Visibility Verification", () => {
     test.use({ authenticateAs: TestUserRole.ORG_VIEWER });
 
+    test.beforeEach(async ({ page }) => {
+      await mockAccountInfo(page, TestUserRole.ORG_VIEWER);
+    });
+
     test("API returns filtered RGDs for viewer", async ({ page, request }) => {
       // Get token from localStorage after authentication
       await navigateWithAuth(page, "/catalog", TestUserRole.ORG_VIEWER);
@@ -495,6 +557,11 @@ test.describe("Note: Catalog Project Filter", () => {
   test.describe("Project Filter Dropdown", () => {
     test.use({ authenticateAs: TestUserRole.GLOBAL_ADMIN });
 
+    test.beforeEach(async ({ page }) => {
+      await mockAccountInfo(page, TestUserRole.GLOBAL_ADMIN);
+      await setupPermissionMocking(page, { '*:*': true });
+    });
+
     test("Project filter shows only RGDs with matching project label", async ({
       page,
       request,
@@ -515,7 +582,7 @@ test.describe("Note: Catalog Project Filter", () => {
       // Get initial count (all RGDs visible to admin)
       const initialCountText = await page
         .locator("text=/\\d+ available/")
-        .textContent()
+        .textContent({ timeout: 2000 })
         .catch(() => "0 available");
       const initialCount = parseInt(
         initialCountText?.match(/(\d+)/)?.[1] || "0"
@@ -675,7 +742,7 @@ test.describe("Note: Catalog Project Filter", () => {
       // Get filtered count
       const filteredCountText = await page
         .locator("text=/\\d+ available/")
-        .textContent()
+        .textContent({ timeout: 2000 })
         .catch(() => "0 available");
       const filteredCount = parseInt(
         filteredCountText?.match(/(\d+)/)?.[1] || "0"

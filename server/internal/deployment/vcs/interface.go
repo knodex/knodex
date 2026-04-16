@@ -109,9 +109,9 @@ func (e *ScopeError) Error() string {
 func RequiredScopes(provider Provider) []string {
 	switch provider {
 	case ProviderGitHub:
-		return []string{"repo"} // or "public_repo" for public repos
+		return []string{"repo"}
 	case ProviderGitLab:
-		return []string{"api"} // or "read_repository" + "write_repository"
+		return []string{"api"}
 	case ProviderBitbucket:
 		return []string{"repository:write"}
 	default:

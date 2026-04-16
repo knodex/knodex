@@ -34,15 +34,16 @@ const (
 	ErrCodeMethodNotAllowed ErrorCode = "METHOD_NOT_ALLOWED"
 	// ErrCodeLicenseRequired indicates a valid enterprise license is required for the feature
 	ErrCodeLicenseRequired ErrorCode = "LICENSE_REQUIRED"
-	// ErrCodeConflict indicates a resource was modified concurrently and the request should be retried
+	// ErrCodeConflict indicates a resource conflict — either the resource already exists or was modified concurrently
 	ErrCodeConflict ErrorCode = "CONFLICT"
 )
 
 // ErrorResponse represents a standardized API error response
 type ErrorResponse struct {
-	Code    ErrorCode         `json:"code"`
-	Message string            `json:"message"`
-	Details map[string]string `json:"details,omitempty"`
+	Code      ErrorCode         `json:"code"`
+	Message   string            `json:"message"`
+	Details   map[string]string `json:"details,omitempty"`
+	RequestID string            `json:"request_id,omitempty"`
 }
 
 // WriteJSON writes a JSON response with the given status code
@@ -71,9 +72,10 @@ func WriteError(w http.ResponseWriter, statusCode int, code ErrorCode, message s
 	}
 
 	errResp := ErrorResponse{
-		Code:    code,
-		Message: safeMessage,
-		Details: safeDetails,
+		Code:      code,
+		Message:   safeMessage,
+		Details:   safeDetails,
+		RequestID: w.Header().Get("X-Request-ID"),
 	}
 	WriteJSON(w, statusCode, errResp)
 }
@@ -110,9 +112,11 @@ func InternalError(w http.ResponseWriter, message string) {
 	WriteError(w, http.StatusInternalServerError, ErrCodeInternalError, message, nil)
 }
 
-// MethodNotAllowed writes a 405 error response
-func MethodNotAllowed(w http.ResponseWriter, message string) {
-	WriteError(w, http.StatusMethodNotAllowed, ErrCodeMethodNotAllowed, message, nil)
+// Conflict writes a 409 error response
+func Conflict(w http.ResponseWriter, resource, identifier string) {
+	WriteError(w, http.StatusConflict, ErrCodeConflict,
+		resource+" already exists: "+identifier,
+		map[string]string{"resource": resource, "identifier": identifier})
 }
 
 // setNoCacheHeaders sets cache-control headers to prevent caching of auth responses.

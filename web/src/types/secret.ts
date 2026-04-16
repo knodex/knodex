@@ -6,6 +6,7 @@ export interface Secret {
   namespace: string;
   keys: string[];
   createdAt: string;
+  updatedAt?: string;
   labels?: Record<string, string>;
 }
 
@@ -14,6 +15,7 @@ export interface SecretDetail {
   namespace: string;
   data: Record<string, string>;
   createdAt: string;
+  updatedAt?: string;
   labels?: Record<string, string>;
 }
 
@@ -30,7 +32,7 @@ export interface UpdateSecretRequest {
 
 export interface SecretListResponse {
   items: Secret[];
-  totalCount: number;
+  pageCount: number;
   continue?: string;
   hasMore: boolean;
 }

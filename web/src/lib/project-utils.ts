@@ -66,7 +66,7 @@ export function projectAllowsAllNamespaces(project: Project): boolean {
  * If project has specific namespaces or patterns, filters to only those
  * Supports glob patterns like "staging*", "dev*", etc.
  */
-export function filterByProjectNamespaces<T extends { namespace: string }>(
+export function filterByProjectNamespaces<T extends { namespace: string; isClusterScoped?: boolean }>(
   items: T[],
   project: Project | undefined
 ): T[] {
@@ -86,8 +86,11 @@ export function filterByProjectNamespaces<T extends { namespace: string }>(
     return [];
   }
 
-  // Filter items - namespace must match at least one pattern
+  // Cluster-scoped instances (isClusterScoped=true or empty namespace) always pass through
+  // project namespace filtering — their access is controlled at the project authorization level.
   return items.filter((item) =>
+    item.isClusterScoped === true ||
+    !item.namespace ||
     allowedPatterns.some((pattern) =>
       namespaceMatchesPattern(item.namespace, pattern)
     )
