@@ -30,6 +30,8 @@ const config: Config = {
 
   themes: ['@docusaurus/theme-mermaid'],
 
+  plugins: [require.resolve('docusaurus-lunr-search')],
+
   presets: [
     [
       'classic',
@@ -37,7 +39,7 @@ const config: Config = {
         docs: {
           sidebarPath: './sidebars.ts',
           editUrl: 'https://github.com/knodex/knodex/edit/main/website/',
-          routeBasePath: 'docs',
+          routeBasePath: '/',
           // Versioning configuration
           disableVersioning: false,
           includeCurrentVersion: true,
@@ -63,6 +65,7 @@ const config: Config = {
       respectPrefersColorScheme: true,
     },
     navbar: {
+      style: 'dark',
       title: 'Knodex',
       logo: {
         alt: 'Knodex',
@@ -95,9 +98,9 @@ const config: Config = {
         {
           title: 'Documentation',
           items: [
-            {label: 'Getting Started', to: '/docs/getting-started'},
-            {label: 'User Guide', to: '/docs/user-guide'},
-            {label: 'Administration', to: '/docs/administration'},
+            {label: 'Getting Started', to: '/getting-started'},
+            {label: 'User Guide', to: '/user-guide'},
+            {label: 'Administration', to: '/administration'},
           ],
         },
         {

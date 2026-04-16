@@ -30,7 +30,7 @@ interface ProductTagProps {
 
 export default function ProductTag({ tags }: ProductTagProps): JSX.Element {
   return (
-    <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+    <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem', marginBottom: '1rem' }}>
       {tags.map((tag) => {
         const style = tagStyles[tag];
         if (!style) return null;

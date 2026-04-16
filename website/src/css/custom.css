@@ -1,33 +1,136 @@
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');
+
+/* ── Brand: teal primary, violet accent (matches knodex.io) ── */
 :root {
-  --ifm-color-primary: #4f46e5;
-  --ifm-color-primary-dark: #4338ca;
-  --ifm-color-primary-darker: #3730a3;
-  --ifm-color-primary-darkest: #312e81;
-  --ifm-color-primary-light: #6366f1;
-  --ifm-color-primary-lighter: #818cf8;
-  --ifm-color-primary-lightest: #a5b4fc;
+  /* Teal primary */
+  --ifm-color-primary: #14b8a6;
+  --ifm-color-primary-dark: #0d9488;
+  --ifm-color-primary-darker: #0f766e;
+  --ifm-color-primary-darkest: #115e59;
+  --ifm-color-primary-light: #2dd4bf;
+  --ifm-color-primary-lighter: #5eead4;
+  --ifm-color-primary-lightest: #99f6e4;
+
+  /* Brand gradient (teal → violet) */
+  --knodex-gradient: linear-gradient(135deg, #2dd4bf, #8b5cf6);
+  --knodex-gradient-subtle: linear-gradient(135deg, rgba(45, 212, 191, 0.1), rgba(139, 92, 246, 0.1));
+
+  /* Typography */
+  --ifm-font-family-base: 'Poppins', ui-sans-serif, system-ui, sans-serif;
+  --ifm-heading-font-weight: 600;
+
+  /* Backgrounds */
+  --ifm-background-color: #fafaf9;
+  --ifm-background-surface-color: #ffffff;
+
+  /* Borders */
+  --ifm-color-emphasis-300: #e7e5e4;
+
+  /* Code */
   --ifm-code-font-size: 95%;
-  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.1);
+  --docusaurus-highlighted-code-line-bg: rgba(20, 184, 166, 0.12);
 }
 
 [data-theme='dark'] {
-  --ifm-color-primary: #818cf8;
-  --ifm-color-primary-dark: #6366f1;
-  --ifm-color-primary-darker: #4f46e5;
-  --ifm-color-primary-darkest: #4338ca;
-  --ifm-color-primary-light: #a5b4fc;
-  --ifm-color-primary-lighter: #c7d2fe;
-  --ifm-color-primary-lightest: #e0e7ff;
-  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.3);
+  --ifm-color-primary: #2dd4bf;
+  --ifm-color-primary-dark: #14b8a6;
+  --ifm-color-primary-darker: #0d9488;
+  --ifm-color-primary-darkest: #0f766e;
+  --ifm-color-primary-light: #5eead4;
+  --ifm-color-primary-lighter: #99f6e4;
+  --ifm-color-primary-lightest: #ccfbf1;
+
+  --ifm-background-color: #111827;
+  --ifm-background-surface-color: #1f2937;
+
+  --docusaurus-highlighted-code-line-bg: rgba(45, 212, 191, 0.15);
 }
 
-/* Product tags (OSS / Enterprise badges) */
+/* ── Navbar ── */
+.navbar {
+  background: #111827;
+  border-bottom: 1px solid rgba(45, 212, 191, 0.15);
+  box-shadow: none;
+}
+
+.navbar__title {
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.navbar__link {
+  color: #d1d5db !important;
+  font-weight: 500;
+}
+
+.navbar__link:hover,
+.navbar__link--active {
+  color: #2dd4bf !important;
+}
+
+/* ── Sidebar ── */
+.menu__link--active {
+  color: var(--ifm-color-primary);
+  font-weight: 600;
+}
+
+/* ── Buttons / links ── */
+.button--primary {
+  background: var(--knodex-gradient);
+  border: none;
+  font-weight: 600;
+}
+
+.button--primary:hover {
+  background: linear-gradient(135deg, #14b8a6, #7c3aed);
+  filter: brightness(1.05);
+}
+
+/* ── Table of contents active item ── */
+.table-of-contents__link--active {
+  color: var(--ifm-color-primary);
+  font-weight: 600;
+}
+
+/* ── Footer ── */
+.footer {
+  background: #0f172a;
+  border-top: 1px solid rgba(45, 212, 191, 0.12);
+}
+
+.footer__title {
+  background: var(--knodex-gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ── Admonitions ── */
+.alert--info {
+  --ifm-alert-border-color: #14b8a6;
+}
+
+/* ── Product tags (OSS / Enterprise badges) ── */
+.product-tag[data-tag='oss'] {
+  background-color: rgba(20, 184, 166, 0.1);
+  color: #0d9488;
+  border: 1px solid rgba(20, 184, 166, 0.3);
+}
+
+.product-tag[data-tag='enterprise'] {
+  background-color: rgba(139, 92, 246, 0.1);
+  color: #8b5cf6;
+  border: 1px solid rgba(139, 92, 246, 0.3);
+}
+
 [data-theme='dark'] .product-tag[data-tag='oss'] {
-  background-color: rgba(46, 160, 67, 0.15) !important;
-  color: #56d364 !important;
+  background-color: rgba(45, 212, 191, 0.12) !important;
+  color: #5eead4 !important;
+  border-color: rgba(45, 212, 191, 0.25) !important;
 }
 
 [data-theme='dark'] .product-tag[data-tag='enterprise'] {
-  background-color: rgba(130, 140, 248, 0.15) !important;
-  color: #a5b4fc !important;
+  background-color: rgba(139, 92, 246, 0.12) !important;
+  color: #c4b5fd !important;
+  border-color: rgba(139, 92, 246, 0.25) !important;
 }
