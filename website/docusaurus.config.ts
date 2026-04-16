@@ -41,7 +41,7 @@ const config: Config = {
           // Versioning configuration
           disableVersioning: false,
           includeCurrentVersion: true,
-          lastVersion: 'current',
+          lastVersion: '0.5.0',
           versions: {
             current: {
               label: 'Next',
