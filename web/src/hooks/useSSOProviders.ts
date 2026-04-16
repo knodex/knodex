@@ -13,6 +13,7 @@ import type {
   CreateSSOProviderRequest,
   UpdateSSOProviderRequest,
 } from "@/types/sso";
+import { STALE_TIME } from "@/lib/query-client";
 
 /**
  * Hook for fetching SSO providers list
@@ -21,7 +22,7 @@ export function useSSOProviders() {
   return useQuery({
     queryKey: ["sso-providers"],
     queryFn: () => listSSOProviders(),
-    staleTime: 5 * 60 * 1000, // 5 minutes
+    staleTime: STALE_TIME.STATIC,
   });
 }
 
@@ -33,7 +34,7 @@ export function useSSOProvider(name: string) {
     queryKey: ["sso-provider", name],
     queryFn: () => getSSOProvider(name),
     enabled: !!name,
-    staleTime: 5 * 60 * 1000,
+    staleTime: STALE_TIME.STATIC,
   });
 }
 

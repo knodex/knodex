@@ -26,7 +26,6 @@ func mockRGDWatcher(t *testing.T) *watcher.RGDWatcher {
 			Name:        "postgres-cluster",
 			Namespace:   "default",
 			Description: "PostgreSQL cluster with high availability",
-			Version:     "1.0.0",
 			Tags:        []string{"database", "production"},
 			Category:    "database",
 			Labels:      map[string]string{"tier": "backend"},
@@ -38,7 +37,6 @@ func mockRGDWatcher(t *testing.T) *watcher.RGDWatcher {
 			Name:         "redis-cache",
 			Namespace:    "default",
 			Description:  "Redis cache for session storage",
-			Version:      "2.0.0",
 			Tags:         []string{"cache", "production"},
 			Category:     "cache",
 			Labels:       map[string]string{"tier": "backend"},
@@ -51,7 +49,6 @@ func mockRGDWatcher(t *testing.T) *watcher.RGDWatcher {
 			Name:        "mongodb",
 			Namespace:   "staging",
 			Description: "MongoDB document database",
-			Version:     "1.5.0",
 			Tags:        []string{"database", "staging"},
 			Category:    "database",
 			Labels:      map[string]string{},
@@ -76,6 +73,7 @@ func createTestHandler(w *watcher.RGDWatcher) *RGDHandler {
 	})
 	return NewRGDHandler(RGDHandlerConfig{
 		CatalogService: catalogService,
+		AuthService:    adminAuthService(),
 	})
 }
 
@@ -649,6 +647,87 @@ func TestRGDHandler_GetCount_EmptyCache(t *testing.T) {
 	// Empty cache should return count 0
 	if countResp.Count != 0 {
 		t.Errorf("expected count 0, got %d", countResp.Count)
+	}
+}
+
+func TestRGDHandler_IsClusterScoped_InAPIResponse(t *testing.T) {
+	t.Parallel()
+
+	// Create a watcher with one cluster-scoped and one namespace-scoped RGD
+	cache := watcher.NewRGDCache()
+	clusterRGD := models.CatalogRGD{
+		Name:            "tenant-provisioner",
+		Namespace:       "default",
+		Description:     "Cluster-scoped tenant provisioner",
+		Tags:            []string{},
+		Labels:          map[string]string{},
+		Annotations:     map[string]string{models.CatalogAnnotation: "true"},
+		IsClusterScoped: true,
+	}
+	namespacedRGD := models.CatalogRGD{
+		Name:            "webapp",
+		Namespace:       "default",
+		Description:     "Namespace-scoped web app",
+		Tags:            []string{},
+		Labels:          map[string]string{},
+		Annotations:     map[string]string{models.CatalogAnnotation: "true"},
+		IsClusterScoped: false,
+	}
+	cache.Set(&clusterRGD)
+	cache.Set(&namespacedRGD)
+	w := watcher.NewRGDWatcherWithCache(cache)
+	handler := createTestHandler(w)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/rgds", nil)
+	rec := httptest.NewRecorder()
+	handler.ListRGDs(rec, req)
+
+	resp := rec.Result()
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	// Decode as raw JSON to verify the field name and value exactly
+	var rawResp map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&rawResp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	items, ok := rawResp["items"].([]interface{})
+	if !ok {
+		t.Fatal("response missing 'items' array")
+	}
+	if len(items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(items))
+	}
+
+	// Build a map for easier lookup by name
+	byName := make(map[string]map[string]interface{})
+	for _, item := range items {
+		m, ok := item.(map[string]interface{})
+		if !ok {
+			t.Fatal("item is not a map")
+		}
+		name, _ := m["name"].(string)
+		byName[name] = m
+	}
+
+	// Cluster-scoped RGD must have isClusterScoped: true
+	if tenant, ok := byName["tenant-provisioner"]; !ok {
+		t.Error("tenant-provisioner not in response")
+	} else if tenant["isClusterScoped"] != true {
+		t.Errorf("tenant-provisioner: expected isClusterScoped=true, got %v", tenant["isClusterScoped"])
+	}
+
+	// Namespace-scoped RGD must have isClusterScoped: false (not absent)
+	if webapp, ok := byName["webapp"]; !ok {
+		t.Error("webapp not in response")
+	} else if tenant, ok := webapp["isClusterScoped"]; !ok {
+		t.Error("webapp: isClusterScoped field is absent from JSON response")
+	} else if tenant != false {
+		t.Errorf("webapp: expected isClusterScoped=false, got %v", tenant)
 	}
 }
 

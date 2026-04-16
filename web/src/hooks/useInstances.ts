@@ -8,8 +8,10 @@ import {
   deleteInstance,
   updateInstanceSpec,
   getInstanceCount,
+  getInstanceChildren,
 } from "@/api/rgd";
 import type { InstanceListParams, UpdateInstanceRequest } from "@/types/rgd";
+import { STALE_TIME } from "@/lib/query-client";
 
 /**
  * Hook for fetching paginated instance list
@@ -19,7 +21,7 @@ export function useInstanceList(params?: InstanceListParams) {
     queryKey: ["instances", params],
     queryFn: () => listInstances(params),
     placeholderData: keepPreviousData,
-    staleTime: 30 * 1000, // 30 seconds - instances change frequently
+    staleTime: STALE_TIME.FREQUENT, // instances change frequently
   });
 }
 
@@ -44,8 +46,8 @@ export function useInstance(namespace: string, kind: string, name: string) {
   return useQuery({
     queryKey: ["instance", namespace, kind, name],
     queryFn: () => getInstance(namespace, kind, name),
-    enabled: !!namespace && !!kind && !!name,
-    staleTime: 15 * 1000, // 15 seconds
+    enabled: !!kind && !!name, // namespace can be empty for cluster-scoped instances
+    staleTime: STALE_TIME.REALTIME,
   });
 }
 
@@ -91,6 +93,18 @@ export function useUpdateInstanceSpec() {
       queryClient.invalidateQueries({ queryKey: ["instance", namespace, kind, name] });
       queryClient.invalidateQueries({ queryKey: ["instances"] });
     },
+  });
+}
+
+/**
+ * Hook for fetching child resources of an instance, grouped by node-id.
+ */
+export function useInstanceChildren(namespace: string, kind: string, name: string) {
+  return useQuery({
+    queryKey: ["instance", namespace, kind, name, "children"],
+    queryFn: () => getInstanceChildren(namespace, kind, name),
+    enabled: !!kind && !!name,
+    staleTime: STALE_TIME.FREQUENT, // child resources change with instance
   });
 }
 

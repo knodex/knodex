@@ -5,7 +5,7 @@
  * Delete role confirmation dialog
  * Simpler than DeleteRepositoryDialog - just confirm/cancel, no type-to-confirm
  */
-import { AlertTriangle, Loader2 } from "lucide-react";
+import { AlertTriangle, Loader2 } from "@/lib/icons";
 import {
   AlertDialog,
   AlertDialogContent,

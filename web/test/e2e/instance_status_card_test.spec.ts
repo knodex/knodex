@@ -24,7 +24,7 @@ async function setupInstanceRoutes(page: Page, detailInstance?: Instance) {
     })
   })
 
-  await page.route(`**${API_PATHS.instances}**`, async (route) => {
+  const instanceHandler = async (route: import('@playwright/test').Route) => {
     const url = route.request().url()
 
     if (url.includes('/prod-db-1')) {
@@ -40,7 +40,9 @@ async function setupInstanceRoutes(page: Page, detailInstance?: Instance) {
         body: JSON.stringify(mockInstanceListResponse),
       })
     }
-  })
+  }
+  await page.route(`**${API_PATHS.instances}**`, instanceHandler)
+  await page.route(`**${API_PATHS.namespacedInstances}**`, instanceHandler)
 }
 
 /** Navigate to the prod-db-1 instance detail view */
@@ -50,7 +52,7 @@ async function navigateToInstanceDetail(page: Page) {
   const instanceCard = page.getByRole('button', { name: /view details for prod-db-1/i })
   await expect(instanceCard).toBeVisible()
   await instanceCard.click()
-  await expect(page.getByRole('button', { name: /back/i })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'prod-db-1' })).toBeVisible()
 }
 
 test.describe('Instance Status Card (Unified Status Display)', () => {
@@ -135,6 +137,12 @@ test.describe('Instance Status Card (Unified Status Display)', () => {
   test('AC-7: conditions section preserves existing rendering', async ({ page }) => {
     const conditions = page.getByTestId('conditions-section')
     await expect(conditions).toBeVisible()
+
+    // Expand conditions section (collapsed by default when all conditions are True)
+    const expandButton = conditions.getByRole('button')
+    if (await expandButton.getAttribute('aria-expanded') === 'false') {
+      await expandButton.click()
+    }
 
     // Condition type
     await expect(conditions.getByText('Ready', { exact: true }).first()).toBeVisible()

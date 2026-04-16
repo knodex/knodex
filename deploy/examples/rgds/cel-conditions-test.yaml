@@ -1,17 +1,17 @@
-# Example RGD: CEL Conditions Test (webapp-full-featured)
+# Example RGD: CEL Conditions Test
 # Demonstrates: Template conditional resources with affectedProperties propagation
 #
 # Test matrix:
 #   Field              | Used By                    | Expected Behavior
 #   -------------------|----------------------------|------------------------------------------
 #   name               | app (non-cond) + cache     | Always visible (in non-conditional)
-#   visibleAnnotation  | app + database + cache     | Always visible (in non-conditional)
-#   hiddenAnnotation   | database + cache ONLY      | Hidden when BOTH enables are false
-#   database (object)  | database ONLY              | Hidden when enableDatabase=false
-#   enableDatabase     | Controlling field           | Always visible (controller)
-#   enableCache        | Controlling field           | Always visible (controller)
 #   image              | app (non-cond)             | Always visible
 #   port               | app (non-cond)             | Always visible
+#   sharedLabel        | database + cache ONLY      | Hidden when BOTH features disabled (AND)
+#   database.enabled   | Controlling field           | Always visible (controller parent)
+#   database.name      | database ONLY              | Visible when database.enabled=true
+#   cache.enabled      | Controlling field           | Always visible (controller parent)
+#   cache.maxMemory    | cache ONLY                 | Visible when cache.enabled=true
 #   advanced.*         | app (non-cond)             | Advanced section (hidden behind toggle)
 apiVersion: kro.run/v1alpha1
 kind: ResourceGraphDefinition
@@ -31,26 +31,26 @@ spec:
       name: string
       image: string | default="nginx:latest"
       port: integer | default=80
-      visibleAnnotation: string | default=""
-      hiddenAnnotation: string | default=""
-      enableDatabase: boolean | default=false
-      enableCache: boolean | default=false
+      # Shared field used ONLY by conditional resources (AND-based hiding test)
+      sharedLabel: string | default=""
       database:
+        enabled: boolean | default=false
         name: string | default="mydb"
+      cache:
+        enabled: boolean | default=false
+        maxMemory: string | default="256mb"
       advanced:
         replicas: integer | default=1
         enableMonitoring: boolean | default=false
 
   resources:
-    # Always-present Deployment — uses name, visibleAnnotation, image, port, advanced.*
+    # Always-present Deployment — uses name, image, port, advanced.*
     - id: app
       template:
         apiVersion: apps/v1
         kind: Deployment
         metadata:
           name: ${schema.spec.name}
-          annotations:
-            visible: ${schema.spec.visibleAnnotation}
         spec:
           replicas: ${schema.spec.advanced.replicas}
           selector:
@@ -67,18 +67,17 @@ spec:
                   ports:
                     - containerPort: ${schema.spec.port}
 
-    # Conditional database — uses database.name, visibleAnnotation, hiddenAnnotation
+    # Conditional database — uses database.name, sharedLabel
     - id: database
       includeWhen:
-        - ${schema.spec.enableDatabase == true}
+        - ${schema.spec.database.enabled == true}
       template:
         apiVersion: apps/v1
         kind: StatefulSet
         metadata:
           name: ${schema.spec.name}-db
-          annotations:
-            visible: ${schema.spec.visibleAnnotation}
-            hidden: ${schema.spec.hiddenAnnotation}
+          labels:
+            shared: ${schema.spec.sharedLabel}
         spec:
           serviceName: ${schema.spec.name}-db
           replicas: 1
@@ -101,18 +100,17 @@ spec:
                   ports:
                     - containerPort: 5432
 
-    # Conditional cache — uses name, visibleAnnotation, hiddenAnnotation
+    # Conditional cache — uses name, sharedLabel
     - id: cache
       includeWhen:
-        - ${schema.spec.enableCache == true}
+        - ${schema.spec.cache.enabled == true}
       template:
         apiVersion: apps/v1
         kind: Deployment
         metadata:
           name: ${schema.spec.name}-cache
-          annotations:
-            visible: ${schema.spec.visibleAnnotation}
-            hidden: ${schema.spec.hiddenAnnotation}
+          labels:
+            shared: ${schema.spec.sharedLabel}
         spec:
           replicas: 1
           selector:
@@ -128,6 +126,10 @@ spec:
               containers:
                 - name: redis
                   image: redis:7-alpine
+                  args:
+                    - redis-server
+                    - --maxmemory
+                    - ${schema.spec.cache.maxMemory}
                   ports:
                     - containerPort: 6379
 

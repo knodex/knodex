@@ -19,6 +19,10 @@ vi.mock("@/hooks/useSecrets", () => ({
   })),
 }));
 
+vi.mock("@/hooks/useAuth", () => ({
+  useCurrentProject: vi.fn(() => "alpha"),
+}));
+
 const mockSecret: SecretDetail = {
   name: "db-credentials",
   namespace: "alpha-ns",
@@ -38,7 +42,6 @@ function renderDialog(props: Partial<React.ComponentProps<typeof EditSecretDialo
     open: true,
     onOpenChange: vi.fn(),
     secret: mockSecret,
-    project: "alpha",
     ...props,
   };
 

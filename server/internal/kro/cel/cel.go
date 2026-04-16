@@ -31,7 +31,7 @@ func NewTypedEnvironment(schemas map[string]*spec.Schema) (*celgo.Env, error) {
 // NewUntypedEnvironment creates a CEL environment without type declarations
 // using KRO's pkg/cel. Resource IDs are declared as variables of type 'any'.
 func NewUntypedEnvironment(resourceIDs []string) (*celgo.Env, error) {
-	return krocel.UntypedEnvironment(resourceIDs)
+	return krocel.DefaultEnvironment(krocel.WithResourceIDs(resourceIDs))
 }
 
 // NewExpression creates an uncompiled KRO Expression with only the original

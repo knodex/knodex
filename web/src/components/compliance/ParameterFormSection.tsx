@@ -3,7 +3,7 @@
 
 import { useState, useMemo } from "react";
 import { useFormContext } from "react-hook-form";
-import { Code, FormInput, Settings } from "lucide-react";
+import { Code, FormInput, Settings } from "@/lib/icons";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";

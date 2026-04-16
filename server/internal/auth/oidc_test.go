@@ -10,6 +10,7 @@ package auth
 import (
 	"context"
 	"encoding/base64"
+	"net/http"
 	"strings"
 	"sync"
 	"testing"
@@ -122,7 +123,7 @@ func createTestOIDCProvisioningService() (*OIDCProvisioningService, *fake.Client
 	}
 	_, _ = k8sClient.CoreV1().Secrets(namespace).Create(context.Background(), accountsSecret, metav1.CreateOptions{})
 
-	projectService := rbac.NewProjectService(k8sClient, nil)
+	projectService := rbac.NewProjectService(k8sClient, nil, "knodex-system")
 	casbinEnforcer, _ := rbac.NewCasbinEnforcer()
 
 	// Create with empty group mapper (no mappings configured), no default role
@@ -168,7 +169,7 @@ func createTestOIDCProvisioningServiceWithMapperAndEnforcer(groupMapper *GroupMa
 	}
 	_, _ = k8sClient.CoreV1().Secrets(namespace).Create(context.Background(), accountsSecret, metav1.CreateOptions{})
 
-	projectService := rbac.NewProjectService(k8sClient, nil)
+	projectService := rbac.NewProjectService(k8sClient, nil, "knodex-system")
 	casbinEnforcer, _ := rbac.NewCasbinEnforcer()
 
 	return NewOIDCProvisioningService(projectService, groupMapper, casbinEnforcer, ""), casbinEnforcer
@@ -1160,6 +1161,42 @@ func TestInitializeProviderInto_UsesSSRFSafeDialer(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected error to mention SSRF protection (one of %v), got: %s", ssrfIndicators, err.Error())
+	}
+}
+
+// TestDefaultHTTPClient_TimeoutsAndSSRFDialer verifies that the production HTTP client
+// has correct timeout values and preserves the SSRF-safe dialer (STORY-361 AC #1, #3).
+func TestDefaultHTTPClient_TimeoutsAndSSRFDialer(t *testing.T) {
+	svc := &OIDCService{} // nil httpClient → defaultHTTPClient() will be used
+	client := svc.defaultHTTPClient()
+
+	// Verify overall request timeout (AC #1)
+	if client.Timeout != OIDCClientTimeout {
+		t.Errorf("client.Timeout = %v, want %v", client.Timeout, OIDCClientTimeout)
+	}
+
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatal("client.Transport is not *http.Transport")
+	}
+
+	// Verify transport timeouts (AC #1)
+	if transport.TLSHandshakeTimeout != OIDCTLSHandshakeTimeout {
+		t.Errorf("TLSHandshakeTimeout = %v, want %v", transport.TLSHandshakeTimeout, OIDCTLSHandshakeTimeout)
+	}
+	if transport.IdleConnTimeout != OIDCIdleConnTimeout {
+		t.Errorf("IdleConnTimeout = %v, want %v", transport.IdleConnTimeout, OIDCIdleConnTimeout)
+	}
+	if transport.MaxIdleConns != OIDCMaxIdleConns {
+		t.Errorf("MaxIdleConns = %d, want %d", transport.MaxIdleConns, OIDCMaxIdleConns)
+	}
+	if transport.MaxIdleConnsPerHost != OIDCMaxIdleConnsPerHost {
+		t.Errorf("MaxIdleConnsPerHost = %d, want %d", transport.MaxIdleConnsPerHost, OIDCMaxIdleConnsPerHost)
+	}
+
+	// Verify SSRF-safe dialer is preserved (AC #3)
+	if transport.DialContext == nil {
+		t.Fatal("transport.DialContext is nil — SSRF-safe dialer not set")
 	}
 }
 

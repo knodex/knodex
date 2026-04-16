@@ -1,0 +1,66 @@
+# Cluster Provisioner RGD (infrastructure category)
+# Simulates provisioning a Kubernetes cluster and sharing its kubeconfig.
+#
+# Flow:
+#   1. Operator deploys this to eng-infra namespace
+#   2. Creates a ConfigMap with cluster metadata in eng-infra
+#   3. Creates a kubeconfig Secret in eng-shared so developers can consume it
+#
+# The kubeconfig field accepts a raw kubeconfig YAML string.
+# For simulation, use: kubectl config view --raw --minify
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: cluster-provisioner
+  annotations:
+    knodex.io/catalog: "true"
+    knodex.io/title: "Cluster Provisioner"
+    knodex.io/description: "Provisions a Kubernetes cluster and shares kubeconfig to the shared namespace for developer consumption"
+    knodex.io/tags: "cluster,infrastructure,kubeconfig,multi-cluster"
+    knodex.io/category: "infrastructure"
+    knodex.io/icon: "server"
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: ClusterProvisioner
+    spec:
+      clusterName: string | description="Name for the provisioned cluster (used as Secret prefix)"
+      sharedNamespace: string | default="eng-shared" description="Namespace where the kubeconfig Secret will be created for developer access"
+      kubeconfig: string | description="Raw kubeconfig YAML for the target cluster"
+    status:
+      clusterConfigMap: ${clusterMeta.metadata.name}
+      kubeconfigSecret: ${kubeconfigSecret.metadata.name}
+      kubeconfigNamespace: ${kubeconfigSecret.metadata.namespace}
+
+  resources:
+    # Cluster metadata ConfigMap in the operator's namespace (eng-infra)
+    - id: clusterMeta
+      template:
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: cluster-${schema.spec.clusterName}-meta
+          labels:
+            app.kubernetes.io/managed-by: knodex
+            knodex.io/cluster: ${schema.spec.clusterName}
+        data:
+          cluster-name: ${schema.spec.clusterName}
+          provisioned-by: "knodex-cluster-provisioner"
+          shared-namespace: ${schema.spec.sharedNamespace}
+
+    # Kubeconfig Secret in the shared namespace (eng-shared)
+    # This is the cross-namespace handoff: operator creates, developer consumes
+    - id: kubeconfigSecret
+      template:
+        apiVersion: v1
+        kind: Secret
+        metadata:
+          name: ${schema.spec.clusterName}-kubeconfig
+          namespace: ${schema.spec.sharedNamespace}
+          labels:
+            app.kubernetes.io/managed-by: knodex
+            knodex.io/cluster: ${schema.spec.clusterName}
+            knodex.io/secret-type: kubeconfig
+        type: Opaque
+        stringData:
+          value: ${schema.spec.kubeconfig}

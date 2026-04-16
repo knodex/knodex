@@ -200,13 +200,3 @@ func FilterNamespacesByPatterns(namespaces []string, patterns []string) []string
 	sort.Strings(matched)
 	return matched
 }
-
-// NamespaceExists checks if a namespace exists on the cluster
-func (s *NamespaceService) NamespaceExists(ctx context.Context, name string) (bool, error) {
-	_, err := s.k8sClient.CoreV1().Namespaces().Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		// Check if it's a "not found" error
-		return false, nil
-	}
-	return true, nil
-}

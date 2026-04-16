@@ -13,8 +13,8 @@ export function Skeleton({ className, ...props }: SkeletonProps) {
   return (
     <div
       className={cn(
-        "animate-pulse rounded-md bg-muted",
-        "motion-reduce:animate-none motion-reduce:bg-muted/50",
+        "animate-token-shimmer rounded-md",
+        "motion-reduce:animate-none motion-reduce:bg-[rgba(255,255,255,0.04)]",
         className
       )}
       {...props}

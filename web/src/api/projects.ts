@@ -7,6 +7,7 @@ import type {
   ProjectListResponse,
   CreateProjectRequest,
   UpdateProjectRequest,
+  ResourceAggregationResponse,
 } from "@/types/project";
 
 /**
@@ -56,4 +57,18 @@ export async function updateProject(
  */
 export async function deleteProject(name: string): Promise<void> {
   await apiClient.delete(`/v1/projects/${encodeURIComponent(name)}`);
+}
+
+/**
+ * Get aggregated resources for a project across clusters
+ */
+export async function getProjectResources(
+  name: string,
+  kind: "Certificate" | "Ingress"
+): Promise<ResourceAggregationResponse> {
+  const response = await apiClient.get<ResourceAggregationResponse>(
+    `/v1/projects/${encodeURIComponent(name)}/resources`,
+    { params: { kind } }
+  );
+  return response.data;
 }

@@ -4,6 +4,7 @@
 import { cn } from "@/lib/utils";
 import type { NestedObjectEditorProps } from "./types";
 import { formatLabel } from "./utils";
+import { orderProperties } from "@/lib/order-properties";
 
 /**
  * Inline editor for object items within arrays.
@@ -28,7 +29,7 @@ export function NestedObjectEditor({
         depth > 2 && "bg-secondary/10"
       )}
     >
-      {Object.entries(property.properties).map(([key, prop]) => {
+      {orderProperties(Object.entries(property.properties), property.propertyOrder).map(([key, prop]) => {
         const fieldValue = value[key];
         const isSimple =
           prop.type === "string" ||

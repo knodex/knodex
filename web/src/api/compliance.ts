@@ -252,6 +252,41 @@ export async function exportViolationHistory(
   return { blob: response.data, filename };
 }
 
+// --- Pre-deploy compliance validation ---
+
+export interface ComplianceValidateViolation {
+  policy: string;
+  severity: "warning" | "error";
+  message: string;
+  field?: string;
+  guidance?: string;
+}
+
+export interface ComplianceValidateRequest {
+  rgdName: string;
+  project: string;
+  namespace: string;
+  values: Record<string, unknown>;
+}
+
+export interface ComplianceValidateResponse {
+  result: "pass" | "warning" | "block";
+  violations: ComplianceValidateViolation[];
+}
+
+/**
+ * Validate a deployment against compliance policies (dry-run, no side effects)
+ */
+export async function validateCompliance(
+  request: ComplianceValidateRequest
+): Promise<ComplianceValidateResponse> {
+  const response = await apiClient.post<ComplianceValidateResponse>(
+    "/v1/compliance/validate",
+    request
+  );
+  return response.data;
+}
+
 /**
  * Download a blob as a file
  */

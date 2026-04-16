@@ -3,11 +3,13 @@
 
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { User, Shield, Users, KeyRound } from "lucide-react";
+import { User, Shield, Users, KeyRound } from "@/lib/icons";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { useUserStore } from "@/stores/userStore";
 import { getAccountInfo } from "@/api/auth";
+import { STALE_TIME } from "@/lib/query-client";
 
 /**
  * Formats a Unix timestamp as a human-readable date/time string.
@@ -31,7 +33,7 @@ export function UserInfoPage() {
     queryKey: ["account", "info"],
     queryFn: getAccountInfo,
     enabled: !!user,
-    staleTime: 60 * 1000,
+    staleTime: STALE_TIME.STANDARD,
   });
 
   // Use server-filtered groups when available, fall back to JWT groups from store.
@@ -100,7 +102,7 @@ export function UserInfoPage() {
             {isAccountLoading ? (
               <div className="flex flex-wrap gap-2">
                 {[1, 2, 3].map((i) => (
-                  <div key={i} className="h-6 w-24 animate-pulse rounded-full bg-muted" />
+                  <Skeleton key={i} className="h-6 w-24 rounded-full" />
                 ))}
               </div>
             ) : groups.length === 0 ? (

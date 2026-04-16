@@ -4,7 +4,6 @@
 package helpers
 
 import (
-	"fmt"
 	"net/http"
 
 	"github.com/knodex/knodex/server/internal/api/response"
@@ -21,11 +20,6 @@ func NewValidationErrors() ValidationErrors {
 // Add adds a validation error for a field
 func (v ValidationErrors) Add(field, message string) {
 	v[field] = message
-}
-
-// AddIndexed adds a validation error for an indexed field (e.g., "items[0]")
-func (v ValidationErrors) AddIndexed(field string, index int, message string) {
-	v[fmt.Sprintf("%s[%d]", field, index)] = message
 }
 
 // HasErrors returns true if there are any validation errors

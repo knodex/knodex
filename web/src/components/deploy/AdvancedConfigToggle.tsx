@@ -3,7 +3,7 @@
 
 /* eslint-disable react-refresh/only-export-components */
 import { useState, useCallback } from "react";
-import { ChevronDown, ChevronRight, Settings } from "lucide-react";
+import { ChevronDown, ChevronRight, Settings } from "@/lib/icons";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import type { AdvancedSection } from "@/types/rgd";
@@ -45,6 +45,9 @@ export function AdvancedConfigToggle({
   // Count unique top-level advanced properties (excluding parent paths)
   const optionCount = countAdvancedOptions(advancedSection.affectedProperties);
 
+  // Unique id per toggle instance to avoid duplicate HTML ids when multiple toggles render
+  const sectionId = `advanced-config-${advancedSection.path.replace(/\./g, "-")}`;
+
   return (
     <div className={cn("mt-6 border-t border-border pt-4", className)}>
       <button
@@ -56,7 +59,7 @@ export function AdvancedConfigToggle({
           "focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
         )}
         aria-expanded={isExpanded}
-        aria-controls="advanced-config-section"
+        aria-controls={sectionId}
       >
         {isExpanded ? (
           <ChevronDown className="h-4 w-4 shrink-0" />
@@ -74,7 +77,7 @@ export function AdvancedConfigToggle({
 
       {isExpanded && (
         <div
-          id="advanced-config-section"
+          id={sectionId}
           className="mt-4 rounded-lg bg-muted/30 p-4 border border-border/50"
           role="region"
           aria-label="Advanced configuration options"

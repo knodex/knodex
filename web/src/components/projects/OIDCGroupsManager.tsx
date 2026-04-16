@@ -10,7 +10,7 @@
  * receive the associated role permissions.
  */
 import { useState, useCallback } from "react";
-import { Plus, X } from "lucide-react";
+import { Plus, X } from "@/lib/icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -188,6 +188,7 @@ export function OIDCGroupsManager({
                   placeholder="Enter OIDC group ID (e.g., UUID or group name)"
                   className="flex-1 font-mono text-sm h-8"
                   disabled={isLoading}
+                  /* eslint-disable-next-line jsx-a11y/no-autofocus */
                   autoFocus
                 />
                 <Button

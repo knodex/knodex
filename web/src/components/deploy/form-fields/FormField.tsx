@@ -1,7 +1,8 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useFormContext, Controller } from "react-hook-form";
+import { memo } from "react";
+import { useFormContext, useController } from "react-hook-form";
 import { ExternalRefSelector } from "../ExternalRefSelector";
 import { TextField } from "./TextField";
 import { NumberField } from "./NumberField";
@@ -14,6 +15,73 @@ import { formatLabel } from "./utils";
 import type { FormFieldProps } from "./types";
 
 /**
+ * Stable wrapper for Controller-based ArrayField.
+ * Uses useController instead of Controller render prop to avoid new closure on every render.
+ */
+const ControlledArrayField = memo(function ControlledArrayField({
+  name,
+  label,
+  description,
+  property,
+  required,
+  error,
+  depth,
+  deploymentNamespace,
+}: {
+  name: string;
+  label: string;
+  description?: string;
+  property: FormFieldProps["property"];
+  required: boolean;
+  error?: string;
+  depth: number;
+  deploymentNamespace?: string;
+}) {
+  const { field } = useController({ name });
+  return (
+    <ArrayField
+      name={name}
+      label={label}
+      description={description}
+      property={property}
+      value={(field.value as unknown[]) || []}
+      onChange={field.onChange}
+      required={required}
+      error={error}
+      depth={depth}
+      deploymentNamespace={deploymentNamespace}
+    />
+  );
+});
+
+/**
+ * Stable wrapper for Controller-based KeyValueField.
+ */
+const ControlledKeyValueField = memo(function ControlledKeyValueField({
+  name,
+  label,
+  description,
+  error,
+}: {
+  name: string;
+  label: string;
+  description?: string;
+  error?: string;
+}) {
+  const { field } = useController({ name });
+  return (
+    <KeyValueField
+      name={name}
+      label={label}
+      description={description}
+      value={(field.value as Record<string, string>) || {}}
+      onChange={field.onChange}
+      error={error}
+    />
+  );
+});
+
+/**
  * Main form field router component.
  * Renders the appropriate field component based on the property type.
  */
@@ -23,11 +91,11 @@ export function FormField({
   required = false,
   depth = 0,
   deploymentNamespace,
+  inlineAdvancedSection,
 }: FormFieldProps) {
   const {
     register,
     formState: { errors },
-    control,
   } = useFormContext();
 
   // Get nested error
@@ -55,6 +123,7 @@ export function FormField({
             required={required}
             error={errorMessage}
             defaultValue={property.default as string}
+            register={register}
           />
         );
       }
@@ -82,7 +151,6 @@ export function FormField({
           min={property.minimum}
           max={property.maximum}
           isInteger={property.type === "integer"}
-          register={register}
         />
       );
 
@@ -107,6 +175,7 @@ export function FormField({
             apiVersion={property.externalRefSelector.apiVersion}
             kind={property.externalRefSelector.kind}
             deploymentNamespace={deploymentNamespace}
+            useInstanceNamespace={property.externalRefSelector.useInstanceNamespace}
             autoFillFields={property.externalRefSelector.autoFillFields}
             label={label}
             description={description}
@@ -125,45 +194,30 @@ export function FormField({
             required={required}
             depth={depth}
             deploymentNamespace={deploymentNamespace}
+            inlineAdvancedSection={inlineAdvancedSection}
           />
         );
       }
       return (
-        <Controller
+        <ControlledKeyValueField
           name={name}
-          control={control}
-          render={({ field }) => (
-            <KeyValueField
-              name={name}
-              label={label}
-              description={description}
-              value={(field.value as Record<string, string>) || {}}
-              onChange={field.onChange}
-              error={errorMessage}
-            />
-          )}
+          label={label}
+          description={description}
+          error={errorMessage}
         />
       );
 
     case "array":
       return (
-        <Controller
+        <ControlledArrayField
           name={name}
-          control={control}
-          render={({ field }) => (
-            <ArrayField
-              name={name}
-              label={label}
-              description={description}
-              property={property}
-              value={(field.value as unknown[]) || []}
-              onChange={field.onChange}
-              required={required}
-              error={errorMessage}
-              depth={depth}
-              deploymentNamespace={deploymentNamespace}
-            />
-          )}
+          label={label}
+          description={description}
+          property={property}
+          required={required}
+          error={errorMessage}
+          depth={depth}
+          deploymentNamespace={deploymentNamespace}
         />
       );
 

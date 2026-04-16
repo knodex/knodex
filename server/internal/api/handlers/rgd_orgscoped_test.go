@@ -29,7 +29,6 @@ func mockRGDWatcherWithNamespaces(t *testing.T) *watcher.RGDWatcher {
 			Name:        "postgres-cluster",
 			Namespace:   "project-1-ns",
 			Description: "PostgreSQL cluster in project 1",
-			Version:     "1.0.0",
 			Tags:        []string{"database", "production"},
 			Category:    "database",
 			Labels:      map[string]string{"project": "project-1"},
@@ -41,7 +40,6 @@ func mockRGDWatcherWithNamespaces(t *testing.T) *watcher.RGDWatcher {
 			Name:        "redis-cache",
 			Namespace:   "project-1-ns",
 			Description: "Redis cache in project 1",
-			Version:     "2.0.0",
 			Tags:        []string{"cache", "production"},
 			Category:    "cache",
 			Labels:      map[string]string{"project": "project-1"},
@@ -53,7 +51,6 @@ func mockRGDWatcherWithNamespaces(t *testing.T) *watcher.RGDWatcher {
 			Name:        "mongodb",
 			Namespace:   "project-2-ns",
 			Description: "MongoDB in project 2",
-			Version:     "1.5.0",
 			Tags:        []string{"database", "staging"},
 			Category:    "database",
 			Labels:      map[string]string{"project": "project-2"},
@@ -65,7 +62,6 @@ func mockRGDWatcherWithNamespaces(t *testing.T) *watcher.RGDWatcher {
 			Name:        "mysql-cluster",
 			Namespace:   "project-3-ns",
 			Description: "MySQL in project 3",
-			Version:     "1.0.0",
 			Tags:        []string{"database"},
 			Category:    "database",
 			Labels:      map[string]string{"project": "project-3"},
@@ -228,8 +224,8 @@ func TestRGDHandler_ListRGDs_RedisCacheBehavior(t *testing.T) {
 
 	// Verify cache key exists in Redis
 	// Cache key format from catalog_service.listCacheKey():
-	// rgd:list:org=%s:ns=%s:cat=%s:tags=%s:search=%s:projects=%s:public=%t:page=%d:size=%d:sort=%s:%s
-	cacheKey := "rgd:list:org=:ns=project-1-ns:cat=:tags=:search=:projects=:public=false:page=1:size=20:sort=name:asc"
+	// rgd:list:org=%s:ns=%s:cat=%s:tags=%s:ek=%s:search=%s:dok=%s:pk=%s:pg=%s:projects=%s:public=%t:tiers=%s:status=%s:page=%d:size=%d:sort=%s:%s
+	cacheKey := "rgd:list:org=:ns=project-1-ns:cat=:tags=:ek=:search=:dok=:pk=:pg=:projects=:public=false:tiers=:status=:page=1:size=20:sort=name:asc"
 	exists, err := redisClient.Exists(ctx, cacheKey).Result()
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), exists, "cache key should exist in Redis after first request")

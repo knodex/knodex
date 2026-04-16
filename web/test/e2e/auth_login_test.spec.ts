@@ -151,7 +151,7 @@ test.describe('Authentication Flow', () => {
 
       // Should redirect to catalog (root "/" redirects to "/catalog")
       await expect(page).toHaveURL('/catalog');
-      await expect(page.getByText('Resource Definitions')).toBeVisible();
+      await expect(page.getByText('Catalog')).toBeVisible();
 
       // Should show username in header
       await expect(page.getByText('admin')).toBeVisible();
@@ -294,7 +294,7 @@ test.describe('Authentication Flow', () => {
 
       // Should redirect to catalog (root "/" redirects to "/catalog")
       await expect(page).toHaveURL('/catalog');
-      await expect(page.getByText('Resource Definitions')).toBeVisible();
+      await expect(page.getByText('Catalog')).toBeVisible();
       await expect(page.getByText('admin')).toBeVisible();
     });
 

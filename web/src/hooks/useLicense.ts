@@ -4,6 +4,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { getLicenseStatus, updateLicense } from "@/api/license";
 import { isEnterprise } from "./useCompliance";
+import { STALE_TIME } from "@/lib/query-client";
 
 /**
  * Hook for fetching the current license status.
@@ -14,7 +15,7 @@ export function useLicenseStatus() {
     queryKey: ["license", "status"],
     queryFn: getLicenseStatus,
     enabled: isEnterprise(),
-    staleTime: 5 * 60 * 1000, // 5 minutes - license doesn't change often
+    staleTime: STALE_TIME.STATIC, // license doesn't change often
     retry: (failureCount, error) => {
       // Don't retry on auth errors
       if (error && "status" in (error as Record<string, unknown>) && (error as Record<string, unknown>).status === 401) {

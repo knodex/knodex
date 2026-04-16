@@ -15,6 +15,26 @@ import (
 	"time"
 )
 
+// LOCK ORDER: policyEnforcer.mu → CasbinEnforcer.mu
+//
+// The RBAC package has two RWMutexes that form a strict acquisition hierarchy.
+// policyEnforcer.mu (this file, policyEnforcer struct) must ALWAYS be acquired before
+// CasbinEnforcer.mu (casbin.go, CasbinEnforcer struct). No CasbinEnforcer method ever
+// acquires policyEnforcer.mu, so the ordering is strictly one-directional.
+//
+// Key call paths that hold policyEnforcer.mu and call into CasbinEnforcer:
+//
+//   LoadProjectPolicies      → loadProjectPoliciesLocked → enforcer.AddPolicy/AddUserRole
+//   SyncPolicies             → loadProjectPoliciesLocked/removeProjectPoliciesLocked → enforcer.*
+//   assignUserRolesInCasbin  → enforcer.GetRolesForUser/AddUserRole/RemoveUserRole
+//   RestorePersistedRoles    → enforcer.AddUserRole
+//
+// Manual Lock/Unlock (no defer) patterns:
+//   - LoadProjectPolicies: unlocks before cache.Clear() — cache ops outside lock
+//   - CanAccess/CanAccessWithGroups: short RLock sections for hot-path performance
+//
+// WARNING: Never acquire CasbinEnforcer.mu then policyEnforcer.mu — deadlock risk.
+
 // Common errors for PolicyEnforcer
 var (
 	// ErrAccessDenied is returned when a user doesn't have permission to perform an action
@@ -31,9 +51,6 @@ var (
 
 	// ErrAlreadyExists is returned when attempting to create a resource that already exists
 	ErrAlreadyExists = errors.New("resource already exists")
-
-	// ErrNotFound is returned when a resource is not found (generic)
-	ErrNotFound = errors.New("resource not found")
 
 	// ErrConflict is returned when there is a version conflict during update
 	ErrConflict = errors.New("resource version conflict")
@@ -138,11 +155,10 @@ type PolicyMetrics struct {
 // Authorizer provides authorization checks for RBAC decisions.
 // Use this interface when you only need to check permissions.
 type Authorizer interface {
-	// CanAccess checks if user can perform action on object
-	// Returns true if access is allowed, false otherwise
-	// User format: "user:{email}" or "user:{id}"
-	// Object format: "{resource_type}/{resource_name}"
-	// Action: get, list, create, update, delete
+	// Deprecated: Use CanAccessWithGroups instead. CanAccess only checks direct user
+	// permissions and misses OIDC group and server-side role evaluation. It remains as an
+	// internal implementation detail used by CanAccessWithGroups, EnforceProjectAccess, and
+	// AuthorizationService.CanAccess.
 	CanAccess(ctx context.Context, user, object, action string) (bool, error)
 
 	// CanAccessWithGroups checks if user OR any of their OIDC groups OR any of their server-side
@@ -368,8 +384,9 @@ func NewPolicyEnforcerWithConfig(enforcer *CasbinEnforcer, projectReader Project
 	return pe
 }
 
-// CanAccess checks if user can perform action on object
-// If caching is enabled, cached decisions are returned when available
+// Deprecated: Use CanAccessWithGroups instead. CanAccess only checks direct user permissions
+// and misses OIDC group and server-side role evaluation.
+// If caching is enabled, cached decisions are returned when available.
 func (pe *policyEnforcer) CanAccess(ctx context.Context, user, object, action string) (bool, error) {
 	// Validate user format
 	if user == "" {
@@ -579,8 +596,8 @@ func (pe *policyEnforcer) CanAccessWithGroups(ctx context.Context, user string, 
 	// SECURITY: Roles are sourced from Casbin's state via GetImplicitRolesForUser,
 	// ensuring role revocations take effect immediately. A compromised JWT with stale
 	// casbin_roles cannot be used to escalate privileges.
-	// PERF TODO: When called from GetAccessibleProjects (N projects), this fetches
-	// the same roles N times. Consider hoisting the lookup into GetAccessibleProjects.
+	// NOTE: GetAccessibleProjects short-circuits with a wildcard check before
+	// entering its per-project loop, avoiding N redundant role fetches for admins.
 	//
 	// FORMAT NOTE: Role assignments may be stored with or without "user:" prefix
 	// depending on the source (local admin login vs OIDC auto_role_binder).
@@ -683,10 +700,11 @@ func (pe *policyEnforcer) CanAccessWithGroups(ctx context.Context, user string, 
 }
 
 // resolveNamespaceToProjectObject implements ArgoCD-style namespace-to-project resolution.
-// Given an object like "instances/ns-beta-team/foo", it:
+// Given an object like "instances/ns-beta-team/WebApp/my-app", it:
 // 1. Extracts the namespace ("ns-beta-team")
 // 2. Finds the project that owns this namespace via destinations
-// 3. Returns a project-scoped object ("instances/proj-beta-team/*")
+// 3. Returns a project-scoped object preserving namespace: "instances/proj-beta-team/ns-beta-team/WebApp/my-app"
+// This enables namespace-scoped Casbin policies (roles[].destinations) to match via keyMatch.
 //
 // Returns empty string if:
 // - Object doesn't contain a namespace segment
@@ -729,10 +747,16 @@ func (pe *policyEnforcer) resolveNamespaceToProjectObject(ctx context.Context, o
 		return ""
 	}
 
-	// Create project-scoped object: "instances/{project-id}/*"
-	// This matches how policies are defined: "instances/proj-beta-team/*"
+	// Create project-scoped object preserving namespace:
+	// "instances/{project-id}/{namespace}/{kind}/{name}" or "instances/{project-id}/{namespace}/*"
+	// This enables namespace-scoped Casbin policies to match correctly via keyMatch.
+	// For example: policy "instances/alpha/ns-app/*" matches request "instances/alpha/ns-app/WebApp/my-app"
 	resourceType := parts[0] // "instances"
-	return resourceType + "/" + project.Name + "/*"
+	// Rebuild the path after the namespace using project name
+	// Input:  "instances/{namespace}/{kind}/{name}"
+	// Output: "instances/{project}/{namespace}/{kind}/{name}"
+	remaining := strings.Join(parts[1:], "/") // "namespace/kind/name" or just "namespace"
+	return resourceType + "/" + project.Name + "/" + remaining
 }
 
 // getProjectScopedWildcards returns project-scoped wildcard objects for the user's accessible projects.
@@ -742,6 +766,7 @@ func (pe *policyEnforcer) resolveNamespaceToProjectObject(ctx context.Context, o
 func (pe *policyEnforcer) getProjectScopedWildcards(ctx context.Context, groups []string, resourceType string) []string {
 	var wildcards []string
 	seenProjects := make(map[string]bool)
+	seenObjects := make(map[string]bool) // deduplicates namespace-scoped policy objects
 
 	// For each group, find projects they have access to via grouping policies
 	pe.mu.RLock()
@@ -768,7 +793,7 @@ func (pe *policyEnforcer) getProjectScopedWildcards(ctx context.Context, groups 
 			continue
 		}
 
-		// Extract project names from role strings
+		// Extract project names from role strings and add wildcards
 		// Role format: proj:<project>:<role>
 		for _, role := range roles {
 			if strings.HasPrefix(role, "proj:") {
@@ -777,8 +802,35 @@ func (pe *policyEnforcer) getProjectScopedWildcards(ctx context.Context, groups 
 					projectName := parts[1]
 					if !seenProjects[projectName] {
 						seenProjects[projectName] = true
+						// Add project-wide wildcard (matches roles without destinations)
 						wildcard := resourceType + "/" + projectName + "/*"
 						wildcards = append(wildcards, wildcard)
+					}
+				}
+			}
+
+			// Also extract namespace-scoped wildcards from the role's actual policies.
+			// Roles with destinations generate policies like "secrets/{project}/{ns}/*".
+			// The project-wide wildcard "secrets/{project}/*" won't match these via keyMatch,
+			// so we need to include the actual namespace-scoped objects for list authorization.
+			// Deduplicate via seenObjects: multiple groups can map to the same role, causing
+			// its policies to be extracted multiple times without this guard.
+			rolePolicies, err := pe.enforcer.GetPoliciesForRole(role)
+			if err != nil {
+				continue
+			}
+			prefix := resourceType + "/"
+			for _, policy := range rolePolicies {
+				// Policy format: [subject, object, action, effect]
+				if len(policy) >= 2 {
+					obj := policy[1]
+					if strings.HasPrefix(obj, prefix) && obj != prefix+"*" {
+						// Only add namespace-scoped wildcards (e.g., "secrets/alpha/ns-app/*")
+						// Skip project-wide wildcards (already added above)
+						if !seenObjects[obj] {
+							seenObjects[obj] = true
+							wildcards = append(wildcards, obj)
+						}
 					}
 				}
 			}
@@ -803,7 +855,7 @@ func (pe *policyEnforcer) EnforceProjectAccess(ctx context.Context, user, projec
 
 	allowed, err := pe.CanAccess(ctx, user, object, action)
 	if err != nil {
-		return err
+		return fmt.Errorf("enforce project access on %q: %w", projectName, err)
 	}
 
 	if !allowed {
@@ -832,7 +884,7 @@ func (pe *policyEnforcer) LoadProjectPolicies(ctx context.Context, project *Proj
 			"project", project.Name,
 			"error", err,
 		)
-		return err
+		return fmt.Errorf("load project policies: %w", err)
 	}
 
 	// Invalidate cache when policies change
@@ -887,6 +939,44 @@ func getBuiltInAdminPolicies(projectName string) []string {
 
 		// Secrets management - full CRUD scoped to project
 		fmt.Sprintf("secrets/%s/*, *, allow", projectName),
+	}
+}
+
+// getBuiltInOperatorPolicies returns built-in policies for the global role:operator role.
+// Operators can view infrastructure, networking, and storage category RGDs in the sidebar.
+//
+// Policies granted:
+//   - rgds/infrastructure/*, get, allow - View infrastructure RGDs and category sidebar
+//   - rgds/infrastructure/*, list, allow - List infrastructure RGDs
+//   - rgds/networking/*, get, allow - View networking RGDs and category sidebar
+//   - rgds/networking/*, list, allow - List networking RGDs
+//   - rgds/storage/*, get, allow - View storage RGDs and category sidebar
+//   - rgds/storage/*, list, allow - List storage RGDs
+func getBuiltInOperatorPolicies() []string {
+	return []string{
+		"rgds/infrastructure/*, get, allow",
+		"rgds/infrastructure/*, list, allow",
+		"rgds/networking/*, get, allow",
+		"rgds/networking/*, list, allow",
+		"rgds/storage/*, get, allow",
+		"rgds/storage/*, list, allow",
+	}
+}
+
+// getBuiltInDeveloperPolicies returns built-in policies for the global role:developer role.
+// Developers can view applications and observability category RGDs in the sidebar.
+//
+// Policies granted:
+//   - rgds/applications/*, get, allow - View application RGDs and category sidebar
+//   - rgds/applications/*, list, allow - List application RGDs
+//   - rgds/observability/*, get, allow - View observability RGDs and category sidebar
+//   - rgds/observability/*, list, allow - List observability RGDs
+func getBuiltInDeveloperPolicies() []string {
+	return []string{
+		"rgds/applications/*, get, allow",
+		"rgds/applications/*, list, allow",
+		"rgds/observability/*, get, allow",
+		"rgds/observability/*, list, allow",
 	}
 }
 
@@ -957,10 +1047,11 @@ func (pe *policyEnforcer) loadProjectPoliciesLocked(project *Project) error {
 		// SECURITY: Custom policies from Project CRD are scoped to the project automatically
 		// This prevents project admins from granting themselves access to other projects
 		// For example, a policy "*, *, allow" becomes scoped to only this project's resources
+		// When role has destinations, policies are further scoped to those namespaces
 		for _, policyStr := range role.Policies {
-			// Parse and add policy with project scoping
+			// Parse and add policy with project scoping (+ destination scoping if set)
 			// Policy format: "object, action, effect" (3-part only for security)
-			if err := pe.addProjectScopedPolicyFromString(project.Name, roleName, policyStr); err != nil {
+			if err := pe.addProjectScopedPolicyFromStringWithDests(project.Name, roleName, policyStr, role.Destinations); err != nil {
 				return fmt.Errorf("%w: failed to add policy for role %s: %v", ErrInvalidPolicy, role.Name, err)
 			}
 		}
@@ -976,7 +1067,7 @@ func (pe *policyEnforcer) loadProjectPoliciesLocked(project *Project) error {
 				"policies_count", len(builtInPolicies),
 			)
 			for _, policyStr := range builtInPolicies {
-				if err := pe.addPolicyFromString(roleName, policyStr); err != nil {
+				if err := pe.addPolicyFromStringWithDests(roleName, policyStr, role.Destinations, project.Name); err != nil {
 					return fmt.Errorf("%w: failed to add built-in admin policy for role %s: %v", ErrInvalidPolicy, role.Name, err)
 				}
 			}
@@ -992,7 +1083,7 @@ func (pe *policyEnforcer) loadProjectPoliciesLocked(project *Project) error {
 				"policies_count", len(builtInPolicies),
 			)
 			for _, policyStr := range builtInPolicies {
-				if err := pe.addPolicyFromString(roleName, policyStr); err != nil {
+				if err := pe.addPolicyFromStringWithDests(roleName, policyStr, role.Destinations, project.Name); err != nil {
 					return fmt.Errorf("%w: failed to add built-in readonly policy for role %s: %v", ErrInvalidPolicy, role.Name, err)
 				}
 			}
@@ -1193,7 +1284,7 @@ func (pe *policyEnforcer) addPolicyFromString(roleName, policyStr string) error 
 
 	// Validate effect
 	if err := ValidateEffect(effect); err != nil {
-		return err
+		return fmt.Errorf("add policy from string for role %q: %w", roleName, err)
 	}
 
 	// Normalize actions (expand "view" to ["list", "get"], etc.)
@@ -1206,6 +1297,63 @@ func (pe *policyEnforcer) addPolicyFromString(roleName, policyStr string) error 
 		}
 	}
 
+	return nil
+}
+
+// addPolicyFromStringWithDests adds a built-in policy, expanding namespace-bearing resources
+// per destination when destinations are provided. Built-in policies contain already-formatted
+// object paths like "instances/{project}/*, *, allow". When destinations are set, patterns like
+// "instances/{project}/*" expand to "instances/{project}/{dest}/*" for each destination.
+func (pe *policyEnforcer) addPolicyFromStringWithDests(roleName, policyStr string, destinations []string, projectName string) error {
+	if len(destinations) == 0 {
+		return pe.addPolicyFromString(roleName, policyStr)
+	}
+
+	policyStr = strings.TrimSpace(policyStr)
+	if policyStr == "" {
+		return nil
+	}
+
+	// Parse the 3-part built-in policy format: "object, action, effect"
+	parts := strings.Split(policyStr, ",")
+	for i := range parts {
+		parts[i] = strings.TrimSpace(parts[i])
+	}
+	if len(parts) != 3 {
+		// Non-3-part built-in policies shouldn't happen, fall through
+		return pe.addPolicyFromString(roleName, policyStr)
+	}
+
+	object, action, effect := parts[0], parts[1], parts[2]
+
+	// Check if object is a namespace-bearing resource with project wildcard.
+	// Only resources with namespace-scoped API routes or K8s namespace-scoped storage
+	// should be expanded per destination. Repositories and compliance are project-level
+	// resources — their handlers check "resource/{project}/*" which must match
+	// project-wide policies.
+	nsResources := []string{"instances/", "secrets/"}
+	projectWildcard := projectName + "/*"
+	expanded := false
+	for _, prefix := range nsResources {
+		if object == prefix+projectWildcard {
+			// Expand per destination
+			resType := strings.TrimSuffix(prefix, "/")
+			for _, dest := range destinations {
+				destObject := fmt.Sprintf("%s/%s/%s/*", resType, projectName, dest)
+				expandedPolicy := fmt.Sprintf("%s, %s, %s", destObject, action, effect)
+				if err := pe.addPolicyFromString(roleName, expandedPolicy); err != nil {
+					return err
+				}
+			}
+			expanded = true
+			break
+		}
+	}
+
+	if !expanded {
+		// Non-namespace-bearing resources (projects, rgds) - add as-is
+		return pe.addPolicyFromString(roleName, policyStr)
+	}
 	return nil
 }
 
@@ -1227,6 +1375,11 @@ func (pe *policyEnforcer) addPolicyFromString(roleName, policyStr string) error 
 // 1. Simplified 3-part: "object, action, effect"
 // 2. ArgoCD 6-part: "p, subject, resource_type, action, scope, effect"
 func (pe *policyEnforcer) addProjectScopedPolicyFromString(projectName, roleName, policyStr string) error {
+	return pe.addProjectScopedPolicyFromStringWithDests(projectName, roleName, policyStr, nil)
+}
+
+// addProjectScopedPolicyFromStringWithDests adds a project-scoped policy, optionally scoped to destinations.
+func (pe *policyEnforcer) addProjectScopedPolicyFromStringWithDests(projectName, roleName, policyStr string, destinations []string) error {
 	policyStr = strings.TrimSpace(policyStr)
 	if policyStr == "" {
 		return nil // Empty policies are ignored
@@ -1279,12 +1432,12 @@ func (pe *policyEnforcer) addProjectScopedPolicyFromString(projectName, roleName
 
 	// Validate effect
 	if err := ValidateEffect(effect); err != nil {
-		return err
+		return fmt.Errorf("add project-scoped policy for role %q in project %q: %w", roleName, projectName, err)
 	}
 
 	// SECURITY: Scope wildcard objects to the project
 	// This prevents project admins from accessing resources outside their project
-	scopedObjects := scopeObjectToProject(projectName, object)
+	scopedObjects := scopeObjectToProjectWithDestinations(projectName, object, destinations)
 
 	// Normalize actions (expand "view" to ["list", "get"], etc.)
 	actions := normalizeAction(action)
@@ -1313,36 +1466,67 @@ func (pe *policyEnforcer) addProjectScopedPolicyFromString(projectName, roleName
 //   - "rgds/*" -> ["rgds/*"] (RGDs are global/shared, not project-scoped)
 //   - "projects/{other}" -> ["projects/{other}"] (explicit path not modified)
 func scopeObjectToProject(projectName, object string) []string {
+	return scopeObjectToProjectWithDestinations(projectName, object, nil)
+}
+
+// scopeObjectToProjectWithDestinations converts wildcard objects to project-scoped objects.
+// When destinations is non-empty, namespace-bearing resources (instances, secrets, etc.)
+// are scoped to each destination namespace instead of project-wide wildcards.
+// This is the core of multi-tenant access control.
+//
+// Examples (no destinations — backward compatible):
+//   - "*" -> ["projects/{project}", "instances/{project}/*", ...]
+//   - "instances/*" -> ["instances/{project}/*"]
+//
+// Examples (with destinations ["ns-a", "ns-b"]):
+//   - "*" -> ["projects/{project}", "instances/{project}/ns-a/*", "instances/{project}/ns-b/*", ...]
+//   - "instances/*" -> ["instances/{project}/ns-a/*", "instances/{project}/ns-b/*"]
+func scopeObjectToProjectWithDestinations(projectName, object string, destinations []string) []string {
 	// Handle global wildcard - expand to all project-scoped resources
 	// Also handle "{project}/*" which results from 6-part ArgoCD format
 	// when resourceType="*" and scope="{project}/*" (e.g., bootstrap platform-admin role)
 	projectWildcard := projectName + "/*"
 	if object == "*" || object == projectWildcard {
-		return []string{
+		result := []string{
 			// Project access (only their own project)
 			fmt.Sprintf("projects/%s", projectName),
-			// Instance management within project
-			fmt.Sprintf("instances/%s/*", projectName),
-			// Repository management within project
-			fmt.Sprintf("repositories/%s/*", projectName),
-			// Application management within project
-			fmt.Sprintf("applications/%s/*", projectName),
-			// Secrets management within project
-			fmt.Sprintf("secrets/%s/*", projectName),
-			// RGD access is global (catalog browsing) - not scoped
-			"rgds/*",
+		}
+
+		// Namespace-bearing resources: scope per-destination if destinations provided.
+		// Only instances and secrets are namespace-scoped (have K8s namespace dimension).
+		nsResources := []string{"instances", "secrets"}
+		for _, res := range nsResources {
+			result = append(result, scopeResourceToDestinations(res, projectName, destinations)...)
+		}
+
+		// Project-level resources: always project-wide regardless of destinations.
+		// Repositories, applications, and compliance are not namespace-scoped —
+		// their handlers check "resource/{project}/*" which must match project-wide policies.
+		projectWideResources := []string{"repositories", "compliance"}
+		for _, res := range projectWideResources {
+			result = append(result, fmt.Sprintf("%s/%s/*", res, projectName))
+		}
+
+		// RGD access is global (catalog browsing) - not scoped
+		result = append(result, "rgds/*")
+		return result
+	}
+
+	// Handle namespace-bearing resource wildcards — per-destination if destinations set
+	nsResourcePrefixes := []string{"instances/", "secrets/"}
+	for _, prefix := range nsResourcePrefixes {
+		if object == prefix+"*" {
+			resType := strings.TrimSuffix(prefix, "/")
+			return scopeResourceToDestinations(resType, projectName, destinations)
 		}
 	}
 
-	// Handle resource-type wildcards
-	// "instances/*" -> "instances/{project}/*"
-	// "repositories/*" -> "repositories/{project}/*"
-	// "applications/*" -> "applications/{project}/*"
-	// "secrets/*" -> "secrets/{project}/*"
-	resourcePrefixes := []string{"instances/", "repositories/", "applications/", "secrets/"}
-	for _, prefix := range resourcePrefixes {
+	// Handle project-level resource wildcards — always project-wide
+	projectWideResourcePrefixes := []string{"repositories/", "compliance/"}
+	for _, prefix := range projectWideResourcePrefixes {
 		if object == prefix+"*" {
-			return []string{fmt.Sprintf("%s%s/*", prefix, projectName)}
+			resType := strings.TrimSuffix(prefix, "/")
+			return []string{fmt.Sprintf("%s/%s/*", resType, projectName)}
 		}
 	}
 
@@ -1359,6 +1543,20 @@ func scopeObjectToProject(projectName, object string) []string {
 	// Other explicit paths are passed through as-is
 	// Note: These will likely fail authorization if they reference other projects
 	return []string{object}
+}
+
+// scopeResourceToDestinations returns scoped object paths for a resource type.
+// When destinations is non-empty, returns per-destination paths.
+// When destinations is empty, returns project-wide wildcard.
+func scopeResourceToDestinations(resourceType, projectName string, destinations []string) []string {
+	if len(destinations) == 0 {
+		return []string{fmt.Sprintf("%s/%s/*", resourceType, projectName)}
+	}
+	result := make([]string, 0, len(destinations))
+	for _, dest := range destinations {
+		result = append(result, fmt.Sprintf("%s/%s/%s/*", resourceType, projectName, dest))
+	}
+	return result
 }
 
 // SyncPolicies synchronizes all Project policies from Kubernetes
@@ -1475,7 +1673,9 @@ func (pe *policyEnforcer) removeProjectPoliciesLocked(projectName string) error 
 		}
 	}
 
-	// Remove all user/group -> role mappings for project roles
+	// Remove OIDC group -> role mappings for project roles.
+	// Preserve user-assigned grouping policies (from Redis persistence)
+	// so that RestorePersistedRoles assignments survive policy reloads.
 	roles, err := pe.enforcer.GetAllRoles()
 	if err != nil {
 		return fmt.Errorf("failed to get roles: %w", err)
@@ -1489,10 +1689,14 @@ func (pe *policyEnforcer) removeProjectPoliciesLocked(projectName string) error 
 				continue
 			}
 
-			// Remove user/group -> role mappings
+			// Only remove OIDC group mappings (group:* prefix).
+			// User-assigned mappings (user-local-*, user-oidc-*) are managed
+			// by AssignUserRoles/RestorePersistedRoles and must be preserved.
 			for _, user := range users {
-				if _, err := pe.enforcer.RemoveUserRole(user, role); err != nil {
-					continue
+				if strings.HasPrefix(user, "group:") {
+					if _, err := pe.enforcer.RemoveUserRole(user, role); err != nil {
+						continue
+					}
 				}
 			}
 		}
@@ -1510,7 +1714,7 @@ func (pe *policyEnforcer) AssignUserRoles(ctx context.Context, user string, role
 	// Update Casbin in-memory state (under lock — lock scope excludes Redis I/O
 	// to avoid blocking concurrent authorization reads)
 	if err := pe.assignUserRolesInCasbin(user, roles); err != nil {
-		return err
+		return fmt.Errorf("assign user roles for %q: %w", user, err)
 	}
 
 	// Persist to Redis OUTSIDE the lock — Redis I/O must not block authorization reads.
@@ -1749,7 +1953,7 @@ func (pe *policyEnforcer) RemoveUserRoles(ctx context.Context, user string) erro
 
 	// Remove from Casbin in-memory (under lock — lock scope excludes Redis I/O)
 	if err := pe.removeUserRolesInCasbin(user); err != nil {
-		return err
+		return fmt.Errorf("remove user roles for %q: %w", user, err)
 	}
 
 	// Remove from Redis OUTSIDE the lock — Redis I/O must not block authorization reads.
@@ -1811,7 +2015,7 @@ func (pe *policyEnforcer) RemoveUserRole(ctx context.Context, user, role string)
 	// Remove from Casbin and capture remaining roles (under lock — lock scope excludes Redis I/O)
 	remainingRoles, err := pe.removeUserRoleInCasbin(user, role)
 	if err != nil {
-		return err
+		return fmt.Errorf("remove user role %q for %q: %w", role, user, err)
 	}
 
 	// Update Redis OUTSIDE the lock — Redis I/O must not block authorization reads.
@@ -2009,9 +2213,22 @@ func (pe *policyEnforcer) GetAccessibleProjects(ctx context.Context, user string
 		return nil, fmt.Errorf("failed to list projects: %w", err)
 	}
 
-	// Check access for each project
-	// This is the UNIFIED approach: same code for global admins and regular users
-	// Global admins will have access to all because their Casbin policies grant wildcard access
+	// Fast path: check if user has wildcard access (e.g., role:serveradmin).
+	// This avoids N calls to CanAccessWithGroups (each fetching roles) when
+	// the answer is "all projects".
+	if hasWildcard, err := pe.CanAccessWithGroups(ctx, user, groups, "projects/*", "get"); err == nil && hasWildcard {
+		accessibleProjects := make([]string, 0, len(projects))
+		for _, project := range projects {
+			accessibleProjects = append(accessibleProjects, project.Name)
+		}
+		pe.logger.Debug("user has wildcard project access, returning all projects",
+			"user", user,
+			"total_projects", len(projects),
+		)
+		return accessibleProjects, nil
+	}
+
+	// Regular path: check access for each project individually
 	accessibleProjects := make([]string, 0, len(projects))
 
 	for _, project := range projects {

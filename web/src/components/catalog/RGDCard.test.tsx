@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { RGDCard } from "./RGDCard";
 import type { CatalogRGD } from "@/types/rgd";
@@ -12,7 +12,6 @@ function createTestRGD(overrides: Partial<CatalogRGD> = {}): CatalogRGD {
     name: "test-rgd",
     namespace: "default",
     description: "A test RGD",
-    version: "v1",
     tags: ["database"],
     category: "database",
     labels: {},
@@ -33,35 +32,31 @@ function renderCard(rgd: CatalogRGD) {
 }
 
 describe("RGDCard", () => {
-  it("does not show Inactive badge for active RGDs", () => {
-    renderCard(createTestRGD({ status: "Active" }));
-    expect(screen.queryByText("Inactive")).not.toBeInTheDocument();
+  it("renders custom icon img when rgd.icon is set", () => {
+    renderCard(createTestRGD({ icon: "argocd" }));
+    const img = screen.getByRole("img", { name: "argocd icon" });
+    expect(img).toBeInTheDocument();
+    expect(img).toHaveAttribute("src", "/api/v1/icons/argocd");
   });
 
-  it("renders Inactive badge when status is not Active", () => {
-    renderCard(createTestRGD({ status: "Inactive" }));
-    expect(screen.getByText("Inactive")).toBeInTheDocument();
+  it("does not render img when rgd.icon is not set", () => {
+    renderCard(createTestRGD({ icon: undefined }));
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
   });
 
-  it("renders Inactive badge when status is empty", () => {
-    renderCard(createTestRGD({ status: "" }));
-    expect(screen.getByText("Inactive")).toBeInTheDocument();
+  it("falls back to CategoryIcon after img load error", () => {
+    renderCard(createTestRGD({ icon: "unknown-brand" }));
+    const img = screen.getByRole("img", { name: "unknown-brand icon" });
+
+    // Simulate image load failure (triggers onError → setFailed(true))
+    fireEvent.error(img);
+
+    // After error, img is replaced by CategoryIcon (renders an SVG, not <img>)
+    expect(screen.queryByRole("img", { name: "unknown-brand icon" })).not.toBeInTheDocument();
   });
 
-  it("applies muted styling for inactive RGDs", () => {
-    const { container } = renderCard(createTestRGD({ status: "Inactive" }));
-    const card = container.firstChild as HTMLElement;
-    expect(card).toHaveClass("opacity-60");
-  });
-
-  it("does not apply muted styling for active RGDs", () => {
-    const { container } = renderCard(createTestRGD({ status: "Active" }));
-    const card = container.firstChild as HTMLElement;
-    expect(card).not.toHaveClass("opacity-60");
-  });
-
-  it("still shows instance count for inactive RGDs", () => {
-    renderCard(createTestRGD({ status: "Inactive", instances: 5 }));
+  it("renders instance count", () => {
+    renderCard(createTestRGD({ instances: 5 }));
     expect(screen.getByText("5 instances")).toBeInTheDocument();
   });
 });

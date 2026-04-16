@@ -18,6 +18,25 @@ test.describe('Catalog View with Authentication', () => {
 
     // Mock permissions for Global Admin (full access)
     test.beforeEach(async ({ page }) => {
+      // Mock account/info so session restore succeeds (prevents "Connection Error" state)
+      await page.route('**/api/v1/account/info', async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            userID: 'user-global-admin',
+            email: 'admin@e2e-test.local',
+            displayName: 'Global Administrator',
+            groups: [],
+            casbinRoles: ['role:serveradmin'],
+            projects: [],
+            roles: {},
+            issuer: 'knodex',
+            tokenExpiresAt: Math.floor(Date.now() / 1000) + 3600,
+            tokenIssuedAt: Math.floor(Date.now() / 1000) - 60,
+          }),
+        })
+      })
       await setupPermissionMocking(page, { '*:*': true })
     })
 
@@ -36,16 +55,16 @@ test.describe('Catalog View with Authentication', () => {
     })
 
     test('displays RGD cards from all projects', async ({ page }) => {
+      // First real API call to the cluster can be slow (cold-start in CI)
+      test.setTimeout(60000)
       await page.goto('/catalog')
       await page.waitForLoadState('domcontentloaded')
-      await page.waitForLoadState('networkidle')
 
       // Global admin should see all RGDs
       // RGD cards are buttons with aria-label="View details for {name}"
       const rgdCards = page.getByRole('button', { name: /view details for/i })
 
-      // Wait for RGDs to load (should have at least one)
-      await expect(rgdCards.first()).toBeVisible({ timeout: 10000 })
+      await expect(rgdCards.first()).toBeVisible({ timeout: 45000 })
 
       // Global admin should see RGDs from all projects
       const count = await rgdCards.count()
@@ -67,7 +86,7 @@ test.describe('Catalog View with Authentication', () => {
 
       // Global admin should see deploy button on detail page
       // The deploy button appears after permission API returns
-      const deployButton = page.getByRole('button', { name: /deploy/i })
+      const deployButton = page.getByRole('button', { name: /deploy/i }).first()
       await expect(deployButton).toBeVisible({ timeout: 15000 })
     })
   })
@@ -77,6 +96,25 @@ test.describe('Catalog View with Authentication', () => {
 
     // Mock permissions for Viewer (read-only, no deploy)
     test.beforeEach(async ({ page }) => {
+      // Mock account/info so session restore succeeds (prevents "Connection Error" state)
+      await page.route('**/api/v1/account/info', async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            userID: 'user-alpha-viewer',
+            email: 'alpha-viewer@e2e-test.local',
+            displayName: 'Alpha Viewer',
+            groups: [],
+            casbinRoles: [],
+            projects: ['proj-alpha-team'],
+            roles: { 'proj-alpha-team': 'viewer' },
+            issuer: 'knodex',
+            tokenExpiresAt: Math.floor(Date.now() / 1000) + 3600,
+            tokenIssuedAt: Math.floor(Date.now() / 1000) - 60,
+          }),
+        })
+      })
       await setupPermissionMocking(page, {
         'rgds:get': true,
         'rgds:list': true,
@@ -124,6 +162,25 @@ test.describe('Catalog View with Authentication', () => {
 
     // Mock permissions for Developer (can deploy)
     test.beforeEach(async ({ page }) => {
+      // Mock account/info so session restore succeeds (prevents "Connection Error" state)
+      await page.route('**/api/v1/account/info', async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            userID: 'user-alpha-developer',
+            email: 'alpha-dev@e2e-test.local',
+            displayName: 'Alpha Developer',
+            groups: [],
+            casbinRoles: [],
+            projects: ['proj-alpha-team'],
+            roles: { 'proj-alpha-team': 'developer' },
+            issuer: 'knodex',
+            tokenExpiresAt: Math.floor(Date.now() / 1000) + 3600,
+            tokenIssuedAt: Math.floor(Date.now() / 1000) - 60,
+          }),
+        })
+      })
       await setupPermissionMocking(page, {
         'rgds:get': true,
         'rgds:list': true,
@@ -148,7 +205,7 @@ test.describe('Catalog View with Authentication', () => {
       await page.waitForLoadState('networkidle')
 
       // Developer should see deploy button on detail page
-      const deployButton = page.getByRole('button', { name: /deploy/i })
+      const deployButton = page.getByRole('button', { name: /deploy/i }).first()
       await expect(deployButton).toBeVisible({ timeout: 15000 })
     })
 
@@ -168,7 +225,7 @@ test.describe('Catalog View with Authentication', () => {
       await page.waitForLoadState('networkidle')
 
       // Developer should see deploy button (they have deploy permissions)
-      const deployButton = page.getByRole('button', { name: /deploy/i })
+      const deployButton = page.getByRole('button', { name: /deploy/i }).first()
       await expect(deployButton).toBeVisible({ timeout: 15000 })
     })
   })

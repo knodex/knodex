@@ -22,16 +22,6 @@ const (
 	RoleViewer        = "viewer"
 )
 
-// ValidateRole checks if a role string is valid
-func ValidateRole(role string) bool {
-	switch role {
-	case RolePlatformAdmin, RoleDeveloper, RoleViewer:
-		return true
-	default:
-		return false
-	}
-}
-
 // Project CRD constants
 const (
 	ProjectGroup    = "knodex.io"
@@ -52,9 +42,23 @@ type Project struct {
 	Status ProjectStatus `json:"status,omitempty"`
 }
 
+// ProjectType represents the tier of a project (platform or app).
+type ProjectType string
+
+const (
+	// ProjectTypePlatform is for infrastructure/cluster management projects.
+	ProjectTypePlatform ProjectType = "platform"
+	// ProjectTypeApp is for application workload projects (default).
+	ProjectTypeApp ProjectType = "app"
+)
+
 // ProjectSpec defines the desired state of a Project
 // Mirrors ArgoCD AppProjectSpec structure
 type ProjectSpec struct {
+	// Type is the project tier: "platform" or "app".
+	// Immutable after creation. Defaults to "app" when empty (backward compatible).
+	Type ProjectType `json:"type,omitempty" yaml:"type,omitempty"`
+
 	// Description is a human-readable description of the project
 	Description string `json:"description,omitempty" yaml:"description,omitempty"`
 
@@ -80,6 +84,25 @@ type ProjectSpec struct {
 	// Roles are custom RBAC roles specific to this project
 	// Each role contains Casbin policy strings
 	Roles []ProjectRole `json:"roles,omitempty" yaml:"roles,omitempty"`
+
+	// Clusters binds the project to CAPI clusters (App Projects only).
+	// Omit for monocluster mode (backward compatible).
+	Clusters []ClusterBinding `json:"clusters,omitempty" yaml:"clusters,omitempty"`
+
+	// Namespace is the namespace claim across all bound clusters (App Projects only).
+	// Required when Clusters is non-empty.
+	Namespace string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
+
+	// NamespaceRetention controls what happens to provisioned namespaces when
+	// the project is deleted. "delete" removes them; "keep" (default) leaves
+	// them in place. Omitted/empty means "keep" (safe default).
+	NamespaceRetention string `json:"namespaceRetention,omitempty" yaml:"namespaceRetention,omitempty"`
+}
+
+// ClusterBinding references a target cluster by name.
+type ClusterBinding struct {
+	// ClusterRef is the name of the target cluster.
+	ClusterRef string `json:"clusterRef" yaml:"clusterRef"`
 }
 
 // Destination represents a deployment target (namespace-only for single-cluster)
@@ -122,12 +145,44 @@ type ProjectRole struct {
 	// Groups are OIDC group names bound to this role
 	// Users in these groups will have this role
 	Groups []string `json:"groups,omitempty" yaml:"groups,omitempty"`
+
+	// Destinations is an optional list of namespace patterns from the project's
+	// destinations list. When set, policies for this role are scoped to only
+	// these namespaces. When empty/nil, the role gets project-wide policies
+	// (backward compatible).
+	Destinations []string `json:"destinations,omitempty" yaml:"destinations,omitempty"`
+}
+
+// ClusterPhase represents the provisioning state of a cluster binding.
+type ClusterPhase string
+
+const (
+	ClusterPhasePending      ClusterPhase = "Pending"
+	ClusterPhaseProvisioning ClusterPhase = "Provisioning"
+	ClusterPhaseProvisioned  ClusterPhase = "Provisioned"
+	ClusterPhaseDeleting     ClusterPhase = "Deleting"
+	ClusterPhaseDeleted      ClusterPhase = "Deleted"
+	ClusterPhaseFailed       ClusterPhase = "Failed"
+	ClusterPhaseUnknown      ClusterPhase = "Unknown"
+	ClusterPhaseUnreachable  ClusterPhase = "ClusterUnreachable"
+)
+
+// ClusterState tracks the provisioning status of a single cluster binding.
+type ClusterState struct {
+	// ClusterRef is the name of the target cluster.
+	ClusterRef string `json:"clusterRef" yaml:"clusterRef"`
+	// Phase is the provisioning phase (Pending, Provisioning, Provisioned, Deleting, Deleted, Failed, Unknown, ClusterUnreachable).
+	Phase ClusterPhase `json:"phase" yaml:"phase"`
+	// Message is a human-readable status message (e.g. error details).
+	Message string `json:"message,omitempty" yaml:"message,omitempty"`
 }
 
 // ProjectStatus defines the observed state of a Project
 type ProjectStatus struct {
 	// Conditions is an array of current status conditions
 	Conditions []ProjectCondition `json:"conditions,omitempty" yaml:"conditions,omitempty"`
+	// ClusterStates tracks per-cluster provisioning status (App Projects with cluster bindings).
+	ClusterStates []ClusterState `json:"clusterStates,omitempty" yaml:"clusterStates,omitempty"`
 }
 
 // ProjectCondition represents a status condition
@@ -220,11 +275,17 @@ func (p *Project) DeepCopyObject() runtime.Object {
 	p.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
 
 	// Deep copy Spec
+	out.Spec.Type = p.Spec.Type
 	out.Spec.Description = p.Spec.Description
 
 	if p.Spec.Destinations != nil {
 		out.Spec.Destinations = make([]Destination, len(p.Spec.Destinations))
-		copy(out.Spec.Destinations, p.Spec.Destinations)
+		for i, d := range p.Spec.Destinations {
+			out.Spec.Destinations[i] = Destination{
+				Namespace: d.Namespace,
+				Name:      d.Name,
+			}
+		}
 	}
 
 	if p.Spec.ClusterResourceWhitelist != nil {
@@ -262,10 +323,24 @@ func (p *Project) DeepCopyObject() runtime.Object {
 				out.Spec.Roles[i].Groups = make([]string, len(role.Groups))
 				copy(out.Spec.Roles[i].Groups, role.Groups)
 			}
+			if role.Destinations != nil {
+				out.Spec.Roles[i].Destinations = make([]string, len(role.Destinations))
+				copy(out.Spec.Roles[i].Destinations, role.Destinations)
+			}
 		}
 	}
 
+	if p.Spec.Clusters != nil {
+		out.Spec.Clusters = make([]ClusterBinding, len(p.Spec.Clusters))
+		copy(out.Spec.Clusters, p.Spec.Clusters)
+	}
+	out.Spec.Namespace = p.Spec.Namespace
+
 	// Deep copy Status
+	if p.Status.ClusterStates != nil {
+		out.Status.ClusterStates = make([]ClusterState, len(p.Status.ClusterStates))
+		copy(out.Status.ClusterStates, p.Status.ClusterStates)
+	}
 	if p.Status.Conditions != nil {
 		out.Status.Conditions = make([]ProjectCondition, len(p.Status.Conditions))
 		for i, cond := range p.Status.Conditions {

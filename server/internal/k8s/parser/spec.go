@@ -67,24 +67,6 @@ func GetStatusOrEmpty(obj *unstructured.Unstructured) map[string]interface{} {
 	return status
 }
 
-// GetSpecField returns a field at the specified path within the spec.
-// The path is relative to spec, so GetSpecField(obj, "template", "spec")
-// returns obj.spec.template.spec.
-// Returns ErrFieldNotFound if the spec or field doesn't exist.
-// Returns ErrNilObject if the object is nil.
-func GetSpecField(obj *unstructured.Unstructured, path ...string) (interface{}, error) {
-	if obj == nil {
-		fullPath := append([]string{"spec"}, path...)
-		return nil, newPathError("GetSpecField", fullPath, "interface{}", "", ErrNilObject)
-	}
-	if len(path) == 0 {
-		return GetSpec(obj)
-	}
-
-	fullPath := append([]string{"spec"}, path...)
-	return GetValue(obj.Object, fullPath...)
-}
-
 // GetSpecFieldString returns a string field at the specified path within the spec.
 func GetSpecFieldString(obj *unstructured.Unstructured, path ...string) (string, error) {
 	if obj == nil {
@@ -108,35 +90,6 @@ func GetSpecFieldStringOrDefault(obj *unstructured.Unstructured, defaultVal stri
 		return defaultVal
 	}
 	return str
-}
-
-// GetSpecFieldMap returns a map field at the specified path within the spec.
-func GetSpecFieldMap(obj *unstructured.Unstructured, path ...string) (map[string]interface{}, error) {
-	if obj == nil {
-		fullPath := append([]string{"spec"}, path...)
-		return nil, newPathError("GetSpecFieldMap", fullPath, "map[string]interface{}", "", ErrNilObject)
-	}
-	if len(path) == 0 {
-		return GetSpec(obj)
-	}
-
-	fullPath := append([]string{"spec"}, path...)
-	return GetMap(obj.Object, fullPath...)
-}
-
-// GetSpecFieldSlice returns a slice field at the specified path within the spec.
-func GetSpecFieldSlice(obj *unstructured.Unstructured, path ...string) ([]interface{}, error) {
-	if obj == nil {
-		fullPath := append([]string{"spec"}, path...)
-		return nil, newPathError("GetSpecFieldSlice", fullPath, "[]interface{}", "", ErrNilObject)
-	}
-	if len(path) == 0 {
-		fullPath := []string{"spec"}
-		return nil, newPathError("GetSpecFieldSlice", fullPath, "[]interface{}", "", ErrEmptyPath)
-	}
-
-	fullPath := append([]string{"spec"}, path...)
-	return GetSlice(obj.Object, fullPath...)
 }
 
 // GetStatusField returns a field at the specified path within the status.
@@ -182,20 +135,6 @@ func GetStatusFieldStringOrDefault(obj *unstructured.Unstructured, defaultVal st
 	return str
 }
 
-// GetStatusFieldMap returns a map field at the specified path within the status.
-func GetStatusFieldMap(obj *unstructured.Unstructured, path ...string) (map[string]interface{}, error) {
-	if obj == nil {
-		fullPath := append([]string{"status"}, path...)
-		return nil, newPathError("GetStatusFieldMap", fullPath, "map[string]interface{}", "", ErrNilObject)
-	}
-	if len(path) == 0 {
-		return GetStatus(obj)
-	}
-
-	fullPath := append([]string{"status"}, path...)
-	return GetMap(obj.Object, fullPath...)
-}
-
 // GetStatusFieldSlice returns a slice field at the specified path within the status.
 func GetStatusFieldSlice(obj *unstructured.Unstructured, path ...string) ([]interface{}, error) {
 	if obj == nil {
@@ -209,18 +148,6 @@ func GetStatusFieldSlice(obj *unstructured.Unstructured, path ...string) ([]inte
 
 	fullPath := append([]string{"status"}, path...)
 	return GetSlice(obj.Object, fullPath...)
-}
-
-// HasSpec returns true if the object has a spec field.
-func HasSpec(obj *unstructured.Unstructured) bool {
-	_, err := GetSpec(obj)
-	return err == nil
-}
-
-// HasStatus returns true if the object has a status field.
-func HasStatus(obj *unstructured.Unstructured) bool {
-	_, err := GetStatus(obj)
-	return err == nil
 }
 
 // GetConditions returns the conditions slice from status.conditions.
@@ -264,31 +191,4 @@ func GetConditionStatus(obj *unstructured.Unstructured, conditionType string) st
 // IsConditionTrue returns true if a specific condition has status "True".
 func IsConditionTrue(obj *unstructured.Unstructured, conditionType string) bool {
 	return GetConditionStatus(obj, conditionType) == "True"
-}
-
-// IsConditionFalse returns true if a specific condition has status "False".
-func IsConditionFalse(obj *unstructured.Unstructured, conditionType string) bool {
-	return GetConditionStatus(obj, conditionType) == "False"
-}
-
-// GetConditionReason returns the reason of a specific condition.
-// Returns empty string if the condition doesn't exist.
-func GetConditionReason(obj *unstructured.Unstructured, conditionType string) string {
-	condition := GetCondition(obj, conditionType)
-	if condition == nil {
-		return ""
-	}
-	reason, _ := condition["reason"].(string)
-	return reason
-}
-
-// GetConditionMessage returns the message of a specific condition.
-// Returns empty string if the condition doesn't exist.
-func GetConditionMessage(obj *unstructured.Unstructured, conditionType string) string {
-	condition := GetCondition(obj, conditionType)
-	if condition == nil {
-		return ""
-	}
-	message, _ := condition["message"].(string)
-	return message
 }

@@ -1042,7 +1042,7 @@ func TestInstanceCRUDHandler_DeleteInstance_AuditDetails(t *testing.T) {
 	cache.Set(&models.Instance{
 		Name:        "test-instance",
 		Namespace:   "production",
-		Kind:        "WebApp",
+		Kind:        "Webapp",
 		APIVersion:  "kro.run/v1alpha1",
 		RGDName:     "webapp-rgd",
 		Health:      models.HealthHealthy,
@@ -1054,7 +1054,7 @@ func TestInstanceCRUDHandler_DeleteInstance_AuditDetails(t *testing.T) {
 	obj := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "kro.run/v1alpha1",
-			"kind":       "WebApp",
+			"kind":       "Webapp",
 			"metadata": map[string]interface{}{
 				"name":      "test-instance",
 				"namespace": "production",
@@ -1075,12 +1075,13 @@ func TestInstanceCRUDHandler_DeleteInstance_AuditDetails(t *testing.T) {
 		InstanceTracker: tracker,
 		DynamicClient:   fakeDynClient,
 		AuditRecorder:   recorder,
+		AuthService:     adminAuthService(),
 	})
 
 	userCtx := &middleware.UserContext{UserID: "admin-user", Email: "admin@test.local"}
 	req := newRequestWithUserContext(http.MethodDelete, "/api/v1/instances/production/WebApp/test-instance", nil, userCtx)
 	req.SetPathValue("namespace", "production")
-	req.SetPathValue("kind", "WebApp")
+	req.SetPathValue("kind", "Webapp")
 	req.SetPathValue("name", "test-instance")
 	rec := httptest.NewRecorder()
 
@@ -1113,8 +1114,8 @@ func TestInstanceCRUDHandler_DeleteInstance_AuditDetails(t *testing.T) {
 	if e.Details["rgdName"] != "webapp-rgd" {
 		t.Errorf("expected rgdName 'webapp-rgd', got %v", e.Details["rgdName"])
 	}
-	if e.Details["kind"] != "WebApp" {
-		t.Errorf("expected kind 'WebApp', got %v", e.Details["kind"])
+	if e.Details["kind"] != "Webapp" {
+		t.Errorf("expected kind 'Webapp', got %v", e.Details["kind"])
 	}
 	if e.Details["health"] != "Healthy" {
 		t.Errorf("expected health 'Healthy', got %v", e.Details["health"])

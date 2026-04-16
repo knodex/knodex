@@ -26,6 +26,7 @@ import type {
   ViolationHistoryCountParams,
   ViolationHistoryExportParams,
 } from "@/types/compliance";
+import { STALE_TIME } from "@/lib/query-client";
 
 /**
  * Check if enterprise features are enabled
@@ -47,7 +48,7 @@ export function useComplianceSummary() {
     queryKey: ["compliance", "summary"],
     queryFn: getComplianceSummary,
     enabled: isEnterprise(),
-    staleTime: 30 * 1000, // 30 seconds
+    staleTime: STALE_TIME.FREQUENT,
     retry: (failureCount, error) => {
       // Don't retry on 402 Payment Required or 503 Service Unavailable
       if (isEnterpriseRequired(error) || isGatekeeperUnavailable(error)) {
@@ -80,7 +81,7 @@ export function useConstraintTemplates(params?: TemplateListParams) {
     queryFn: () => listConstraintTemplates(params),
     enabled: isEnterprise(),
     placeholderData: keepPreviousData,
-    staleTime: 30 * 1000,
+    staleTime: STALE_TIME.FREQUENT,
     retry: (failureCount, error) => {
       if (isEnterpriseRequired(error)) {
         return false;
@@ -98,7 +99,7 @@ export function useConstraintTemplate(name: string) {
     queryKey: ["compliance", "template", name],
     queryFn: () => getConstraintTemplate(name),
     enabled: isEnterprise() && !!name,
-    staleTime: 60 * 1000, // 1 minute - templates change infrequently
+    staleTime: STALE_TIME.STANDARD, // templates change infrequently
     retry: (failureCount, error) => {
       if (isEnterpriseRequired(error)) {
         return false;
@@ -118,7 +119,7 @@ export function useConstraints(params?: ConstraintListParams) {
     queryFn: () => listConstraints(params),
     enabled: isEnterprise(),
     placeholderData: keepPreviousData,
-    staleTime: 30 * 1000,
+    staleTime: STALE_TIME.FREQUENT,
     retry: (failureCount, error) => {
       if (isEnterpriseRequired(error)) {
         return false;
@@ -136,7 +137,7 @@ export function useConstraint(kind: string, name: string) {
     queryKey: ["compliance", "constraint", kind, name],
     queryFn: () => getConstraint(kind, name),
     enabled: isEnterprise() && !!kind && !!name,
-    staleTime: 30 * 1000,
+    staleTime: STALE_TIME.FREQUENT,
     retry: (failureCount, error) => {
       if (isEnterpriseRequired(error)) {
         return false;
@@ -156,7 +157,7 @@ export function useViolations(params?: ViolationListParams) {
     queryFn: () => listViolations(params),
     enabled: isEnterprise(),
     placeholderData: keepPreviousData,
-    staleTime: 30 * 1000,
+    staleTime: STALE_TIME.FREQUENT,
     retry: (failureCount, error) => {
       if (isEnterpriseRequired(error)) {
         return false;
@@ -244,7 +245,7 @@ export function useViolationHistoryCount(params?: ViolationHistoryCountParams) {
     queryKey: ["compliance", "violations", "history", "count", params],
     queryFn: () => getViolationHistoryCount(params),
     enabled: isEnterprise() && !!params?.since,
-    staleTime: 30 * 1000,
+    staleTime: STALE_TIME.FREQUENT,
     retry: (failureCount, error) => {
       if (isEnterpriseRequired(error)) return false;
       return failureCount < 2;

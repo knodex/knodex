@@ -9,6 +9,7 @@ import (
 
 	"github.com/knodex/knodex/server/internal/api/helpers"
 	"github.com/knodex/knodex/server/internal/api/response"
+	kroadapter "github.com/knodex/knodex/server/internal/kro/graph"
 	"github.com/knodex/knodex/server/internal/kro/parser"
 	kroschema "github.com/knodex/knodex/server/internal/kro/schema"
 	"github.com/knodex/knodex/server/internal/kro/watcher"
@@ -36,6 +37,25 @@ func NewSchemaHandler(w *watcher.RGDWatcher, e *kroschema.Extractor) *SchemaHand
 // SetPolicyEnforcer sets the policy enforcer for authorization checks
 func (h *SchemaHandler) SetPolicyEnforcer(enforcer rbac.Authorizer) {
 	h.policyEnforcer = enforcer
+}
+
+// getResourceGraph returns a ResourceGraph for the given RGD, preferring the
+// cached KRO graph and falling back to the lightweight parser.
+func (h *SchemaHandler) getResourceGraph(rgd *models.CatalogRGD) *parser.ResourceGraph {
+	// Try cached KRO graph first
+	if g := h.watcher.GetGraph(rgd.Namespace, rgd.Name); g != nil {
+		adapter := kroadapter.NewUIGraphAdapter(g)
+		return adapter.GetResourceGraph(rgd.Name, rgd.Namespace, rgd.RawSpec)
+	}
+
+	// Fallback to lightweight parser
+	if h.resourceParser != nil {
+		rg, err := h.resourceParser.ParseRGDResources(rgd.Name, rgd.Namespace, rgd.RawSpec)
+		if err == nil {
+			return rg
+		}
+	}
+	return nil
 }
 
 // GetSchema handles GET /api/v1/rgds/{name}/schema
@@ -134,13 +154,7 @@ func (h *SchemaHandler) GetSchema(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Parse resource graph for conditional/externalRef enrichment
-			var resourceGraph *parser.ResourceGraph
-			if h.resourceParser != nil {
-				rg, rgErr := h.resourceParser.ParseRGDResources(rgd.Name, rgd.Namespace, rgd.RawSpec)
-				if rgErr == nil {
-					resourceGraph = rg
-				}
-			}
+			resourceGraph := h.getResourceGraph(rgd)
 
 			if enrichErr := kroschema.EnrichSchema(resp.Schema, rgdIntent, resourceGraph, h.watcher); enrichErr != nil {
 				slog.Warn("schema enrichment failed", "rgd", name, "error", enrichErr)
@@ -153,13 +167,7 @@ func (h *SchemaHandler) GetSchema(w http.ResponseWriter, r *http.Request) {
 			}
 		} else {
 			// Degraded path: still enrich with resource graph (conditional sections, externalRef, advanced)
-			var resourceGraph *parser.ResourceGraph
-			if h.resourceParser != nil {
-				rg, rgErr := h.resourceParser.ParseRGDResources(rgd.Name, rgd.Namespace, rgd.RawSpec)
-				if rgErr == nil {
-					resourceGraph = rg
-				}
-			}
+			resourceGraph := h.getResourceGraph(rgd)
 
 			if resourceGraph != nil {
 				if enrichErr := kroschema.EnrichSchemaFromResources(resp.Schema, resourceGraph, h.watcher); enrichErr != nil {

@@ -5,11 +5,14 @@ kind: ResourceGraphDefinition
 metadata:
   name: simple-app
   namespace: default
+  labels:
+    knodex.io/package: examples
   annotations:
     knodex.io/catalog: "true"
     knodex.io/description: "Simple application deployment with basic service"
     knodex.io/tags: "simple,basic,example"
     knodex.io/category: "examples"
+    knodex.io/property-order: '{"": ["appName", "image", "port"]}'
 spec:
   schema:
     apiVersion: v1alpha1

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { Link } from "react-router-dom";
-import { ArrowLeft, ScrollText } from "lucide-react";
+import { ArrowLeft, ScrollText } from "@/lib/icons";
 import { isEnterprise } from "@/hooks/useCompliance";
 import { EnterpriseRequired } from "@/components/compliance";
 import { AuditConfigForm } from "@/components/settings/audit/AuditConfigForm";

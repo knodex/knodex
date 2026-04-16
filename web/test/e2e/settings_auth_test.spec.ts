@@ -36,7 +36,7 @@ test.describe('Note: Repository Authentication Methods', () => {
 
   test('AC-01: SSH authentication form displays correct fields', async ({ page }) => {
     // Navigate directly to repositories settings page
-    await page.goto('/settings/repositories');
+    await page.goto('/repositories');
     await page.waitForLoadState('networkidle', { timeout: 15000 });
 
     await page.screenshot({
@@ -44,8 +44,8 @@ test.describe('Note: Repository Authentication Methods', () => {
       fullPage: true
     });
 
-    // Click Add Repository button
-    const addButton = page.locator('button:has-text("Add Repository"), button:has-text("New Repository")');
+    // Click Add Repository / Create button (empty state shows "Add Repository", non-empty shows "Create")
+    const addButton = page.locator('button').filter({ hasText: /Add Repository|Create/i }).first();
     if (await addButton.isVisible({ timeout: 5000 })) {
       await addButton.click();
       await page.waitForTimeout(1000);
@@ -112,27 +112,30 @@ test.describe('Note: Repository Authentication Methods', () => {
   });
 
   test('AC-02: HTTPS authentication form displays correct fields', async ({ page }) => {
+    // Mock repositories API so the page renders without real server dependency
+    await page.route(/\/api\/v1\/repositories(\?|$)/, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ items: [], totalCount: 0 }),
+      });
+    });
+
     // Navigate directly to repositories settings page
-    await page.goto('/settings/repositories');
-    await page.waitForLoadState('networkidle', { timeout: 15000 });
+    await page.goto('/repositories');
 
-    // Click Add Repository button
-    const addButton = page.locator('button:has-text("Add Repository")');
-    if (await addButton.isVisible({ timeout: 5000 })) {
-      await addButton.click();
-      await page.waitForTimeout(1000);
-    }
+    // Wait for Create button (the list page button text is "Create")
+    const addButton = page.locator('button:has-text("Add Repository"), button:has-text("Create")').first();
+    await expect(addButton).toBeVisible({ timeout: 10000 });
+    await addButton.click();
+    await page.waitForTimeout(1000);
 
-    // Select HTTPS authentication type
-    const authTypeSelect = page.locator('select#authType, [name="authType"]');
-    if (await authTypeSelect.isVisible({ timeout: 5000 })) {
-      await authTypeSelect.selectOption('https');
+    // Select HTTPS authentication type (uses buttons, not a <select>)
+    // Default is already HTTPS, but click it explicitly to be sure
+    const httpsButton = page.locator('button:has-text("HTTPS")');
+    if (await httpsButton.isVisible({ timeout: 5000 }).catch(() => false)) {
+      await httpsButton.click();
       await page.waitForTimeout(500);
-    } else {
-      const httpsOption = page.locator('input[value="https"], button:has-text("HTTPS"), label:has-text("HTTPS")');
-      if (await httpsOption.first().isVisible({ timeout: 3000 })) {
-        await httpsOption.first().click();
-      }
     }
 
     await page.screenshot({
@@ -199,27 +202,19 @@ test.describe('Note: Repository Authentication Methods', () => {
     });
 
     // Navigate directly to repositories settings page
-    await page.goto('/settings/repositories');
+    await page.goto('/repositories');
 
-    // Wait for Add Repository button (indicates page loaded)
-    const addButton = page.locator('button:has-text("Add Repository")');
+    // Wait for Create button (the list page button text is "Create")
+    const addButton = page.locator('button:has-text("Add Repository"), button:has-text("Create")').first();
     await expect(addButton).toBeVisible({ timeout: 10000 });
     await addButton.click();
+    await page.waitForTimeout(1000);
 
-    // Wait for form to appear, then select GitHub App authentication type
-    const authTypeSelect = page.locator('select#authType, [name="authType"]');
-    if (await authTypeSelect.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await authTypeSelect.selectOption('github-app');
-    } else {
-      const githubAppOption = page.locator(
-        'input[value="github-app"], ' +
-        'button:has-text("GitHub App"), ' +
-        'label:has-text("GitHub App")'
-      );
-      if (await githubAppOption.first().isVisible({ timeout: 5000 }).catch(() => false)) {
-        await githubAppOption.first().click();
-      }
-    }
+    // Select GitHub App authentication type (uses buttons, not a <select>)
+    const githubAppButton = page.locator('button:has-text("GitHub App")');
+    await expect(githubAppButton).toBeVisible({ timeout: 5000 });
+    await githubAppButton.click();
+    await page.waitForTimeout(500);
 
     await page.screenshot({
       path: '../test-results/e2e/screenshots/github-app-01-form.png',
@@ -268,7 +263,7 @@ test.describe('Note: Repository Authentication Methods', () => {
 
   test('AC-04: Form dynamically switches fields based on auth type', async ({ page }) => {
     // Navigate directly to repositories settings page
-    await page.goto('/settings/repositories');
+    await page.goto('/repositories');
     await page.waitForLoadState('networkidle', { timeout: 15000 });
 
     // Click Add Repository button
@@ -317,7 +312,7 @@ test.describe('Note: Repository Authentication Methods', () => {
 
   test('AC-06: Test Connection button validates credentials', async ({ page }) => {
     // Navigate directly to repositories settings page
-    await page.goto('/settings/repositories');
+    await page.goto('/repositories');
     await page.waitForLoadState('networkidle', { timeout: 15000 });
 
     // Click Add Repository button
@@ -383,7 +378,7 @@ test.describe('Note: Repository Authentication Methods', () => {
 
   test('Repository list displays auth type badge', async ({ page }) => {
     // Navigate directly to repositories settings page
-    await page.goto('/settings/repositories');
+    await page.goto('/repositories');
     await page.waitForLoadState('networkidle', { timeout: 15000 });
 
     await page.screenshot({

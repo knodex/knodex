@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/knodex/knodex/server/internal/api/middleware"
+	"github.com/knodex/knodex/server/internal/rbac"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -134,7 +135,6 @@ func TestGetUserAuthContext_Success(t *testing.T) {
 	assert.Equal(t, userCtx.CasbinRoles, authCtx.Roles, "roles should match middleware input")
 	assert.Equal(t, []string{"project-a", "project-b"}, authCtx.AccessibleProjects)
 	assert.Equal(t, []string{"ns-a", "ns-b"}, authCtx.AccessibleNamespaces)
-	assert.False(t, authCtx.IsGlobalAccess)
 }
 
 func TestGetUserAuthContext_GlobalAdmin(t *testing.T) {
@@ -144,7 +144,7 @@ func TestGetUserAuthContext_GlobalAdmin(t *testing.T) {
 		accessibleProjects: []string{"project-a", "project-b", "project-c"},
 	}
 	provider := &mockNamespaceProvider{
-		namespaces: nil, // nil indicates global access
+		namespaces: []string{"*"}, // ["*"] indicates global access
 	}
 
 	svc := NewAuthorizationService(AuthorizationServiceConfig{
@@ -162,8 +162,7 @@ func TestGetUserAuthContext_GlobalAdmin(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, authCtx)
-	assert.Nil(t, authCtx.AccessibleNamespaces)
-	assert.True(t, authCtx.IsGlobalAccess)
+	assert.Equal(t, []string{"*"}, authCtx.AccessibleNamespaces)
 }
 
 func TestGetUserAuthContext_PolicyEnforcerError(t *testing.T) {
@@ -222,7 +221,6 @@ func TestGetUserAuthContext_NamespaceProviderError(t *testing.T) {
 	require.NotNil(t, authCtx)
 	assert.Equal(t, []string{"project-1"}, authCtx.AccessibleProjects)
 	assert.Empty(t, authCtx.AccessibleNamespaces) // Secure default
-	assert.False(t, authCtx.IsGlobalAccess)
 }
 
 func TestGetUserAuthContext_NilPolicyEnforcer(t *testing.T) {
@@ -272,9 +270,9 @@ func TestGetUserAuthContext_NilNamespaceProvider(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, authCtx)
-	// Should allow all namespaces (backward compatibility)
-	assert.Nil(t, authCtx.AccessibleNamespaces)
-	assert.True(t, authCtx.IsGlobalAccess)
+	// Should fail closed: no namespaces accessible when provider is nil
+	assert.NotNil(t, authCtx.AccessibleNamespaces)
+	assert.Empty(t, authCtx.AccessibleNamespaces)
 }
 
 func TestGetAccessibleProjects_NilUserContext(t *testing.T) {
@@ -400,7 +398,7 @@ func TestGetAccessibleNamespaces_GlobalAdmin(t *testing.T) {
 	t.Parallel()
 
 	provider := &mockNamespaceProvider{
-		namespaces: nil, // nil = global access
+		namespaces: []string{"*"}, // ["*"] = global access
 	}
 
 	svc := NewAuthorizationService(AuthorizationServiceConfig{
@@ -416,7 +414,7 @@ func TestGetAccessibleNamespaces_GlobalAdmin(t *testing.T) {
 	namespaces, err := svc.GetAccessibleNamespaces(context.Background(), userCtx)
 
 	require.NoError(t, err)
-	assert.Nil(t, namespaces) // nil indicates global access
+	assert.Equal(t, []string{"*"}, namespaces) // ["*"] indicates global access
 }
 
 func TestGetAccessibleNamespaces_NilProvider(t *testing.T) {
@@ -434,7 +432,8 @@ func TestGetAccessibleNamespaces_NilProvider(t *testing.T) {
 	namespaces, err := svc.GetAccessibleNamespaces(context.Background(), userCtx)
 
 	require.NoError(t, err)
-	assert.Nil(t, namespaces) // nil = backward compatibility (all namespaces)
+	assert.NotNil(t, namespaces)
+	assert.Empty(t, namespaces) // fail-closed: no namespaces when provider is nil
 }
 
 func TestGetAccessibleNamespaces_ProviderError(t *testing.T) {
@@ -677,4 +676,118 @@ func TestDefaultRGDFilters(t *testing.T) {
 	assert.Empty(t, filters.Category)
 	assert.Empty(t, filters.Tags)
 	assert.Empty(t, filters.Search)
+}
+
+// mockProjectService implements rbac.ProjectServiceInterface for testing.
+type mockProjectService struct {
+	projects map[string]*rbac.Project
+	err      error
+}
+
+func (m *mockProjectService) GetProject(_ context.Context, name string) (*rbac.Project, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	if p, ok := m.projects[name]; ok {
+		return p, nil
+	}
+	return nil, errors.New("not found")
+}
+
+func (m *mockProjectService) CreateProject(_ context.Context, _ string, _ rbac.ProjectSpec, _ string) (*rbac.Project, error) {
+	return nil, nil
+}
+
+func (m *mockProjectService) ListProjects(_ context.Context) (*rbac.ProjectList, error) {
+	return nil, nil
+}
+
+func (m *mockProjectService) UpdateProject(_ context.Context, p *rbac.Project, _ string) (*rbac.Project, error) {
+	return p, nil
+}
+
+func (m *mockProjectService) DeleteProject(_ context.Context, _ string) error {
+	return nil
+}
+
+func (m *mockProjectService) Exists(_ context.Context, name string) (bool, error) {
+	_, ok := m.projects[name]
+	return ok, nil
+}
+
+func (m *mockProjectService) UpdateProjectStatus(_ context.Context, p *rbac.Project) (*rbac.Project, error) {
+	return p, nil
+}
+
+// --- ProjectTypeResolver tests ---
+
+func TestNewProjectTypeResolver_NilProjectService(t *testing.T) {
+	t.Parallel()
+	resolver := NewProjectTypeResolver(nil, testLogger())
+	assert.Nil(t, resolver, "nil project service should return nil resolver")
+}
+
+func TestProjectTypeResolver_SingleAppProject(t *testing.T) {
+	t.Parallel()
+	ps := &mockProjectService{
+		projects: map[string]*rbac.Project{
+			"my-app": {Spec: rbac.ProjectSpec{Type: rbac.ProjectTypeApp}},
+		},
+	}
+	resolver := NewProjectTypeResolver(ps, testLogger())
+	types, err := resolver.GetProjectTypes(context.Background(), []string{"my-app"})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"my-app": "app"}, types)
+}
+
+func TestProjectTypeResolver_SinglePlatformProject(t *testing.T) {
+	t.Parallel()
+	ps := &mockProjectService{
+		projects: map[string]*rbac.Project{
+			"infra": {Spec: rbac.ProjectSpec{Type: rbac.ProjectTypePlatform}},
+		},
+	}
+	resolver := NewProjectTypeResolver(ps, testLogger())
+	types, err := resolver.GetProjectTypes(context.Background(), []string{"infra"})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"infra": "platform"}, types)
+}
+
+func TestProjectTypeResolver_MixedProjects(t *testing.T) {
+	t.Parallel()
+	ps := &mockProjectService{
+		projects: map[string]*rbac.Project{
+			"my-app": {Spec: rbac.ProjectSpec{Type: rbac.ProjectTypeApp}},
+			"infra":  {Spec: rbac.ProjectSpec{Type: rbac.ProjectTypePlatform}},
+		},
+	}
+	resolver := NewProjectTypeResolver(ps, testLogger())
+	types, err := resolver.GetProjectTypes(context.Background(), []string{"my-app", "infra"})
+	require.NoError(t, err)
+	assert.Equal(t, "app", types["my-app"])
+	assert.Equal(t, "platform", types["infra"])
+}
+
+func TestProjectTypeResolver_MissingTypeDefaultsToApp(t *testing.T) {
+	t.Parallel()
+	ps := &mockProjectService{
+		projects: map[string]*rbac.Project{
+			"legacy": {Spec: rbac.ProjectSpec{}}, // No Type set
+		},
+	}
+	resolver := NewProjectTypeResolver(ps, testLogger())
+	types, err := resolver.GetProjectTypes(context.Background(), []string{"legacy"})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"legacy": "app"}, types, "empty type should default to app")
+}
+
+func TestProjectTypeResolver_ProjectNotFoundDefaultsToApp(t *testing.T) {
+	t.Parallel()
+	ps := &mockProjectService{
+		projects: map[string]*rbac.Project{}, // No projects
+	}
+	resolver := NewProjectTypeResolver(ps, testLogger())
+	types, err := resolver.GetProjectTypes(context.Background(), []string{"nonexistent"})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"nonexistent": "app"}, types, "not-found project should default to app")
 }

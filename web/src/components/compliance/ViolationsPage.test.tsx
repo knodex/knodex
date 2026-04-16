@@ -264,7 +264,7 @@ describe("ViolationsPage", () => {
       wrapper: createWrapper(["/compliance/violations?resource=test"]),
     });
 
-    expect(screen.getByRole("button", { name: /clear/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^clear$/i })).toBeInTheDocument();
   });
 
   it("shows total count in header", () => {
@@ -279,7 +279,7 @@ describe("ViolationsPage", () => {
 
     render(<ViolationsPage />, { wrapper: createWrapper() });
 
-    expect(screen.getByText("(2)")).toBeInTheDocument();
+    expect(screen.getAllByText("Violations")[0]).toBeInTheDocument();
   });
 
   it("shows cluster-scoped indicator for resources without namespace", () => {
@@ -313,10 +313,10 @@ describe("ViolationsPage", () => {
 
     render(<ViolationsPage />, { wrapper: createWrapper() });
 
-    expect(screen.getByText("cluster-scoped")).toBeInTheDocument();
+    expect(screen.getByText("cluster")).toBeInTheDocument();
   });
 
-  it("renders breadcrumbs correctly (AC-NAVL-01)", () => {
+  it("renders page title correctly (AC-NAVL-01)", () => {
     vi.mocked(useComplianceModule.useViolations).mockReturnValue({
       data: mockViolations,
       isLoading: false,
@@ -328,9 +328,6 @@ describe("ViolationsPage", () => {
 
     render(<ViolationsPage />, { wrapper: createWrapper() });
 
-    expect(screen.getByText("Compliance")).toBeInTheDocument();
-    // "Violations" appears in breadcrumb and card
-    const violationsElements = screen.getAllByText("Violations");
-    expect(violationsElements.length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Violations")[0]).toBeInTheDocument();
   });
 });

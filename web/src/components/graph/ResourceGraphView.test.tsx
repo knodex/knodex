@@ -186,6 +186,7 @@ describe("ResourceGraphView", () => {
       render(<ResourceGraphView resourceGraph={simpleGraph} />);
       expect(screen.getByText("Template")).toBeInTheDocument();
       expect(screen.getByText("ExternalRef")).toBeInTheDocument();
+      expect(screen.getByText("Collection (forEach)")).toBeInTheDocument();
       expect(screen.getByText("Conditional (includeWhen)")).toBeInTheDocument();
       expect(screen.getByText("Dependency")).toBeInTheDocument();
     });
@@ -257,6 +258,96 @@ describe("ResourceGraphView", () => {
       render(<ResourceGraphView resourceGraph={singleResourceGraph} />);
       const resourcesText = screen.getByText(/resources/);
       expect(resourcesText.textContent).toContain("1");
+    });
+  });
+
+  describe("collection nodes", () => {
+    const collectionGraph: ResourceGraph = {
+      rgdName: "collection-rgd",
+      rgdNamespace: "default",
+      resources: [
+        {
+          id: "deployment-1",
+          apiVersion: "apps/v1",
+          kind: "Deployment",
+          isTemplate: true,
+          isConditional: false,
+          dependsOn: [],
+        },
+        {
+          id: "workerPods",
+          apiVersion: "v1",
+          kind: "Pod",
+          isTemplate: true,
+          isConditional: false,
+          dependsOn: ["deployment-1"],
+          isCollection: true,
+          forEach: [
+            {
+              name: "worker",
+              expression: "schema.spec.workers",
+              source: "schema" as const,
+              sourcePath: "spec.workers",
+              dimensionIndex: 0,
+            },
+          ],
+          readyWhen: ["each.status.conditions.exists(c, c.type == 'Ready')"],
+        },
+        {
+          id: "service-1",
+          apiVersion: "v1",
+          kind: "Service",
+          isTemplate: true,
+          isConditional: false,
+          dependsOn: ["deployment-1"],
+        },
+      ],
+      edges: [
+        {
+          from: "workerPods",
+          to: "deployment-1",
+          type: "reference",
+        },
+        {
+          from: "service-1",
+          to: "deployment-1",
+          type: "reference",
+        },
+      ],
+    };
+
+    it("renders collection resource with collection node type", () => {
+      render(<ResourceGraphView resourceGraph={collectionGraph} />);
+      // Verify graph renders
+      const flowContainer = screen.getByTestId("react-flow-mock");
+      expect(flowContainer).toBeInTheDocument();
+      // Verify collection-specific stats appear
+      const collectionsText = screen.getByText(/collections/);
+      expect(collectionsText.textContent).toContain("1");
+      // Verify collection legend item appears
+      expect(screen.getByText("Collection (forEach)")).toBeInTheDocument();
+    });
+
+    it("renders non-collection resources with resource node type alongside collections", () => {
+      render(<ResourceGraphView resourceGraph={collectionGraph} />);
+      // Total resources count should include both collection and non-collection
+      const resourcesText = screen.getByText(/resources/);
+      expect(resourcesText.textContent).toContain("3");
+      // Templates count should exclude collection resources (not double-counted)
+      const templatesText = screen.getByText(/templates/);
+      expect(templatesText.textContent).toContain("2");
+    });
+
+    it("shows collection count in stats bar when collections present", () => {
+      render(<ResourceGraphView resourceGraph={collectionGraph} />);
+      const collectionsText = screen.getByText(/collections/);
+      expect(collectionsText).toBeInTheDocument();
+      expect(collectionsText.textContent).toContain("1");
+    });
+
+    it("does not show collection count when no collections", () => {
+      render(<ResourceGraphView resourceGraph={simpleGraph} />);
+      expect(screen.queryByText(/collections/)).not.toBeInTheDocument();
     });
   });
 

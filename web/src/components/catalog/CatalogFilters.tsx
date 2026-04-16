@@ -2,39 +2,34 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import React, { useState, useCallback, useEffect, useMemo } from "react";
-import { Search, X } from "lucide-react";
+import { Search, X } from "@/lib/icons";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { MultiSelect } from "@/components/ui/multi-select";
 import { cn } from "@/lib/utils";
+import {
+  filterSearchClasses,
+  filterSearchIconClasses,
+  filterClearButtonClasses,
+} from "@/components/ui/filter-bar";
 
 export interface FilterState {
   search: string;
   tags: string[];
-  project: string;
+  category: string;
+  projectScoped: boolean;
+  producesKind: string;
 }
 
 interface CatalogFiltersProps {
   filters: FilterState;
   onFiltersChange: (filters: FilterState) => void;
   availableTags: string[];
-  availableProjects: string[];
 }
-
-// Special value for "All" options since Select requires non-empty values
-const ALL_PROJECTS_VALUE = "__all_projects__";
 
 export function CatalogFilters({
   filters,
   onFiltersChange,
   availableTags,
-  availableProjects,
 }: CatalogFiltersProps) {
   const [searchValue, setSearchValue] = useState(filters.search);
 
@@ -61,21 +56,17 @@ export function CatalogFilters({
     []
   );
 
-  const handleProjectChange = useCallback(
-    (value: string) => {
-      const project = value === ALL_PROJECTS_VALUE ? "" : value;
-      onFiltersChange({ ...filters, project });
-    },
-    [filters, onFiltersChange]
-  );
+  const handleProjectScopedToggle = useCallback(() => {
+    onFiltersChange({ ...filters, projectScoped: !filters.projectScoped });
+  }, [filters, onFiltersChange]);
 
   const handleClearFilters = useCallback(() => {
     setSearchValue("");
-    onFiltersChange({ search: "", tags: [], project: "" });
+    onFiltersChange({ search: "", tags: [], category: "", projectScoped: false, producesKind: "" });
   }, [onFiltersChange]);
 
   const hasActiveFilters = useMemo(
-    () => filters.search || filters.tags.length > 0 || filters.project,
+    () => filters.search || filters.tags.length > 0 || filters.category || filters.projectScoped || filters.producesKind,
     [filters]
   );
 
@@ -84,28 +75,19 @@ export function CatalogFilters({
     [availableTags]
   );
 
-  // Convert filter values to select values
-  const projectSelectValue = filters.project || ALL_PROJECTS_VALUE;
-
   return (
     <div className="space-y-3">
       {/* Modern Filter Bar - Vercel-inspired */}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-2">
         {/* Search Input */}
         <div className="relative flex-[2] min-w-[280px]">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+          <Search className={filterSearchIconClasses} />
           <Input
             type="text"
             placeholder="Search by name, description, or tags..."
             value={searchValue}
             onChange={handleSearchChange}
-            className={cn(
-              "pl-9 pr-10 h-9 text-sm",
-              "bg-background border border-border",
-              "hover:border-primary/30 transition-colors duration-200",
-              "focus-visible:ring-2 focus-visible:ring-ring/40",
-              "placeholder:text-muted-foreground shadow-sm"
-            )}
+            className={filterSearchClasses}
             aria-label="Search resource definitions"
           />
           {searchValue && (
@@ -115,7 +97,7 @@ export function CatalogFilters({
                 setSearchValue("");
                 onFiltersChange({ ...filters, search: "" });
               }}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground/60 hover:text-foreground transition-colors"
+              className={filterClearButtonClasses}
               aria-label="Clear search"
             >
               <X className="h-3.5 w-3.5" />
@@ -125,34 +107,21 @@ export function CatalogFilters({
 
         {/* Compact Filters - All in one row */}
         <div className="flex flex-wrap gap-2 sm:flex-nowrap">
-          {/* Project Selector - Only show if there are projects */}
-          {availableProjects.length > 0 && (
-            <Select
-              value={projectSelectValue}
-              onValueChange={handleProjectChange}
-            >
-              <SelectTrigger
-                className={cn(
-                  "h-9 text-sm min-w-[140px]",
-                  "bg-background border border-border shadow-sm",
-                  "hover:border-primary/30 hover:bg-muted/30 transition-all duration-200",
-                  "focus:ring-2 focus:ring-ring/40",
-                  filters.project ? "text-foreground font-medium" : "text-muted-foreground"
-                )}
-                aria-label="Filter by project"
-              >
-                <SelectValue placeholder="All projects" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={ALL_PROJECTS_VALUE}>All projects</SelectItem>
-                {availableProjects.map((project) => (
-                  <SelectItem key={project} value={project}>
-                    {project}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
+          {/* Project Scoped Toggle */}
+          <button
+            type="button"
+            onClick={handleProjectScopedToggle}
+            className={cn(
+              "h-9 px-3 text-sm rounded-[var(--radius-token-md)] border transition-all duration-150 whitespace-nowrap",
+              filters.projectScoped
+                ? "bg-[var(--brand-primary)]/10 border-[var(--brand-primary)]/30 text-[var(--brand-primary)] font-medium"
+                : "bg-transparent border-[var(--border-default)] text-muted-foreground hover:border-[var(--border-hover)] hover:text-foreground"
+            )}
+            aria-pressed={filters.projectScoped}
+            aria-label="Show only project-scoped RGDs"
+          >
+            Project scoped
+          </button>
 
           {/* Tag Filters */}
           {normalizedAvailableTags.length > 0 && (
@@ -176,9 +145,9 @@ export function CatalogFilters({
           <div className="flex items-center gap-2 text-muted-foreground/70">
             <span>Filters:</span>
             <div className="flex flex-wrap gap-1.5">
-              {filters.project && (
+              {filters.category && (
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-muted/40 text-foreground/80">
-                  {filters.project}
+                  {filters.category}
                 </span>
               )}
               {filters.search && (

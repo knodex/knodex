@@ -361,32 +361,6 @@ func TestIsWildcard(t *testing.T) {
 	}
 }
 
-func TestIsDenyRule(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		input    string
-		expected bool
-	}{
-		{"!https://github.com/secret", true},
-		{"https://github.com/allowed", false},
-		{"!*", true},
-		{"", false},
-	}
-
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.input, func(t *testing.T) {
-			t.Parallel()
-
-			result := IsDenyRule(tt.input)
-			if result != tt.expected {
-				t.Errorf("IsDenyRule(%q) = %v, want %v", tt.input, result, tt.expected)
-			}
-		})
-	}
-}
-
 func TestValidateProjectName(t *testing.T) {
 	t.Parallel()
 
@@ -990,96 +964,6 @@ func TestValidateDestinationAgainstAllowed_NamespaceIsolation(t *testing.T) {
 	}
 }
 
-// TestValidateDisplayName tests display name validation
-func TestValidateDisplayName(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name        string
-		displayName string
-		wantErr     bool
-		errContains string
-	}{
-		{
-			name:        "valid display name",
-			displayName: "My Project",
-			wantErr:     false,
-		},
-		{
-			name:        "valid display name with numbers",
-			displayName: "Project 123",
-			wantErr:     false,
-		},
-		{
-			name:        "valid display name with special chars",
-			displayName: "Project - Test (Dev)",
-			wantErr:     false,
-		},
-		{
-			name:        "valid unicode display name",
-			displayName: "Projet développement",
-			wantErr:     false,
-		},
-		{
-			name:        "empty display name",
-			displayName: "",
-			wantErr:     true,
-			errContains: "cannot be empty",
-		},
-		{
-			name:        "display name too long",
-			displayName: strings.Repeat("a", 256),
-			wantErr:     true,
-			errContains: "exceeds maximum length",
-		},
-		{
-			name:        "display name at max length",
-			displayName: strings.Repeat("a", 255),
-			wantErr:     false,
-		},
-		{
-			name:        "display name with control char (tab)",
-			displayName: "Project\tName",
-			wantErr:     true,
-			errContains: "control characters",
-		},
-		{
-			name:        "display name with control char (newline)",
-			displayName: "Project\nName",
-			wantErr:     true,
-			errContains: "control characters",
-		},
-		{
-			name:        "display name with null char",
-			displayName: "Project\x00Name",
-			wantErr:     true,
-			errContains: "control characters",
-		},
-		{
-			name:        "display name with DEL char",
-			displayName: "Project\x7FName",
-			wantErr:     true,
-			errContains: "control characters",
-		},
-	}
-
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			err := ValidateDisplayName(tt.displayName)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("ValidateDisplayName(%q) error = %v, wantErr %v", tt.displayName, err, tt.wantErr)
-				return
-			}
-			if err != nil && tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
-				t.Errorf("ValidateDisplayName(%q) error = %q, want error containing %q", tt.displayName, err.Error(), tt.errContains)
-			}
-		})
-	}
-}
-
 // TestValidateNamespace tests namespace validation
 func TestValidateNamespace(t *testing.T) {
 	t.Parallel()
@@ -1182,208 +1066,6 @@ func TestValidateNamespace(t *testing.T) {
 			}
 			if err != nil && tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
 				t.Errorf("ValidateNamespace(%q) error = %q, want error containing %q", tt.namespace, err.Error(), tt.errContains)
-			}
-		})
-	}
-}
-
-// TestSanitizeInput tests input sanitization
-func TestSanitizeInput(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name     string
-		input    string
-		expected string
-	}{
-		{
-			name:     "clean input unchanged",
-			input:    "Hello World",
-			expected: "Hello World",
-		},
-		{
-			name:     "input with leading/trailing spaces trimmed",
-			input:    "  Hello World  ",
-			expected: "Hello World",
-		},
-		{
-			name:     "input with null char removed",
-			input:    "Hello\x00World",
-			expected: "HelloWorld",
-		},
-		{
-			name:     "input with control chars removed",
-			input:    "Hello\x01\x02\x03World",
-			expected: "HelloWorld",
-		},
-		{
-			name:     "input with tab removed",
-			input:    "Hello\tWorld",
-			expected: "HelloWorld",
-		},
-		{
-			name:     "input with newline removed",
-			input:    "Hello\nWorld",
-			expected: "HelloWorld",
-		},
-		{
-			name:     "input with carriage return removed",
-			input:    "Hello\rWorld",
-			expected: "HelloWorld",
-		},
-		{
-			name:     "input with DEL char removed",
-			input:    "Hello\x7FWorld",
-			expected: "HelloWorld",
-		},
-		{
-			name:     "empty string",
-			input:    "",
-			expected: "",
-		},
-		{
-			name:     "only spaces",
-			input:    "   ",
-			expected: "",
-		},
-		{
-			name:     "only control chars",
-			input:    "\x00\x01\x02",
-			expected: "",
-		},
-		{
-			name:     "unicode preserved",
-			input:    "Hëllo Wörld",
-			expected: "Hëllo Wörld",
-		},
-		{
-			name:     "special chars preserved",
-			input:    "Hello @#$%^&*() World!",
-			expected: "Hello @#$%^&*() World!",
-		},
-		{
-			name:     "mixed control and regular chars",
-			input:    "  \x00Hello\x1F \tWorld\x7F  ",
-			expected: "Hello World",
-		},
-	}
-
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			result := SanitizeInput(tt.input)
-			if result != tt.expected {
-				t.Errorf("SanitizeInput(%q) = %q, want %q", tt.input, result, tt.expected)
-			}
-		})
-	}
-}
-
-// TestValidateUserID tests user ID validation
-func TestValidateUserID(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name        string
-		userID      string
-		wantErr     bool
-		errContains string
-	}{
-		{
-			name:    "valid user ID",
-			userID:  "user123",
-			wantErr: false,
-		},
-		{
-			name:    "valid user ID with hyphen",
-			userID:  "user-123",
-			wantErr: false,
-		},
-		{
-			name:    "valid user ID with period",
-			userID:  "user.name",
-			wantErr: false,
-		},
-		{
-			name:    "valid user ID mixed",
-			userID:  "user-123.test",
-			wantErr: false,
-		},
-		{
-			name:        "empty user ID",
-			userID:      "",
-			wantErr:     true,
-			errContains: "cannot be empty",
-		},
-		{
-			name:        "user ID too long",
-			userID:      strings.Repeat("a", 254),
-			wantErr:     true,
-			errContains: "exceeds maximum length",
-		},
-		{
-			name:    "user ID at max length",
-			userID:  strings.Repeat("a", 253),
-			wantErr: false,
-		},
-		{
-			name:        "user ID with uppercase",
-			userID:      "User123",
-			wantErr:     true,
-			errContains: "invalid character",
-		},
-		{
-			name:        "user ID starting with hyphen",
-			userID:      "-user123",
-			wantErr:     true,
-			errContains: "cannot start or end with hyphen or period",
-		},
-		{
-			name:        "user ID ending with hyphen",
-			userID:      "user123-",
-			wantErr:     true,
-			errContains: "cannot start or end with hyphen or period",
-		},
-		{
-			name:        "user ID starting with period",
-			userID:      ".user123",
-			wantErr:     true,
-			errContains: "cannot start or end with hyphen or period",
-		},
-		{
-			name:        "user ID ending with period",
-			userID:      "user123.",
-			wantErr:     true,
-			errContains: "cannot start or end with hyphen or period",
-		},
-		{
-			name:        "user ID with space",
-			userID:      "user 123",
-			wantErr:     true,
-			errContains: "invalid character",
-		},
-		{
-			name:        "user ID with underscore",
-			userID:      "user_123",
-			wantErr:     true,
-			errContains: "invalid character",
-		},
-	}
-
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			err := ValidateUserID(tt.userID)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("ValidateUserID(%q) error = %v, wantErr %v", tt.userID, err, tt.wantErr)
-				return
-			}
-			if err != nil && tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
-				t.Errorf("ValidateUserID(%q) error = %q, want error containing %q", tt.userID, err.Error(), tt.errContains)
 			}
 		})
 	}
@@ -1872,6 +1554,271 @@ func TestMatchNamespace_SecurityScenarios(t *testing.T) {
 			if result != tt.expected {
 				t.Errorf("Security scenario failed: %s\nMatchNamespace(%q, %q) = %v, want %v",
 					tt.scenario, tt.namespace, tt.pattern, result, tt.expected)
+			}
+		})
+	}
+}
+
+// --- STORY-411: ProjectType validation ---
+
+func TestValidateProjectSpec_TypeValidation(t *testing.T) {
+	t.Parallel()
+
+	baseSpec := func(pt ProjectType) ProjectSpec {
+		return ProjectSpec{
+			Type:         pt,
+			Destinations: []Destination{{Namespace: "default"}},
+		}
+	}
+
+	tests := []struct {
+		name    string
+		spec    ProjectSpec
+		wantErr bool
+	}{
+		{name: "empty type is valid (defaults to app)", spec: baseSpec(""), wantErr: false},
+		{name: "type app is valid", spec: baseSpec(ProjectTypeApp), wantErr: false},
+		{name: "type platform is valid", spec: baseSpec(ProjectTypePlatform), wantErr: false},
+		{name: "invalid type returns error", spec: baseSpec("enterprise"), wantErr: true},
+		{name: "arbitrary string type returns error", spec: baseSpec("foo"), wantErr: true},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := ValidateProjectSpec(tt.spec)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateProjectSpec() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// --- STORY-412: Cluster Binding Validation ---
+
+func TestValidateProjectSpec_ClusterBindings(t *testing.T) {
+	t.Parallel()
+
+	base := ProjectSpec{
+		Destinations: []Destination{{Namespace: "default"}},
+	}
+
+	tests := []struct {
+		name    string
+		spec    ProjectSpec
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name: "app project with valid clusters",
+			spec: ProjectSpec{
+				Type:         ProjectTypeApp,
+				Destinations: base.Destinations,
+				Clusters:     []ClusterBinding{{ClusterRef: "prod-eu-west"}},
+				Namespace:    "team-alpha",
+			},
+			wantErr: false,
+		},
+		{
+			name: "app project empty clusters (monocluster)",
+			spec: ProjectSpec{
+				Type:         ProjectTypeApp,
+				Destinations: base.Destinations,
+			},
+			wantErr: false,
+		},
+		{
+			name: "platform project with clusters rejected",
+			spec: ProjectSpec{
+				Type:         ProjectTypePlatform,
+				Destinations: base.Destinations,
+				Clusters:     []ClusterBinding{{ClusterRef: "prod-eu-west"}},
+				Namespace:    "infra-ns",
+			},
+			wantErr: true,
+			errMsg:  "only valid on app projects",
+		},
+		{
+			name: "clusters without namespace rejected",
+			spec: ProjectSpec{
+				Type:         ProjectTypeApp,
+				Destinations: base.Destinations,
+				Clusters:     []ClusterBinding{{ClusterRef: "prod-eu-west"}},
+			},
+			wantErr: true,
+			errMsg:  "namespace is required",
+		},
+		{
+			name: "empty clusterRef rejected",
+			spec: ProjectSpec{
+				Type:         ProjectTypeApp,
+				Destinations: base.Destinations,
+				Clusters:     []ClusterBinding{{ClusterRef: ""}},
+				Namespace:    "team-alpha",
+			},
+			wantErr: true,
+			errMsg:  "clusterRef is required",
+		},
+		{
+			name: "duplicate clusterRef rejected",
+			spec: ProjectSpec{
+				Type:         ProjectTypeApp,
+				Destinations: base.Destinations,
+				Clusters:     []ClusterBinding{{ClusterRef: "prod"}, {ClusterRef: "prod"}},
+				Namespace:    "team-alpha",
+			},
+			wantErr: true,
+			errMsg:  "duplicated",
+		},
+		{
+			name: "default type (empty) with clusters accepted",
+			spec: ProjectSpec{
+				Destinations: base.Destinations,
+				Clusters:     []ClusterBinding{{ClusterRef: "prod-eu-west"}},
+				Namespace:    "team-alpha",
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid namespace format rejected",
+			spec: ProjectSpec{
+				Type:         ProjectTypeApp,
+				Destinations: base.Destinations,
+				Clusters:     []ClusterBinding{{ClusterRef: "prod-eu-west"}},
+				Namespace:    "UPPER-CASE",
+			},
+			wantErr: true,
+			errMsg:  "spec.namespace",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := ValidateProjectSpec(tt.spec)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateProjectSpec() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.errMsg != "" && err != nil {
+				if !strings.Contains(err.Error(), tt.errMsg) {
+					t.Errorf("expected error containing %q, got %q", tt.errMsg, err.Error())
+				}
+			}
+		})
+	}
+}
+
+func TestDestination_Validate_Simple(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		dest    Destination
+		wantErr bool
+	}{
+		{
+			name:    "valid destination",
+			dest:    Destination{Namespace: "prod"},
+			wantErr: false,
+		},
+		{
+			name:    "valid destination with name",
+			dest:    Destination{Namespace: "prod", Name: "production"},
+			wantErr: false,
+		},
+		{
+			name:    "valid wildcard destination",
+			dest:    Destination{Namespace: "dev-*"},
+			wantErr: false,
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := tt.dest.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateRoleDestinations(t *testing.T) {
+	t.Parallel()
+	projectDests := []Destination{
+		{Namespace: "prod-platform"},
+		{Namespace: "prod-app"},
+		{Namespace: "prod-shared"},
+	}
+
+	tests := []struct {
+		name    string
+		role    ProjectRole
+		wantErr bool
+	}{
+		{
+			name: "role with no destinations - always valid",
+			role: ProjectRole{
+				Name:     "admin",
+				Policies: []string{"*, *, allow"},
+			},
+			wantErr: false,
+		},
+		{
+			name: "role with valid destinations",
+			role: ProjectRole{
+				Name:         "developer",
+				Policies:     []string{"instances/*, *, allow"},
+				Destinations: []string{"prod-app"},
+			},
+			wantErr: false,
+		},
+		{
+			name: "role with multiple valid destinations",
+			role: ProjectRole{
+				Name:         "operator",
+				Policies:     []string{"instances/*, *, allow"},
+				Destinations: []string{"prod-platform", "prod-shared"},
+			},
+			wantErr: false,
+		},
+		{
+			name: "role with invalid destination",
+			role: ProjectRole{
+				Name:         "developer",
+				Policies:     []string{"instances/*, *, allow"},
+				Destinations: []string{"nonexistent-ns"},
+			},
+			wantErr: true,
+		},
+		{
+			name: "role with empty destination entry",
+			role: ProjectRole{
+				Name:         "developer",
+				Policies:     []string{"instances/*, *, allow"},
+				Destinations: []string{""},
+			},
+			wantErr: true,
+		},
+		{
+			name: "role with duplicate destinations rejected",
+			role: ProjectRole{
+				Name:         "developer",
+				Policies:     []string{"instances/*, *, allow"},
+				Destinations: []string{"prod-app", "prod-app"},
+			},
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := ValidateRoleDestinations(tt.role, projectDests)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateRoleDestinations() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}

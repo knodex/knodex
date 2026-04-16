@@ -129,7 +129,7 @@ test.describe("RBAC: Infrastructure & API Tests", () => {
       );
 
       // Check projects via Settings page (only Global Admin can access)
-      await page.goto("/settings/projects");
+      await page.goto("/projects");
       await page.waitForLoadState("domcontentloaded");
       await page.waitForLoadState('networkidle'); // Allow data to load
 
@@ -138,7 +138,7 @@ test.describe("RBAC: Infrastructure & API Tests", () => {
         '[data-testid="project-card"]',
         "article.cursor-pointer",
         ".cursor-pointer:has(h3)",
-        'a[href^="/settings/projects/"]',
+        'a[href^="/projects/"]',
       ];
 
       let projectCount = 0;

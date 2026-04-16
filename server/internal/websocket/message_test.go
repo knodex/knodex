@@ -79,7 +79,7 @@ func TestNewInstanceUpdateMessage(t *testing.T) {
 		"namespace": "default",
 	}
 
-	msg, err := NewInstanceUpdateMessage(ActionAdd, "default", "test-instance", testInstance, "project-a")
+	msg, err := NewInstanceUpdateMessage(ActionAdd, "default", "WebApp", "test-instance", testInstance, "project-a")
 	if err != nil {
 		t.Fatalf("NewInstanceUpdateMessage failed: %v", err)
 	}
@@ -99,6 +99,10 @@ func TestNewInstanceUpdateMessage(t *testing.T) {
 
 	if updateData.Namespace != "default" {
 		t.Errorf("expected namespace default, got %s", updateData.Namespace)
+	}
+
+	if updateData.Kind != "WebApp" {
+		t.Errorf("expected kind WebApp, got %s", updateData.Kind)
 	}
 
 	if updateData.Name != "test-instance" {

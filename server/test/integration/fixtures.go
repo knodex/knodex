@@ -70,10 +70,11 @@ type ProjectToValidate struct {
 
 // RoleToValidate represents role data for validation
 type RoleToValidate struct {
-	Name        string   `json:"name"`
-	Description string   `json:"description,omitempty"`
-	Policies    []string `json:"policies,omitempty"`
-	Groups      []string `json:"groups,omitempty"`
+	Name         string   `json:"name"`
+	Description  string   `json:"description,omitempty"`
+	Policies     []string `json:"policies,omitempty"`
+	Groups       []string `json:"groups,omitempty"`
+	Destinations []string `json:"destinations,omitempty"`
 }
 
 // ValidateUpdateRequestBody creates a request body for project update validation
@@ -103,10 +104,11 @@ type DestinationResponse struct {
 
 // RoleResponse represents a role in responses
 type RoleResponse struct {
-	Name        string   `json:"name"`
-	Description string   `json:"description,omitempty"`
-	Policies    []string `json:"policies,omitempty"`
-	Groups      []string `json:"groups,omitempty"`
+	Name         string   `json:"name"`
+	Description  string   `json:"description,omitempty"`
+	Policies     []string `json:"policies,omitempty"`
+	Groups       []string `json:"groups,omitempty"`
+	Destinations []string `json:"destinations,omitempty"`
 }
 
 // ProjectListResponse represents the response from list projects endpoint

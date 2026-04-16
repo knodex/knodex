@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import type { useFormContext } from "react-hook-form";
-import type { FormProperty } from "@/types/rgd";
+import type { FormProperty, AdvancedSection } from "@/types/rgd";
 
 /**
  * Base props shared by all form field components
@@ -32,6 +32,8 @@ export interface FormFieldProps {
   depth?: number;
   /** The deployment namespace selected at the top of the deploy form */
   deploymentNamespace?: string;
+  /** Per-feature inline advanced section (e.g., bastion.advanced) rendered inside ObjectField */
+  inlineAdvancedSection?: AdvancedSection;
 }
 
 /**
@@ -44,7 +46,7 @@ export interface TextFieldProps extends RegisterFieldProps {
 /**
  * Props for NumberField component
  */
-export interface NumberFieldProps extends RegisterFieldProps {
+export interface NumberFieldProps extends BaseFieldProps {
   min?: number;
   max?: number;
   isInteger?: boolean;
@@ -58,7 +60,7 @@ export type CheckboxFieldProps = RegisterFieldProps;
 /**
  * Props for SelectField component
  */
-export interface SelectFieldProps extends BaseFieldProps {
+export interface SelectFieldProps extends RegisterFieldProps {
   options: string[];
   defaultValue?: string;
 }
@@ -75,6 +77,8 @@ export interface ObjectFieldProps {
   depth: number;
   /** The deployment namespace selected at the top of the deploy form */
   deploymentNamespace?: string;
+  /** Per-feature inline advanced section (e.g., bastion.advanced) rendered inside ObjectField */
+  inlineAdvancedSection?: AdvancedSection;
 }
 
 /**

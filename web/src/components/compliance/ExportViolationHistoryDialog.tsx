@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { useState, useMemo, useEffect } from "react";
-import { FileDown, Loader2, Info } from "lucide-react";
+import { FileDown, Loader2, Info } from "@/lib/icons";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -127,7 +127,8 @@ export function ExportViolationHistoryDialog({
         <div className="space-y-4 py-4">
           {/* Time range preset chips */}
           <div className="space-y-2">
-            <label className="text-sm font-medium">Time Range</label>
+            {/* eslint-disable-next-line jsx-a11y/label-has-associated-control */}
+            <label className="text-sm font-medium" id="time-range-label">Time Range</label>
             <div className="flex flex-wrap gap-2">
               {TIME_PRESETS.map((preset) => (
                 <Button
@@ -145,7 +146,7 @@ export function ExportViolationHistoryDialog({
 
           {/* Enforcement filter */}
           <div className="space-y-2">
-            <label className="text-sm font-medium">Enforcement Action</label>
+            <label className="text-sm font-medium" htmlFor="enforcement-action-select">Enforcement Action</label>
             <Select value={enforcement} onValueChange={setEnforcement}>
               <SelectTrigger>
                 <SelectValue />
@@ -161,7 +162,7 @@ export function ExportViolationHistoryDialog({
 
           {/* Retention warning */}
           {exceedsRetention && (
-            <div className="flex items-start gap-2 rounded-md bg-blue-50 dark:bg-blue-950/30 p-3 text-sm text-blue-700 dark:text-blue-300">
+            <div className="flex items-start gap-2 rounded-md bg-blue-50 dark:bg-blue-950/30 p-3 text-sm text-blue-800 dark:text-blue-300">
               <Info className="h-4 w-4 mt-0.5 shrink-0" />
               <span>
                 History is retained for {retentionDays} days. Showing available data.

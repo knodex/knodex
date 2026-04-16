@@ -89,11 +89,13 @@ func TestMiddlewareChain_FullStack(t *testing.T) {
 	var handler http.Handler = testHandler
 
 	// User rate limiting
-	handler = UserRateLimit(UserRateLimitConfig{
+	userRateLimitMw, userRateLimiter := UserRateLimit(UserRateLimitConfig{
 		RequestsPerMinute: 100,
 		BurstSize:         10,
 		FallbackToIP:      false,
-	})(handler)
+	})
+	t.Cleanup(func() { userRateLimiter.Stop() })
+	handler = userRateLimitMw(handler)
 
 	// Authorization using CasbinAuthz
 	handler = CasbinAuthz(CasbinAuthzConfig{
@@ -245,11 +247,13 @@ func TestMiddlewareChain_RateLimitFailure(t *testing.T) {
 	})
 
 	var handler http.Handler = testHandler
-	handler = UserRateLimit(UserRateLimitConfig{
+	rateLimitMw, rateLimiter := UserRateLimit(UserRateLimitConfig{
 		RequestsPerMinute: 60,
 		BurstSize:         2,
 		FallbackToIP:      false,
-	})(handler)
+	})
+	t.Cleanup(func() { rateLimiter.Stop() })
+	handler = rateLimitMw(handler)
 	handler = CasbinAuthz(CasbinAuthzConfig{
 		Enforcer: mockEnforcer,
 	})(handler)

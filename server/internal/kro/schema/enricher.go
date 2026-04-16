@@ -29,9 +29,9 @@ const (
 	advancedKey      = "advanced"
 )
 
-// defaultResourceParser is a package-level ResourceParser instance reused across calls.
-// ResourceParser is stateless, so a single instance is safe for concurrent use.
-var defaultResourceParser = parser.NewResourceParser()
+// fallbackResourceParser is a package-level ResourceParser instance used for cross-RGD
+// lookups when the KRO graph builder is not available. Stateless, safe for concurrent use.
+var fallbackResourceParser = parser.NewResourceParser()
 
 // EnrichSchemaFromResources enriches a FormSchema with metadata from the RGD resource graph.
 // It adds:
@@ -69,15 +69,15 @@ func EnrichSchemaFromResources(schema *models.FormSchema, resourceGraph *parser.
 	if len(rgdProvider) > 0 {
 		provider = rgdProvider[0]
 	}
-	if err := addNestedExternalRefSelectors(schema, resourceGraph, provider, defaultResourceParser); err != nil {
+	if err := addNestedExternalRefSelectors(schema, resourceGraph, provider, fallbackResourceParser); err != nil {
 		return fmt.Errorf("failed to add nested external ref selectors: %w", err)
 	}
 
-	// Extract advanced section (fields hidden by default in UI)
-	advancedSection := extractAdvancedSection(schema)
-	if advancedSection != nil {
-		schema.AdvancedSection = advancedSection
-	}
+	// Extract advanced sections (global and per-feature, hidden by default in UI)
+	schema.AdvancedSections = extractAdvancedSections(schema)
+
+	// Add collection annotations to schema fields that drive forEach expansion
+	addCollectionAnnotations(schema, resourceGraph)
 
 	return nil
 }
@@ -393,10 +393,13 @@ func addExternalRefSelectors(schema *models.FormSchema, graph *parser.ResourceGr
 		// Attach resource picker metadata to the parent object property.
 		// NOTE: AutoFillFields keys "name" and "namespace" are a contract with the frontend
 		// ExternalRefSelector component which reads autoFillFields.name and autoFillFields.namespace.
+		// UseInstanceNamespace is false because the externalRef has an explicit namespace field
+		// in the schema — the resource can live in any namespace (e.g., a shared kubeconfig Secret).
+		// The picker queries all namespaces and auto-fills the selected resource's namespace.
 		if err := attachResourcePickerToParent(schema.Properties, parentPath, &models.ExternalRefSelectorMetadata{
 			APIVersion:           extRef.APIVersion,
 			Kind:                 extRef.Kind,
-			UseInstanceNamespace: true,
+			UseInstanceNamespace: false,
 			AutoFillFields:       map[string]string{"name": nameLeaf, "namespace": nsLeaf},
 		}); err != nil {
 			return fmt.Errorf("failed to attach resource picker to %q: %w", parentPath, err)
@@ -508,11 +511,12 @@ func addNestedExternalRefSelectors(schema *models.FormSchema, graph *parser.Reso
 				continue
 			}
 
-			// Attach resource picker metadata to the parent object property
+			// Attach resource picker metadata to the parent object property.
+			// UseInstanceNamespace false: nested externalRefs have explicit namespace fields.
 			if err := attachResourcePickerToParent(schema.Properties, parentPath, &models.ExternalRefSelectorMetadata{
 				APIVersion:           apiVersion,
 				Kind:                 kind,
-				UseInstanceNamespace: true,
+				UseInstanceNamespace: false,
 				AutoFillFields:       map[string]string{"name": nameLeaf, "namespace": nsLeaf},
 			}); err != nil {
 				return fmt.Errorf("failed to attach nested external ref selector to %q: %w", parentPath, err)
@@ -608,56 +612,74 @@ func hasExternalRefSelector(props map[string]models.FormProperty, path string) b
 	return hasExternalRefSelector(prop.Properties, parts[1])
 }
 
-// extractAdvancedSection identifies fields under spec.advanced and marks them as hidden by default.
-// Returns nil if the schema has no "advanced" property.
-func extractAdvancedSection(schema *models.FormSchema) *models.AdvancedSection {
+// extractAdvancedSections identifies fields under spec.advanced (global) and spec.<feature>.advanced
+// (per-feature) and marks them as hidden by default. Returns nil if no advanced sections exist.
+func extractAdvancedSections(schema *models.FormSchema) []models.AdvancedSection {
 	if schema.Properties == nil {
 		return nil
 	}
 
-	// Check if schema has "advanced" property
-	advancedProp, exists := schema.Properties[advancedKey]
-	if !exists {
+	var sections []models.AdvancedSection
+
+	// Backward compat: top-level "advanced" key → AdvancedSection{Path: "advanced", ...}
+	if advProp, exists := schema.Properties[advancedKey]; exists {
+		if advProp.Type == "object" && advProp.Properties != nil && len(advProp.Properties) > 0 {
+			section := models.AdvancedSection{
+				Path:               advancedKey,
+				AffectedProperties: make([]string, 0),
+			}
+			markAdvancedPropertiesAt(schema.Properties, advancedKey, &section)
+			if len(section.AffectedProperties) > 0 {
+				sort.Strings(section.AffectedProperties)
+				sections = append(sections, section)
+			}
+		}
+	}
+
+	// Per-feature: top-level object with nested "advanced" sub-object
+	for featureKey, featureProp := range schema.Properties {
+		if featureKey == advancedKey || featureProp.Type != "object" || featureProp.Properties == nil {
+			continue
+		}
+		advProp, ok := featureProp.Properties[advancedKey]
+		if !ok || advProp.Type != "object" || advProp.Properties == nil || len(advProp.Properties) == 0 {
+			continue
+		}
+		path := featureKey + "." + advancedKey
+		section := models.AdvancedSection{
+			Path:               path,
+			AffectedProperties: make([]string, 0),
+		}
+		markAdvancedPropertiesAt(featureProp.Properties, path, &section)
+		if len(section.AffectedProperties) > 0 {
+			sort.Strings(section.AffectedProperties)
+			sections = append(sections, section)
+		}
+	}
+
+	if len(sections) == 0 {
 		return nil
 	}
 
-	// Only process object-type advanced properties with nested fields
-	if advancedProp.Type != "object" || advancedProp.Properties == nil || len(advancedProp.Properties) == 0 {
-		return nil
-	}
-
-	section := &models.AdvancedSection{
-		Path:               advancedKey,
-		AffectedProperties: make([]string, 0),
-	}
-
-	// Mark all nested properties as advanced and collect paths
-	markAdvancedProperties(schema.Properties, advancedKey, section)
-
-	// Only return the section if we found affected properties
-	if len(section.AffectedProperties) == 0 {
-		return nil
-	}
-
-	return section
+	sort.Slice(sections, func(i, j int) bool { return sections[i].Path < sections[j].Path })
+	return sections
 }
 
-// markAdvancedProperties recursively marks properties under the advanced section.
-func markAdvancedProperties(
+// markAdvancedPropertiesAt marks properties under an "advanced" sub-key in the given property map.
+// Works for both the top-level "advanced" key (basePath = "advanced") and per-feature nested keys
+// (e.g., basePath = "bastion.advanced" when props = featureProp.Properties).
+func markAdvancedPropertiesAt(
 	props map[string]models.FormProperty,
 	basePath string,
 	section *models.AdvancedSection,
 ) {
-	// Get the advanced property
 	advancedProp, exists := props[advancedKey]
 	if !exists || advancedProp.Properties == nil {
 		return
 	}
 
-	// Recursively process all nested properties under "advanced"
 	processNestedAdvancedProperties(advancedProp.Properties, basePath, section)
 
-	// Update the advanced property back in the schema
 	advancedProp.IsAdvanced = true
 	props[advancedKey] = advancedProp
 }
@@ -831,4 +853,83 @@ func parseInt64(s string) (int64, error) {
 // parseFloat64 parses a string as float64.
 func parseFloat64(s string) (float64, error) {
 	return strconv.ParseFloat(s, 64)
+}
+
+// addCollectionAnnotations annotates schema fields that drive forEach collection expansion.
+// For each collection resource with schema-sourced iterators, it navigates the FormProperty tree
+// and attaches a CollectionAnnotation so the frontend can identify collection-driving fields.
+func addCollectionAnnotations(schema *models.FormSchema, graph *parser.ResourceGraph) {
+	if schema == nil || graph == nil {
+		return
+	}
+
+	collections := graph.GetCollectionResources()
+	if len(collections) == 0 {
+		return
+	}
+
+	for _, res := range collections {
+		dimensions := len(res.ForEach)
+		for _, iter := range res.ForEach {
+			// Only annotate schema-sourced iterators (AC3: skip resource/literal sources)
+			if iter.Source != parser.SchemaSource {
+				continue
+			}
+
+			if iter.SourcePath == "" {
+				slog.Debug("schema-sourced iterator has empty SourcePath, skipping annotation",
+					"resourceID", res.ID, "iterator", iter.Name)
+				continue
+			}
+
+			// Navigate and set the annotation directly on the target property
+			// AC6: graceful degradation — if path doesn't exist, skip silently
+			setCollectionAnnotation(schema.Properties, iter.SourcePath, &models.CollectionAnnotation{
+				ResourceID:     res.ID,
+				IteratorVar:    iter.Name,
+				Dimensions:     dimensions,
+				DimensionIndex: iter.DimensionIndex,
+				Source:         string(iter.Source),
+			})
+		}
+	}
+}
+
+// setCollectionAnnotation navigates the FormProperty tree by dot-separated path and attaches
+// a CollectionAnnotation to the target property. Returns false if the path doesn't resolve.
+//
+// Path format: "spec.workers" navigates Properties["spec"] → Properties["workers"].
+// For array properties, navigation continues into Items.Properties.
+// Uses write-back pattern (like attachResourcePickerToParent) to handle Go map value semantics.
+func setCollectionAnnotation(props map[string]models.FormProperty, fieldPath string, annotation *models.CollectionAnnotation) bool {
+	if props == nil || fieldPath == "" {
+		return false
+	}
+
+	parts := strings.SplitN(fieldPath, ".", 2)
+
+	prop, exists := props[parts[0]]
+	if !exists {
+		return false
+	}
+
+	if len(parts) == 1 {
+		// Target found — attach annotation and write back
+		prop.CollectionAnnotation = annotation
+		props[parts[0]] = prop
+		return true
+	}
+
+	// Navigate deeper into nested properties
+	var ok bool
+	if prop.Properties != nil {
+		ok = setCollectionAnnotation(prop.Properties, parts[1], annotation)
+	} else if prop.Type == "array" && prop.Items != nil && prop.Items.Properties != nil {
+		ok = setCollectionAnnotation(prop.Items.Properties, parts[1], annotation)
+	}
+
+	if ok {
+		props[parts[0]] = prop
+	}
+	return ok
 }

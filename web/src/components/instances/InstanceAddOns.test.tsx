@@ -114,7 +114,6 @@ describe('InstanceAddOns', () => {
         description: 'Add Redis caching to your instance',
         tags: ['database', 'cache'],
         namespace: 'default',
-        version: '1.0.0',
         category: 'storage',
         labels: {},
         instances: 0,
@@ -157,13 +156,13 @@ describe('InstanceAddOns', () => {
       expect(screen.getByText('cache')).toBeInTheDocument();
     });
 
-    it('deploy link includes instanceName and instanceNamespace as query params', () => {
+    it('deploy link links to catalog page for addon', () => {
       renderWithProviders(<InstanceAddOns {...defaultProps} />);
 
       const deployLink = screen.getByRole('link', { name: /deploy/i });
       expect(deployLink).toHaveAttribute(
         'href',
-        `/catalog/${encodeURIComponent('redis-addon')}/deploy?prefillRef=${encodeURIComponent('my-instance')}&prefillRefNs=${encodeURIComponent('production')}`
+        `/catalog/${encodeURIComponent('redis-addon')}`
       );
     });
 

@@ -61,6 +61,14 @@ func (m *mockNamespaceProjectService) Exists(ctx context.Context, name string) (
 	return exists, nil
 }
 
+func (m *mockNamespaceProjectService) UpdateProjectStatus(ctx context.Context, project *rbac.Project) (*rbac.Project, error) {
+	if _, exists := m.projects[project.Name]; !exists {
+		return nil, rbac.ErrProjectNotFound
+	}
+	m.projects[project.Name] = project
+	return project, nil
+}
+
 func (m *mockNamespaceProjectService) addProject(name string, spec rbac.ProjectSpec) *rbac.Project {
 	project := &rbac.Project{
 		ObjectMeta: metav1.ObjectMeta{Name: name},

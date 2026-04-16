@@ -11,7 +11,10 @@ import type {
   WebSocketMessage,
   InstanceUpdateData,
   RGDUpdateData,
+  DriftUpdateData,
   CountsUpdateData,
+  RevisionUpdateData,
+  ResourceEventData,
 } from "@/types/websocket";
 
 // Re-export ConnectionStatus for existing consumers
@@ -70,6 +73,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
   const pingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const subscriptionsRef = useRef<Set<string>>(new Set(initialSubscriptions));
   const isManualDisconnect = useRef(false);
+  const reconnectAttemptsRef = useRef(0);
 
   const queryClient = useQueryClient();
   const wsLogger = useMemo(() => createLogger("[WebSocket]"), []);
@@ -98,18 +102,32 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
             if (data.action === "delete") {
               // Remove specific instance from cache
               queryClient.removeQueries({
-                queryKey: ["instance", data.namespace, data.name],
+                queryKey: ["instance", data.namespace, data.kind, data.name],
               });
-            } else if (data.instance) {
-              // Update specific instance in cache
-              queryClient.setQueryData(
-                ["instance", data.namespace, data.name],
-                data.instance
-              );
+            } else {
+              // Invalidate to trigger a fresh HTTP GET (which includes drift enrichment)
+              // Do NOT use setQueryData here — watcher-built instances lack drift state
+              queryClient.invalidateQueries({
+                queryKey: ["instance", data.namespace, data.kind, data.name],
+              });
             }
 
             // Invalidate instance list to trigger refetch, but exclude count queries
             // (counts are pushed via WebSocket counts_update, not HTTP polling)
+            queryClient.invalidateQueries({
+              queryKey: ["instances"],
+              predicate: (query) => !query.queryKey.includes("count"),
+            });
+            break;
+          }
+
+          case "drift_update": {
+            const data = message.data as DriftUpdateData;
+            log("Drift update:", data.namespace, data.kind, data.name, "drifted:", data.drifted);
+            queryClient.invalidateQueries({
+              queryKey: ["instance", data.namespace, data.kind, data.name],
+            });
+            // Invalidate instance list so drift badges update on the list view
             queryClient.invalidateQueries({
               queryKey: ["instances"],
               predicate: (query) => !query.queryKey.includes("count"),
@@ -128,7 +146,16 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
               predicate: (query) => !query.queryKey.includes("count"),
             });
             if (data.name) {
-              queryClient.invalidateQueries({ queryKey: ["rgd", data.name] });
+              queryClient.invalidateQueries({
+                queryKey: ["rgd", data.name],
+                predicate: (query) => {
+                  const key = query.queryKey;
+                  // Don't invalidate immutable revision/diff queries
+                  if (key[2] === "revision") return false;
+                  if (key[2] === "revisions" && key[3] === "diff") return false;
+                  return true;
+                },
+              });
               queryClient.invalidateQueries({ queryKey: ["rgd-schema", data.name] });
             }
             break;
@@ -139,6 +166,38 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
             log("Counts update:", data.rgdCount, "RGDs,", data.instanceCount, "instances");
             queryClient.setQueryData(["rgds", "count"], { count: data.rgdCount });
             queryClient.setQueryData(["instances", "count"], { count: data.instanceCount });
+            break;
+          }
+
+          case "revision_update": {
+            const data = message.data as RevisionUpdateData;
+            log("Revision update:", data.rgdName, "rev", data.revision);
+            // Invalidate revision LIST only — individual revisions and diffs are immutable.
+            // exact: true prevents prefix-matching from also invalidating
+            // ["rgd", name, "revisions", "diff", r1, r2] queries.
+            queryClient.invalidateQueries({
+              queryKey: ["rgd", data.rgdName, "revisions"],
+              exact: true,
+            });
+            break;
+          }
+
+          case "resource_event": {
+            const data = message.data as ResourceEventData;
+            log("Resource event:", data.resourceKind, data.resourceName, data.status, data.message);
+            // Invalidate the Kubernetes events query for this instance
+            // The namespace is embedded in the instanceId (namespace/kind/name format)
+            // but we need the namespace from the resourceKind/resourceName lookup.
+            // For now, invalidate by namespace (extracted from instanceId if available)
+            if (data.instanceId) {
+              const parts = data.instanceId.split("/");
+              if (parts.length >= 3) {
+                const ns = parts[0];
+                queryClient.invalidateQueries({
+                  queryKey: ["instance-timeline", ns, data.resourceKind, data.resourceName, "kubernetes"],
+                });
+              }
+            }
             break;
           }
 
@@ -270,6 +329,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
         ws.onopen = () => {
           log("Connected");
           setStatus("connected");
+          reconnectAttemptsRef.current = 0;
           setReconnectAttempts(0);
           startPing();
 
@@ -293,16 +353,18 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
           stopPing();
           wsRef.current = null;
 
-          // Attempt reconnection if not manually disconnected
-          if (!isManualDisconnect.current && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-            const delay = getReconnectDelay(reconnectAttempts);
-            log(`Reconnecting in ${Math.round(delay / 1000)}s (attempt ${reconnectAttempts + 1})`);
+          // Use ref for reconnect count to avoid stale closure over state
+          const attempts = reconnectAttemptsRef.current;
+          if (!isManualDisconnect.current && attempts < MAX_RECONNECT_ATTEMPTS) {
+            const delay = getReconnectDelay(attempts);
+            log(`Reconnecting in ${Math.round(delay / 1000)}s (attempt ${attempts + 1})`);
 
             reconnectTimeoutRef.current = setTimeout(() => {
-              setReconnectAttempts((prev) => prev + 1);
+              reconnectAttemptsRef.current = attempts + 1;
+              setReconnectAttempts(attempts + 1);
               connect();
             }, delay);
-          } else if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+          } else if (attempts >= MAX_RECONNECT_ATTEMPTS) {
             setError("Max reconnection attempts reached");
           }
         };
@@ -313,15 +375,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
         setStatus("error");
         setError("Failed to authenticate WebSocket connection");
       });
-  }, [
-    handleMessage,
-    log,
-    sendMessage,
-    startPing,
-    stopPing,
-    getReconnectDelay,
-    reconnectAttempts,
-  ]);
+  }, [handleMessage, log, sendMessage, startPing, stopPing, getReconnectDelay]);
 
   // Disconnect from WebSocket server
   const disconnect = useCallback(() => {
@@ -340,6 +394,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
     }
 
     setStatus("disconnected");
+    reconnectAttemptsRef.current = 0;
     setReconnectAttempts(0);
   }, [stopPing]);
 

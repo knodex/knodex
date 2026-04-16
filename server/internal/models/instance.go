@@ -17,16 +17,21 @@ const (
 	DeploymentModeLabel = "knodex.io/deployment-mode"
 	// ProjectLabel identifies the project using namespace name (e.g., "acme"), not project ID (e.g., "proj-acme")
 	ProjectLabel = "knodex.io/project"
+	// ManagedByLabel identifies resources managed by Knodex
+	ManagedByLabel = "knodex.io/managed-by"
+	// ManagedByValue is the standard value for the ManagedByLabel
+	ManagedByValue = "knodex"
 	// RepositoryIDLabel tracks the repository used for GitOps
 	RepositoryIDLabel = "knodex.io/repository-id"
 
 	// Annotation keys for dashboard-specific metadata
-	AnnotationInstanceID  = "knodex.io/instance-id"
-	AnnotationCreatedBy   = "knodex.io/created-by"
-	AnnotationCreatedAt   = "knodex.io/created-at"
-	AnnotationProjectID   = "knodex.io/project-id"
-	AnnotationGeneratedAt = "knodex.io/generated-at"
-	AnnotationGeneratedBy = "knodex.io/generated-by"
+	AnnotationInstanceID    = "knodex.io/instance-id"
+	AnnotationCreatedBy     = "knodex.io/created-by"
+	AnnotationCreatedAt     = "knodex.io/created-at"
+	AnnotationProjectID     = "knodex.io/project-id"
+	AnnotationGeneratedAt   = "knodex.io/generated-at"
+	AnnotationGeneratedBy   = "knodex.io/generated-by"
+	AnnotationTargetCluster = "knodex.io/target-cluster"
 )
 
 // InstanceHealth represents the health status of an instance
@@ -38,7 +43,30 @@ const (
 	HealthUnhealthy   InstanceHealth = "Unhealthy"
 	HealthProgressing InstanceHealth = "Progressing"
 	HealthUnknown     InstanceHealth = "Unknown"
+	// HealthNone indicates the resource type has no health concept (e.g. ConfigMap,
+	// Secret, ServiceAccount). No health indicator should be shown in the UI.
+	HealthNone InstanceHealth = "None"
 )
+
+// CollectionStatus holds the aggregated runtime state of a forEach collection.
+// Populated by STORY-333 (Instance Tracker Collection Sync) via label queries.
+type CollectionStatus struct {
+	TotalCount int              `json:"totalCount"`
+	ReadyCount int              `json:"readyCount"`
+	Health     InstanceHealth   `json:"health"`
+	Disabled   bool             `json:"disabled,omitempty"`
+	Items      []CollectionItem `json:"items,omitempty"`
+}
+
+// CollectionItem represents a single expanded resource within a collection.
+type CollectionItem struct {
+	Name   string         `json:"name"`
+	Kind   string         `json:"kind"`
+	Status string         `json:"status"`
+	Phase  string         `json:"phase,omitempty"`
+	Health InstanceHealth `json:"health"`
+	Age    string         `json:"age,omitempty"`
+}
 
 // Instance represents a deployed instance of an RGD
 type Instance struct {
@@ -89,10 +117,23 @@ type Instance struct {
 	ProjectName string `json:"projectName,omitempty"`
 	// RGDStatus is the KRO status of the parent RGD (e.g., "Active", "Inactive")
 	RGDStatus string `json:"rgdStatus,omitempty"`
+	// RGDIcon is the icon slug from the parent RGD's knodex.io/icon annotation
+	RGDIcon string `json:"rgdIcon,omitempty"`
+	// RGDCategory is the category from the parent RGD's knodex.io/category annotation
+	RGDCategory string `json:"rgdCategory,omitempty"`
+	// TargetCluster is the child cluster where sub-resources are deployed (from knodex.io/target-cluster annotation)
+	TargetCluster string `json:"targetCluster,omitempty"`
+	// IsClusterScoped indicates this instance belongs to a cluster-scoped RGD (no namespace)
+	IsClusterScoped bool `json:"isClusterScoped,omitempty"`
+	// ReconciliationSuspended is true when kro.run/reconcile: suspended is set on the instance.
+	// KRO will not create or update child resources while this is true.
+	ReconciliationSuspended bool `json:"reconciliationSuspended,omitempty"`
 	// GitOpsDrift indicates the live spec doesn't match the desired spec pushed to Git
 	GitOpsDrift bool `json:"gitopsDrift,omitempty"`
 	// DesiredSpec is the spec that was pushed to Git (for drift comparison)
 	DesiredSpec map[string]interface{} `json:"desiredSpec,omitempty"`
+	// DriftedAt is when drift was first detected (from the Git push timestamp)
+	DriftedAt *time.Time `json:"driftedAt,omitempty"`
 }
 
 // InstanceCondition represents a status condition

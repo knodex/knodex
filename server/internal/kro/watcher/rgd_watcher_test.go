@@ -9,6 +9,8 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
+	krograph "github.com/kubernetes-sigs/kro/pkg/graph"
+
 	"github.com/knodex/knodex/server/internal/kro"
 	"github.com/knodex/knodex/server/internal/models"
 	"github.com/knodex/knodex/server/internal/testutil"
@@ -145,7 +147,6 @@ func TestRGDWatcher_UnstructuredToRGD(t *testing.T) {
 		kro.TagsAnnotation:        "database, postgres, aws",
 		kro.CategoryAnnotation:    "database",
 		kro.IconAnnotation:        "postgres-icon",
-		kro.VersionAnnotation:     "v2.0",
 	}
 
 	labels := map[string]string{
@@ -166,9 +167,6 @@ func TestRGDWatcher_UnstructuredToRGD(t *testing.T) {
 	}
 	if rgd.Description != "A test RGD for PostgreSQL" {
 		t.Errorf("expected description, got %q", rgd.Description)
-	}
-	if rgd.Version != "v2.0" {
-		t.Errorf("expected version 'v2.0', got %q", rgd.Version)
 	}
 	if rgd.Category != "database" {
 		t.Errorf("expected category 'database', got %q", rgd.Category)
@@ -299,6 +297,78 @@ func TestRGDWatcher_UnstructuredToRGD_PluralName(t *testing.T) {
 	})
 }
 
+func TestRGDWatcher_UnstructuredToRGD_IsClusterScoped(t *testing.T) {
+	fakeClient := testutil.NewFakeDynamicClient(t)
+	watcher := NewRGDWatcherWithClient(fakeClient)
+
+	t.Run("scope Cluster sets IsClusterScoped true", func(t *testing.T) {
+		u := testutil.NewUnstructuredRGD("tenant-rgd", "default",
+			testutil.WithAnnotations(map[string]string{kro.CatalogAnnotation: "true"}),
+			testutil.WithScope("Cluster"),
+		)
+		rgd := watcher.unstructuredToRGD(u)
+		if !rgd.IsClusterScoped {
+			t.Error("expected IsClusterScoped=true for scope=Cluster")
+		}
+	})
+
+	t.Run("scope Namespaced sets IsClusterScoped false", func(t *testing.T) {
+		u := testutil.NewUnstructuredRGD("webapp-rgd", "default",
+			testutil.WithAnnotations(map[string]string{kro.CatalogAnnotation: "true"}),
+			testutil.WithScope("Namespaced"),
+		)
+		rgd := watcher.unstructuredToRGD(u)
+		if rgd.IsClusterScoped {
+			t.Error("expected IsClusterScoped=false for scope=Namespaced")
+		}
+	})
+
+	t.Run("absent scope defaults to IsClusterScoped false", func(t *testing.T) {
+		u := testutil.NewUnstructuredRGD("simple-rgd", "default",
+			testutil.WithAnnotations(map[string]string{kro.CatalogAnnotation: "true"}),
+		)
+		rgd := watcher.unstructuredToRGD(u)
+		if rgd.IsClusterScoped {
+			t.Error("expected IsClusterScoped=false when scope field absent")
+		}
+	})
+
+	t.Run("scope and pluralName can coexist", func(t *testing.T) {
+		u := testutil.NewUnstructuredRGD("combined-rgd", "default",
+			testutil.WithAnnotations(map[string]string{kro.CatalogAnnotation: "true"}),
+			testutil.WithPluralName("tenants"),
+			testutil.WithScope("Cluster"),
+		)
+		rgd := watcher.unstructuredToRGD(u)
+		if !rgd.IsClusterScoped {
+			t.Error("expected IsClusterScoped=true")
+		}
+		if rgd.PluralName != "tenants" {
+			t.Errorf("expected PluralName 'tenants', got %q", rgd.PluralName)
+		}
+	})
+
+	// Only exact "Cluster" (case-sensitive) sets IsClusterScoped=true.
+	// Any other value — including lowercase, unknown strings, or empty — defaults to namespace-scoped.
+	for _, invalidScope := range []string{"cluster", "CLUSTER", "Unknown", ""} {
+		scope := invalidScope
+		label := scope
+		if label == "" {
+			label = "<empty>"
+		}
+		t.Run("non-Cluster scope value "+label+" defaults to false", func(t *testing.T) {
+			u := testutil.NewUnstructuredRGD("edge-rgd", "default",
+				testutil.WithAnnotations(map[string]string{kro.CatalogAnnotation: "true"}),
+				testutil.WithScope(scope),
+			)
+			rgd := watcher.unstructuredToRGD(u)
+			if rgd.IsClusterScoped {
+				t.Errorf("expected IsClusterScoped=false for scope=%q", scope)
+			}
+		})
+	}
+}
+
 func TestRGDWatcher_UnstructuredToRGD_TitleAnnotation(t *testing.T) {
 	fakeClient := testutil.NewFakeDynamicClient(t)
 	watcher := NewRGDWatcherWithClient(fakeClient)
@@ -350,23 +420,6 @@ func TestRGDWatcher_UnstructuredToRGD_TitleFallbackToName(t *testing.T) {
 
 	if rgd.Title != "redis-cache" {
 		t.Errorf("expected title to fall back to name 'redis-cache', got %q", rgd.Title)
-	}
-}
-
-func TestRGDWatcher_UnstructuredToRGD_DefaultVersion(t *testing.T) {
-	fakeClient := testutil.NewFakeDynamicClient(t)
-	watcher := NewRGDWatcherWithClient(fakeClient)
-
-	annotations := map[string]string{
-		kro.CatalogAnnotation: "true",
-		// No version annotation
-	}
-
-	u := createTestRGD("test-rgd", "default", annotations, nil)
-	rgd := watcher.unstructuredToRGD(u)
-
-	if rgd.Version != "v1" {
-		t.Errorf("expected default version 'v1', got %q", rgd.Version)
 	}
 }
 
@@ -1481,6 +1534,51 @@ func TestRGDWatcher_UnstructuredToRGD_StatusField(t *testing.T) {
 	}
 }
 
+func TestRGDWatcher_UnstructuredToRGD_LastIssuedRevision(t *testing.T) {
+	fakeClient := testutil.NewFakeDynamicClient(t)
+	watcher := NewRGDWatcherWithClient(fakeClient)
+
+	t.Run("extracts lastIssuedRevision from status", func(t *testing.T) {
+		u := testutil.NewUnstructuredRGD("test-rgd", "default",
+			testutil.WithAnnotations(map[string]string{kro.CatalogAnnotation: "true"}),
+			testutil.WithStatus("Active"),
+		)
+		// Inject status.lastIssuedRevision as int64 (Kubernetes unstructured stores integers as int64)
+		statusMap := u.Object["status"].(map[string]interface{})
+		statusMap["lastIssuedRevision"] = int64(5)
+
+		rgd := watcher.unstructuredToRGD(u)
+		if rgd.LastIssuedRevision != 5 {
+			t.Errorf("expected LastIssuedRevision=5, got %d", rgd.LastIssuedRevision)
+		}
+	})
+
+	t.Run("returns 0 when lastIssuedRevision is absent", func(t *testing.T) {
+		u := testutil.NewUnstructuredRGD("test-rgd", "default",
+			testutil.WithAnnotations(map[string]string{kro.CatalogAnnotation: "true"}),
+			testutil.WithStatus("Active"),
+		)
+		rgd := watcher.unstructuredToRGD(u)
+		if rgd.LastIssuedRevision != 0 {
+			t.Errorf("expected LastIssuedRevision=0 when field absent, got %d", rgd.LastIssuedRevision)
+		}
+	})
+
+	t.Run("handles float64 type from JSON unmarshaling", func(t *testing.T) {
+		u := testutil.NewUnstructuredRGD("test-rgd", "default",
+			testutil.WithAnnotations(map[string]string{kro.CatalogAnnotation: "true"}),
+			testutil.WithStatus("Active"),
+		)
+		statusMap := u.Object["status"].(map[string]interface{})
+		statusMap["lastIssuedRevision"] = float64(3)
+
+		rgd := watcher.unstructuredToRGD(u)
+		if rgd.LastIssuedRevision != 3 {
+			t.Errorf("expected LastIssuedRevision=3 from float64, got %d", rgd.LastIssuedRevision)
+		}
+	})
+}
+
 // TestRGDWatcher_GetRGDByKind tests the GetRGDByKind method used for cross-RGD resolution
 func TestRGDWatcher_GetRGDByKind(t *testing.T) {
 	cache := NewRGDCache()
@@ -1536,7 +1634,7 @@ func TestRGDWatcher_GetRGDByKind(t *testing.T) {
 }
 
 // TestExtractDependsOnKindsAndSecretRefs validates both return values of
-// extractDependsOnKindsAndSecretRefs. The sibling TestExtractDependsOnKinds
+// extractFallbackMetadata. The sibling TestExtractDependsOnKinds
 // only validated kinds; this test covers the secretRefs output (Task 4.2).
 func TestExtractDependsOnKindsAndSecretRefs(t *testing.T) {
 	tests := []struct {
@@ -1646,7 +1744,7 @@ func TestExtractDependsOnKindsAndSecretRefs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, secretRefs := extractDependsOnKindsAndSecretRefs(tt.rawSpec, "test-rgd")
+			_, _, secretRefs := extractFallbackMetadata(tt.rawSpec, "test-rgd")
 
 			if len(secretRefs) != tt.expectedSecretCount {
 				t.Fatalf("expected %d secretRefs, got %d: %+v", tt.expectedSecretCount, len(secretRefs), secretRefs)
@@ -1738,6 +1836,10 @@ func TestRGDWatcher_UnstructuredToRGD_SecretRefs(t *testing.T) {
 	if rgd == nil {
 		t.Fatal("expected non-nil CatalogRGD")
 	}
+
+	// buildAndCacheGraph populates DependsOnKinds and SecretRefs
+	// (builder is nil in tests, so fallback parser is used)
+	w.buildAndCacheGraph(u, rgd)
 
 	// Only the Secret externalRef should appear in SecretRefs, not the ConfigMap.
 	if len(rgd.SecretRefs) != 1 {
@@ -1881,7 +1983,7 @@ func TestExtractDependsOnKinds(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, _ := extractDependsOnKindsAndSecretRefs(tt.rawSpec, "test-rgd")
+			result, _, _ := extractFallbackMetadata(tt.rawSpec, "test-rgd")
 
 			if len(result) != len(tt.expected) {
 				t.Fatalf("expected %d kinds, got %d: %v", len(tt.expected), len(result), result)
@@ -1893,5 +1995,374 @@ func TestExtractDependsOnKinds(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestRGDWatcher_ShouldIncludeInCatalog_PackageFilter(t *testing.T) {
+	catalogAnnotations := map[string]string{kro.CatalogAnnotation: "true"}
+
+	newWatcher := func() *RGDWatcher {
+		return NewRGDWatcherWithClient(testutil.NewFakeDynamicClient(t))
+	}
+
+	t.Run("no filter set - all catalog RGDs included", func(t *testing.T) {
+		w := newWatcher()
+		rgd := createTestRGD("test-rgd", "default", catalogAnnotations, nil)
+		if !w.shouldIncludeInCatalog(rgd) {
+			t.Error("expected RGD to be included when no package filter is set")
+		}
+	})
+
+	t.Run("no filter set - RGD with package label included", func(t *testing.T) {
+		w := newWatcher()
+		labels := map[string]string{kro.RGDPackageLabel: "networking"}
+		rgd := createTestRGD("test-rgd", "default", catalogAnnotations, labels)
+		if !w.shouldIncludeInCatalog(rgd) {
+			t.Error("expected RGD with package label to be included when no filter is set")
+		}
+	})
+
+	t.Run("filter active - matching package included", func(t *testing.T) {
+		w := newWatcher()
+		w.SetPackageFilter([]string{"networking", "database"})
+		labels := map[string]string{kro.RGDPackageLabel: "networking"}
+		rgd := createTestRGD("test-rgd", "default", catalogAnnotations, labels)
+		if !w.shouldIncludeInCatalog(rgd) {
+			t.Error("expected RGD with matching package to be included")
+		}
+	})
+
+	t.Run("filter active - non-matching package excluded", func(t *testing.T) {
+		w := newWatcher()
+		w.SetPackageFilter([]string{"networking", "database"})
+		labels := map[string]string{kro.RGDPackageLabel: "monitoring"}
+		rgd := createTestRGD("test-rgd", "default", catalogAnnotations, labels)
+		if w.shouldIncludeInCatalog(rgd) {
+			t.Error("expected RGD with non-matching package to be excluded")
+		}
+	})
+
+	t.Run("filter active - missing package label excluded", func(t *testing.T) {
+		w := newWatcher()
+		w.SetPackageFilter([]string{"networking", "database"})
+		rgd := createTestRGD("test-rgd", "default", catalogAnnotations, nil)
+		if w.shouldIncludeInCatalog(rgd) {
+			t.Error("expected RGD without package label to be excluded when filter is active")
+		}
+	})
+
+	t.Run("filter active - empty package label excluded", func(t *testing.T) {
+		w := newWatcher()
+		w.SetPackageFilter([]string{"networking", "database"})
+		labels := map[string]string{kro.RGDPackageLabel: ""}
+		rgd := createTestRGD("test-rgd", "default", catalogAnnotations, labels)
+		if w.shouldIncludeInCatalog(rgd) {
+			t.Error("expected RGD with empty package label to be excluded when filter is active")
+		}
+	})
+
+	t.Run("filter active - catalog annotation still required", func(t *testing.T) {
+		w := newWatcher()
+		w.SetPackageFilter([]string{"networking"})
+		labels := map[string]string{kro.RGDPackageLabel: "networking"}
+		rgd := createTestRGD("test-rgd", "default", nil, labels)
+		if w.shouldIncludeInCatalog(rgd) {
+			t.Error("expected RGD without catalog annotation to be excluded even with matching package")
+		}
+	})
+
+	t.Run("filter active - case insensitive matching", func(t *testing.T) {
+		w := newWatcher()
+		w.SetPackageFilter([]string{"networking", "database"})
+		labels := map[string]string{kro.RGDPackageLabel: "Networking"}
+		rgd := createTestRGD("test-rgd", "default", catalogAnnotations, labels)
+		if !w.shouldIncludeInCatalog(rgd) {
+			t.Error("expected case-insensitive match for package label")
+		}
+	})
+
+	t.Run("filter cleared - all catalog RGDs included again", func(t *testing.T) {
+		w := newWatcher()
+		w.SetPackageFilter([]string{"networking"})
+		w.SetPackageFilter(nil)
+		rgd := createTestRGD("test-rgd", "default", catalogAnnotations, nil)
+		if !w.shouldIncludeInCatalog(rgd) {
+			t.Error("expected RGD to be included after filter is cleared")
+		}
+	})
+}
+
+func TestRGDWatcher_HandleAdd_PackageFilter(t *testing.T) {
+	catalogAnnotations := map[string]string{kro.CatalogAnnotation: "true"}
+
+	t.Run("filtered-out RGD not added to cache", func(t *testing.T) {
+		w := NewRGDWatcherWithCache(NewRGDCache())
+		w.SetPackageFilter([]string{"networking"})
+
+		labels := map[string]string{kro.RGDPackageLabel: "monitoring"}
+		rgd := createTestRGD("excluded-rgd", "default", catalogAnnotations, labels)
+		w.handleAdd(rgd)
+
+		if _, ok := w.cache.Get("default", "excluded-rgd"); ok {
+			t.Error("expected filtered-out RGD to not appear in cache after handleAdd")
+		}
+	})
+
+	t.Run("matching RGD added to cache", func(t *testing.T) {
+		w := NewRGDWatcherWithCache(NewRGDCache())
+		w.SetPackageFilter([]string{"networking"})
+
+		labels := map[string]string{kro.RGDPackageLabel: "networking"}
+		rgd := createTestRGD("included-rgd", "default", catalogAnnotations, labels)
+		w.handleAdd(rgd)
+
+		if _, ok := w.cache.Get("default", "included-rgd"); !ok {
+			t.Error("expected matching RGD to appear in cache after handleAdd")
+		}
+	})
+}
+
+func TestRGDWatcher_PackageLabelParsing(t *testing.T) {
+	fakeClient := testutil.NewFakeDynamicClient(t)
+	watcher := NewRGDWatcherWithClient(fakeClient)
+
+	tests := []struct {
+		name     string
+		labels   map[string]string
+		expected string
+	}{
+		{
+			name:     "package label present",
+			labels:   map[string]string{kro.RGDPackageLabel: "networking"},
+			expected: "networking",
+		},
+		{
+			name:     "package label absent",
+			labels:   nil,
+			expected: "",
+		},
+		{
+			name:     "package label empty",
+			labels:   map[string]string{kro.RGDPackageLabel: ""},
+			expected: "",
+		},
+		{
+			name:     "package label with whitespace trimmed",
+			labels:   map[string]string{kro.RGDPackageLabel: "  database  "},
+			expected: "database",
+		},
+		{
+			name:     "package label normalized to lowercase",
+			labels:   map[string]string{kro.RGDPackageLabel: "Networking"},
+			expected: "networking",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			annotations := map[string]string{kro.CatalogAnnotation: "true"}
+			u := createTestRGD("test-rgd", "default", annotations, tt.labels)
+			rgd := watcher.unstructuredToRGD(u)
+			if rgd.Package != tt.expected {
+				t.Errorf("expected Package %q, got %q", tt.expected, rgd.Package)
+			}
+		})
+	}
+}
+
+// makeTestNode creates a KRO graph node for testing extractGraphMetadata.
+func makeTestNode(id string, index int, apiVersion, kind string, nodeType krograph.NodeType) *krograph.Node {
+	obj := &unstructured.Unstructured{}
+	obj.SetKind(kind)
+	obj.SetAPIVersion(apiVersion)
+	return &krograph.Node{
+		Meta: krograph.NodeMeta{
+			ID:    id,
+			Index: index,
+			Type:  nodeType,
+		},
+		Template: obj,
+	}
+}
+
+func TestExtractGraphMetadata_ProducesKinds(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name            string
+		nodes           map[string]*krograph.Node
+		wantDepends     int
+		wantProduces    int
+		wantProduceKind string // first produced kind to verify
+	}{
+		{
+			name: "mixed node types: regular + collection + external",
+			nodes: map[string]*krograph.Node{
+				"deploy": makeTestNode("deploy", 0, "apps/v1", "Deployment", krograph.NodeTypeResource),
+				"svc":    makeTestNode("svc", 1, "v1", "Service", krograph.NodeTypeResource),
+				"pods":   makeTestNode("pods", 2, "v1", "Pod", krograph.NodeTypeCollection),
+				"secret": makeTestNode("secret", 3, "v1", "Secret", krograph.NodeTypeExternal),
+				"extcol": makeTestNode("extcol", 4, "v1", "ConfigMap", krograph.NodeTypeExternalCollection),
+			},
+			wantDepends:  2, // Secret + ConfigMap
+			wantProduces: 3, // Deployment + Service + Pod
+		},
+		{
+			name:         "nil graph returns nil",
+			nodes:        nil,
+			wantDepends:  0,
+			wantProduces: 0,
+		},
+		{
+			name: "only external nodes produce nothing",
+			nodes: map[string]*krograph.Node{
+				"ext1": makeTestNode("ext1", 0, "v1", "Secret", krograph.NodeTypeExternal),
+			},
+			wantDepends:  1,
+			wantProduces: 0,
+		},
+		{
+			name: "deduplicates by full GVK",
+			nodes: map[string]*krograph.Node{
+				"d1": makeTestNode("d1", 0, "apps/v1", "Deployment", krograph.NodeTypeResource),
+				"d2": makeTestNode("d2", 1, "apps/v1", "Deployment", krograph.NodeTypeResource),
+			},
+			wantDepends:  0,
+			wantProduces: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var g *krograph.Graph
+			if tt.nodes != nil {
+				g = &krograph.Graph{Nodes: tt.nodes}
+			}
+
+			depends, produces, _ := extractGraphMetadata(g, nil)
+
+			if len(depends) != tt.wantDepends {
+				t.Errorf("DependsOnKinds: got %d, want %d: %v", len(depends), tt.wantDepends, depends)
+			}
+			if len(produces) != tt.wantProduces {
+				t.Errorf("ProducesKinds: got %d, want %d: %v", len(produces), tt.wantProduces, produces)
+			}
+		})
+	}
+}
+
+func TestExtractGraphMetadata_GVKParsing(t *testing.T) {
+	t.Parallel()
+
+	g := &krograph.Graph{
+		Nodes: map[string]*krograph.Node{
+			"mc": makeTestNode("mc", 0, "containerservice.azure.com/v1api20231001", "ManagedCluster", krograph.NodeTypeResource),
+			"cm": makeTestNode("cm", 1, "v1", "ConfigMap", krograph.NodeTypeResource),
+		},
+	}
+
+	_, produces, _ := extractGraphMetadata(g, nil)
+
+	if len(produces) != 2 {
+		t.Fatalf("expected 2 ProducesKinds, got %d", len(produces))
+	}
+
+	// Find ManagedCluster
+	var mc *models.GVKRef
+	for i := range produces {
+		if produces[i].Kind == "ManagedCluster" {
+			mc = &produces[i]
+			break
+		}
+	}
+	if mc == nil {
+		t.Fatal("ManagedCluster not found in ProducesKinds")
+	}
+	if mc.Group != "containerservice.azure.com" {
+		t.Errorf("ManagedCluster.Group = %q, want %q", mc.Group, "containerservice.azure.com")
+	}
+	if mc.Version != "v1api20231001" {
+		t.Errorf("ManagedCluster.Version = %q, want %q", mc.Version, "v1api20231001")
+	}
+
+	// Find ConfigMap (core API — no group)
+	var cm *models.GVKRef
+	for i := range produces {
+		if produces[i].Kind == "ConfigMap" {
+			cm = &produces[i]
+			break
+		}
+	}
+	if cm == nil {
+		t.Fatal("ConfigMap not found in ProducesKinds")
+	}
+	if cm.Group != "" {
+		t.Errorf("ConfigMap.Group = %q, want empty", cm.Group)
+	}
+	if cm.Version != "v1" {
+		t.Errorf("ConfigMap.Version = %q, want %q", cm.Version, "v1")
+	}
+}
+
+func TestExtractFallbackMetadata_ProducesKinds(t *testing.T) {
+	t.Parallel()
+
+	rawSpec := map[string]interface{}{
+		"resources": []interface{}{
+			// Template resource — should be in ProducesKinds
+			map[string]interface{}{
+				"template": map[string]interface{}{
+					"apiVersion": "apps/v1",
+					"kind":       "Deployment",
+					"metadata": map[string]interface{}{
+						"name": "my-deploy",
+					},
+				},
+			},
+			// ExternalRef — should NOT be in ProducesKinds, should be in DependsOnKinds
+			map[string]interface{}{
+				"externalRef": map[string]interface{}{
+					"apiVersion": "v1",
+					"kind":       "Secret",
+					"metadata": map[string]interface{}{
+						"name": "${spec.secretName}",
+					},
+				},
+			},
+			// Template resource — should be in ProducesKinds
+			map[string]interface{}{
+				"template": map[string]interface{}{
+					"apiVersion": "v1",
+					"kind":       "Service",
+					"metadata": map[string]interface{}{
+						"name": "my-svc",
+					},
+				},
+			},
+		},
+	}
+
+	depends, produces, _ := extractFallbackMetadata(rawSpec, "test-rgd")
+
+	if len(depends) != 1 {
+		t.Fatalf("expected 1 DependsOnKinds, got %d: %v", len(depends), depends)
+	}
+	if depends[0] != "Secret" {
+		t.Errorf("DependsOnKinds[0] = %q, want %q", depends[0], "Secret")
+	}
+
+	if len(produces) != 2 {
+		t.Fatalf("expected 2 ProducesKinds, got %d: %v", len(produces), produces)
+	}
+
+	kinds := map[string]bool{}
+	for _, gvk := range produces {
+		kinds[gvk.Kind] = true
+	}
+	if !kinds["Deployment"] {
+		t.Error("expected Deployment in ProducesKinds")
+	}
+	if !kinds["Service"] {
+		t.Error("expected Service in ProducesKinds")
 	}
 }

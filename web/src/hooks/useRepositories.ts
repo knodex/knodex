@@ -10,6 +10,7 @@ import {
   deleteRepository,
 } from "@/api/repository";
 import type { CreateRepositoryRequest, UpdateRepositoryRequest } from "@/types/repository";
+import { STALE_TIME } from "@/lib/query-client";
 
 /**
  * Hook for fetching repositories list, optionally filtered by project
@@ -18,7 +19,7 @@ export function useRepositories(projectId?: string) {
   return useQuery({
     queryKey: ["repositories", projectId ?? "all"],
     queryFn: () => listRepositories(projectId),
-    staleTime: 5 * 60 * 1000, // 5 minutes - repositories don't change often
+    staleTime: STALE_TIME.STATIC, // repositories don't change often
   });
 }
 
@@ -30,7 +31,7 @@ export function useRepository(id: string) {
     queryKey: ["repository", id],
     queryFn: () => getRepository(id),
     enabled: !!id,
-    staleTime: 5 * 60 * 1000,
+    staleTime: STALE_TIME.STATIC,
   });
 }
 

@@ -1,0 +1,29 @@
+{{- if .Values.dex.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "knodex.fullname" . }}-dex-server
+  labels:
+    {{- include "knodex.dex.labels" . | nindent 4 }}
+  {{- with .Values.dex.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.dex.service.type | default "ClusterIP" }}
+  ports:
+    - name: http
+      port: {{ .Values.dex.service.httpPort | default 5556 }}
+      targetPort: http
+      protocol: TCP
+    - name: grpc
+      port: {{ .Values.dex.service.grpcPort | default 5557 }}
+      targetPort: grpc
+      protocol: TCP
+    - name: metrics
+      port: {{ .Values.dex.service.metricsPort | default 5558 }}
+      targetPort: metrics
+      protocol: TCP
+  selector:
+    {{- include "knodex.dex.selectorLabels" . | nindent 4 }}
+{{- end }}

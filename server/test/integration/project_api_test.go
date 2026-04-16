@@ -500,3 +500,97 @@ func TestProjectAPI_DeleteProject_NotFound(t *testing.T) {
 
 	ts.AssertStatus(resp, http.StatusNotFound)
 }
+
+// TestProjectAPI_CreateProject_WithRoleDestinations tests creating a project
+// where roles have destinations (namespace-scoped policies via roles[].destinations).
+// Verifies the full API round-trip: destinations on roles are persisted and returned.
+func TestProjectAPI_CreateProject_WithRoleDestinations(t *testing.T) {
+	ts := NewTestServer(t)
+	defer ts.Close()
+
+	adminToken := ts.AddGlobalAdmin(GlobalAdminID, GlobalAdminEmail)
+
+	reqBody := map[string]interface{}{
+		"name":        "role-dest-project",
+		"description": "Project with role-scoped destinations",
+		"destinations": []map[string]interface{}{
+			{"namespace": "prod-platform"},
+			{"namespace": "prod-app"},
+			{"namespace": "prod-shared"},
+		},
+		"roles": []map[string]interface{}{
+			{
+				"name":         "platform-operator",
+				"description":  "Operator scoped to platform namespace",
+				"policies":     []string{"instances/*, *, allow", "secrets/*, *, allow"},
+				"groups":       []string{"platform-engineers"},
+				"destinations": []string{"prod-platform"},
+			},
+			{
+				"name":         "app-developer",
+				"description":  "Developer scoped to app namespace",
+				"policies":     []string{"instances/*, *, allow"},
+				"groups":       []string{"app-devs"},
+				"destinations": []string{"prod-app"},
+			},
+			{
+				"name":     "shared-reader",
+				"policies": []string{"secrets/*, get, allow"},
+				"groups":   []string{"app-devs"},
+				// destinations: ["prod-shared"] — scoped to shared namespace only
+				"destinations": []string{"prod-shared"},
+			},
+		},
+	}
+
+	resp, err := ts.Request(http.MethodPost, "/api/v1/projects", reqBody, adminToken)
+	if err != nil {
+		t.Fatalf("failed to make request: %v", err)
+	}
+	ts.AssertStatus(resp, http.StatusCreated)
+
+	project, err := DecodeJSON[ProjectResponse](resp)
+	if err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if project.Name != "role-dest-project" {
+		t.Errorf("expected project name 'role-dest-project', got '%s'", project.Name)
+	}
+	if len(project.Destinations) != 3 {
+		t.Errorf("expected 3 destinations, got %d", len(project.Destinations))
+	}
+	if len(project.Roles) != 3 {
+		t.Fatalf("expected 3 roles, got %d", len(project.Roles))
+	}
+
+	// Verify role destinations are persisted and returned correctly
+	rolesByName := make(map[string]RoleResponse)
+	for _, r := range project.Roles {
+		rolesByName[r.Name] = r
+	}
+
+	platformOp, ok := rolesByName["platform-operator"]
+	if !ok {
+		t.Fatal("expected role 'platform-operator' in response")
+	}
+	if len(platformOp.Destinations) != 1 || platformOp.Destinations[0] != "prod-platform" {
+		t.Errorf("platform-operator: expected destinations [prod-platform], got %v", platformOp.Destinations)
+	}
+
+	appDev, ok := rolesByName["app-developer"]
+	if !ok {
+		t.Fatal("expected role 'app-developer' in response")
+	}
+	if len(appDev.Destinations) != 1 || appDev.Destinations[0] != "prod-app" {
+		t.Errorf("app-developer: expected destinations [prod-app], got %v", appDev.Destinations)
+	}
+
+	sharedReader, ok := rolesByName["shared-reader"]
+	if !ok {
+		t.Fatal("expected role 'shared-reader' in response")
+	}
+	if len(sharedReader.Destinations) != 1 || sharedReader.Destinations[0] != "prod-shared" {
+		t.Errorf("shared-reader: expected destinations [prod-shared], got %v", sharedReader.Destinations)
+	}
+}

@@ -10,36 +10,6 @@ import (
 	"testing"
 )
 
-func TestMethodNotAllowed(t *testing.T) {
-	t.Parallel()
-
-	w := httptest.NewRecorder()
-
-	MethodNotAllowed(w, "method not allowed")
-
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected status %d, got %d", http.StatusMethodNotAllowed, w.Code)
-	}
-
-	contentType := w.Header().Get("Content-Type")
-	if contentType != "application/json" {
-		t.Errorf("expected Content-Type application/json, got %s", contentType)
-	}
-
-	var resp ErrorResponse
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-
-	if resp.Code != ErrCodeMethodNotAllowed {
-		t.Errorf("expected code %s, got %s", ErrCodeMethodNotAllowed, resp.Code)
-	}
-
-	if resp.Message != "method not allowed" {
-		t.Errorf("expected message 'method not allowed', got '%s'", resp.Message)
-	}
-}
-
 func TestUnauthorized(t *testing.T) {
 	t.Parallel()
 
@@ -108,6 +78,44 @@ func TestNotFound(t *testing.T) {
 
 	if resp.Details["resource"] != "dashboard" {
 		t.Errorf("expected resource 'dashboard', got '%s'", resp.Details["resource"])
+	}
+}
+
+func TestConflict(t *testing.T) {
+	t.Parallel()
+
+	w := httptest.NewRecorder()
+
+	Conflict(w, "secret", "my-secret")
+
+	if w.Code != http.StatusConflict {
+		t.Errorf("expected status %d, got %d", http.StatusConflict, w.Code)
+	}
+
+	contentType := w.Header().Get("Content-Type")
+	if contentType != "application/json" {
+		t.Errorf("expected Content-Type application/json, got %s", contentType)
+	}
+
+	var resp ErrorResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if resp.Code != ErrCodeConflict {
+		t.Errorf("expected code %s, got %s", ErrCodeConflict, resp.Code)
+	}
+
+	if resp.Message != "secret already exists: my-secret" {
+		t.Errorf("expected message 'secret already exists: my-secret', got '%s'", resp.Message)
+	}
+
+	if resp.Details["resource"] != "secret" {
+		t.Errorf("expected resource 'secret', got '%s'", resp.Details["resource"])
+	}
+
+	if resp.Details["identifier"] != "my-secret" {
+		t.Errorf("expected identifier 'my-secret', got '%s'", resp.Details["identifier"])
 	}
 }
 
@@ -338,6 +346,48 @@ func TestWriteError_DoesNotSetNoCacheHeaders(t *testing.T) {
 	WriteError(w, http.StatusNotFound, ErrCodeNotFound, "not found", nil)
 
 	assertNoNoCacheHeaders(t, w)
+}
+
+func TestWriteError_RequestIDPopulated(t *testing.T) {
+	t.Parallel()
+
+	w := httptest.NewRecorder()
+	// Simulate RequestID middleware setting the header on the response
+	w.Header().Set("X-Request-ID", "req-abc-123")
+
+	WriteError(w, http.StatusBadRequest, ErrCodeBadRequest, "bad input", nil)
+
+	var resp ErrorResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if resp.RequestID != "req-abc-123" {
+		t.Errorf("request_id = %q, want %q", resp.RequestID, "req-abc-123")
+	}
+}
+
+func TestWriteError_RequestIDOmittedWhenEmpty(t *testing.T) {
+	t.Parallel()
+
+	w := httptest.NewRecorder()
+	// No X-Request-ID header set
+
+	WriteError(w, http.StatusNotFound, ErrCodeNotFound, "not found", nil)
+
+	// Verify raw JSON does not contain request_id key (omitempty)
+	body := w.Body.String()
+	if contains := json.Valid([]byte(body)); !contains {
+		t.Fatalf("response is not valid JSON: %s", body)
+	}
+
+	var raw map[string]interface{}
+	if err := json.Unmarshal([]byte(body), &raw); err != nil {
+		t.Fatalf("failed to unmarshal raw response: %v", err)
+	}
+	if _, exists := raw["request_id"]; exists {
+		t.Error("request_id should be omitted when empty, but was present in JSON")
+	}
 }
 
 func TestWriteError_HTMLEncodesMessage(t *testing.T) {

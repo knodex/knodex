@@ -19,6 +19,7 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/knodex/knodex/server/internal/netutil"
+	utilretry "github.com/knodex/knodex/server/internal/util/retry"
 )
 
 const (
@@ -27,6 +28,9 @@ const (
 	// DefaultGitLabTimeout for GitLab API requests
 	DefaultGitLabTimeout = 30 * time.Second
 )
+
+// Compile-time interface compliance check
+var _ Client = (*GitLabClient)(nil)
 
 // GitLabClient provides methods for interacting with GitLab API
 // It implements the Client interface defined in interface.go
@@ -232,7 +236,7 @@ func (c *GitLabClient) GetRepository(ctx context.Context) (*RepositoryInfo, erro
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxVCSResponseSize))
 		return nil, parseGitLabError(resp.StatusCode, body)
 	}
 
@@ -277,7 +281,7 @@ func (c *GitLabClient) GetFileContent(ctx context.Context, path, branch string) 
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxVCSResponseSize))
 		return nil, parseGitLabError(resp.StatusCode, body)
 	}
 
@@ -366,7 +370,7 @@ func (c *GitLabClient) CommitFile(ctx context.Context, req *CommitFileRequest) (
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxVCSResponseSize))
 		return nil, parseGitLabError(resp.StatusCode, body)
 	}
 
@@ -417,7 +421,7 @@ func (c *GitLabClient) getLatestCommitSHA(ctx context.Context, branch string) (s
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxVCSResponseSize))
 		return "", parseGitLabError(resp.StatusCode, body)
 	}
 
@@ -501,7 +505,7 @@ func (c *GitLabClient) CommitMultipleFiles(ctx context.Context, req *CommitMulti
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxVCSResponseSize))
 		return nil, parseGitLabError(resp.StatusCode, body)
 	}
 
@@ -557,6 +561,40 @@ func (c *GitLabClient) CommitWithIdempotency(ctx context.Context, req *CommitFil
 	return result, false, nil
 }
 
+// CommitMultipleWithIdempotency commits multiple files with idempotency checking.
+// Returns (result, skipped, error) where skipped=true if all files are already identical.
+func (c *GitLabClient) CommitMultipleWithIdempotency(ctx context.Context, req *CommitMultipleFilesRequest) (*CommitResult, bool, error) {
+	if len(req.Files) == 0 {
+		return nil, false, fmt.Errorf("no files to commit")
+	}
+	if req.Message == "" {
+		return nil, false, fmt.Errorf("commit message cannot be empty")
+	}
+
+	// Check if all files already exist with same content
+	allIdentical := true
+	for path, content := range req.Files {
+		existing, err := c.GetFileContent(ctx, path, req.Branch)
+		if err != nil || existing == nil {
+			allIdentical = false
+			break
+		}
+		if existing.Content != content {
+			allIdentical = false
+			break
+		}
+	}
+
+	if allIdentical {
+		return &CommitResult{
+			Message: "skipped: all files identical",
+		}, true, nil
+	}
+
+	result, err := c.CommitMultipleFiles(ctx, req)
+	return result, false, err
+}
+
 // DeleteFile deletes a file from the repository
 func (c *GitLabClient) DeleteFile(ctx context.Context, path, branch, message string) error {
 	if path == "" {
@@ -602,7 +640,7 @@ func (c *GitLabClient) DeleteFile(ctx context.Context, path, branch, message str
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxVCSResponseSize))
 		return parseGitLabError(resp.StatusCode, body)
 	}
 
@@ -627,14 +665,13 @@ func (c *GitLabClient) GetRateLimitState() (remaining, limit int, resetTime time
 	return c.rateLimit.Remaining, c.rateLimit.Limit, c.rateLimit.Reset
 }
 
-// doWithRetry executes an HTTP request with retry logic and rate limit tracking
+// doWithRetry executes an HTTP request with retry logic and rate limit tracking.
+// Uses util/retry.DoWithResult for exponential backoff with ±25% jitter (prevents thundering herd).
 func (c *GitLabClient) doWithRetry(ctx context.Context, req *http.Request) (*http.Response, error) {
 	// Check rate limit before making request
 	if err := c.checkRateLimit(); err != nil {
 		return nil, err
 	}
-
-	var lastErr error
 
 	// Capture request body for retries (body can only be read once)
 	var bodyBytes []byte
@@ -647,14 +684,13 @@ func (c *GitLabClient) doWithRetry(ctx context.Context, req *http.Request) (*htt
 		}
 	}
 
-	for attempt := 0; attempt < c.retryConfig.MaxAttempts; attempt++ {
-		// Context cancellation stops retry loop immediately
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
-		}
+	retryConf := utilretry.RetryConfig{
+		MaxAttempts: c.retryConfig.MaxAttempts,
+		BaseDelay:   c.retryConfig.BaseDelay,
+		MaxDelay:    c.retryConfig.MaxDelay,
+	}
 
+	return utilretry.DoWithResult(ctx, retryConf, func() (*http.Response, error) {
 		// Clone request and restore body for each attempt
 		reqClone := req.Clone(ctx)
 		if bodyBytes != nil {
@@ -664,13 +700,10 @@ func (c *GitLabClient) doWithRetry(ctx context.Context, req *http.Request) (*htt
 
 		resp, err := c.httpClient.Do(reqClone)
 		if err != nil {
-			lastErr = err
-			// Check if error is retryable (network errors, timeouts)
 			if !isRetryableError(err) {
-				return nil, err
+				return nil, utilretry.Permanent(err)
 			}
-			c.waitBeforeRetry(ctx, attempt)
-			continue
+			return nil, err
 		}
 
 		// Update rate limit state from headers
@@ -678,42 +711,22 @@ func (c *GitLabClient) doWithRetry(ctx context.Context, req *http.Request) (*htt
 
 		// Retry on 5xx server errors
 		if resp.StatusCode >= 500 {
-			body, _ := io.ReadAll(resp.Body)
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, maxVCSResponseSize))
 			resp.Body.Close()
-			lastErr = fmt.Errorf("server error: %d, body: %s", resp.StatusCode, truncateBody(body))
-			c.waitBeforeRetry(ctx, attempt)
-			continue
+			return nil, fmt.Errorf("server error: %d, body: %s", resp.StatusCode, truncateBody(body))
 		}
 
-		// Retry on 429 (Too Many Requests)
+		// Retry on 429 (Too Many Requests) — wait for Retry-After, then retry
 		if resp.StatusCode == http.StatusTooManyRequests {
 			retryAfter := parseRetryAfter(resp.Header.Get("Retry-After"))
 			resp.Body.Close()
-			lastErr = fmt.Errorf("rate limited: retry after %s", retryAfter)
 			c.waitForRateLimit(ctx, retryAfter)
-			continue
+			return nil, fmt.Errorf("rate limited: retry after %s", retryAfter)
 		}
 
 		// Success or non-retryable client error
 		return resp, nil
-	}
-
-	return nil, fmt.Errorf("max retries exceeded (%d attempts): %w", c.retryConfig.MaxAttempts, lastErr)
-}
-
-// waitBeforeRetry waits with exponential backoff before the next retry attempt
-func (c *GitLabClient) waitBeforeRetry(ctx context.Context, attempt int) {
-	delay := c.retryConfig.BaseDelay * time.Duration(1<<uint(attempt))
-	if delay > c.retryConfig.MaxDelay {
-		delay = c.retryConfig.MaxDelay
-	}
-
-	select {
-	case <-ctx.Done():
-		return
-	case <-time.After(delay):
-		return
-	}
+	})
 }
 
 // waitForRateLimit waits for the rate limit to reset

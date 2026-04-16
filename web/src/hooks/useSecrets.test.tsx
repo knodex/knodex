@@ -4,7 +4,7 @@
 import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AxiosError, AxiosHeaders } from "axios";
-import { useSecretList, useSecret, useSecretExists } from "./useSecrets";
+import { useSecretList, useSecretExists } from "./useSecrets";
 import * as secretsApi from "@/api/secrets";
 import type { ReactNode } from "react";
 
@@ -33,7 +33,7 @@ describe("useSecrets hooks", () => {
 
   describe("useSecretList", () => {
     it("fetches secrets list when project provided", async () => {
-      const mockResponse = { items: [], totalCount: 0, hasMore: false };
+      const mockResponse = { items: [], pageCount: 0, hasMore: false };
       vi.mocked(secretsApi.listSecrets).mockResolvedValue(mockResponse);
 
       const { result } = renderHook(() => useSecretList("my-project"), {
@@ -56,41 +56,6 @@ describe("useSecrets hooks", () => {
 
       expect(result.current.fetchStatus).toBe("idle");
       expect(secretsApi.listSecrets).not.toHaveBeenCalled();
-    });
-  });
-
-  describe("useSecret", () => {
-    it("fetches secret when all params provided", async () => {
-      const mockSecret = {
-        name: "my-secret",
-        namespace: "default",
-        data: { key: "value" },
-        createdAt: "2026-01-01T00:00:00Z",
-      };
-      vi.mocked(secretsApi.getSecret).mockResolvedValue(mockSecret);
-
-      const { result } = renderHook(
-        () => useSecret("my-secret", "my-project", "default"),
-        { wrapper: createWrapper() }
-      );
-
-      await waitFor(() => {
-        expect(result.current.isSuccess).toBe(true);
-      });
-
-      expect(secretsApi.getSecret).toHaveBeenCalledWith("my-secret", "my-project", "default");
-    });
-
-    it("does NOT fetch when any required param is empty", async () => {
-      const { result } = renderHook(
-        () => useSecret("", "my-project", "default"),
-        { wrapper: createWrapper() }
-      );
-
-      await new Promise(resolve => setTimeout(resolve, 100));
-
-      expect(result.current.fetchStatus).toBe("idle");
-      expect(secretsApi.getSecret).not.toHaveBeenCalled();
     });
   });
 

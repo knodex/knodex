@@ -34,6 +34,10 @@ var (
 	// Max 253 characters, each label matches DNS1123LabelRegex.
 	DNS1123SubdomainRegex = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`)
 
+	// K8sKindRegex matches a valid Kubernetes Kind name (CamelCase identifier).
+	// Must start with an uppercase letter, followed by alphanumeric characters. Max 63 characters.
+	K8sKindRegex = regexp.MustCompile(`^[A-Z][a-zA-Z0-9]*$`)
+
 	// globReplacer escapes glob wildcard characters.
 	globReplacer = strings.NewReplacer(
 		"*", `\*`,
@@ -168,4 +172,10 @@ func IsValidDNS1123Label(s string) bool {
 // A valid subdomain is 1-253 characters, each segment is a valid DNS-1123 label.
 func IsValidDNS1123Subdomain(s string) bool {
 	return len(s) > 0 && len(s) <= 253 && DNS1123SubdomainRegex.MatchString(s)
+}
+
+// IsValidK8sKind checks whether s is a valid Kubernetes Kind name.
+// Kind names are CamelCase identifiers starting with an uppercase letter, max 63 characters.
+func IsValidK8sKind(s string) bool {
+	return len(s) > 0 && len(s) <= 63 && K8sKindRegex.MatchString(s)
 }

@@ -134,6 +134,32 @@ func loadBuiltinPoliciesLocked(e *casbin.Enforcer) error {
 		}
 	}
 
+	// ========================================
+	// OPERATOR - category-scoped RGD access
+	// ========================================
+	for _, policyStr := range getBuiltInOperatorPolicies() {
+		parts := strings.SplitN(policyStr, ",", 3)
+		if len(parts) != 3 {
+			return fmt.Errorf("invalid operator policy format: %q", policyStr)
+		}
+		if _, err := e.AddPolicy("role:operator", strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), strings.TrimSpace(parts[2])); err != nil {
+			return fmt.Errorf("failed to add operator policy %q: %w", policyStr, err)
+		}
+	}
+
+	// ========================================
+	// DEVELOPER - category-scoped RGD access
+	// ========================================
+	for _, policyStr := range getBuiltInDeveloperPolicies() {
+		parts := strings.SplitN(policyStr, ",", 3)
+		if len(parts) != 3 {
+			return fmt.Errorf("invalid developer policy format: %q", policyStr)
+		}
+		if _, err := e.AddPolicy("role:developer", strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), strings.TrimSpace(parts[2])); err != nil {
+			return fmt.Errorf("failed to add developer policy %q: %w", policyStr, err)
+		}
+	}
+
 	return nil
 }
 
@@ -397,6 +423,56 @@ func FormatObjectUnsafe(resourceType, resourceName string) string {
 		return resourceType + "/*"
 	}
 	return resourceType + "/" + resourceName
+}
+
+// DefaultRGDCategory is used when an RGD has no category annotation.
+// This ensures authorization paths are always well-formed: rgds/{category}/{name}.
+const DefaultRGDCategory = "uncategorized"
+
+// FormatRGDObject creates a three-segment object string for RGD policy matching:
+// rgds/{category}/{name}. If category is empty, it defaults to "uncategorized".
+// Returns an error if the resource name contains invalid characters.
+//
+// Category normalization: '/' characters are replaced with '-' to guarantee a
+// 3-segment path. Without this, a category like "infra/networking" would produce
+// "rgds/infra/networking/my-rgd" (4 segments). With Casbin's keyMatch, a policy
+// "rgds/infra/*" would then inadvertently match both intended "rgds/infra/my-rgd"
+// and unexpected "rgds/infra/networking/my-rgd", broadening access beyond intent.
+func FormatRGDObject(category, name string) (string, error) {
+	if category == "" {
+		category = DefaultRGDCategory
+	}
+
+	if len(category) > MaxResourceNameLength {
+		return "", fmt.Errorf("category exceeds maximum length of %d", MaxResourceNameLength)
+	}
+
+	// Sanitize: escape glob chars, then replace '/' to ensure a single path segment.
+	sanitizeCategory := func(c string) string {
+		return strings.ReplaceAll(sanitize.GlobCharacters(c), "/", "-")
+	}
+
+	if name == "" || name == "*" {
+		return ResourceRGDs + "/" + sanitizeCategory(category) + "/*", nil
+	}
+
+	if len(name) > MaxResourceNameLength {
+		return "", fmt.Errorf("resource name exceeds maximum length of %d", MaxResourceNameLength)
+	}
+
+	return ResourceRGDs + "/" + sanitizeCategory(category) + "/" + sanitize.GlobCharacters(name), nil
+}
+
+// FormatRGDObjectUnsafe creates a three-segment RGD object string without sanitization.
+// WARNING: Only use this for trusted/validated input (e.g., built-in policies).
+func FormatRGDObjectUnsafe(category, name string) string {
+	if category == "" {
+		category = DefaultRGDCategory
+	}
+	if name == "" || name == "*" {
+		return ResourceRGDs + "/" + category + "/*"
+	}
+	return ResourceRGDs + "/" + category + "/" + name
 }
 
 // FormatProjectRole creates a project-specific role name

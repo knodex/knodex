@@ -24,7 +24,7 @@ describe("ResultBadge", () => {
     render(<ResultBadge result="error" />);
     const badge = screen.getByText("error");
     expect(badge).toBeInTheDocument();
-    expect(badge.className).toContain("bg-yellow-100");
+    expect(badge.className).toContain("bg-amber-100");
   });
 
   it("renders unknown result without color class", () => {

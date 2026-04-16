@@ -4,8 +4,9 @@
 import { useCallback, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { AlertTriangle, Loader2 } from "lucide-react";
+import { AlertTriangle, Loader2 } from "@/lib/icons";
 import { useDeleteSecret } from "@/hooks/useSecrets";
+import { useCurrentProject } from "@/hooks/useAuth";
 import { ApiError } from "@/api/client";
 import {
   AlertDialog,
@@ -23,7 +24,6 @@ interface DeleteSecretDialogProps {
   onOpenChange: (open: boolean) => void;
   secretName: string;
   secretNamespace: string;
-  project: string;
   /** If true, navigate to /secrets after deletion. Default true (detail view behavior). */
   navigateOnDelete?: boolean;
 }
@@ -33,9 +33,9 @@ export function DeleteSecretDialog({
   onOpenChange,
   secretName,
   secretNamespace,
-  project,
   navigateOnDelete = true,
 }: DeleteSecretDialogProps) {
+  const project = useCurrentProject() ?? "";
   const navigate = useNavigate();
   const deleteMutation = useDeleteSecret();
   const [postDeleteWarnings, setPostDeleteWarnings] = useState<string[]>([]);
@@ -50,7 +50,7 @@ export function DeleteSecretDialog({
     [onOpenChange, deleteMutation.isPending]
   );
 
-  const secretsListUrl = `/secrets?project=${encodeURIComponent(project)}`;
+  const secretsListUrl = `/secrets`;
 
   const handleDelete = useCallback(async () => {
     try {

@@ -1354,60 +1354,66 @@ func TestCollectSchemaRefs_Fallback(t *testing.T) {
 
 // TestExtractExpressionsFromValue tests the helper that wraps KRO's parser
 // for single-string expression extraction.
+//
+// NOTE: In KRO v0.9.0, string templates like "prefix-${a}-${b}" are compiled
+// into a single CEL concatenation expression at parse time, e.g.,
+// '"prefix-" + (a) + "-" + (b)'. This means extractExpressionsFromValue
+// returns one expression for templates rather than individual expressions.
+// Downstream consumers use extractBareSchemaFields (substring matching)
+// which handles both forms correctly.
 func TestExtractExpressionsFromValue(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  []string
-	}{
-		{
-			name:  "simple expression",
-			input: "${schema.spec.name}",
-			want:  []string{"schema.spec.name"},
-		},
-		{
-			name:  "no expression",
-			input: "static-value",
-			want:  nil,
-		},
-		{
-			name:  "expression with string literal containing brace",
-			input: `${schema.spec.name + "}"}`,
-			want:  []string{`schema.spec.name + "}"`},
-		},
-		{
-			name:  "embedded expression",
-			input: "prefix-${schema.spec.name}-suffix",
-			want:  []string{"schema.spec.name"},
-		},
-		{
-			name:  "multiple expressions",
-			input: "${schema.spec.a}-${schema.spec.b}",
-			want:  []string{"schema.spec.a", "schema.spec.b"},
-		},
-	}
+	t.Run("simple expression", func(t *testing.T) {
+		got := extractExpressionsFromValue("${schema.spec.name}")
+		if len(got) != 1 || got[0] != "schema.spec.name" {
+			t.Errorf("got %v, want [schema.spec.name]", got)
+		}
+	})
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := extractExpressionsFromValue(tt.input)
+	t.Run("no expression", func(t *testing.T) {
+		got := extractExpressionsFromValue("static-value")
+		if got != nil {
+			t.Errorf("got %v, want nil", got)
+		}
+	})
 
-			if len(got) != len(tt.want) {
-				t.Errorf("extractExpressionsFromValue() returned %d expressions, want %d\ngot: %v\nwant: %v",
-					len(got), len(tt.want), got, tt.want)
-				return
-			}
+	t.Run("expression with string literal containing brace", func(t *testing.T) {
+		got := extractExpressionsFromValue(`${schema.spec.name + "}"}`)
+		if len(got) != 1 || got[0] != `schema.spec.name + "}"` {
+			t.Errorf("got %v, want [schema.spec.name + \"}\"]", got)
+		}
+	})
 
-			gotSet := make(map[string]bool)
-			for _, e := range got {
-				gotSet[e] = true
-			}
-			for _, w := range tt.want {
-				if !gotSet[w] {
-					t.Errorf("expected expression %q not found in %v", w, got)
-				}
-			}
-		})
-	}
+	t.Run("embedded expression", func(t *testing.T) {
+		// In KRO v0.9.0, templates compile into concatenation expressions.
+		// The returned expression contains the schema.spec reference.
+		got := extractExpressionsFromValue("prefix-${schema.spec.name}-suffix")
+		if len(got) != 1 {
+			t.Fatalf("got %d expressions, want 1; got: %v", len(got), got)
+		}
+		// Verify the expression contains the schema reference
+		// (may be wrapped in concatenation: "prefix-" + (schema.spec.name) + "-suffix")
+		fields := extractBareSchemaFields(got[0])
+		if len(fields) != 1 || fields[0] != "spec.name" {
+			t.Errorf("schema fields from expression %q = %v, want [spec.name]", got[0], fields)
+		}
+	})
+
+	t.Run("multiple expressions", func(t *testing.T) {
+		// In KRO v0.9.0, "${a}-${b}" compiles into a single concatenation expression.
+		got := extractExpressionsFromValue("${schema.spec.a}-${schema.spec.b}")
+		if len(got) != 1 {
+			t.Fatalf("got %d expressions, want 1; got: %v", len(got), got)
+		}
+		// Verify both schema references are extractable from the concatenated expression
+		fields := extractBareSchemaFields(got[0])
+		fieldSet := make(map[string]bool)
+		for _, f := range fields {
+			fieldSet[f] = true
+		}
+		if !fieldSet["spec.a"] || !fieldSet["spec.b"] {
+			t.Errorf("schema fields from expression %q = %v, want [spec.a, spec.b]", got[0], fields)
+		}
+	})
 }
 
 // TestExtractBareSchemaFields tests extraction of schema.spec.* from bare strings
@@ -2124,5 +2130,570 @@ func TestResourceParser_SecretRef_NoSchemaSection(t *testing.T) {
 	// No schema → no description, but parsing should still work
 	if graph.SecretRefs[0].Description != "" {
 		t.Errorf("Description = %q, want empty", graph.SecretRefs[0].Description)
+	}
+}
+
+// TestIsResourceRef tests the word-boundary-aware reference checker that replaced
+// plain strings.Contains for dependency detection in KRO v0.9.0 concatenated expressions.
+//
+// The core invariant: `isResourceRef(expr, id)` must return true when id is a root
+// CEL identifier in expr, and false when id only appears as a field accessor nested
+// inside another identifier (e.g., "schema.spec.id").
+func TestIsResourceRef(t *testing.T) {
+	tests := []struct {
+		name       string
+		expr       string
+		internalID string
+		want       bool
+	}{
+		// True positives — root identifier references
+		{
+			name:       "simple root reference",
+			expr:       "configmap.metadata.name",
+			internalID: "configmap",
+			want:       true,
+		},
+		{
+			name:       "reference inside concatenation — opening paren",
+			expr:       `(configmap.metadata.name) + "-" + (service.spec.clusterIP)`,
+			internalID: "configmap",
+			want:       true,
+		},
+		{
+			name:       "second operand in concatenation",
+			expr:       `(configmap.metadata.name) + "-" + (service.spec.clusterIP)`,
+			internalID: "service",
+			want:       true,
+		},
+		{
+			name:       "reference preceded by space",
+			expr:       "x == configmap.metadata.name",
+			internalID: "configmap",
+			want:       true,
+		},
+		// False positives that naive strings.Contains would produce
+		{
+			name:       "schema field whose name equals internalID — no match",
+			expr:       "schema.spec.configmap",
+			internalID: "configmap",
+			want:       false,
+		},
+		{
+			name:       "single-char ID appearing in schema field path — no match",
+			expr:       "schema.spec.a",
+			internalID: "a",
+			want:       false,
+		},
+		{
+			name:       "ID nested under schema.spec as intermediate field — no match",
+			expr:       "schema.spec.db.name",
+			internalID: "db",
+			want:       false,
+		},
+		{
+			name:       "unrelated expression with no match",
+			expr:       "schema.spec.name",
+			internalID: "configmap",
+			want:       false,
+		},
+		{
+			name:       "empty expression",
+			expr:       "",
+			internalID: "configmap",
+			want:       false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isResourceRef(tt.expr, tt.internalID)
+			if got != tt.want {
+				t.Errorf("isResourceRef(%q, %q) = %v, want %v", tt.expr, tt.internalID, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestResourceParser_ConcatenatedExpressionDependency tests that dependency resolution
+// correctly identifies resource references inside KRO v0.9.0 concatenated expressions.
+//
+// In v0.9.0, "${dbSecret.metadata.name}-${appConfig.data.key}" is compiled by KRO
+// into a single CEL expression like `(dbSecret.metadata.name) + "-" + (appConfig.data.key)`.
+// This means dependency detection must use word-boundary-aware matching (isResourceRef),
+// not HasPrefix (which would miss the second operand) or naive Contains (which produces
+// false positives on schema field names).
+func TestResourceParser_ConcatenatedExpressionDependency(t *testing.T) {
+	p := NewResourceParser()
+
+	spec := map[string]interface{}{
+		"resources": []interface{}{
+			// Secret resource (credentials)
+			map[string]interface{}{
+				"id": "credentials",
+				"template": map[string]interface{}{
+					"apiVersion": "v1",
+					"kind":       "Secret",
+				},
+			},
+			// ConfigMap resource (config)
+			map[string]interface{}{
+				"id": "config",
+				"template": map[string]interface{}{
+					"apiVersion": "v1",
+					"kind":       "ConfigMap",
+				},
+			},
+			// Deployment with a CONCATENATED reference to both resources:
+			// "${credentials.metadata.name}-${config.data.url}"
+			// KRO v0.9.0 compiles this to: (credentials.metadata.name) + "-" + (config.data.url)
+			// HasPrefix would only match the first operand; isResourceRef must match both.
+			map[string]interface{}{
+				"id": "deployment",
+				"template": map[string]interface{}{
+					"apiVersion": "apps/v1",
+					"kind":       "Deployment",
+					"spec": map[string]interface{}{
+						"template": map[string]interface{}{
+							"spec": map[string]interface{}{
+								"containers": []interface{}{
+									map[string]interface{}{
+										"env": []interface{}{
+											map[string]interface{}{
+												"name":  "SECRET_NAME",
+												"value": "${credentials.metadata.name}-${config.data.url}",
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	graph, err := p.ParseRGDResources("concat-dep-test", "default", spec)
+	if err != nil {
+		t.Fatalf("ParseRGDResources() error = %v", err)
+	}
+
+	if len(graph.Resources) != 3 {
+		t.Fatalf("expected 3 resources, got %d", len(graph.Resources))
+	}
+
+	// Find deployment
+	var deployment *ResourceDefinition
+	for i := range graph.Resources {
+		if graph.Resources[i].Kind == "Deployment" {
+			deployment = &graph.Resources[i]
+			break
+		}
+	}
+	if deployment == nil {
+		t.Fatal("deployment not found")
+	}
+
+	// Deployment must declare dependency on BOTH resources
+	if len(deployment.DependsOn) != 2 {
+		t.Fatalf("expected 2 dependencies (credentials + config), got %d: %v",
+			len(deployment.DependsOn), deployment.DependsOn)
+	}
+
+	// Verify the exact dependency IDs, not just the count
+	depSet := make(map[string]bool)
+	for _, d := range deployment.DependsOn {
+		depSet[d] = true
+	}
+	if !depSet["0-Secret"] {
+		t.Errorf("missing dependency on 0-Secret (credentials); got: %v", deployment.DependsOn)
+	}
+	if !depSet["1-ConfigMap"] {
+		t.Errorf("missing dependency on 1-ConfigMap (config); got: %v", deployment.DependsOn)
+	}
+}
+
+// --- forEach collection tests (STORY-330) ---
+
+func TestResourceParser_ForEach_SchemaSource(t *testing.T) {
+	p := NewResourceParser()
+	spec := map[string]interface{}{
+		"resources": []interface{}{
+			map[string]interface{}{
+				"id": "workerPods",
+				"forEach": []interface{}{
+					map[string]interface{}{"worker": "${schema.spec.workers}"},
+				},
+				"template": map[string]interface{}{
+					"apiVersion": "v1",
+					"kind":       "Pod",
+				},
+			},
+		},
+	}
+
+	graph, err := p.ParseRGDResources("worker-rgd", "default", spec)
+	if err != nil {
+		t.Fatalf("ParseRGDResources() error = %v", err)
+	}
+	if len(graph.ParseErrors) != 0 {
+		t.Fatalf("unexpected parse errors: %v", graph.ParseErrors)
+	}
+	if len(graph.Resources) != 1 {
+		t.Fatalf("expected 1 resource, got %d", len(graph.Resources))
+	}
+
+	res := graph.Resources[0]
+	if !res.IsCollection {
+		t.Error("expected IsCollection = true")
+	}
+	if len(res.ForEach) != 1 {
+		t.Fatalf("expected 1 iterator, got %d", len(res.ForEach))
+	}
+
+	it := res.ForEach[0]
+	if it.Name != "worker" {
+		t.Errorf("Name = %q, want %q", it.Name, "worker")
+	}
+	if it.Expression != "${schema.spec.workers}" {
+		t.Errorf("Expression = %q, want %q", it.Expression, "${schema.spec.workers}")
+	}
+	if it.Source != SchemaSource {
+		t.Errorf("Source = %q, want %q", it.Source, SchemaSource)
+	}
+	if it.SourcePath != "spec.workers" {
+		t.Errorf("SourcePath = %q, want %q", it.SourcePath, "spec.workers")
+	}
+	if it.DimensionIndex != 0 {
+		t.Errorf("DimensionIndex = %d, want 0", it.DimensionIndex)
+	}
+
+	// GetCollectionResources helper
+	collections := graph.GetCollectionResources()
+	if len(collections) != 1 {
+		t.Errorf("GetCollectionResources() = %d, want 1", len(collections))
+	}
+}
+
+func TestResourceParser_ForEach_ResourceSource(t *testing.T) {
+	p := NewResourceParser()
+	spec := map[string]interface{}{
+		"resources": []interface{}{
+			map[string]interface{}{
+				"id": "brokerPods",
+				"forEach": []interface{}{
+					map[string]interface{}{"broker": "${cluster.status.brokers}"},
+				},
+				"template": map[string]interface{}{
+					"apiVersion": "v1",
+					"kind":       "Pod",
+				},
+			},
+		},
+	}
+
+	graph, err := p.ParseRGDResources("broker-rgd", "default", spec)
+	if err != nil {
+		t.Fatalf("ParseRGDResources() error = %v", err)
+	}
+	if len(graph.ParseErrors) != 0 {
+		t.Fatalf("unexpected parse errors: %v", graph.ParseErrors)
+	}
+
+	res := graph.Resources[0]
+	if !res.IsCollection {
+		t.Error("expected IsCollection = true")
+	}
+
+	it := res.ForEach[0]
+	if it.Name != "broker" {
+		t.Errorf("Name = %q, want %q", it.Name, "broker")
+	}
+	if it.Source != ResourceSource {
+		t.Errorf("Source = %q, want %q", it.Source, ResourceSource)
+	}
+	if it.SourcePath != "status.brokers" {
+		t.Errorf("SourcePath = %q, want %q", it.SourcePath, "status.brokers")
+	}
+}
+
+func TestResourceParser_ForEach_CartesianProduct(t *testing.T) {
+	p := NewResourceParser()
+	spec := map[string]interface{}{
+		"resources": []interface{}{
+			map[string]interface{}{
+				"id": "deployments",
+				"forEach": []interface{}{
+					map[string]interface{}{"region": "${schema.spec.regions}"},
+					map[string]interface{}{"tier": "${schema.spec.tiers}"},
+				},
+				"template": map[string]interface{}{
+					"apiVersion": "apps/v1",
+					"kind":       "Deployment",
+				},
+			},
+		},
+	}
+
+	graph, err := p.ParseRGDResources("multi-dim", "default", spec)
+	if err != nil {
+		t.Fatalf("ParseRGDResources() error = %v", err)
+	}
+	if len(graph.ParseErrors) != 0 {
+		t.Fatalf("unexpected parse errors: %v", graph.ParseErrors)
+	}
+
+	res := graph.Resources[0]
+	if !res.IsCollection {
+		t.Error("expected IsCollection = true")
+	}
+	if len(res.ForEach) != 2 {
+		t.Fatalf("expected 2 iterators (cartesian), got %d", len(res.ForEach))
+	}
+
+	// Index iterators by Name for deterministic assertions (map iteration order varies)
+	byName := make(map[string]Iterator, 2)
+	for _, it := range res.ForEach {
+		byName[it.Name] = it
+	}
+
+	// "region" dimension
+	region, ok := byName["region"]
+	if !ok {
+		t.Fatalf("expected iterator named %q, got names: %v", "region", func() []string {
+			names := make([]string, 0, len(byName))
+			for n := range byName {
+				names = append(names, n)
+			}
+			return names
+		}())
+	}
+	if region.Source != SchemaSource {
+		t.Errorf("region: Source = %q, want %q", region.Source, SchemaSource)
+	}
+	if region.SourcePath != "spec.regions" {
+		t.Errorf("region: SourcePath = %q, want %q", region.SourcePath, "spec.regions")
+	}
+
+	// "tier" dimension
+	tier, ok := byName["tier"]
+	if !ok {
+		t.Fatalf("expected iterator named %q", "tier")
+	}
+	if tier.Source != SchemaSource {
+		t.Errorf("tier: Source = %q, want %q", tier.Source, SchemaSource)
+	}
+	if tier.SourcePath != "spec.tiers" {
+		t.Errorf("tier: SourcePath = %q, want %q", tier.SourcePath, "spec.tiers")
+	}
+
+	// DimensionIndex must be 0 and 1
+	dims := make(map[int]bool)
+	for _, it := range res.ForEach {
+		dims[it.DimensionIndex] = true
+	}
+	if !dims[0] || !dims[1] {
+		t.Errorf("expected DimensionIndex values {0,1}, got iterators: %+v", res.ForEach)
+	}
+}
+
+func TestResourceParser_ForEach_LiteralSource(t *testing.T) {
+	p := NewResourceParser()
+	spec := map[string]interface{}{
+		"resources": []interface{}{
+			map[string]interface{}{
+				"id": "regionPods",
+				"forEach": []interface{}{
+					map[string]interface{}{"region": `["us-east", "eu-west"]`},
+				},
+				"template": map[string]interface{}{
+					"apiVersion": "v1",
+					"kind":       "Pod",
+				},
+			},
+		},
+	}
+
+	graph, err := p.ParseRGDResources("literal-rgd", "default", spec)
+	if err != nil {
+		t.Fatalf("ParseRGDResources() error = %v", err)
+	}
+
+	res := graph.Resources[0]
+	if !res.IsCollection {
+		t.Error("expected IsCollection = true")
+	}
+	if res.ForEach[0].Source != LiteralSource {
+		t.Errorf("Source = %q, want %q", res.ForEach[0].Source, LiteralSource)
+	}
+	if res.ForEach[0].SourcePath != "" {
+		t.Errorf("SourcePath = %q, want empty for LiteralSource", res.ForEach[0].SourcePath)
+	}
+}
+
+func TestResourceParser_ForEach_ExternalRefMutuallyExclusive(t *testing.T) {
+	p := NewResourceParser()
+	spec := map[string]interface{}{
+		"resources": []interface{}{
+			map[string]interface{}{
+				"id": "invalid",
+				"forEach": []interface{}{
+					map[string]interface{}{"item": "${schema.spec.items}"},
+				},
+				"externalRef": map[string]interface{}{
+					"apiVersion": "v1",
+					"kind":       "ConfigMap",
+					"metadata": map[string]interface{}{
+						"name":      "my-cm",
+						"namespace": "default",
+					},
+				},
+			},
+		},
+	}
+
+	graph, err := p.ParseRGDResources("invalid-rgd", "default", spec)
+	if err != nil {
+		t.Fatalf("ParseRGDResources() unexpected hard error: %v", err)
+	}
+
+	// Parse error should be recorded (non-fatal)
+	if len(graph.ParseErrors) == 0 {
+		t.Fatal("expected parse error for forEach+externalRef combination, got none")
+	}
+	if graph.ParseErrors[0].Expression != "forEach" {
+		t.Errorf("ParseError.Expression = %q, want %q", graph.ParseErrors[0].Expression, "forEach")
+	}
+}
+
+func TestResourceParser_ReadyWhen_Collection(t *testing.T) {
+	p := NewResourceParser()
+	spec := map[string]interface{}{
+		"resources": []interface{}{
+			map[string]interface{}{
+				"id": "workerPods",
+				"forEach": []interface{}{
+					map[string]interface{}{"worker": "${schema.spec.workers}"},
+				},
+				"readyWhen": []interface{}{
+					"each.status.phase == 'Running'",
+					"each.status.containerStatuses.size() > 0",
+				},
+				"template": map[string]interface{}{
+					"apiVersion": "v1",
+					"kind":       "Pod",
+				},
+			},
+		},
+	}
+
+	graph, err := p.ParseRGDResources("ready-rgd", "default", spec)
+	if err != nil {
+		t.Fatalf("ParseRGDResources() error = %v", err)
+	}
+
+	res := graph.Resources[0]
+	if !res.IsCollection {
+		t.Error("expected IsCollection = true")
+	}
+	if len(res.ReadyWhen) != 2 {
+		t.Fatalf("expected 2 readyWhen entries, got %d: %v", len(res.ReadyWhen), res.ReadyWhen)
+	}
+	if res.ReadyWhen[0] != "each.status.phase == 'Running'" {
+		t.Errorf("ReadyWhen[0] = %q, want %q", res.ReadyWhen[0], "each.status.phase == 'Running'")
+	}
+}
+
+func TestResourceParser_NonCollection_IsCollectionFalse(t *testing.T) {
+	p := NewResourceParser()
+	spec := map[string]interface{}{
+		"resources": []interface{}{
+			map[string]interface{}{
+				"template": map[string]interface{}{
+					"apiVersion": "apps/v1",
+					"kind":       "Deployment",
+				},
+			},
+			map[string]interface{}{
+				"externalRef": map[string]interface{}{
+					"apiVersion": "v1",
+					"kind":       "ConfigMap",
+					"metadata": map[string]interface{}{
+						"name":      "${schema.spec.cmName}",
+						"namespace": "default",
+					},
+				},
+			},
+		},
+	}
+
+	graph, err := p.ParseRGDResources("standard-rgd", "default", spec)
+	if err != nil {
+		t.Fatalf("ParseRGDResources() error = %v", err)
+	}
+	if len(graph.ParseErrors) != 0 {
+		t.Fatalf("unexpected parse errors: %v", graph.ParseErrors)
+	}
+
+	for _, res := range graph.Resources {
+		if res.IsCollection {
+			t.Errorf("resource %q: IsCollection = true, want false for non-forEach resource", res.ID)
+		}
+		if len(res.ForEach) != 0 {
+			t.Errorf("resource %q: ForEach is non-empty for non-forEach resource", res.ID)
+		}
+	}
+
+	// GetCollectionResources should return empty
+	if cols := graph.GetCollectionResources(); len(cols) != 0 {
+		t.Errorf("GetCollectionResources() = %d, want 0", len(cols))
+	}
+}
+
+func TestAnalyzeForEachSource_BareExpression(t *testing.T) {
+	// No ${...} delimiters — treated as a bare CEL literal
+	src, path := analyzeForEachSource("schema.spec.workers")
+	if src != SchemaSource {
+		t.Errorf("bare schema expr: Source = %q, want %q", src, SchemaSource)
+	}
+	if path != "spec.workers" {
+		t.Errorf("bare schema expr: SourcePath = %q, want %q", path, "spec.workers")
+	}
+}
+
+func TestAnalyzeForEachSource_EmptyExpression(t *testing.T) {
+	src, path := analyzeForEachSource("")
+	if src != LiteralSource {
+		t.Errorf("empty expr: Source = %q, want %q", src, LiteralSource)
+	}
+	if path != "" {
+		t.Errorf("empty expr: SourcePath = %q, want empty", path)
+	}
+}
+
+func TestAnalyzeForEachSource_SchemaMetadata(t *testing.T) {
+	// schema.metadata.* does NOT match schema.spec.* — falls through to ResourceSource check.
+	// "schema" is excluded from ResourceSource, so result is LiteralSource.
+	// This documents the known boundary: only schema.spec.* yields SchemaSource.
+	src, path := analyzeForEachSource("${schema.metadata.name}")
+	if src != LiteralSource {
+		t.Errorf("schema.metadata expr: Source = %q, want %q (known limitation: only schema.spec.* is SchemaSource)", src, LiteralSource)
+	}
+	if path != "" {
+		t.Errorf("schema.metadata expr: SourcePath = %q, want empty", path)
+	}
+}
+
+func TestAnalyzeForEachSource_CELMethodCallOnSchemaField(t *testing.T) {
+	// CEL method call — e.g., schema.spec.items.filter(x, x.enabled)
+	// The field path is truncated at the first non-identifier/non-dot character '('.
+	// This documents the truncation behavior: SourcePath captures only the clean prefix.
+	src, path := analyzeForEachSource("${schema.spec.items.filter(x, x.enabled)}")
+	if src != SchemaSource {
+		t.Errorf("CEL method call: Source = %q, want %q", src, SchemaSource)
+	}
+	// Truncated at '(' → "spec.items.filter" → TrimRight('.') → "spec.items.filter"
+	if path != "spec.items.filter" {
+		t.Errorf("CEL method call: SourcePath = %q, want %q", path, "spec.items.filter")
 	}
 }

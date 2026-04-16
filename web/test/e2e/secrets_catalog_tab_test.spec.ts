@@ -84,8 +84,9 @@ test.describe('Secrets Catalog Tab', () => {
       fullPage: true,
     });
 
-    // Verify Secrets tab does NOT appear in deploy form
-    const secretsTab = page.locator('button[role="tab"]:has-text("Secrets")');
+    // Verify Secrets tab does NOT appear in deploy dialog
+    const dialog = page.locator('[role="dialog"]');
+    const secretsTab = dialog.locator('button[role="tab"]:has-text("Secrets")');
     const hasSecretsTab = await secretsTab.isVisible({ timeout: 2000 }).catch(() => false);
     expect(hasSecretsTab).toBe(false);
   });

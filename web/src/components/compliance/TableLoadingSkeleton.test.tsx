@@ -28,7 +28,7 @@ describe("TableLoadingSkeleton", () => {
 
     // Should render multiple skeleton rows (default is typically 5-10)
     // Count the Skeleton elements in table body
-    const skeletons = container.querySelectorAll("[data-slot='skeleton'], .animate-pulse");
+    const skeletons = container.querySelectorAll("[data-slot='skeleton'], .animate-token-shimmer");
     expect(skeletons.length).toBeGreaterThan(0);
   });
 
@@ -48,7 +48,7 @@ describe("TableLoadingSkeleton", () => {
 
     // When showDoubleLines is true, each cell should have 2 skeleton lines
     // We can check for multiple skeleton elements per cell
-    const skeletons = container.querySelectorAll("[data-slot='skeleton'], .animate-pulse");
+    const skeletons = container.querySelectorAll("[data-slot='skeleton'], .animate-token-shimmer");
     expect(skeletons.length).toBeGreaterThan(columns.length);
   });
 

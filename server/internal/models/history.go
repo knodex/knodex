@@ -39,6 +39,10 @@ const (
 	EventTypeUpdated DeploymentEventType = "Updated"
 	// EventTypeStatusChanged when instance status changes
 	EventTypeStatusChanged DeploymentEventType = "StatusChanged"
+	// EventTypeRevisionChanged when parent RGD revision changes (informational marker)
+	EventTypeRevisionChanged DeploymentEventType = "RevisionChanged"
+	// EventTypeKubernetesEvent when a Kubernetes Event is recorded for an instance (via KRO's InstanceConditionEvents)
+	EventTypeKubernetesEvent DeploymentEventType = "KubernetesEvent"
 )
 
 // DeploymentMode represents how the instance was deployed
@@ -193,6 +197,14 @@ type TimelineEntry struct {
 	IsCompleted bool `json:"isCompleted"`
 	// IsCurrent indicates if this is the current state
 	IsCurrent bool `json:"isCurrent"`
+	// RevisionNumber is set for RevisionChanged events (the new revision number)
+	RevisionNumber int `json:"revisionNumber,omitempty"`
+	// PreviousRevision is the prior revision number (0 for initial revision)
+	PreviousRevision int `json:"previousRevision,omitempty"`
+	// Source indicates the event source: "kubernetes" for K8s Events, empty for deployment events
+	Source string `json:"source,omitempty"`
+	// Details contains additional event details (populated for KubernetesEvent entries)
+	Details map[string]interface{} `json:"details,omitempty"`
 }
 
 // GetTimeline returns a simplified timeline for UI display
@@ -213,6 +225,12 @@ func (h *DeploymentHistory) GetTimeline() []TimelineEntry {
 		// Add Git commit URL if available
 		if event.GitCommitSHA != "" {
 			entry.GitCommitURL = event.GetGitHubCommitURL()
+		}
+
+		// Mark Kubernetes Events with their source and include details
+		if event.EventType == EventTypeKubernetesEvent {
+			entry.Source = "kubernetes"
+			entry.Details = event.Details
 		}
 
 		timeline = append(timeline, entry)

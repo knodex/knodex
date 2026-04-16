@@ -4,6 +4,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { canI } from "@/api/auth";
 import { useIsAuthenticated } from "./useAuth";
+import { STALE_TIME } from "@/lib/query-client";
 
 /**
  * Hook for real-time permission checking via the backend Casbin enforcer.
@@ -36,7 +37,7 @@ export function useCanI(
     queryKey: ["can-i", resource, action, subresource],
     queryFn: () => canI(resource, action, subresource),
     enabled: isAuthenticated && !!resource && !!action,
-    staleTime: 60 * 1000, // 60 seconds - reduces refetch during dev (Tilt resilience)
+    staleTime: STALE_TIME.STANDARD, // reduces refetch during dev (Tilt resilience)
     gcTime: 5 * 60 * 1000, // 5 minutes garbage collection
     retry: 2, // Retry transient failures (e.g., Tilt server restart)
     retryDelay: 1000, // 1 second between retries
@@ -87,7 +88,7 @@ function useCanIMultiple(
         : results.some((r) => r === true);
     },
     enabled: isAuthenticated && permissions.length > 0,
-    staleTime: 60 * 1000,
+    staleTime: STALE_TIME.STANDARD,
     gcTime: 5 * 60 * 1000,
     retry: 2,
     retryDelay: 1000,

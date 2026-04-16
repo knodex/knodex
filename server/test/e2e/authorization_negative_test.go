@@ -41,7 +41,7 @@ func TestAuthorization_Negative_MissingJWTToken(t *testing.T) {
 		{"POST", "/api/v1/instances"},
 		{"POST", "/api/v1/repositories"},
 		{"DELETE", "/api/v1/projects/test-project"},
-		{"DELETE", "/api/v1/instances/default/SimpleApp/test"},
+		{"DELETE", "/api/v1/namespaces/default/instances/SimpleApp/test"},
 	}
 
 	for _, ep := range endpoints {

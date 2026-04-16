@@ -16,3 +16,20 @@ declare const __ENTERPRISE__: boolean;
  * Managed by Release Please for automated version bumps.
  */
 declare const __APP_VERSION__: string;
+
+/**
+ * Enable strict import.meta.env typing.
+ * Without this, Vite's default ImportMetaEnv has a [string]: any index signature,
+ * allowing access to any VITE_* key without type errors. Setting strictImportMetaEnv
+ * removes that fallback so only declared variables are valid.
+ */
+interface ViteTypeOptions {
+  strictImportMetaEnv: true;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type -- Add future VITE_* variables here
+interface ImportMetaEnv {}
+
+interface ImportMeta {
+  readonly env: ImportMetaEnv;
+}

@@ -3,56 +3,20 @@
 
 import React, { useMemo } from "react";
 import {
-  Database,
-  HardDrive,
-  Network,
-  Server,
-  MessageSquare,
-  Activity,
-  Shield,
-  Box,
-  Package,
-  Cloud,
-  Lock,
-  Workflow,
   Clock,
   FolderKanban,
-  AlertTriangle,
-} from "lucide-react";
+  Package,
+} from "@/lib/icons";
 import type { CatalogRGD } from "@/types/rgd";
 import { cn } from "@/lib/utils";
 import { formatDistanceToNow } from "@/lib/date";
-import { Badge } from "@/components/ui/badge";
+import { RGDIcon } from "@/components/ui/rgd-icon";
+import { ScopeIndicator } from "@/components/shared/ScopeIndicator";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-
-const CATEGORY_ICONS: Record<string, typeof Database> = {
-  database: Database,
-  storage: HardDrive,
-  networking: Network,
-  network: Network,
-  compute: Server,
-  messaging: MessageSquare,
-  monitoring: Activity,
-  security: Shield,
-  application: Package,
-  app: Package,
-  cloud: Cloud,
-  auth: Lock,
-  workflow: Workflow,
-};
-
-/**
- * Renders the appropriate icon for a category
- */
-function CategoryIcon({ category, className }: { category: string; className?: string }) {
-  const normalized = category.toLowerCase().trim();
-  const Icon = CATEGORY_ICONS[normalized] || Box;
-  return <Icon className={className} />;
-}
 
 interface RGDCardProps {
   rgd: CatalogRGD;
@@ -60,8 +24,6 @@ interface RGDCardProps {
 }
 
 export const RGDCard = React.memo(function RGDCard({ rgd, onClick }: RGDCardProps) {
-  const isInactive = rgd.status !== "Active";
-
   const normalizedCategory = useMemo(
     () => (rgd.category || "uncategorized").toLowerCase(),
     [rgd.category]
@@ -80,25 +42,26 @@ export const RGDCard = React.memo(function RGDCard({ rgd, onClick }: RGDCardProp
   return (
     <div
       role="button"
+      tabIndex={0}
       aria-label={`View details for ${rgd.title || rgd.name}`}
       className={cn(
         "group relative cursor-pointer rounded-lg border border-border/60 bg-card p-5",
         "transition-all duration-200 ease-out",
-        "hover:border-primary/30 hover:bg-accent/5",
-        isInactive && "opacity-60"
+        "hover:border-primary/30 hover:bg-accent/5"
       )}
       onClick={() => onClick?.(rgd)}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick?.(rgd); } }}
     >
       {/* Header */}
       <div className="flex items-start justify-between gap-3 mb-4">
         <div className="flex items-center gap-3 min-w-0">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-            <CategoryIcon category={rgd.category || "uncategorized"} className="h-5 w-5" />
+            <RGDIcon icon={rgd.icon} category={rgd.category || "uncategorized"} />
           </div>
           <div className="min-w-0">
             <Tooltip>
               <TooltipTrigger asChild>
-                <h3 className="font-semibold text-foreground truncate text-base group-hover:text-primary transition-colors duration-200">
+                <h3 className="font-semibold text-foreground line-clamp-2 text-base group-hover:text-primary transition-colors duration-200">
                   {rgd.title || rgd.name}
                 </h3>
               </TooltipTrigger>
@@ -122,16 +85,8 @@ export const RGDCard = React.memo(function RGDCard({ rgd, onClick }: RGDCardProp
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          {isInactive && (
-            <Badge variant="destructive" className="gap-1">
-              <AlertTriangle className="h-3 w-3" />
-              Inactive
-            </Badge>
-          )}
-          {rgd.version && (
-            <span className="px-2 py-0.5 rounded-md text-xs font-mono font-medium text-muted-foreground bg-muted/80">
-              {rgd.version}
-            </span>
+          {rgd.isClusterScoped && (
+            <ScopeIndicator isClusterScoped variant="compact" />
           )}
         </div>
       </div>

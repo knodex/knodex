@@ -26,11 +26,12 @@ import {
 } from "@/components/ui/select";
 import { KeyValueEditor } from "./KeyValueEditor";
 import { createPairId, type KeyValuePair } from "./keyValueTypes";
+import { useCurrentProject } from "@/hooks/useAuth";
+import { useProjects } from "@/hooks/useProjects";
 
 interface CreateSecretDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  project: string;
 }
 
 // K8s DNS-1123 subdomain: lowercase alphanumeric, hyphens, dots; max 253 chars
@@ -39,23 +40,29 @@ const MAX_SECRET_NAME_LENGTH = 253;
 
 const createInitialPairs = (): KeyValuePair[] => [{ id: createPairId(), key: "", value: "", visible: false }];
 
-export function CreateSecretDialog({ open, onOpenChange, project }: CreateSecretDialogProps) {
+export function CreateSecretDialog({ open, onOpenChange }: CreateSecretDialogProps) {
+  const globalProject = useCurrentProject();
+  const [project, setProject] = useState(globalProject ?? "");
   const [name, setName] = useState("");
   const [namespace, setNamespace] = useState("");
   const [pairs, setPairs] = useState<KeyValuePair[]>(createInitialPairs);
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
 
-  const { data: namespacesData, isLoading: namespacesLoading, isError: namespacesError } = useProjectNamespaces(project);
+  const { data: projectsData, isLoading: projectsLoading } = useProjects();
+  const projects = projectsData?.items ?? [];
+
+  const { data: namespacesData, isLoading: namespacesLoading, isError: namespacesError } = useProjectNamespaces(project || undefined);
   const namespaces = namespacesData?.namespaces ?? [];
 
   const createMutation = useCreateSecret();
 
   const resetForm = useCallback(() => {
+    setProject(globalProject ?? "");
     setName("");
     setNamespace("");
     setPairs(createInitialPairs());
     setValidationErrors({});
-  }, []);
+  }, [globalProject]);
 
   const handleOpenChange = useCallback(
     (isOpen: boolean) => {
@@ -70,6 +77,9 @@ export function CreateSecretDialog({ open, onOpenChange, project }: CreateSecret
   const validate = useCallback((): boolean => {
     const errors: Record<string, string> = {};
 
+    if (!project) {
+      errors.project = "Project is required";
+    }
     const trimmedName = name.trim();
     if (!trimmedName) {
       errors.name = "Name is required";
@@ -103,7 +113,7 @@ export function CreateSecretDialog({ open, onOpenChange, project }: CreateSecret
 
     setValidationErrors(errors);
     return Object.keys(errors).length === 0;
-  }, [name, namespace, pairs]);
+  }, [project, name, namespace, pairs]);
 
   const handleSubmit = useCallback(async () => {
     if (!validate()) return;
@@ -142,7 +152,7 @@ export function CreateSecretDialog({ open, onOpenChange, project }: CreateSecret
         <DialogHeader>
           <DialogTitle>Create Secret</DialogTitle>
           <DialogDescription>
-            Create a new Kubernetes secret in project "{project}".
+            Create a new Kubernetes secret.
           </DialogDescription>
         </DialogHeader>
 
@@ -153,6 +163,35 @@ export function CreateSecretDialog({ open, onOpenChange, project }: CreateSecret
           }}
         >
           <div className="space-y-4 py-2">
+            {/* Project */}
+            <div className="space-y-2">
+              <Label htmlFor="secret-project">Project</Label>
+              <Select
+                value={project}
+                onValueChange={(value) => {
+                  setProject(value);
+                  setNamespace("");
+                }}
+                disabled={projectsLoading}
+              >
+                <SelectTrigger id="secret-project">
+                  <SelectValue placeholder={
+                    projectsLoading ? "Loading projects…" : "Select project"
+                  } />
+                </SelectTrigger>
+                <SelectContent>
+                  {projects.map((p) => (
+                    <SelectItem key={p.name} value={p.name}>
+                      {p.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {validationErrors.project && (
+                <p className="text-sm text-destructive">{validationErrors.project}</p>
+              )}
+            </div>
+
             {/* Name */}
             <div className="space-y-2">
               <Label htmlFor="secret-name">Name</Label>
@@ -174,7 +213,7 @@ export function CreateSecretDialog({ open, onOpenChange, project }: CreateSecret
             {/* Namespace */}
             <div className="space-y-2">
               <Label htmlFor="secret-namespace">Namespace</Label>
-              <Select value={namespace} onValueChange={setNamespace} disabled={namespacesLoading || namespacesError}>
+              <Select value={namespace} onValueChange={setNamespace} disabled={!project || namespacesLoading || namespacesError}>
                 <SelectTrigger id="secret-namespace">
                   <SelectValue placeholder={
                     namespacesLoading ? "Loading namespaces…" :

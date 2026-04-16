@@ -5,7 +5,7 @@
  * Delete project confirmation dialog with type-to-confirm
  */
 import { useState } from "react";
-import { AlertTriangle, Loader2 } from "lucide-react";
+import { AlertTriangle, Loader2 } from "@/lib/icons";
 import {
   AlertDialog,
   AlertDialogContent,

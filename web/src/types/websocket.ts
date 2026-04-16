@@ -12,10 +12,13 @@
 export type MessageType =
   | "instance_update"
   | "rgd_update"
+  | "drift_update"
   | "violation_update"
   | "template_update"
   | "constraint_update"
   | "counts_update"
+  | "revision_update"
+  | "resource_event"
   | "error"
   | "pong"
   | "subscribed"
@@ -44,6 +47,7 @@ export interface WebSocketMessage<T = unknown> {
 export interface InstanceUpdateData {
   action: Action;
   namespace: string;
+  kind: string;
   name: string;
   instance?: unknown;
   projectId?: string;
@@ -148,6 +152,48 @@ export interface ConstraintUpdateData {
 export interface CountsUpdateData {
   rgdCount: number;
   instanceCount: number;
+}
+
+/**
+ * Revision update data - matches backend RevisionUpdateData
+ * Used for real-time GraphRevision creation events
+ */
+export interface RevisionUpdateData {
+  action: Action;
+  rgdName: string;
+  revision: number;
+  projectId?: string;
+}
+
+/**
+ * Drift update data - matches backend DriftUpdateData
+ * Used for real-time drift state changes (reconciled/drifted)
+ */
+export interface DriftUpdateData {
+  namespace: string;
+  kind: string;
+  name: string;
+  drifted: boolean;
+  projectId?: string;
+}
+
+/**
+ * Resource event data - matches backend ResourceEventData
+ * Used for real-time Kubernetes Event notifications via the EventAdapter
+ */
+export interface ResourceEventData {
+  /** Instance UID */
+  instanceId: string;
+  /** Resource kind (e.g., WebApp, Database) */
+  resourceKind: string;
+  /** Resource name */
+  resourceName: string;
+  /** Event status: "Normal" or "Warning" */
+  status: string;
+  /** Human-readable event message */
+  message: string;
+  /** Project namespace for RBAC filtering (server-side only, may be absent) */
+  projectId?: string;
 }
 
 /**

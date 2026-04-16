@@ -103,15 +103,23 @@ describe("useHistory hooks", () => {
       );
     });
 
-    it("should not fetch when namespace is empty", async () => {
+    it("should fetch for cluster-scoped instances (empty namespace)", async () => {
+      vi.mocked(historyApi.getInstanceHistory).mockResolvedValue(mockHistory);
+
       const { result } = renderHook(
         () => useInstanceHistory("", "WebApp", "test-instance"),
         { wrapper: createWrapper() }
       );
 
-      expect(result.current.isLoading).toBe(false);
-      expect(result.current.fetchStatus).toBe("idle");
-      expect(historyApi.getInstanceHistory).not.toHaveBeenCalled();
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true);
+      });
+
+      expect(historyApi.getInstanceHistory).toHaveBeenCalledWith(
+        "",
+        "WebApp",
+        "test-instance"
+      );
     });
 
     it("should not fetch when name is empty", async () => {
@@ -163,14 +171,23 @@ describe("useHistory hooks", () => {
       );
     });
 
-    it("should not fetch when namespace is empty", async () => {
+    it("should fetch for cluster-scoped instances (empty namespace)", async () => {
+      vi.mocked(historyApi.getInstanceTimeline).mockResolvedValue(mockTimeline);
+
       const { result } = renderHook(
         () => useInstanceTimeline("", "WebApp", "test-instance"),
         { wrapper: createWrapper() }
       );
 
-      expect(result.current.fetchStatus).toBe("idle");
-      expect(historyApi.getInstanceTimeline).not.toHaveBeenCalled();
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true);
+      });
+
+      expect(historyApi.getInstanceTimeline).toHaveBeenCalledWith(
+        "",
+        "WebApp",
+        "test-instance"
+      );
     });
   });
 

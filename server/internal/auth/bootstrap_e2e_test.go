@@ -229,7 +229,7 @@ func TestE2E_OIDCUserEvaluation(t *testing.T) {
 
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme)
 
-	projectService := rbac.NewProjectService(k8sClient, dynamicClient)
+	projectService := rbac.NewProjectService(k8sClient, dynamicClient, "knodex-system")
 
 	// Create ConfigMap and Secret for AccountStore
 	namespace := "default"
@@ -417,7 +417,7 @@ func setupE2EAuthServer(t *testing.T) (*httptest.Server, *auth.Service, *rbac.Pr
 	metav1.AddToGroupVersion(scheme, schema.GroupVersion{Group: rbac.ProjectGroup, Version: rbac.ProjectVersion})
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme)
 
-	projectService := rbac.NewProjectService(k8sClient, dynamicClient)
+	projectService := rbac.NewProjectService(k8sClient, dynamicClient, "knodex-system")
 
 	// Create ConfigMap and Secret for AccountStore
 	namespace := "default"

@@ -63,7 +63,7 @@ describe('useAuth hooks', () => {
       expect(result.current).toBeNull();
     });
 
-    it('should return default project on login', () => {
+    it('should return null (All Projects) on fresh login', () => {
       act(() => {
         useUserStore.getState().login(makeUserInfo({
           projects: ['proj-1', 'proj-2'],
@@ -72,19 +72,18 @@ describe('useAuth hooks', () => {
       });
 
       const { result } = renderHook(() => useCurrentProject());
-      expect(result.current).toBe('proj-1');
+      expect(result.current).toBeNull();
     });
 
     it('should update when current project changes', () => {
       act(() => {
         useUserStore.getState().login(makeUserInfo({
           projects: ['proj-1', 'proj-2'],
-          defaultProject: 'proj-1',
         }));
       });
 
       const { result } = renderHook(() => useCurrentProject());
-      expect(result.current).toBe('proj-1');
+      expect(result.current).toBeNull();
 
       act(() => {
         useUserStore.getState().setCurrentProject('proj-2');

@@ -324,6 +324,8 @@ func setupMockDynamicClient() (*MockDynamicClient, *MockNamespaceableResourceInt
 	mockClient := new(MockDynamicClient)
 	mockResource := new(MockNamespaceableResourceInterface)
 	mockClient.On("Resource", ProjectGVR).Return(mockResource)
+	// Namespace-scoped: .Resource(GVR).Namespace(ns) returns the same mock
+	mockResource.On("Namespace", "knodex-system").Return(mockResource)
 	return mockClient, mockResource
 }
 
@@ -422,7 +424,7 @@ func TestProjectService_CreateProject(t *testing.T) {
 			mockClient, mockResource := setupMockDynamicClient()
 			tt.mockSetup(mockResource)
 
-			svc := NewProjectService(nil, mockClient)
+			svc := NewProjectService(nil, mockClient, "knodex-system")
 
 			result, err := svc.CreateProject(context.Background(), tt.projectName, tt.spec, tt.createdBy)
 
@@ -452,7 +454,7 @@ func TestProjectService_CreateProject_SetsLabelsAndAnnotations(t *testing.T) {
 		}).
 		Return(newTestUnstructuredProject("test-project"), nil)
 
-	svc := NewProjectService(nil, mockClient)
+	svc := NewProjectService(nil, mockClient, "knodex-system")
 	_, err := svc.CreateProject(context.Background(), "test-project", newTestProjectSpec(), "creator-user")
 
 	require.NoError(t, err)
@@ -528,7 +530,7 @@ func TestProjectService_GetProject(t *testing.T) {
 			mockClient, mockResource := setupMockDynamicClient()
 			tt.mockSetup(mockResource)
 
-			svc := NewProjectService(nil, mockClient)
+			svc := NewProjectService(nil, mockClient, "knodex-system")
 
 			result, err := svc.GetProject(context.Background(), tt.projectID)
 
@@ -603,7 +605,7 @@ func TestProjectService_ListProjects(t *testing.T) {
 			mockClient, mockResource := setupMockDynamicClient()
 			tt.mockSetup(mockResource)
 
-			svc := NewProjectService(nil, mockClient)
+			svc := NewProjectService(nil, mockClient, "knodex-system")
 
 			result, err := svc.ListProjects(context.Background())
 
@@ -704,7 +706,7 @@ func TestProjectService_UpdateProject(t *testing.T) {
 			mockClient, mockResource := setupMockDynamicClient()
 			tt.mockSetup(mockResource)
 
-			svc := NewProjectService(nil, mockClient)
+			svc := NewProjectService(nil, mockClient, "knodex-system")
 
 			result, err := svc.UpdateProject(context.Background(), tt.project, tt.updatedBy)
 
@@ -731,7 +733,7 @@ func TestProjectService_UpdateProject_SetsUpdatedAnnotations(t *testing.T) {
 		}).
 		Return(newTestUnstructuredProject("test-project"), nil)
 
-	svc := NewProjectService(nil, mockClient)
+	svc := NewProjectService(nil, mockClient, "knodex-system")
 	project := &Project{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:            "test-project",
@@ -800,7 +802,7 @@ func TestProjectService_DeleteProject(t *testing.T) {
 			mockClient, mockResource := setupMockDynamicClient()
 			tt.mockSetup(mockResource)
 
-			svc := NewProjectService(nil, mockClient)
+			svc := NewProjectService(nil, mockClient, "knodex-system")
 
 			err := svc.DeleteProject(context.Background(), tt.projectID)
 
@@ -883,7 +885,7 @@ func TestProjectService_GetUserRole(t *testing.T) {
 			mockClient, mockResource := setupMockDynamicClient()
 			tt.mockSetup(mockResource)
 
-			svc := NewProjectService(nil, mockClient)
+			svc := NewProjectService(nil, mockClient, "knodex-system")
 
 			role, err := svc.GetUserRole(context.Background(), tt.projectID, tt.userID)
 
@@ -939,7 +941,7 @@ func TestProjectService_GetProjectRoles(t *testing.T) {
 			mockClient, mockResource := setupMockDynamicClient()
 			tt.mockSetup(mockResource)
 
-			svc := NewProjectService(nil, mockClient)
+			svc := NewProjectService(nil, mockClient, "knodex-system")
 
 			roles, err := svc.GetProjectRoles(context.Background(), tt.projectID)
 
@@ -1040,7 +1042,7 @@ func TestProjectService_AddRole(t *testing.T) {
 			mockClient, mockResource := setupMockDynamicClient()
 			tt.mockSetup(mockResource)
 
-			svc := NewProjectService(nil, mockClient)
+			svc := NewProjectService(nil, mockClient, "knodex-system")
 
 			result, err := svc.AddRole(context.Background(), tt.projectID, tt.role, tt.updatedBy)
 
@@ -1119,7 +1121,7 @@ func TestProjectService_RemoveRole(t *testing.T) {
 			mockClient, mockResource := setupMockDynamicClient()
 			tt.mockSetup(mockResource)
 
-			svc := NewProjectService(nil, mockClient)
+			svc := NewProjectService(nil, mockClient, "knodex-system")
 
 			result, err := svc.RemoveRole(context.Background(), tt.projectID, tt.roleName, tt.updatedBy)
 
@@ -1210,7 +1212,7 @@ func TestProjectService_UpdateRole(t *testing.T) {
 			mockClient, mockResource := setupMockDynamicClient()
 			tt.mockSetup(mockResource)
 
-			svc := NewProjectService(nil, mockClient)
+			svc := NewProjectService(nil, mockClient, "knodex-system")
 
 			result, err := svc.UpdateRole(context.Background(), tt.projectID, tt.roleName, tt.updatedRole, tt.updatedBy)
 
@@ -1290,7 +1292,7 @@ func TestProjectService_AddGroupToRole(t *testing.T) {
 			mockClient, mockResource := setupMockDynamicClient()
 			tt.mockSetup(mockResource)
 
-			svc := NewProjectService(nil, mockClient)
+			svc := NewProjectService(nil, mockClient, "knodex-system")
 
 			result, err := svc.AddGroupToRole(context.Background(), tt.projectID, tt.roleName, tt.groupName, tt.updatedBy)
 
@@ -1358,7 +1360,7 @@ func TestProjectService_GetProjectByDestinationNamespace(t *testing.T) {
 			mockClient, mockResource := setupMockDynamicClient()
 			tt.mockSetup(mockResource)
 
-			svc := NewProjectService(nil, mockClient)
+			svc := NewProjectService(nil, mockClient, "knodex-system")
 
 			result, err := svc.GetProjectByDestinationNamespace(context.Background(), tt.namespace)
 
@@ -1427,7 +1429,7 @@ func TestProjectService_GetUserProjectsByGroup(t *testing.T) {
 			mockClient, mockResource := setupMockDynamicClient()
 			tt.mockSetup(mockResource)
 
-			svc := NewProjectService(nil, mockClient)
+			svc := NewProjectService(nil, mockClient, "knodex-system")
 
 			result, err := svc.GetUserProjectsByGroup(context.Background(), tt.userGroups)
 
@@ -1515,7 +1517,7 @@ func TestProjectService_UpdateProjectStatus(t *testing.T) {
 			mockClient, mockResource := setupMockDynamicClient()
 			tt.mockSetup(mockResource)
 
-			svc := NewProjectService(nil, mockClient)
+			svc := NewProjectService(nil, mockClient, "knodex-system")
 
 			result, err := svc.UpdateProjectStatus(context.Background(), tt.project)
 
@@ -1616,7 +1618,7 @@ func TestProjectService_CreateProjectWithDescription(t *testing.T) {
 			mockClient, mockResource := setupMockDynamicClient()
 			tt.mockSetup(mockResource)
 
-			svc := NewProjectService(nil, mockClient)
+			svc := NewProjectService(nil, mockClient, "knodex-system")
 
 			result, err := svc.CreateProjectWithDescription(context.Background(), tt.description, tt.spec, tt.createdBy)
 
@@ -1643,10 +1645,11 @@ func TestProjectService_UsesCorrectGVR(t *testing.T) {
 
 	// Verify Resource is called with correct GVR
 	mockClient.On("Resource", ProjectGVR).Return(mockResource)
+	mockResource.On("Namespace", "knodex-system").Return(mockResource)
 	mockResource.On("Get", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 		Return(newTestUnstructuredProject("test"), nil)
 
-	svc := NewProjectService(nil, mockClient)
+	svc := NewProjectService(nil, mockClient, "knodex-system")
 	_, _ = svc.GetProject(context.Background(), "test")
 
 	// Verify GVR values
@@ -1668,7 +1671,7 @@ func TestProjectService_Exists_Success(t *testing.T) {
 	mockResource.On("Get", mock.Anything, "existing-project", mock.Anything, mock.Anything).
 		Return(newTestUnstructuredProject("existing-project"), nil)
 
-	svc := NewProjectService(nil, mockClient)
+	svc := NewProjectService(nil, mockClient, "knodex-system")
 
 	exists, err := svc.Exists(context.Background(), "existing-project")
 
@@ -1685,7 +1688,7 @@ func TestProjectService_Exists_NotFound(t *testing.T) {
 	mockResource.On("Get", mock.Anything, "non-existent", mock.Anything, mock.Anything).
 		Return(nil, notFoundErr)
 
-	svc := NewProjectService(nil, mockClient)
+	svc := NewProjectService(nil, mockClient, "knodex-system")
 
 	exists, err := svc.Exists(context.Background(), "non-existent")
 
@@ -1701,7 +1704,7 @@ func TestProjectService_Exists_APIError(t *testing.T) {
 	mockResource.On("Get", mock.Anything, "some-project", mock.Anything, mock.Anything).
 		Return(nil, internalErr)
 
-	svc := NewProjectService(nil, mockClient)
+	svc := NewProjectService(nil, mockClient, "knodex-system")
 
 	exists, err := svc.Exists(context.Background(), "some-project")
 
@@ -1765,7 +1768,7 @@ func TestProjectService_Exists_TableDriven(t *testing.T) {
 			mockClient, mockResource := setupMockDynamicClient()
 			tt.mockSetup(mockResource)
 
-			svc := NewProjectService(nil, mockClient)
+			svc := NewProjectService(nil, mockClient, "knodex-system")
 
 			exists, err := svc.Exists(context.Background(), tt.projectName)
 

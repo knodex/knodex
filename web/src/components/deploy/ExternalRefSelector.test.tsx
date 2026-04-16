@@ -3,15 +3,18 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { ExternalRefSelector } from './ExternalRefSelector';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { FormProvider, useForm, type UseFormReturn } from 'react-hook-form';
 import type { ReactNode } from 'react';
 
-// Mock the useK8sResources hook
+// Mock the useK8sResources and useRGDList hooks
 const mockUseK8sResources = vi.fn();
+const mockUseRGDList = vi.fn();
 vi.mock('@/hooks/useRGDs', () => ({
   useK8sResources: (...args: unknown[]) => mockUseK8sResources(...args),
+  useRGDList: (...args: unknown[]) => mockUseRGDList(...args),
 }));
 
 const defaultProps = {
@@ -31,11 +34,13 @@ function FormWrapper({ children, defaultValues }: { children: ReactNode; default
     const methods = useForm({ defaultValues: defaultValues || {} });
     formMethods = methods;
     return (
-      <FormProvider {...methods}>
-        <TooltipProvider>
-          {children}
-        </TooltipProvider>
-      </FormProvider>
+      <MemoryRouter>
+        <FormProvider {...methods}>
+          <TooltipProvider>
+            {children}
+          </TooltipProvider>
+        </FormProvider>
+      </MemoryRouter>
     );
   };
   return <Wrapper />;
@@ -53,6 +58,7 @@ function renderSelector(props = {}, defaultValues?: Record<string, unknown>) {
 describe('ExternalRefSelector', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockUseRGDList.mockReturnValue({ data: undefined, isLoading: false });
     mockUseK8sResources.mockReturnValue({
       data: [
         { name: 'config-a', namespace: 'default' },
@@ -228,5 +234,103 @@ describe('ExternalRefSelector', () => {
 
     const select = screen.getByTestId('input-externalRef.permissionResults');
     expect(select).toHaveTextContent('No ConfigMaps found in default');
+  });
+
+  describe('Deploy one now link', () => {
+    beforeEach(() => {
+      mockUseK8sResources.mockReturnValue({
+        data: [],
+        isLoading: false,
+        isError: false,
+        error: null,
+        refetch: vi.fn(),
+        isFetching: false,
+      });
+    });
+
+    it('renders "Deploy one now" link when no resources found and RGD matches', () => {
+      mockUseRGDList.mockReturnValue({
+        data: { items: [{ name: 'my-configmap-rgd', kind: 'ConfigMap' }] },
+        isLoading: false,
+      });
+
+      renderSelector({ deploymentNamespace: 'default' });
+
+      const link = screen.getByTestId('deploy-link-externalRef.permissionResults');
+      expect(link).toBeInTheDocument();
+      expect(link).toHaveTextContent('Deploy one now');
+      expect(link).toHaveAttribute('href', '/catalog/my-configmap-rgd');
+    });
+
+    it('links to filtered catalog when multiple RGDs produce the kind', () => {
+      mockUseRGDList.mockReturnValue({
+        data: { items: [{ name: 'rgd-a', kind: 'ConfigMap' }, { name: 'rgd-b', kind: 'ConfigMap' }] },
+        isLoading: false,
+      });
+
+      renderSelector({ deploymentNamespace: 'default' });
+
+      const link = screen.getByTestId('deploy-link-externalRef.permissionResults');
+      expect(link).toHaveAttribute('href', '/catalog?producesKind=ConfigMap');
+    });
+
+    it('shows no-rgd message when no RGD produces the kind', () => {
+      mockUseRGDList.mockReturnValue({
+        data: { items: [] },
+        isLoading: false,
+      });
+
+      renderSelector({ deploymentNamespace: 'default' });
+
+      expect(screen.queryByTestId('deploy-link-externalRef.permissionResults')).not.toBeInTheDocument();
+      expect(screen.getByTestId('no-rgd-externalRef.permissionResults')).toBeInTheDocument();
+    });
+
+    it('shows "Checking catalog" while resolving RGD', () => {
+      mockUseRGDList.mockReturnValue({
+        data: undefined,
+        isLoading: true,
+      });
+
+      renderSelector({ deploymentNamespace: 'default' });
+
+      expect(screen.getByTestId('resolving-rgd-externalRef.permissionResults')).toHaveTextContent('Checking catalog');
+      expect(screen.queryByTestId('deploy-link-externalRef.permissionResults')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('no-rgd-externalRef.permissionResults')).not.toBeInTheDocument();
+    });
+
+    it('shows no-rgd message on catalog API error', () => {
+      mockUseRGDList.mockReturnValue({
+        data: undefined,
+        isLoading: false,
+        isError: true,
+      });
+
+      renderSelector({ deploymentNamespace: 'default' });
+
+      expect(screen.getByTestId('no-rgd-externalRef.permissionResults')).toBeInTheDocument();
+    });
+
+    it('does not render link when resources exist', () => {
+      // Reset to default (resources available)
+      mockUseK8sResources.mockReturnValue({
+        data: [{ name: 'config-a', namespace: 'default' }],
+        isLoading: false,
+        isError: false,
+        error: null,
+        refetch: vi.fn(),
+        isFetching: false,
+      });
+
+      renderSelector({ deploymentNamespace: 'default' });
+
+      expect(screen.queryByTestId('deploy-link-externalRef.permissionResults')).not.toBeInTheDocument();
+    });
+
+    it('does not render link when no namespace selected', () => {
+      renderSelector({ deploymentNamespace: undefined });
+
+      expect(screen.queryByTestId('deploy-link-externalRef.permissionResults')).not.toBeInTheDocument();
+    });
   });
 });

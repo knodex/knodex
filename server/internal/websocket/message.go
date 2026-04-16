@@ -19,6 +19,10 @@ const (
 	MessageTypeTemplateUpdate   MessageType = "template_update"   // Enterprise: ConstraintTemplate changes
 	MessageTypeConstraintUpdate MessageType = "constraint_update" // Enterprise: Constraint changes
 	MessageTypeCountsUpdate     MessageType = "counts_update"     // Sidebar badge count push
+	MessageTypeDriftUpdate      MessageType = "drift_update"      // Drift state change (reconciled/drifted)
+	MessageTypeResourceEvent    MessageType = "resource_event"    // Per-resource deploy event (creating/created/failed)
+	MessageTypeDeployProgress   MessageType = "deploy_progress"   // Aggregate deploy progress (in_progress/complete/failed)
+	MessageTypeRevisionUpdate   MessageType = "revision_update"   // GraphRevision change
 	MessageTypeError            MessageType = "error"
 	MessageTypePong             MessageType = "pong"
 	MessageTypeSubscribed       MessageType = "subscribed"
@@ -50,6 +54,7 @@ type Message struct {
 type InstanceUpdateData struct {
 	Action    Action      `json:"action"`
 	Namespace string      `json:"namespace"`
+	Kind      string      `json:"kind"`
 	Name      string      `json:"name"`
 	Instance  interface{} `json:"instance,omitempty"`
 	ProjectID string      `json:"projectId,omitempty"` // For project-scoped filtering
@@ -134,6 +139,44 @@ type CountsUpdateData struct {
 	InstanceCount int `json:"instanceCount"`
 }
 
+// DriftUpdateData contains drift state change information
+type DriftUpdateData struct {
+	Namespace string `json:"namespace"`
+	Kind      string `json:"kind"`
+	Name      string `json:"name"`
+	Drifted   bool   `json:"drifted"`
+	ProjectID string `json:"projectId,omitempty"` // For project-scoped filtering
+}
+
+// ResourceEventData contains per-resource deploy event data.
+// Emitted during deployment as each child resource is created or updated,
+// and for K8s Event notifications via the EventAdapter.
+type ResourceEventData struct {
+	InstanceID   string `json:"instanceId"`
+	ResourceKind string `json:"resourceKind"`
+	ResourceName string `json:"resourceName"`
+	Status       string `json:"status"` // "creating", "created", "failed", "Normal", "Warning"
+	Message      string `json:"message,omitempty"`
+	ProjectID    string `json:"projectId,omitempty"` // For project-scoped RBAC filtering
+}
+
+// DeployProgressData contains aggregate deploy progress data.
+// Emitted after each resource state change during deployment.
+type DeployProgressData struct {
+	InstanceID         string `json:"instanceId"`
+	TotalResources     int    `json:"totalResources"`
+	CompletedResources int    `json:"completedResources"`
+	Status             string `json:"status"` // "in_progress", "complete", "failed"
+}
+
+// RevisionUpdateData contains GraphRevision update information
+type RevisionUpdateData struct {
+	Action    Action `json:"action"`
+	RGDName   string `json:"rgdName"`
+	Revision  int    `json:"revision"`
+	ProjectID string `json:"projectId,omitempty"`
+}
+
 // ErrorData contains error information
 type ErrorData struct {
 	Code    string `json:"code"`
@@ -177,10 +220,11 @@ func NewMessage(msgType MessageType, data interface{}) (*Message, error) {
 }
 
 // NewInstanceUpdateMessage creates an instance update message
-func NewInstanceUpdateMessage(action Action, namespace, name string, instance interface{}, projectID string) (*Message, error) {
+func NewInstanceUpdateMessage(action Action, namespace, kind, name string, instance interface{}, projectID string) (*Message, error) {
 	data := InstanceUpdateData{
 		Action:    action,
 		Namespace: namespace,
+		Kind:      kind,
 		Name:      name,
 		Instance:  instance,
 		ProjectID: projectID,
@@ -245,6 +289,43 @@ func NewCountsUpdateMessage(rgdCount, instanceCount int) (*Message, error) {
 		InstanceCount: instanceCount,
 	}
 	return NewMessage(MessageTypeCountsUpdate, data)
+}
+
+// NewDriftUpdateMessage creates a drift update message
+func NewDriftUpdateMessage(namespace, kind, name string, drifted bool, projectID string) (*Message, error) {
+	data := DriftUpdateData{
+		Namespace: namespace,
+		Kind:      kind,
+		Name:      name,
+		Drifted:   drifted,
+		ProjectID: projectID,
+	}
+	return NewMessage(MessageTypeDriftUpdate, data)
+}
+
+// NewResourceEventMessage creates a per-resource deploy event message.
+// projectID is used for RBAC filtering — only clients with access to the project receive the message.
+func NewResourceEventMessage(instanceID, resourceKind, resourceName, status, message, projectID string) (*Message, error) {
+	data := ResourceEventData{
+		InstanceID:   instanceID,
+		ResourceKind: resourceKind,
+		ResourceName: resourceName,
+		Status:       status,
+		Message:      message,
+		ProjectID:    projectID,
+	}
+	return NewMessage(MessageTypeResourceEvent, data)
+}
+
+// NewRevisionUpdateMessage creates a GraphRevision update message
+func NewRevisionUpdateMessage(action Action, rgdName string, revision int, projectID string) (*Message, error) {
+	data := RevisionUpdateData{
+		Action:    action,
+		RGDName:   rgdName,
+		Revision:  revision,
+		ProjectID: projectID,
+	}
+	return NewMessage(MessageTypeRevisionUpdate, data)
 }
 
 // NewErrorMessage creates an error message

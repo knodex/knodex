@@ -102,7 +102,7 @@ func TestNewProjectWatcher(t *testing.T) {
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme)
 	handler := &mockPolicyHandler{}
 
-	watcher := NewProjectWatcher(dynamicClient, handler, ProjectWatcherConfig{})
+	watcher := NewProjectWatcher(dynamicClient, handler, "knodex-system", ProjectWatcherConfig{})
 
 	if watcher == nil {
 		t.Fatal("expected watcher to be created")
@@ -125,7 +125,7 @@ func TestProjectWatcher_DefaultConfig(t *testing.T) {
 		Logger:       nil,
 	}
 
-	w := NewProjectWatcher(dynamicClient, handler, config)
+	w := NewProjectWatcher(dynamicClient, handler, "knodex-system", config)
 	pw := w.(*projectWatcher)
 
 	if pw.config.ResyncPeriod != 30*time.Minute {
@@ -150,7 +150,7 @@ func TestProjectWatcher_CustomConfig(t *testing.T) {
 		Logger:       logger,
 	}
 
-	w := NewProjectWatcher(dynamicClient, handler, config)
+	w := NewProjectWatcher(dynamicClient, handler, "knodex-system", config)
 	pw := w.(*projectWatcher)
 
 	if pw.config.ResyncPeriod != 5*time.Minute {
@@ -165,7 +165,7 @@ func TestProjectWatcher_IsRunning(t *testing.T) {
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme)
 	handler := &mockPolicyHandler{}
 
-	w := NewProjectWatcher(dynamicClient, handler, ProjectWatcherConfig{})
+	w := NewProjectWatcher(dynamicClient, handler, "knodex-system", ProjectWatcherConfig{})
 
 	// Initially not running
 	if w.IsRunning() {
@@ -180,7 +180,7 @@ func TestProjectWatcher_StopWhenNotRunning(t *testing.T) {
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme)
 	handler := &mockPolicyHandler{}
 
-	w := NewProjectWatcher(dynamicClient, handler, ProjectWatcherConfig{})
+	w := NewProjectWatcher(dynamicClient, handler, "knodex-system", ProjectWatcherConfig{})
 
 	// Should not panic when stopping a non-running watcher
 	w.Stop()
@@ -197,7 +197,7 @@ func TestProjectWatcher_LastSyncTime(t *testing.T) {
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme)
 	handler := &mockPolicyHandler{}
 
-	w := NewProjectWatcher(dynamicClient, handler, ProjectWatcherConfig{})
+	w := NewProjectWatcher(dynamicClient, handler, "knodex-system", ProjectWatcherConfig{})
 
 	// Initially zero
 	if !w.LastSyncTime().IsZero() {
@@ -212,7 +212,7 @@ func TestProjectWatcher_ExtractProject(t *testing.T) {
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme)
 	handler := &mockPolicyHandler{}
 
-	w := NewProjectWatcher(dynamicClient, handler, ProjectWatcherConfig{})
+	w := NewProjectWatcher(dynamicClient, handler, "knodex-system", ProjectWatcherConfig{})
 	pw := w.(*projectWatcher)
 
 	// Test with unstructured object
@@ -243,7 +243,7 @@ func TestProjectWatcher_ExtractProjectInvalidType(t *testing.T) {
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme)
 	handler := &mockPolicyHandler{}
 
-	w := NewProjectWatcher(dynamicClient, handler, ProjectWatcherConfig{})
+	w := NewProjectWatcher(dynamicClient, handler, "knodex-system", ProjectWatcherConfig{})
 	pw := w.(*projectWatcher)
 
 	// Test with invalid type
@@ -270,36 +270,6 @@ func TestProjectWatcherError(t *testing.T) {
 	if err.Error() != "test error" {
 		t.Errorf("expected error message 'test error', got %s", err.Error())
 	}
-}
-
-// TestProjectWatcherManager tests the manager with reconnection
-func TestProjectWatcherManager_Creation(t *testing.T) {
-	t.Parallel()
-
-	scheme := runtime.NewScheme()
-	dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme)
-	handler := &mockPolicyHandler{}
-
-	watcher := NewProjectWatcher(dynamicClient, handler, ProjectWatcherConfig{})
-	manager := NewProjectWatcherManager(watcher, handler, nil)
-
-	if manager == nil {
-		t.Fatal("expected manager to be created")
-	}
-}
-
-func TestProjectWatcherManager_StopWhenNotRunning(t *testing.T) {
-	t.Parallel()
-
-	scheme := runtime.NewScheme()
-	dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme)
-	handler := &mockPolicyHandler{}
-
-	watcher := NewProjectWatcher(dynamicClient, handler, ProjectWatcherConfig{})
-	manager := NewProjectWatcherManager(watcher, handler, nil)
-
-	// Should not panic when stopping a non-running manager
-	manager.Stop()
 }
 
 // Test that watcher correctly identifies Project GVR
@@ -334,7 +304,7 @@ func TestProjectWatcher_ConcurrentAccess(t *testing.T) {
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme)
 	handler := &mockPolicyHandler{}
 
-	w := NewProjectWatcher(dynamicClient, handler, ProjectWatcherConfig{})
+	w := NewProjectWatcher(dynamicClient, handler, "knodex-system", ProjectWatcherConfig{})
 
 	var wg sync.WaitGroup
 	numGoroutines := 10
@@ -361,7 +331,7 @@ func BenchmarkProjectWatcher_IsRunning(b *testing.B) {
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme)
 	handler := &mockPolicyHandler{}
 
-	w := NewProjectWatcher(dynamicClient, handler, ProjectWatcherConfig{})
+	w := NewProjectWatcher(dynamicClient, handler, "knodex-system", ProjectWatcherConfig{})
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -374,7 +344,7 @@ func BenchmarkProjectWatcher_LastSyncTime(b *testing.B) {
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme)
 	handler := &mockPolicyHandler{}
 
-	w := NewProjectWatcher(dynamicClient, handler, ProjectWatcherConfig{})
+	w := NewProjectWatcher(dynamicClient, handler, "knodex-system", ProjectWatcherConfig{})
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -390,7 +360,7 @@ func TestProjectWatcher_OnAdd(t *testing.T) {
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme)
 	handler := &mockPolicyHandler{}
 
-	w := NewProjectWatcher(dynamicClient, handler, ProjectWatcherConfig{})
+	w := NewProjectWatcher(dynamicClient, handler, "knodex-system", ProjectWatcherConfig{})
 	pw := w.(*projectWatcher)
 
 	// Create a valid project object
@@ -432,7 +402,7 @@ func TestProjectWatcher_OnAddWithError(t *testing.T) {
 		loadError: fmt.Errorf("failed to load policies"),
 	}
 
-	w := NewProjectWatcher(dynamicClient, handler, ProjectWatcherConfig{})
+	w := NewProjectWatcher(dynamicClient, handler, "knodex-system", ProjectWatcherConfig{})
 	pw := w.(*projectWatcher)
 
 	project := &unstructured.Unstructured{
@@ -462,7 +432,7 @@ func TestProjectWatcher_OnAddInvalidType(t *testing.T) {
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme)
 	handler := &mockPolicyHandler{}
 
-	w := NewProjectWatcher(dynamicClient, handler, ProjectWatcherConfig{})
+	w := NewProjectWatcher(dynamicClient, handler, "knodex-system", ProjectWatcherConfig{})
 	pw := w.(*projectWatcher)
 
 	// Should not panic with invalid type
@@ -483,7 +453,7 @@ func TestProjectWatcher_OnUpdate(t *testing.T) {
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme)
 	handler := &mockPolicyHandler{}
 
-	w := NewProjectWatcher(dynamicClient, handler, ProjectWatcherConfig{})
+	w := NewProjectWatcher(dynamicClient, handler, "knodex-system", ProjectWatcherConfig{})
 	pw := w.(*projectWatcher)
 
 	oldProject := &unstructured.Unstructured{
@@ -529,7 +499,7 @@ func TestProjectWatcher_OnUpdateSameVersion(t *testing.T) {
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme)
 	handler := &mockPolicyHandler{}
 
-	w := NewProjectWatcher(dynamicClient, handler, ProjectWatcherConfig{})
+	w := NewProjectWatcher(dynamicClient, handler, "knodex-system", ProjectWatcherConfig{})
 	pw := w.(*projectWatcher)
 
 	oldProject := &unstructured.Unstructured{
@@ -574,7 +544,7 @@ func TestProjectWatcher_OnUpdateWithError(t *testing.T) {
 		loadError: fmt.Errorf("failed to load policies"),
 	}
 
-	w := NewProjectWatcher(dynamicClient, handler, ProjectWatcherConfig{})
+	w := NewProjectWatcher(dynamicClient, handler, "knodex-system", ProjectWatcherConfig{})
 	pw := w.(*projectWatcher)
 
 	oldProject := &unstructured.Unstructured{
@@ -611,7 +581,7 @@ func TestProjectWatcher_OnUpdateInvalidOldType(t *testing.T) {
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme)
 	handler := &mockPolicyHandler{}
 
-	w := NewProjectWatcher(dynamicClient, handler, ProjectWatcherConfig{})
+	w := NewProjectWatcher(dynamicClient, handler, "knodex-system", ProjectWatcherConfig{})
 	pw := w.(*projectWatcher)
 
 	newProject := &unstructured.Unstructured{
@@ -643,7 +613,7 @@ func TestProjectWatcher_OnUpdateInvalidNewType(t *testing.T) {
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme)
 	handler := &mockPolicyHandler{}
 
-	w := NewProjectWatcher(dynamicClient, handler, ProjectWatcherConfig{})
+	w := NewProjectWatcher(dynamicClient, handler, "knodex-system", ProjectWatcherConfig{})
 	pw := w.(*projectWatcher)
 
 	oldProject := &unstructured.Unstructured{
@@ -675,7 +645,7 @@ func TestProjectWatcher_OnDelete(t *testing.T) {
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme)
 	handler := &mockPolicyHandler{}
 
-	w := NewProjectWatcher(dynamicClient, handler, ProjectWatcherConfig{})
+	w := NewProjectWatcher(dynamicClient, handler, "knodex-system", ProjectWatcherConfig{})
 	pw := w.(*projectWatcher)
 
 	project := &unstructured.Unstructured{
@@ -709,7 +679,7 @@ func TestProjectWatcher_OnDeleteTombstone(t *testing.T) {
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme)
 	handler := &mockPolicyHandler{}
 
-	w := NewProjectWatcher(dynamicClient, handler, ProjectWatcherConfig{})
+	w := NewProjectWatcher(dynamicClient, handler, "knodex-system", ProjectWatcherConfig{})
 	pw := w.(*projectWatcher)
 
 	project := &unstructured.Unstructured{
@@ -749,7 +719,7 @@ func TestProjectWatcher_OnDeleteTombstoneInvalidInner(t *testing.T) {
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme)
 	handler := &mockPolicyHandler{}
 
-	w := NewProjectWatcher(dynamicClient, handler, ProjectWatcherConfig{})
+	w := NewProjectWatcher(dynamicClient, handler, "knodex-system", ProjectWatcherConfig{})
 	pw := w.(*projectWatcher)
 
 	// Create tombstone with invalid inner object
@@ -776,7 +746,7 @@ func TestProjectWatcher_OnDeleteInvalidType(t *testing.T) {
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme)
 	handler := &mockPolicyHandler{}
 
-	w := NewProjectWatcher(dynamicClient, handler, ProjectWatcherConfig{})
+	w := NewProjectWatcher(dynamicClient, handler, "knodex-system", ProjectWatcherConfig{})
 	pw := w.(*projectWatcher)
 
 	// Should not panic with invalid type
@@ -799,7 +769,7 @@ func TestProjectWatcher_OnDeleteWithError(t *testing.T) {
 		removeError: fmt.Errorf("failed to remove policies"),
 	}
 
-	w := NewProjectWatcher(dynamicClient, handler, ProjectWatcherConfig{})
+	w := NewProjectWatcher(dynamicClient, handler, "knodex-system", ProjectWatcherConfig{})
 	pw := w.(*projectWatcher)
 
 	project := &unstructured.Unstructured{
@@ -829,7 +799,7 @@ func TestProjectWatcher_SetNotRunning(t *testing.T) {
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme)
 	handler := &mockPolicyHandler{}
 
-	w := NewProjectWatcher(dynamicClient, handler, ProjectWatcherConfig{})
+	w := NewProjectWatcher(dynamicClient, handler, "knodex-system", ProjectWatcherConfig{})
 	pw := w.(*projectWatcher)
 
 	// Manually set running to true
@@ -857,7 +827,7 @@ func TestProjectWatcher_UpdateLastSyncTime(t *testing.T) {
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme)
 	handler := &mockPolicyHandler{}
 
-	w := NewProjectWatcher(dynamicClient, handler, ProjectWatcherConfig{})
+	w := NewProjectWatcher(dynamicClient, handler, "knodex-system", ProjectWatcherConfig{})
 	pw := w.(*projectWatcher)
 
 	// Initially zero
@@ -877,90 +847,4 @@ func TestProjectWatcher_UpdateLastSyncTime(t *testing.T) {
 	if time.Since(pw.LastSyncTime()) > time.Second {
 		t.Error("expected sync time to be recent")
 	}
-}
-
-// TestProjectWatcherManager_Start tests the manager Start method
-func TestProjectWatcherManager_Start(t *testing.T) {
-	t.Parallel()
-
-	scheme := runtime.NewScheme()
-	dynamicClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, projectListGVR)
-	handler := &mockPolicyHandler{}
-
-	watcher := NewProjectWatcher(dynamicClient, handler, ProjectWatcherConfig{})
-	manager := NewProjectWatcherManager(watcher, handler, nil)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// Start the manager
-	err := manager.Start(ctx)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Verify running state
-	manager.mu.RLock()
-	running := manager.running
-	manager.mu.RUnlock()
-
-	if !running {
-		t.Error("expected manager to be running")
-	}
-
-	// Stop the manager
-	manager.Stop()
-}
-
-// TestProjectWatcherManager_StartAlreadyRunning tests Start when already running
-func TestProjectWatcherManager_StartAlreadyRunning(t *testing.T) {
-	t.Parallel()
-
-	scheme := runtime.NewScheme()
-	dynamicClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, projectListGVR)
-	handler := &mockPolicyHandler{}
-
-	watcher := NewProjectWatcher(dynamicClient, handler, ProjectWatcherConfig{})
-	manager := NewProjectWatcherManager(watcher, handler, nil)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// Start the manager
-	err := manager.Start(ctx)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Try to start again - should return immediately without error
-	err = manager.Start(ctx)
-	if err != nil {
-		t.Fatalf("unexpected error on second start: %v", err)
-	}
-
-	// Stop the manager
-	manager.Stop()
-}
-
-// TestProjectWatcherManager_StopMultipleTimes tests calling Stop multiple times
-func TestProjectWatcherManager_StopMultipleTimes(t *testing.T) {
-	t.Parallel()
-
-	scheme := runtime.NewScheme()
-	dynamicClient := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme, projectListGVR)
-	handler := &mockPolicyHandler{}
-
-	watcher := NewProjectWatcher(dynamicClient, handler, ProjectWatcherConfig{})
-	manager := NewProjectWatcherManager(watcher, handler, nil)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// Start the manager
-	_ = manager.Start(ctx)
-
-	// Stop multiple times - should not panic
-	manager.Stop()
-	manager.Stop()
-	manager.Stop()
 }

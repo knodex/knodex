@@ -46,7 +46,7 @@ type RGDProvider interface {
 type InstanceCounter interface {
 	// CountInstancesByRGDAndNamespaces returns the instance count for an RGD,
 	// filtered by the user's accessible namespaces.
-	// namespaces == nil means count all instances (global admin)
+	// namespaces == ["*"] means count all instances (global admin)
 	// namespaces == [] means count is 0 (no access)
 	CountInstancesByRGDAndNamespaces(rgdNamespace, rgdName string, namespaces []string, matchFn func(instanceNS string, namespaces []string) bool) int
 }
@@ -55,20 +55,24 @@ type InstanceCounter interface {
 // It consolidates the visibility filtering, caching, and response formatting
 // that was previously scattered across the RGDHandler.
 type CatalogService struct {
-	rgdProvider        RGDProvider
-	instanceCounter    InstanceCounter
-	redisClient        *redis.Client
-	logger             *slog.Logger
-	organizationFilter string // Enterprise org filter (empty = no filtering)
+	rgdProvider         RGDProvider
+	instanceCounter     InstanceCounter
+	policyEnforcer      PolicyEnforcer
+	projectTypeResolver ProjectTypeResolver
+	redisClient         *redis.Client
+	logger              *slog.Logger
+	organizationFilter  string // Enterprise org filter (empty = no filtering)
 }
 
 // CatalogServiceConfig holds configuration for creating a CatalogService.
 type CatalogServiceConfig struct {
-	RGDProvider        RGDProvider
-	InstanceCounter    InstanceCounter
-	RedisClient        *redis.Client
-	Logger             *slog.Logger
-	OrganizationFilter string // Enterprise org filter (empty = no filtering)
+	RGDProvider         RGDProvider
+	InstanceCounter     InstanceCounter
+	PolicyEnforcer      PolicyEnforcer
+	ProjectTypeResolver ProjectTypeResolver // nil = no tier filtering (backward compatible)
+	RedisClient         *redis.Client
+	Logger              *slog.Logger
+	OrganizationFilter  string // Enterprise org filter (empty = no filtering)
 }
 
 // NewCatalogService creates a new CatalogService.
@@ -78,11 +82,13 @@ func NewCatalogService(config CatalogServiceConfig) *CatalogService {
 		logger = slog.Default()
 	}
 	return &CatalogService{
-		rgdProvider:        config.RGDProvider,
-		instanceCounter:    config.InstanceCounter,
-		redisClient:        config.RedisClient,
-		logger:             logger.With("component", "catalog-service"),
-		organizationFilter: config.OrganizationFilter,
+		rgdProvider:         config.RGDProvider,
+		instanceCounter:     config.InstanceCounter,
+		policyEnforcer:      config.PolicyEnforcer,
+		projectTypeResolver: config.ProjectTypeResolver,
+		redisClient:         config.RedisClient,
+		logger:              logger.With("component", "catalog-service"),
+		organizationFilter:  config.OrganizationFilter,
 	}
 }
 
@@ -101,6 +107,12 @@ func (s *CatalogService) ListRGDs(ctx context.Context, authCtx *UserAuthContext,
 	// Convert filters to list options
 	opts := s.filtersToListOptions(filters)
 
+	// Save original pagination for post-filter application when PolicyEnforcer is active.
+	// Casbin filtering is per-user/per-RGD, so we must fetch all items first, filter,
+	// then paginate the filtered set to produce accurate TotalCount and page contents.
+	requestedPage := opts.Page
+	requestedPageSize := opts.PageSize
+
 	// Apply organization filter (enterprise feature)
 	opts.Organization = s.organizationFilter
 
@@ -110,21 +122,88 @@ func (s *CatalogService) ListRGDs(ctx context.Context, authCtx *UserAuthContext,
 		opts.IncludePublic = true
 	}
 
+	// Compute catalog tier visibility from the user's project types.
+	// This filters the catalog to show only RGDs relevant to the user's project tier.
+	catalogTiers, err := s.computeVisibleCatalogTiers(ctx, authCtx)
+	if err != nil {
+		s.logger.Warn("failed to compute visible catalog tiers, showing all tiers",
+			"error", err)
+		// Fail open: show all tiers on error (backward compatible)
+	}
+	opts.CatalogTiers = catalogTiers
+
+	// When PolicyEnforcer is active, fetch all items so Casbin filtering
+	// produces accurate total counts and correct pagination.
+	if s.policyEnforcer != nil && authCtx != nil {
+		opts.Page = 1
+		opts.PageSize = 10000
+	}
+
 	// Try cache first
 	result := s.getRGDsWithCaching(ctx, opts)
 
+	// Warn when the "fetch all" cap is reached: items beyond 10,000 are silently excluded
+	// from Casbin filtering, producing incomplete counts and missing RGDs for large catalogs.
+	if s.policyEnforcer != nil && authCtx != nil && len(result.Items) >= 10000 {
+		s.logger.Warn("RGD catalog fetch limit reached — Casbin filtering may be incomplete; consider caching category-level decisions",
+			"fetched", len(result.Items), "limit", 10000)
+	}
+
+	// Filter through Casbin authorization per-RGD when policy enforcer is configured.
+	// This provides category-scoped access control: rgds/{category}/{name}.
+	// Note: The cache layer (getRGDsWithCaching) stores project-filtered results shared
+	// across users with the same project set. Casbin filtering is applied post-cache and
+	// is per-user, so cache results are never user-specific — this is by design.
+	var filteredItems []models.CatalogRGD
+	if s.policyEnforcer != nil && authCtx != nil {
+		filteredItems = make([]models.CatalogRGD, 0, len(result.Items))
+		for _, rgd := range result.Items {
+			if s.canAccessRGD(ctx, &rgd, authCtx) {
+				filteredItems = append(filteredItems, rgd)
+			}
+		}
+	} else {
+		filteredItems = result.Items
+	}
+
+	// Apply post-filter pagination when PolicyEnforcer is active.
+	// The full set was fetched above; now slice to the requested page.
+	// When policyEnforcer filters, totalCount is len(filtered); otherwise use provider's TotalCount
+	// which accounts for items beyond the current page.
+	totalCount := result.TotalCount
+	if s.policyEnforcer != nil && authCtx != nil {
+		totalCount = len(filteredItems)
+	}
+	page := result.Page
+	pageSize := result.PageSize
+
+	if s.policyEnforcer != nil && authCtx != nil {
+		page = requestedPage
+		pageSize = requestedPageSize
+		start := (requestedPage - 1) * requestedPageSize
+		if start >= len(filteredItems) {
+			filteredItems = nil
+		} else {
+			end := start + requestedPageSize
+			if end > len(filteredItems) {
+				end = len(filteredItems)
+			}
+			filteredItems = filteredItems[start:end]
+		}
+	}
+
 	// Convert to response format with instance counts
-	items := make([]RGDResponse, len(result.Items))
-	for i, rgd := range result.Items {
+	items := make([]RGDResponse, len(filteredItems))
+	for i, rgd := range filteredItems {
 		instanceCount := s.getFilteredInstanceCount(&rgd, authCtx)
 		items[i] = ToRGDResponse(&rgd, instanceCount)
 	}
 
 	return &ListRGDsResult{
 		Items:      items,
-		TotalCount: result.TotalCount,
-		Page:       result.Page,
-		PageSize:   result.PageSize,
+		TotalCount: totalCount,
+		Page:       page,
+		PageSize:   pageSize,
 	}, nil
 }
 
@@ -156,9 +235,28 @@ func (s *CatalogService) GetRGD(ctx context.Context, authCtx *UserAuthContext, n
 		return nil, ErrNotFound
 	}
 
+	// Catalog tier filter: ensure user's project types can see this RGD
+	catalogTiers, err := s.computeVisibleCatalogTiers(ctx, authCtx)
+	if err != nil {
+		s.logger.Warn("failed to compute visible catalog tiers for GetRGD, allowing access",
+			"error", err)
+	}
+	if catalogTiers != nil {
+		tierAllowed := false
+		for _, tier := range catalogTiers {
+			if rgd.CatalogTier == tier {
+				tierAllowed = true
+				break
+			}
+		}
+		if !tierAllowed {
+			return nil, ErrNotFound
+		}
+	}
+
 	// Check project visibility if authenticated
 	if authCtx != nil {
-		if !s.canAccessRGD(rgd, authCtx) {
+		if !s.canAccessRGD(ctx, rgd, authCtx) {
 			s.logger.Debug("RGD access denied",
 				"user_id", authCtx.UserID,
 				"rgd_name", name,
@@ -175,14 +273,26 @@ func (s *CatalogService) GetRGD(ctx context.Context, authCtx *UserAuthContext, n
 }
 
 // GetCount returns the total number of RGDs accessible to the user.
+// Note: This bypasses getRGDsWithCaching() intentionally (count doesn't need the same
+// response caching as list). However, computeVisibleCatalogTiers() makes N K8s API
+// calls to resolve project types on every invocation. If dashboard count frequency
+// becomes a concern, consider caching the tier resolution result per-user.
 func (s *CatalogService) GetCount(ctx context.Context, authCtx *UserAuthContext) (int, error) {
 	if s.rgdProvider == nil {
 		return 0, ErrServiceUnavailable
 	}
 
+	pageSize := 1 // Minimal - we only need count
+	if s.policyEnforcer != nil {
+		// Need all items for per-RGD Casbin filtering — O(n) enforcement calls.
+		// TODO(perf): Cache category-level authorization decisions per-user to avoid
+		// O(N) Casbin calls on every count request. Pre-compute visible categories
+		// once and filter by category set instead of per-RGD enforcement.
+		pageSize = 10000
+	}
 	opts := models.ListOptions{
 		Page:     1,
-		PageSize: 1, // Minimal - we only need count
+		PageSize: pageSize,
 	}
 
 	// Apply organization filter (enterprise feature)
@@ -193,7 +303,33 @@ func (s *CatalogService) GetCount(ctx context.Context, authCtx *UserAuthContext)
 		opts.IncludePublic = true
 	}
 
+	// Compute catalog tier visibility
+	catalogTiers, err := s.computeVisibleCatalogTiers(ctx, authCtx)
+	if err != nil {
+		s.logger.Warn("failed to compute visible catalog tiers for GetCount, showing all",
+			"error", err)
+	}
+	opts.CatalogTiers = catalogTiers
+
 	result := s.rgdProvider.ListRGDs(opts)
+
+	// Warn when the fetch cap is reached for the same reason as ListRGDs.
+	if s.policyEnforcer != nil && authCtx != nil && len(result.Items) >= 10000 {
+		s.logger.Warn("RGD count fetch limit reached — count may be incomplete for catalogs larger than 10,000 RGDs",
+			"fetched", len(result.Items), "limit", 10000)
+	}
+
+	// Apply per-RGD Casbin filtering for accurate count
+	if s.policyEnforcer != nil && authCtx != nil {
+		count := 0
+		for _, rgd := range result.Items {
+			if s.canAccessRGD(ctx, &rgd, authCtx) {
+				count++
+			}
+		}
+		return count, nil
+	}
+
 	return result.TotalCount, nil
 }
 
@@ -211,9 +347,17 @@ func (s *CatalogService) GetFilters(ctx context.Context, authCtx *UserAuthContex
 		accessibleProjects = authCtx.AccessibleProjects
 	}
 
-	// Try cache first
-	if s.redisClient != nil {
-		cacheKey := s.filtersCacheKey(accessibleProjects, includePublic)
+	// Compute catalog tier visibility (must be before cache check so key includes tiers)
+	catalogTiers, tierErr := s.computeVisibleCatalogTiers(ctx, authCtx)
+	if tierErr != nil {
+		s.logger.Warn("failed to compute visible catalog tiers for GetFilters, showing all",
+			"error", tierErr)
+	}
+
+	// Skip cache when PolicyEnforcer is active: filter results are per-user (Casbin-scoped)
+	// and cannot be safely shared across users with identical project membership but different roles.
+	if s.redisClient != nil && s.policyEnforcer == nil {
+		cacheKey := s.filtersCacheKey(accessibleProjects, includePublic, catalogTiers)
 		data, err := s.redisClient.Get(ctx, cacheKey).Bytes()
 		if err == nil {
 			var opts RGDFilterOptions
@@ -231,17 +375,25 @@ func (s *CatalogService) GetFilters(ctx context.Context, authCtx *UserAuthContex
 		Organization:  s.organizationFilter,
 		Projects:      accessibleProjects,
 		IncludePublic: includePublic,
+		CatalogTiers:  catalogTiers,
 		Page:          1,
 		PageSize:      10000, // Get all for filter extraction
 	}
 	result := s.rgdProvider.ListRGDs(opts)
 
-	// Extract unique values
+	// Extract unique values from authorized RGDs only
 	projectSet := make(map[string]bool)
 	tagSet := make(map[string]bool)
 	categorySet := make(map[string]bool)
 
 	for _, rgd := range result.Items {
+		// Apply per-RGD Casbin filtering for consistent filter options
+		if s.policyEnforcer != nil && authCtx != nil {
+			if !s.canAccessRGD(ctx, &rgd, authCtx) {
+				continue
+			}
+		}
+
 		if rgd.Labels != nil {
 			if project := rgd.Labels[models.RGDProjectLabel]; project != "" {
 				projectSet[project] = true
@@ -264,9 +416,10 @@ func (s *CatalogService) GetFilters(ctx context.Context, authCtx *UserAuthContex
 		Categories: collection.SortedKeys(categorySet),
 	}
 
-	// Cache filter options - they change infrequently (only when RGDs are added/removed)
-	if s.redisClient != nil {
-		cacheKey := s.filtersCacheKey(accessibleProjects, includePublic)
+	// Cache filter options only when no PolicyEnforcer is active (results are shared across users).
+	// With PolicyEnforcer, results are per-user Casbin-filtered and must not be shared.
+	if s.redisClient != nil && s.policyEnforcer == nil {
+		cacheKey := s.filtersCacheKey(accessibleProjects, includePublic, catalogTiers)
 		data, err := json.Marshal(filterOpts)
 		if err == nil {
 			if err := s.redisClient.Set(ctx, cacheKey, data, filtersCacheTTL).Err(); err != nil {
@@ -280,18 +433,103 @@ func (s *CatalogService) GetFilters(ctx context.Context, authCtx *UserAuthContex
 	return filterOpts, nil
 }
 
-// canAccessRGD checks if the user can access a specific RGD based on project visibility.
-// An RGD is accessible if:
-// - It's public (no project label)
-// - The user's accessible projects include the RGD's project label
-func (s *CatalogService) canAccessRGD(rgd *models.CatalogRGD, authCtx *UserAuthContext) bool {
+// computeVisibleCatalogTiers determines which catalog tiers should be visible
+// to the user based on their accessible project types.
+//
+// Returns:
+//   - nil: all tiers visible (global admin, mixed project types, or no resolver)
+//   - ["app", "both"]: user only has app projects
+//   - ["infrastructure", "both"]: user only has platform projects
+//   - ["both"]: user has no projects (only universal RGDs)
+func (s *CatalogService) computeVisibleCatalogTiers(ctx context.Context, authCtx *UserAuthContext) ([]string, error) {
+	// No resolver configured — no tier filtering (backward compatible)
+	if s.projectTypeResolver == nil {
+		return nil, nil
+	}
+
+	// Unauthenticated — no filtering (will be handled by auth layer)
+	if authCtx == nil {
+		return nil, nil
+	}
+
+	// Global admin (wildcard namespace access) — see all tiers.
+	// Convention: ["*"] signals global admin access, set by AuthorizationService/NamespaceProvider.
+	if len(authCtx.AccessibleNamespaces) == 1 && authCtx.AccessibleNamespaces[0] == "*" {
+		return nil, nil
+	}
+
+	// No accessible projects — only universal RGDs
+	if len(authCtx.AccessibleProjects) == 0 {
+		return []string{"both"}, nil
+	}
+
+	// Resolve project types
+	projectTypes, err := s.projectTypeResolver.GetProjectTypes(ctx, authCtx.AccessibleProjects)
+	if err != nil {
+		return nil, err
+	}
+
+	// Determine unique project types
+	hasApp := false
+	hasPlatform := false
+	for _, pt := range projectTypes {
+		switch rbac.ProjectType(pt) {
+		case rbac.ProjectTypePlatform:
+			hasPlatform = true
+		default:
+			hasApp = true
+		}
+	}
+
+	// Mixed project types → all tiers visible (union of app + platform = all)
+	if hasApp && hasPlatform {
+		return nil, nil
+	}
+
+	if hasPlatform {
+		return []string{"infrastructure", "both"}, nil
+	}
+
+	return []string{"app", "both"}, nil
+}
+
+// canAccessRGD checks if the user can access a specific RGD.
+// Authorization is now category-scoped via Casbin: rgds/{category}/{name}.
+// Falls back to project-based visibility when no PolicyEnforcer is configured.
+func (s *CatalogService) canAccessRGD(ctx context.Context, rgd *models.CatalogRGD, authCtx *UserAuthContext) bool {
 	if authCtx == nil {
 		return false
 	}
 
 	// Note: Organization filtering is handled in GetRGD() (returns 404 to hide existence).
-	// canAccessRGD only checks project-level access (returns 403 for denied).
+	// canAccessRGD checks category-scoped Casbin authorization (primary) and
+	// project-level access (fallback).
 
+	// Primary: Category-scoped Casbin authorization check
+	if s.policyEnforcer != nil {
+		obj, err := rbac.FormatRGDObject(rgd.Category, rgd.Name)
+		if err != nil {
+			s.logger.Warn("failed to format RGD object for authorization",
+				"rgd_name", rgd.Name, "category", rgd.Category, "error", err)
+			return false
+		}
+
+		allowed, err := s.policyEnforcer.CanAccessWithGroups(
+			ctx,
+			authCtx.UserID,
+			authCtx.Groups,
+			obj,
+			rbac.ActionGet,
+		)
+		if err != nil {
+			s.logger.Warn("RGD authorization check failed",
+				"user_id", authCtx.UserID, "rgd_name", rgd.Name, "error", err)
+			return false
+		}
+		return allowed
+	}
+
+	// Fallback: project-based visibility (when no PolicyEnforcer configured)
 	projectLabel := ""
 	if rgd.Labels != nil {
 		projectLabel = rgd.Labels[models.RGDProjectLabel]
@@ -354,6 +592,15 @@ func (s *CatalogService) filtersToListOptions(filters RGDFilters) models.ListOpt
 	if filters.DependsOnKind != "" {
 		opts.DependsOnKind = filters.DependsOnKind
 	}
+	if filters.ProducesKind != "" {
+		opts.ProducesKind = filters.ProducesKind
+	}
+	if filters.ProducesGroup != "" {
+		opts.ProducesGroup = filters.ProducesGroup
+	}
+	if filters.Status != "" {
+		opts.Status = filters.Status
+	}
 	if filters.Page > 0 {
 		opts.Page = filters.Page
 	}
@@ -372,8 +619,9 @@ func (s *CatalogService) filtersToListOptions(filters RGDFilters) models.ListOpt
 
 // getRGDsWithCaching retrieves RGDs with Redis caching support.
 func (s *CatalogService) getRGDsWithCaching(ctx context.Context, opts models.ListOptions) models.CatalogRGDList {
+	var cacheKey string
 	if s.redisClient != nil {
-		cacheKey := s.listCacheKey(opts)
+		cacheKey = s.listCacheKey(opts)
 		data, err := s.redisClient.Get(ctx, cacheKey).Bytes()
 		if err == nil {
 			var result models.CatalogRGDList
@@ -392,7 +640,6 @@ func (s *CatalogService) getRGDsWithCaching(ctx context.Context, opts models.Lis
 
 	// Cache list results briefly - WebSocket provides real-time updates
 	if s.redisClient != nil {
-		cacheKey := s.listCacheKey(opts)
 		data, err := json.Marshal(result)
 		if err == nil {
 			if err := s.redisClient.Set(ctx, cacheKey, data, listCacheTTL).Err(); err != nil {
@@ -418,7 +665,11 @@ func (s *CatalogService) listCacheKey(opts models.ListOptions) string {
 	copy(tags, opts.Tags)
 	sort.Strings(tags)
 
-	return fmt.Sprintf("rgd:list:org=%s:ns=%s:cat=%s:tags=%s:ek=%s:search=%s:dok=%s:projects=%s:public=%t:page=%d:size=%d:sort=%s:%s",
+	tiers := make([]string, len(opts.CatalogTiers))
+	copy(tiers, opts.CatalogTiers)
+	sort.Strings(tiers)
+
+	return fmt.Sprintf("rgd:list:org=%s:ns=%s:cat=%s:tags=%s:ek=%s:search=%s:dok=%s:pk=%s:pg=%s:projects=%s:public=%t:tiers=%s:status=%s:page=%d:size=%d:sort=%s:%s",
 		opts.Organization,
 		opts.Namespace,
 		opts.Category,
@@ -426,8 +677,12 @@ func (s *CatalogService) listCacheKey(opts models.ListOptions) string {
 		opts.ExtendsKind,
 		opts.Search,
 		opts.DependsOnKind,
+		opts.ProducesKind,
+		opts.ProducesGroup,
 		strings.Join(projects, ","),
 		opts.IncludePublic,
+		strings.Join(tiers, ","),
+		opts.Status,
 		opts.Page,
 		opts.PageSize,
 		opts.SortBy,
@@ -436,9 +691,19 @@ func (s *CatalogService) listCacheKey(opts models.ListOptions) string {
 }
 
 // filtersCacheKey generates a Redis cache key for RGD filters.
-func (s *CatalogService) filtersCacheKey(projects []string, includePublic bool) string {
+func (s *CatalogService) filtersCacheKey(projects []string, includePublic bool, catalogTiers []string) string {
 	sortedProjects := make([]string, len(projects))
 	copy(sortedProjects, projects)
 	sort.Strings(sortedProjects)
-	return fmt.Sprintf("rgd:filters:org=%s:projects=%s:public=%t", s.organizationFilter, strings.Join(sortedProjects, ","), includePublic)
+
+	tiers := make([]string, len(catalogTiers))
+	copy(tiers, catalogTiers)
+	sort.Strings(tiers)
+
+	return fmt.Sprintf("rgd:filters:org=%s:projects=%s:public=%t:tiers=%s",
+		s.organizationFilter,
+		strings.Join(sortedProjects, ","),
+		includePublic,
+		strings.Join(tiers, ","),
+	)
 }

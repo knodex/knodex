@@ -16,6 +16,17 @@ vi.mock("@/hooks/useNamespaces", () => ({
   useProjectNamespaces: vi.fn(),
 }));
 
+vi.mock("@/hooks/useAuth", () => ({
+  useCurrentProject: vi.fn(() => "alpha"),
+}));
+
+vi.mock("@/hooks/useProjects", () => ({
+  useProjects: vi.fn(() => ({
+    data: { items: [{ name: "alpha" }, { name: "beta" }] },
+    isLoading: false,
+  })),
+}));
+
 vi.mock("sonner", () => ({
   toast: {
     success: vi.fn(),
@@ -99,7 +110,6 @@ function renderDialog() {
       <CreateSecretDialog
         open={true}
         onOpenChange={onOpenChange}
-        project="alpha"
       />
     </QueryClientProvider>
   );
@@ -171,6 +181,42 @@ describe("CreateSecretDialog", () => {
     });
 
     expect(mockMutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("shows project validation error when no project is selected", async () => {
+    // Override useCurrentProject to return null (All Projects)
+    const { useCurrentProject } = await import("@/hooks/useAuth");
+    vi.mocked(useCurrentProject).mockReturnValue(null);
+
+    renderDialog();
+
+    // Fill name and namespace but leave project empty
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "my-secret" },
+    });
+    fireEvent.click(screen.getByTestId("select-option-alpha-ns"));
+    fireEvent.change(screen.getByLabelText("Key 1"), {
+      target: { value: "API_KEY" },
+    });
+    fireEvent.change(screen.getByLabelText("Value 1"), {
+      target: { value: "secret-123" },
+    });
+
+    fireEvent.click(screen.getByText("Create"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Project is required")).toBeInTheDocument();
+    });
+    expect(mockMutateAsync).not.toHaveBeenCalled();
+
+    // Restore mock
+    vi.mocked(useCurrentProject).mockReturnValue("alpha");
+  });
+
+  it("renders project options from useProjects", () => {
+    renderDialog();
+    expect(screen.getByTestId("select-option-alpha")).toBeInTheDocument();
+    expect(screen.getByTestId("select-option-beta")).toBeInTheDocument();
   });
 
   it("rejects invalid K8s secret names", async () => {

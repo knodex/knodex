@@ -199,7 +199,7 @@ func setupConcurrencyTestService() *ProjectService {
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme)
 	k8sClient := k8sfake.NewSimpleClientset()
 
-	return NewProjectService(k8sClient, dynamicClient)
+	return NewProjectService(k8sClient, dynamicClient, "knodex-system")
 }
 
 // createTestProjectSpec creates a valid ArgoCD-aligned ProjectSpec for testing

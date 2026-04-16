@@ -23,12 +23,18 @@ type FormSchema struct {
 	Description string `json:"description,omitempty"`
 	// Properties are the form fields
 	Properties map[string]FormProperty `json:"properties"`
+	// PropertyOrder defines the display order for form fields.
+	// When set, listed fields appear first in this order; unlisted fields follow alphabetically.
+	PropertyOrder []string `json:"propertyOrder,omitempty"`
 	// Required lists the required field names
 	Required []string `json:"required,omitempty"`
 	// ConditionalSections defines form sections that should be hidden based on conditions
 	ConditionalSections []ConditionalSection `json:"conditionalSections,omitempty"`
-	// AdvancedSection defines the advanced configuration toggle for fields under spec.advanced
-	AdvancedSection *AdvancedSection `json:"advancedSection,omitempty"`
+	// IsClusterScoped indicates the RGD produces cluster-scoped instances.
+	// When true, the frontend should hide the namespace selector in deploy forms.
+	IsClusterScoped bool `json:"isClusterScoped"`
+	// AdvancedSections defines per-feature and global advanced configuration toggles
+	AdvancedSections []AdvancedSection `json:"advancedSections,omitempty"`
 }
 
 // AdvancedSection defines configuration that is hidden by default
@@ -77,12 +83,28 @@ type ExternalRefSelectorMetadata struct {
 	// Kind is the resource kind (e.g., "ConfigMap", "Secret")
 	Kind string `json:"kind"`
 	// UseInstanceNamespace indicates the dropdown should filter by the deployment namespace.
-	// Always set to true for the paired externalRef.<id>.name/namespace pattern.
-	UseInstanceNamespace bool `json:"useInstanceNamespace,omitempty"`
+	// When false, the picker queries all namespaces (for cross-namespace externalRefs).
+	UseInstanceNamespace bool `json:"useInstanceNamespace"`
 	// AutoFillFields maps resource attributes to sub-field names for auto-populating
 	// multiple form fields from a single resource picker selection.
 	// Example: {"name": "name", "namespace": "namespace"}
 	AutoFillFields map[string]string `json:"autoFillFields,omitempty"`
+}
+
+// CollectionAnnotation provides metadata for schema fields that drive forEach collection expansion.
+// Attached to FormProperty as x-knodex-collection so the frontend can identify collection-driving
+// fields without parsing CEL expressions.
+type CollectionAnnotation struct {
+	// ResourceID is the ID of the collection resource within the RGD (e.g., "workerPods")
+	ResourceID string `json:"resourceId"`
+	// IteratorVar is the variable name bound in template expressions (e.g., "worker")
+	IteratorVar string `json:"iteratorVar"`
+	// Dimensions is the total number of forEach iterators on the resource (1 for simple, 2+ for cartesian)
+	Dimensions int `json:"dimensions"`
+	// DimensionIndex is the zero-based position of this iterator in the forEach array
+	DimensionIndex int `json:"dimensionIndex"`
+	// Source is the iterator source type (e.g., "schema")
+	Source string `json:"source"`
 }
 
 // FormProperty represents a single form field
@@ -111,6 +133,8 @@ type FormProperty struct {
 	Pattern string `json:"pattern,omitempty"`
 	// Properties for nested objects
 	Properties map[string]FormProperty `json:"properties,omitempty"`
+	// PropertyOrder defines the display order for nested object fields.
+	PropertyOrder []string `json:"propertyOrder,omitempty"`
 	// Required for nested objects
 	Required []string `json:"required,omitempty"`
 	// Items for arrays
@@ -125,6 +149,9 @@ type FormProperty struct {
 	ExternalRefSelector *ExternalRefSelectorMetadata `json:"externalRefSelector,omitempty"`
 	// IsAdvanced indicates this field is under the advanced section and hidden by default
 	IsAdvanced bool `json:"isAdvanced,omitempty"`
+	// CollectionAnnotation provides metadata when this field drives a forEach collection expansion.
+	// Serialized as x-knodex-collection following OpenAPI extension convention.
+	CollectionAnnotation *CollectionAnnotation `json:"x-knodex-collection,omitempty"`
 }
 
 // SchemaResponse is the API response for the schema endpoint

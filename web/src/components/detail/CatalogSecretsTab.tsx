@@ -1,7 +1,7 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { KeyRound } from "lucide-react";
+import { KeyRound } from "@/lib/icons";
 import type { SecretRef } from "@/types/secret";
 import { Badge } from "@/components/ui/badge";
 

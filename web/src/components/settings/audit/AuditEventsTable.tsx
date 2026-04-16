@@ -1,8 +1,8 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useMemo } from "react";
-import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, FileSearch } from "lucide-react";
+import { useMemo, useCallback, memo } from "react";
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, FileSearch } from "@/lib/icons";
 import {
   Table,
   TableBody,
@@ -81,6 +81,54 @@ function SortIcon({ field, sortBy, sortOrder }: { field: AuditSortField; sortBy?
     : <ArrowDown className="h-3 w-3 ml-1" />;
 }
 
+/** Memoized table row to prevent re-renders when sort/filter state changes */
+const AuditEventRow = memo(function AuditEventRow({
+  event,
+  onRowClick,
+}: {
+  event: AuditEvent;
+  onRowClick: (event: AuditEvent) => void;
+}) {
+  const handleClick = useCallback(() => onRowClick(event), [onRowClick, event]);
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        onRowClick(event);
+      }
+    },
+    [onRowClick, event]
+  );
+
+  return (
+    <TableRow
+      className="cursor-pointer hover:bg-muted/50"
+      tabIndex={0}
+      role="button"
+      onClick={handleClick}
+      onKeyDown={handleKeyDown}
+    >
+      <TableCell className="text-xs text-muted-foreground">
+        {formatTimestamp(event.timestamp)}
+      </TableCell>
+      <TableCell className="text-sm truncate max-w-[200px]">
+        {event.userEmail || event.userId}
+      </TableCell>
+      <TableCell className="text-sm">{event.action}</TableCell>
+      <TableCell className="text-sm">{event.resource}</TableCell>
+      <TableCell className="text-sm truncate max-w-[180px]">
+        {event.name}
+      </TableCell>
+      <TableCell className="text-sm text-muted-foreground">
+        {event.project || "\u2014"}
+      </TableCell>
+      <TableCell>
+        <ResultBadge result={event.result} />
+      </TableCell>
+    </TableRow>
+  );
+});
+
 export function AuditEventsTable({
   events,
   total,
@@ -109,6 +157,22 @@ export function AuditEventsTable({
       return sortOrder === "desc" ? -cmp : cmp;
     });
   }, [events, sortBy, sortOrder]);
+
+  // Stable sort-column click handler
+  const handleSortClick = useCallback(
+    (field: AuditSortField) => {
+      if (sortBy === field) {
+        if (sortOrder === "asc") {
+          onSortChange(field, "desc");
+        } else {
+          onSortChange(undefined, undefined);
+        }
+      } else {
+        onSortChange(field, "asc");
+      }
+    },
+    [sortBy, sortOrder, onSortChange]
+  );
 
   // Loading skeleton
   if (isLoading && events.length === 0) {
@@ -144,7 +208,7 @@ export function AuditEventsTable({
 
   return (
     <div>
-      <div className="rounded-md border">
+      <div className="rounded-lg border border-border overflow-hidden">
         <Table>
           <TableHeader>
             <TableRow>
@@ -153,18 +217,7 @@ export function AuditEventsTable({
                   key={col.field}
                   style={{ width: col.width }}
                   className="cursor-pointer select-none hover:bg-muted/50"
-                  onClick={() => {
-                    if (sortBy === col.field) {
-                      if (sortOrder === "asc") {
-                        onSortChange(col.field, "desc");
-                      } else {
-                        // desc → unsorted (3-state cycle)
-                        onSortChange(undefined, undefined);
-                      }
-                    } else {
-                      onSortChange(col.field, "asc");
-                    }
-                  }}
+                  onClick={() => handleSortClick(col.field)}
                 >
                   <span className="inline-flex items-center">
                     {col.label}
@@ -176,37 +229,7 @@ export function AuditEventsTable({
           </TableHeader>
           <TableBody>
             {sortedEvents.map((event) => (
-              <TableRow
-                key={event.id}
-                className="cursor-pointer hover:bg-muted/50"
-                tabIndex={0}
-                role="button"
-                onClick={() => onRowClick(event)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    onRowClick(event);
-                  }
-                }}
-              >
-                <TableCell className="text-xs text-muted-foreground">
-                  {formatTimestamp(event.timestamp)}
-                </TableCell>
-                <TableCell className="text-sm truncate max-w-[200px]">
-                  {event.userEmail || event.userId}
-                </TableCell>
-                <TableCell className="text-sm">{event.action}</TableCell>
-                <TableCell className="text-sm">{event.resource}</TableCell>
-                <TableCell className="text-sm truncate max-w-[180px]">
-                  {event.name}
-                </TableCell>
-                <TableCell className="text-sm text-muted-foreground">
-                  {event.project || "\u2014"}
-                </TableCell>
-                <TableCell>
-                  <ResultBadge result={event.result} />
-                </TableCell>
-              </TableRow>
+              <AuditEventRow key={event.id} event={event} onRowClick={onRowClick} />
             ))}
           </TableBody>
         </Table>

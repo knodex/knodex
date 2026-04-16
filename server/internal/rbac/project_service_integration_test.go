@@ -76,7 +76,7 @@ func TestMain(m *testing.M) {
 
 	testK8sClient = k8sClient
 	testDynamicClient = dynamicClient
-	testProjectSvc = rbac.NewProjectService(k8sClient, dynamicClient)
+	testProjectSvc = rbac.NewProjectService(k8sClient, dynamicClient, "knodex-system")
 
 	// Verify CRD is available
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

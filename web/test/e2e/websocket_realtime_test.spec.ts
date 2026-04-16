@@ -111,12 +111,17 @@ test.describe('Global Admin - WebSocket Real-Time Updates', () => {
 
         if (instances.length > 0) {
           const instanceToUpdate = instances[0];
-          const instanceId = instanceToUpdate.id || instanceToUpdate.metadata?.name;
+          const namespace = instanceToUpdate.metadata?.namespace || instanceToUpdate.namespace;
+          const kind = instanceToUpdate.kind;
+          const instanceName = instanceToUpdate.metadata?.name || instanceToUpdate.name;
+          const patchUrl = namespace
+            ? `${BASE_URL}/api/v1/namespaces/${namespace}/instances/${kind}/${instanceName}`
+            : `${BASE_URL}/api/v1/instances/${kind}/${instanceName}`;
 
-          console.log('Updating instance:', instanceId);
+          console.log('Updating instance:', patchUrl);
 
           // Update instance status via API
-          await page.request.patch(`${BASE_URL}/api/v1/instances/${instanceId}`, {
+          await page.request.patch(patchUrl, {
             headers: {
               Authorization: `Bearer ${token}`,
               'Content-Type': 'application/json'

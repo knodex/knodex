@@ -2,11 +2,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import React, { useMemo } from "react";
-import { AlertTriangle, Box, Clock, Package } from "lucide-react";
+import { Clock, Package } from "@/lib/icons";
 import type { Instance } from "@/types/rgd";
 import { cn } from "@/lib/utils";
 import { formatDistanceToNow } from "@/lib/date";
+import { RGDIcon } from "@/components/ui/rgd-icon";
 import { HealthBadge } from "./HealthBadge";
+import { ScopeIndicator } from "@/components/shared/ScopeIndicator";
 import {
   Tooltip,
   TooltipContent,
@@ -20,6 +22,15 @@ interface InstanceCardProps {
   isUpdating?: boolean;
 }
 
+// Health-based left border color (CSS variable names from index.css)
+const HEALTH_BORDER_VAR: Record<string, string> = {
+  Healthy: "var(--success)",
+  Degraded: "var(--warning)",
+  Progressing: "var(--warning)",
+  Unhealthy: "var(--destructive)",
+  Unknown: "var(--border)",
+};
+
 export const InstanceCard = React.memo(function InstanceCard({
   instance,
   onClick,
@@ -30,29 +41,35 @@ export const InstanceCard = React.memo(function InstanceCard({
     [instance.createdAt]
   );
 
+  const healthBorderVar = HEALTH_BORDER_VAR[instance.health] || HEALTH_BORDER_VAR.Unknown;
+
   return (
     <div
       data-testid="instance-card"
       role="button"
+      tabIndex={0}
       aria-label={`View details for ${instance.name}`}
       className={cn(
         "group relative cursor-pointer rounded-lg border border-border/60 bg-card p-5",
+        "border-l-[3px]",
         "transition-all duration-200 ease-out",
         "hover:border-primary/30 hover:bg-accent/5",
         isUpdating && "animate-update-flash"
       )}
+      style={{ borderLeftColor: `hsl(${healthBorderVar})` }}
       onClick={() => onClick?.(instance)}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick?.(instance); } }}
     >
       {/* Header */}
       <div className="flex items-start justify-between gap-3 mb-4">
         <div className="flex items-center gap-3 min-w-0">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-            <Box className="h-5 w-5" />
+            <RGDIcon icon={instance.rgdIcon} category={instance.rgdCategory || "uncategorized"} />
           </div>
           <div className="min-w-0">
             <Tooltip>
               <TooltipTrigger asChild>
-                <h3 className="font-semibold text-foreground truncate text-base group-hover:text-primary transition-colors duration-200">
+                <h3 className="font-semibold text-foreground line-clamp-2 text-base group-hover:text-primary transition-colors duration-200">
                   {instance.name}
                 </h3>
               </TooltipTrigger>
@@ -60,16 +77,13 @@ export const InstanceCard = React.memo(function InstanceCard({
                 <p>{instance.name}</p>
               </TooltipContent>
             </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <p className="text-xs text-muted-foreground font-mono truncate mt-1">
-                  {instance.namespace}
-                </p>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>{instance.namespace}</p>
-              </TooltipContent>
-            </Tooltip>
+            <div className="mt-1">
+              <ScopeIndicator
+                isClusterScoped={instance.isClusterScoped}
+                namespace={instance.namespace}
+                variant="badge"
+              />
+            </div>
           </div>
         </div>
         <HealthBadge health={instance.health} size="sm" />
@@ -81,19 +95,6 @@ export const InstanceCard = React.memo(function InstanceCard({
           <span className="text-xs">RGD:</span>{" "}
           <span className="font-mono text-foreground">{instance.rgdName}</span>
         </span>
-        {instance.rgdStatus && instance.rgdStatus !== "Active" && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium text-destructive bg-destructive/10 border border-destructive/20">
-                <AlertTriangle className="h-3 w-3" />
-                RGD Inactive
-              </span>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>The parent RGD is currently inactive</p>
-            </TooltipContent>
-          </Tooltip>
-        )}
       </div>
 
       {/* Kind/API Tags */}

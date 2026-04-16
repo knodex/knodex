@@ -16,7 +16,7 @@ spec:
     singular: project
     shortNames:
       - proj
-  scope: Cluster
+  scope: Namespaced
   versions:
     - name: v1alpha1
       served: true
@@ -40,11 +40,15 @@ spec:
                 # Destination restrictions (ArgoCD AppProject pattern)
                 destinations:
                   type: array
-                  description: "Namespaces where deployments are allowed."
+                  description: "List of allowed deployment destinations (clusters and namespaces)."
                   minItems: 1
                   items:
                     type: object
                     properties:
+                      server:
+                        type: string
+                        description: "Kubernetes cluster API server URL. Use '*' for any cluster."
+                        maxLength: 2048
                       namespace:
                         type: string
                         description: "Kubernetes namespace. Supports wildcards (*, namespace-*)."
@@ -52,7 +56,7 @@ spec:
                         pattern: "^(\\*|[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\*)?|\\*[a-z0-9]([-a-z0-9]*[a-z0-9])?)$"
                       name:
                         type: string
-                        description: "Optional friendly name for the destination"
+                        description: "Cluster name (alternative to server URL)"
                         maxLength: 253
 
                 # Cluster-scoped resource whitelist (ArgoCD AppProject pattern)
@@ -166,6 +170,13 @@ spec:
                       groups:
                         type: array
                         description: "OIDC group names bound to this role"
+                        items:
+                          type: string
+                          minLength: 1
+                          maxLength: 253
+                      destinations:
+                        type: array
+                        description: "Optional namespace patterns from project destinations. When set, policies are scoped to these namespaces only. When empty, role gets project-wide policies."
                         items:
                           type: string
                           minLength: 1

@@ -67,7 +67,7 @@ func setupServiceWithMiniredis(t *testing.T) (*Service, *miniredis.Miniredis) {
 		{Group: rbac.ProjectGroup, Version: rbac.ProjectVersion, Resource: "projects"}: "ProjectList",
 	}
 	dynamicClient := testutil.NewFakeDynamicClientWithListKinds(t, gvrToListKind)
-	projectSvc := rbac.NewProjectService(k8sClient, dynamicClient)
+	projectSvc := rbac.NewProjectService(k8sClient, dynamicClient, "knodex-system")
 	casbinEnforcer, err := rbac.NewCasbinEnforcer()
 	if err != nil {
 		t.Fatalf("NewCasbinEnforcer() error = %v", err)

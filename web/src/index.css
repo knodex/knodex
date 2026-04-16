@@ -44,6 +44,9 @@
   font-display: swap;
 }
 
+@import "./styles/tokens.css";
+@import "./styles/animations.css";
+
 @import "tailwindcss";
 
 :root {
@@ -107,7 +110,7 @@
   --card-foreground: 220 13% 9%;     /* Gray-900: #111827 */
   --popover: 0 0% 100%;              /* White: #ffffff */
   --popover-foreground: 220 13% 9%;  /* Gray-900: #111827 */
-  --primary: 168 76% 42%;            /* Teal-500: #14b8a6 */
+  --primary: 168 76% 32%;            /* Teal-700: #0d9488 — darker for light mode contrast */
   --primary-foreground: 0 0% 100%;   /* White */
   --secondary: 220 14% 96%;          /* Gray-100: #f3f4f6 */
   --secondary-foreground: 220 13% 9%; /* Gray-900: #111827 */
@@ -117,7 +120,7 @@
   --accent-foreground: 0 0% 100%;    /* White */
   --destructive: 350 89% 60%;        /* Rose-500: #f43f5e */
   --destructive-foreground: 0 0% 100%; /* White */
-  --border: 220 13% 93%;             /* Subtle light border */
+  --border: 220 13% 89%;             /* Slightly darker light border for visibility */
   --input: 220 13% 93%;              /* Match border */
   --ring: 168 80% 59%;               /* Teal-400: #2dd4bf */
   --chart-1: 168 76% 42%;            /* Teal */
@@ -163,8 +166,14 @@
   --graph-template: 217 91% 60%;     /* Blue for templates */
   --graph-external: 25 95% 53%;      /* Orange for external refs */
   --graph-conditional: 38 92% 50%;   /* Amber for conditional */
+  --graph-collection: 262 80% 50%;   /* Purple/Indigo for collections */
   --graph-edge: 168 76% 42%;         /* Teal for edges */
   --graph-background: 0 0% 20%;      /* Grid background */
+
+  /* Graph Diff Colors */
+  --graph-added: 120 70% 40%;        /* Green for added resources */
+  --graph-removed: 0 70% 40%;        /* Red for removed resources */
+  --graph-modified: 45 70% 50%;      /* Yellow/Amber for modified resources */
 
   /* Syntax Highlighting Colors */
   --syntax-string: 142 76% 36%;      /* Green-600: #16a34a */
@@ -174,38 +183,38 @@
 }
 
 .dark {
-  /* ShadCN Dark Mode - Deep navy (#141722) */
+  /* ShadCN Dark Mode — Deep navy with lifted cards */
   --background: 227 26% 11%;         /* Deep navy: #141722 */
   --foreground: 210 20% 98%;         /* Gray-50: #f9fafb */
-  --card: 228 24% 14%;               /* Slightly lighter than bg for contrast */
+  --card: 228 22% 16%;               /* Lifted navy: #1e2230 — visible above bg */
   --card-foreground: 210 20% 98%;    /* Gray-50: #f9fafb */
-  --popover: 228 24% 13%;            /* Match sidebar */
+  --popover: 228 20% 19%;            /* Elevated navy: #262b3a */
   --popover-foreground: 210 20% 98%; /* Gray-50: #f9fafb */
-  --primary: 168 76% 50%;            /* Teal-400 desaturated */
+  --primary: 168 76% 50%;            /* Teal-400: #2dd4bf */
   --primary-foreground: 227 26% 11%; /* Match background */
-  --secondary: 217 19% 27%;          /* Slate-700: #334155 */
+  --secondary: 227 18% 22%;          /* Muted navy: #2a3040 */
   --secondary-foreground: 210 20% 98%; /* Gray-50: #f9fafb */
-  --muted: 217 19% 27%;              /* Slate-700: #334155 */
+  --muted: 227 18% 22%;              /* Muted navy: #2a3040 */
   --muted-foreground: 215 14% 63%;   /* Slate-400: #94a3b8 */
   --accent: 263 70% 60%;             /* Violet-500: #8b5cf6 */
   --accent-foreground: 0 0% 100%;    /* White */
   --destructive: 350 89% 60%;        /* Rose-500: #f43f5e */
   --destructive-foreground: 0 0% 100%;
-  --border: 227 20% 18%;             /* Subtle dark border */
-  --input: 227 20% 18%;              /* Match border */
+  --border: 227 18% 22%;             /* Subtle navy border */
+  --input: 227 18% 22%;              /* Match border */
   --ring: 168 76% 50%;               /* Match primary */
   --chart-1: 168 76% 50%;            /* Teal (match primary) */
   --chart-2: 263 70% 60%;            /* Violet */
   --chart-3: 213 94% 68%;            /* Blue */
   --chart-4: 142 76% 50%;            /* Green */
   --chart-5: 43 96% 56%;             /* Amber */
-  --sidebar: 228 24% 13%;            /* Slightly lighter than bg */
+  --sidebar: 227 26% 11%;            /* Match page background: #141722 */
   --sidebar-foreground: 210 20% 98%; /* Gray-50 */
   --sidebar-primary: 168 76% 50%;    /* Match primary */
   --sidebar-primary-foreground: 227 26% 11%;
   --sidebar-accent: 263 70% 60%;     /* Violet-500 */
   --sidebar-accent-foreground: 0 0% 100%;
-  --sidebar-border: 227 20% 18%;     /* Match border */
+  --sidebar-border: 227 18% 22%;     /* Match border */
   --sidebar-ring: 168 76% 50%;       /* Match primary */
 
   /* Dark mode shadows - deeper */
@@ -230,8 +239,14 @@
   --graph-template: 213 94% 68%;     /* Blue for templates */
   --graph-external: 25 95% 53%;      /* Orange for external refs */
   --graph-conditional: 43 96% 56%;   /* Amber for conditional */
+  --graph-collection: 265 84% 71%;   /* Purple/Indigo for collections */
   --graph-edge: 168 80% 59%;         /* Teal for edges */
   --graph-background: 0 0% 15%;      /* Grid background */
+
+  /* Graph Diff Colors - Dark mode */
+  --graph-added: 120 60% 50%;        /* Green for added resources */
+  --graph-removed: 0 60% 50%;        /* Red for removed resources */
+  --graph-modified: 45 60% 60%;      /* Yellow/Amber for modified resources */
 
   /* Syntax Highlighting Colors - Dark mode */
   --syntax-string: 142 71% 45%;      /* Green-500: #22c55e */
@@ -284,8 +299,12 @@
   --color-graph-template: hsl(var(--graph-template));
   --color-graph-external: hsl(var(--graph-external));
   --color-graph-conditional: hsl(var(--graph-conditional));
+  --color-graph-collection: hsl(var(--graph-collection));
   --color-graph-edge: hsl(var(--graph-edge));
   --color-graph-background: hsl(var(--graph-background));
+  --color-graph-added: hsl(var(--graph-added));
+  --color-graph-removed: hsl(var(--graph-removed));
+  --color-graph-modified: hsl(var(--graph-modified));
 
   /* Syntax highlighting colors */
   --color-syntax-string: hsl(var(--syntax-string));
@@ -300,6 +319,48 @@
   --color-violet: var(--violet);
   --color-violet-light: var(--violet-light);
   --color-blue: var(--blue);
+
+  /* UX Redesign — Surface tokens */
+  --color-surface-bg: var(--surface-bg);
+  --color-surface-primary: var(--surface-primary);
+  --color-surface-elevated: var(--surface-elevated);
+
+  /* UX Redesign — Status tokens */
+  --color-status-healthy: var(--status-healthy);
+  --color-status-warning: var(--status-warning);
+  --color-status-error: var(--status-error);
+  --color-status-info: var(--status-info);
+  --color-status-inactive: var(--status-inactive);
+
+  /* UX Redesign — Brand tokens */
+  --color-brand-primary: var(--brand-primary);
+  --color-brand-hover: var(--brand-hover);
+
+  /* UX Redesign — Text tokens */
+  --color-content-primary: var(--text-primary);
+  --color-content-secondary: var(--text-secondary);
+  --color-content-muted: var(--text-muted);
+  --color-content-disabled: var(--text-disabled);
+
+  /* UX Redesign — Spacing tokens */
+  --spacing-1: var(--space-1);
+  --spacing-2: var(--space-2);
+  --spacing-3: var(--space-3);
+  --spacing-4: var(--space-4);
+  --spacing-6: var(--space-6);
+  --spacing-8: var(--space-8);
+  --spacing-12: var(--space-12);
+
+  /* UX Redesign — Radius tokens */
+  --radius-token-sm: var(--radius-token-sm);
+  --radius-token-md: var(--radius-token-md);
+  --radius-token-lg: var(--radius-token-lg);
+  --radius-token-full: var(--radius-token-full);
+
+  /* UX Redesign — Shadow tokens */
+  --shadow-token-sm: var(--shadow-token-sm);
+  --shadow-token-md: var(--shadow-token-md);
+  --shadow-token-lg: var(--shadow-token-lg);
 
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
@@ -363,6 +424,11 @@
   /* Smooth scrolling */
   html {
     scroll-behavior: smooth;
+  }
+
+  /* Mobile: prevent horizontal scroll */
+  body[data-layout="mobile"] {
+    overflow-x: hidden;
   }
 
   /* Focus ring with teal color */
@@ -905,11 +971,59 @@
     border-color: hsl(var(--graph-conditional));
   }
 
+  .text-graph-collection {
+    color: hsl(var(--graph-collection));
+  }
+  .bg-graph-collection {
+    background-color: hsl(var(--graph-collection));
+  }
+  .bg-graph-collection\/10 {
+    background-color: hsl(var(--graph-collection) / 0.1);
+  }
+  .bg-graph-collection\/20 {
+    background-color: hsl(var(--graph-collection) / 0.2);
+  }
+  .border-graph-collection {
+    border-color: hsl(var(--graph-collection));
+  }
+  .border-graph-collection\/40 {
+    border-color: hsl(var(--graph-collection) / 0.4);
+  }
+
   .text-graph-edge {
     color: hsl(var(--graph-edge));
   }
   .bg-graph-edge {
     background-color: hsl(var(--graph-edge));
+  }
+
+  /* Graph diff status utilities */
+  .text-graph-added {
+    color: hsl(var(--graph-added));
+  }
+  .bg-graph-added\/20 {
+    background-color: hsl(var(--graph-added) / 0.2);
+  }
+  .border-graph-added {
+    border-color: hsl(var(--graph-added));
+  }
+  .text-graph-removed {
+    color: hsl(var(--graph-removed));
+  }
+  .bg-graph-removed\/20 {
+    background-color: hsl(var(--graph-removed) / 0.2);
+  }
+  .border-graph-removed {
+    border-color: hsl(var(--graph-removed));
+  }
+  .text-graph-modified {
+    color: hsl(var(--graph-modified));
+  }
+  .bg-graph-modified\/20 {
+    background-color: hsl(var(--graph-modified) / 0.2);
+  }
+  .border-graph-modified {
+    border-color: hsl(var(--graph-modified));
   }
 
   /* Syntax highlighting utilities */

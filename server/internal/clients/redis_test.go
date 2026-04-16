@@ -28,7 +28,7 @@ func TestNewRedisClient_Success(t *testing.T) {
 		DB:       0,
 	}
 
-	client := NewRedisClient(cfg)
+	client := NewRedisClient(cfg, nil)
 	require.NotNil(t, client, "Redis client should not be nil")
 	defer client.Close()
 
@@ -45,7 +45,7 @@ func TestNewRedisClient_EmptyAddress(t *testing.T) {
 		Address: "",
 	}
 
-	client := NewRedisClient(cfg)
+	client := NewRedisClient(cfg, nil)
 	assert.Nil(t, client, "Redis client should be nil when address is empty")
 }
 
@@ -81,7 +81,7 @@ func TestNewRedisClient_RetryLogic(t *testing.T) {
 	}()
 
 	// This should retry and eventually connect
-	client := NewRedisClient(cfg)
+	client := NewRedisClient(cfg, nil)
 	<-done // Wait for Redis to start
 	defer mr.Close()
 
@@ -114,7 +114,7 @@ func TestNewRedisClient_MaxRetriesExceeded(t *testing.T) {
 
 	// This test will take some time due to retries
 	start := time.Now()
-	client := NewRedisClient(cfg)
+	client := NewRedisClient(cfg, nil)
 	duration := time.Since(start)
 
 	assert.Nil(t, client, "Redis client should be nil after max retries exceeded")
@@ -142,7 +142,7 @@ func TestNewRedisClient_WithPassword(t *testing.T) {
 		DB:       0,
 	}
 
-	client := NewRedisClient(cfg)
+	client := NewRedisClient(cfg, nil)
 	require.NotNil(t, client, "Redis client should not be nil")
 	defer client.Close()
 
@@ -172,7 +172,7 @@ func TestNewRedisClient_WrongPassword(t *testing.T) {
 	// It's still valuable for manual testing
 	t.Skip("Skipping test that requires waiting for all retries to exhaust")
 
-	client := NewRedisClient(cfg)
+	client := NewRedisClient(cfg, nil)
 	assert.Nil(t, client, "Redis client should be nil with wrong password")
 }
 
@@ -187,7 +187,7 @@ func TestCloseRedisClient_Success(t *testing.T) {
 	})
 
 	// Should not panic
-	CloseRedisClient(client)
+	CloseRedisClient(client, nil)
 
 	// Verify client is closed
 	ctx := context.Background()
@@ -199,7 +199,7 @@ func TestCloseRedisClient_NilClient(t *testing.T) {
 	t.Parallel()
 
 	// Should not panic with nil client
-	CloseRedisClient(nil)
+	CloseRedisClient(nil, nil)
 }
 
 // =============================================================================
@@ -223,7 +223,7 @@ func TestNewRedisClient_WithUsername(t *testing.T) {
 
 	// The client will connect fine — miniredis ignores unknown AUTH params.
 	// This tests that our code correctly passes Username to redis.Options.
-	client := NewRedisClient(cfg)
+	client := NewRedisClient(cfg, nil)
 	// miniredis may or may not reject username-only auth; the key is our code doesn't crash
 	if client != nil {
 		defer client.Close()
@@ -252,7 +252,7 @@ func TestNewRedisClient_TLSEnabled_FailsOnPlaintextServer(t *testing.T) {
 		t.Skip("Skipping long-running TLS test in short mode")
 	}
 
-	client := NewRedisClient(cfg)
+	client := NewRedisClient(cfg, nil)
 	assert.Nil(t, client, "Redis client should be nil when TLS is enabled but server doesn't support TLS")
 }
 
@@ -270,7 +270,7 @@ func TestNewRedisClient_TLSDisabled_ConnectsToPlaintextServer(t *testing.T) {
 		TLSEnabled: false,
 	}
 
-	client := NewRedisClient(cfg)
+	client := NewRedisClient(cfg, nil)
 	require.NotNil(t, client, "Redis client should connect when TLS is disabled")
 	defer client.Close()
 
@@ -302,7 +302,7 @@ func TestNewRedisClient_TLSInsecureSkipVerify(t *testing.T) {
 		t.Skip("Skipping long-running TLS test in short mode")
 	}
 
-	client := NewRedisClient(cfg)
+	client := NewRedisClient(cfg, nil)
 	// Client should be nil because miniredis is plaintext
 	assert.Nil(t, client, "Redis client should be nil when TLS is enabled but server is plaintext")
 }

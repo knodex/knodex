@@ -8,27 +8,18 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"path/filepath"
 	"regexp"
-	"strings"
 	"time"
 
 	"github.com/google/go-github/v68/github"
 	"golang.org/x/oauth2"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
-
-	"github.com/knodex/knodex/server/internal/util/sanitize"
 )
 
 const (
 	// DefaultSecretsNamespace is the default namespace where GitHub secrets are stored
 	DefaultSecretsNamespace = "kro-system"
-
-	// Security limits for file operations
-	maxFilePath      = 255              // Maximum file path length
-	maxFileSize      = 10 * 1024 * 1024 // 10MB maximum file size
-	maxCommitMessage = 65536            // 64KB maximum commit message length
 )
 
 var (
@@ -36,10 +27,6 @@ var (
 	// Supports: ghp_ (personal), gho_ (OAuth), ghu_ (user), ghs_ (server), ghr_ (refresh)
 	// Fixed: Non-backtracking pattern to prevent ReDoS attacks
 	githubTokenPattern = regexp.MustCompile(`^ghp_[a-zA-Z0-9]{36}$|^gho_[a-zA-Z0-9]{36}$|^ghu_[a-zA-Z0-9]{36}$|^ghs_[a-zA-Z0-9]{36}$|^ghr_[a-zA-Z0-9]{76}$`)
-
-	// Input validation patterns
-	validRepoName   = regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
-	validBranchName = regexp.MustCompile(`^[a-zA-Z0-9_./\-]+$`)
 )
 
 // GitHubClient wraps the Kubernetes client for GitHub credential management
@@ -77,11 +64,6 @@ func NewGitHubClient(k8sClient kubernetes.Interface) *GitHubClient {
 		namespace:  DefaultSecretsNamespace,
 		httpClient: httpClient,
 	}
-}
-
-// SetNamespace sets the default namespace for reading secrets
-func (c *GitHubClient) SetNamespace(namespace string) {
-	c.namespace = namespace
 }
 
 // GetCredentials reads a GitHub token from a Kubernetes secret
@@ -211,190 +193,6 @@ func (c *GitHubClient) TestConnection(ctx context.Context, creds GitHubCredentia
 	}
 
 	return nil
-}
-
-// CommitFiles commits one or more files to a GitHub repository in a single commit
-// This method handles directory creation automatically and supports both single and multi-file commits
-func (c *GitHubClient) CommitFiles(ctx context.Context, client *github.Client, owner, repo, branch string, files map[string]string, message string) (string, error) {
-	if client == nil {
-		return "", fmt.Errorf("GitHub client cannot be nil")
-	}
-	if len(files) == 0 {
-		return "", fmt.Errorf("no files provided to commit")
-	}
-
-	// Validate input parameters to prevent injection attacks
-	if err := validateInput(owner, repo, branch); err != nil {
-		return "", fmt.Errorf("invalid input: %w", err)
-	}
-
-	// Sanitize commit message to prevent injection
-	sanitizedMessage, err := sanitizeCommitMessage(message)
-	if err != nil {
-		return "", fmt.Errorf("invalid commit message: %w", err)
-	}
-
-	// Validate all file paths and enforce size limits
-	for path, content := range files {
-		if err := validateFilePath(path); err != nil {
-			return "", fmt.Errorf("invalid file path: %w", err)
-		}
-		if len(content) > maxFileSize {
-			return "", fmt.Errorf("file %s exceeds maximum size of %d bytes", path, maxFileSize)
-		}
-	}
-
-	// Get branch reference
-	ref, _, err := client.Git.GetRef(ctx, owner, repo, "refs/heads/"+branch)
-	if err != nil {
-		return "", fmt.Errorf("failed to get branch ref: %w", err)
-	}
-
-	// Get base tree - this is needed to create a new tree
-	baseTree, _, err := client.Git.GetTree(ctx, owner, repo, ref.Object.GetSHA(), true)
-	if err != nil {
-		return "", fmt.Errorf("failed to get base tree: %w", err)
-	}
-
-	// Create tree entries for all files
-	// Directories are created automatically by the GitHub API
-	entries := []*github.TreeEntry{}
-	for path, content := range files {
-		entries = append(entries, &github.TreeEntry{
-			Path:    github.String(path),
-			Mode:    github.String("100644"), // Regular file
-			Type:    github.String("blob"),
-			Content: github.String(content),
-		})
-	}
-
-	// Create new tree with our entries
-	tree, _, err := client.Git.CreateTree(ctx, owner, repo, baseTree.GetSHA(), entries)
-	if err != nil {
-		return "", fmt.Errorf("failed to create tree: %w", err)
-	}
-
-	// Create commit with sanitized message
-	parent := ref.Object
-	commit, _, err := client.Git.CreateCommit(ctx, owner, repo, &github.Commit{
-		Message: github.String(sanitizedMessage),
-		Tree:    tree,
-		Parents: []*github.Commit{{SHA: parent.SHA}},
-	}, nil)
-	if err != nil {
-		return "", fmt.Errorf("failed to create commit: %w", err)
-	}
-
-	// Update reference to point to new commit
-	// This is where conflicts can occur if the ref has changed
-	ref.Object.SHA = commit.SHA
-	_, _, err = client.Git.UpdateRef(ctx, owner, repo, ref, false)
-	if err != nil {
-		return "", fmt.Errorf("failed to update ref (possible conflict): %w", err)
-	}
-
-	return commit.GetSHA(), nil
-}
-
-// CommitFile commits a single file to a GitHub repository
-// This is a convenience wrapper around CommitFiles for single file commits
-func (c *GitHubClient) CommitFile(ctx context.Context, client *github.Client, owner, repo, branch, path, content, message string) (string, error) {
-	files := map[string]string{
-		path: content,
-	}
-	return c.CommitFiles(ctx, client, owner, repo, branch, files, message)
-}
-
-// GetDefaultBranch retrieves the default branch name for a repository
-func (c *GitHubClient) GetDefaultBranch(ctx context.Context, client *github.Client, owner, repo string) (string, error) {
-	if client == nil {
-		return "", fmt.Errorf("GitHub client cannot be nil")
-	}
-	repository, resp, err := client.Repositories.Get(ctx, owner, repo)
-	if resp != nil && resp.Body != nil {
-		defer resp.Body.Close()
-	}
-	if err != nil {
-		return "", fmt.Errorf("failed to get repository: %w", err)
-	}
-
-	defaultBranch := repository.GetDefaultBranch()
-	if defaultBranch == "" {
-		return "", fmt.Errorf("repository has no default branch configured")
-	}
-
-	return defaultBranch, nil
-}
-
-// validateFilePath validates file paths to prevent directory traversal and other attacks
-func validateFilePath(path string) error {
-	// Clean the path to normalize it
-	cleanPath := filepath.Clean(path)
-
-	// Reject absolute paths
-	if filepath.IsAbs(cleanPath) {
-		return fmt.Errorf("absolute paths not allowed: %s", path)
-	}
-
-	// Reject paths that try to traverse outside the repository
-	if strings.HasPrefix(cleanPath, "..") || strings.Contains(cleanPath, "/../") {
-		return fmt.Errorf("directory traversal not allowed: %s", path)
-	}
-
-	// Reject paths with null bytes (potential injection)
-	if strings.Contains(path, "\x00") {
-		return fmt.Errorf("null bytes in path not allowed: %s", path)
-	}
-
-	// Enforce maximum path length
-	if len(cleanPath) > maxFilePath {
-		return fmt.Errorf("path too long (max %d characters): %s", maxFilePath, path)
-	}
-
-	return nil
-}
-
-// validateInput validates owner, repo, and branch names to prevent injection attacks
-func validateInput(owner, repo, branch string) error {
-	if owner == "" || repo == "" || branch == "" {
-		return fmt.Errorf("owner, repo, and branch cannot be empty")
-	}
-
-	if len(owner) > 39 {
-		return fmt.Errorf("owner name too long (max 39 characters)")
-	}
-
-	if len(repo) > 100 {
-		return fmt.Errorf("repo name too long (max 100 characters)")
-	}
-
-	if len(branch) > 255 {
-		return fmt.Errorf("branch name too long (max 255 characters)")
-	}
-
-	if !validRepoName.MatchString(owner) {
-		return fmt.Errorf("invalid owner name format: %s", owner)
-	}
-
-	if !validRepoName.MatchString(repo) {
-		return fmt.Errorf("invalid repo name format: %s", repo)
-	}
-
-	if !validBranchName.MatchString(branch) {
-		return fmt.Errorf("invalid branch name format: %s", branch)
-	}
-
-	return nil
-}
-
-// sanitizeCommitMessage sanitizes commit messages to prevent injection attacks
-func sanitizeCommitMessage(message string) (string, error) {
-	// Enforce maximum length before delegating sanitization
-	if len(message) > maxCommitMessage {
-		return "", fmt.Errorf("commit message too long (max %d characters)", maxCommitMessage)
-	}
-
-	return sanitize.CommitMessage(message)
 }
 
 // getSecretKeys returns a list of keys available in a secret's data map

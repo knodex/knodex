@@ -1,39 +1,41 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useCallback, useMemo } from "react";
 import { Link, useLocation } from "react-router-dom";
 import {
   LayoutGrid,
   Box,
   ExternalLink,
-  X,
   Settings,
   ShieldCheck,
   ScrollText,
-  ChevronDown,
-  FolderKanban,
+  ChevronLeft,
   KeyRound,
-} from "lucide-react";
-import type { LucideProps } from "lucide-react";
+  FolderOpen,
+  GitBranch,
+  FileText,
+  Shield,
+  AlertTriangle,
+} from "@/lib/icons";
+import type { LucideProps } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { getLucideIcon } from "@/lib/icons";
-import { useRGDCount, useInstanceCount } from "@/hooks";
+import { routePreloads } from "@/lib/route-preloads";
+import { useRGDCount } from "@/hooks/useRGDs";
+import { useRGDList } from "@/hooks/useRGDs";
+import { useInstanceCount, useInstanceList } from "@/hooks/useInstances";
 import { useViolationCount, isEnterprise } from "@/hooks/useCompliance";
-import { useViewsEnabled } from "@/hooks/useViews";
+import { useCategoriesEnabled } from "@/hooks/useCategories";
 import { useCanI } from "@/hooks/useCanI";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { useCurrentProject } from "@/hooks/useAuth";
+import { useProjects } from "@/hooks/useProjects";
+import { filterByProjectNamespaces } from "@/lib/project-utils";
 
-type NavTab = "catalog" | "instances" | "compliance" | "settings" | string;
+type NavTab = "catalog" | "instances" | "compliance" | "settings" | "projects" | "repositories" | string;
 
-interface SidebarProps {
-  onCollapseChange?: (isCollapsed: boolean) => void;
-  isMobileOpen?: boolean;
-  onMobileClose?: () => void;
+interface SidebarNavProps {
+  onNavItemClick?: () => void;
 }
 
 interface NavItem {
@@ -44,501 +46,459 @@ interface NavItem {
   to: string;
 }
 
-// Key for localStorage persistence
-const VIEWS_COLLAPSED_KEY = "sidebar-views-collapsed";
+/**
+ * NavItemLink — extracted as a standalone component to avoid recreating on every
+ * SidebarNav render (addresses inline renderNavItem finding).
+ */
+const NavItemLink = React.memo(function NavItemLink({
+  item,
+  isActive,
+  onClick,
+  onPreload,
+}: {
+  item: NavItem;
+  isActive: boolean;
+  onClick: () => void;
+  onPreload: (to: string) => void;
+}) {
+  const Icon = item.icon;
+  return (
+    <Link
+      to={item.to}
+      onClick={onClick}
+      onMouseEnter={() => onPreload(item.to)}
+      onFocus={() => onPreload(item.to)}
+      className={cn(
+        "w-full flex items-center gap-3 px-3 rounded-[var(--radius-token-md)] text-[14px] font-medium transition-all duration-150",
+        "py-[9px]",
+        isActive
+          ? "bg-[rgba(255,255,255,0.1)] text-[var(--text-primary)]"
+          : "text-[var(--text-secondary)] hover:bg-[rgba(255,255,255,0.04)] hover:text-[var(--text-primary)]",
+      )}
+      aria-label={item.label}
+      aria-current={isActive ? "page" : undefined}
+    >
+      <Icon className="h-5 w-5 flex-shrink-0" aria-hidden="true" />
+      <span className="flex-1 text-left whitespace-nowrap overflow-hidden text-ellipsis">
+        {item.label}
+      </span>
+      {item.badge !== undefined && item.badge > 0 && (
+        <span
+          className={cn(
+            "flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-xs font-medium",
+            isActive
+              ? "bg-[rgba(255,255,255,0.1)] text-[var(--text-secondary)]"
+              : "bg-[rgba(255,255,255,0.06)] text-[var(--text-muted)]"
+          )}
+          aria-label={`${item.badge} items`}
+        >
+          {item.badge}
+        </span>
+      )}
+    </Link>
+  );
+});
 
-export function Sidebar({
-  onCollapseChange,
-  isMobileOpen = false,
-  onMobileClose,
-}: SidebarProps) {
+/**
+ * SidebarNav renders the sidebar navigation content (logo, nav sections, footer).
+ * Used by both the desktop Sidebar and the tablet/mobile SidebarDrawer.
+ */
+export function SidebarNav({ onNavItemClick }: SidebarNavProps) {
   const location = useLocation();
-  // Sidebar is collapsed by default, expands on hover
-  const [isHovered, setIsHovered] = useState(false);
 
-  // Views section collapse state (persisted to localStorage)
-  const [isViewsCollapsed, setIsViewsCollapsed] = useState(() => {
-    const stored = localStorage.getItem(VIEWS_COLLAPSED_KEY);
-    return stored === "true";
-  });
-
-  // Expand sidebar on hover (desktop only)
-  const handleMouseEnter = useCallback(() => {
-    setIsHovered(true);
-  }, []);
-
-  const handleMouseLeave = useCallback(() => {
-    setIsHovered(false);
-  }, []);
-
-  // Sidebar is expanded when hovered
-  const isExpanded = isHovered;
-
-  // Get custom views (EE feature)
-  const { views: customViews } = useViewsEnabled();
+  // Get categories (OSS feature — Casbin-filtered per user)
+  const { categories } = useCategoriesEnabled();
 
   // Derive active tab from current route
-  // Check for view routes: /views/{slug}
-  const viewSlugMatch = location.pathname.match(/^\/views\/([^/]+)/);
+  const categorySlugMatch = location.pathname.match(/^\/catalog\/categories\/([^/]+)/);
   const activeTab: NavTab =
+    location.pathname.startsWith('/projects') ? 'projects' :
+    location.pathname.startsWith('/repositories') ? 'repositories' :
     location.pathname.startsWith('/settings') ? 'settings' :
     location.pathname.startsWith('/audit') ? 'audit' :
     location.pathname.startsWith('/compliance') ? 'compliance' :
     location.pathname.startsWith('/secrets') ? 'secrets' :
+    location.pathname.startsWith('/catalog') ? 'catalog' :
+    location.pathname.startsWith('/deploy') ? 'catalog' :
     location.pathname.startsWith('/instances') ? 'instances' :
-    viewSlugMatch ? `view-${viewSlugMatch[1]}` :
-    'catalog';
+    'instances';
 
-  // Auto-expand views section when navigating TO a view
-  // Only runs when the view slug changes, not when collapse state changes
-  useEffect(() => {
-    if (viewSlugMatch) {
-      setIsViewsCollapsed(false);
-      localStorage.setItem(VIEWS_COLLAPSED_KEY, "false");
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewSlugMatch?.[1]]); // Only depend on the slug value, not the collapse state
+  const handleNavItemClick = useCallback(() => {
+    onNavItemClick?.();
+  }, [onNavItemClick]);
 
-  const handleNavItemClick = () => {
-    // Close mobile sidebar when navigation item is clicked
-    onMobileClose?.();
-  };
-
-  const toggleViewsSection = useCallback(() => {
-    setIsViewsCollapsed((prev) => {
-      const newValue = !prev;
-      localStorage.setItem(VIEWS_COLLAPSED_KEY, String(newValue));
-      return newValue;
-    });
-  }, []);
-
-  // Close sidebar on escape key
-  useEffect(() => {
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && isMobileOpen) {
-        onMobileClose?.();
-      }
-    };
-
-    document.addEventListener("keydown", handleEscape);
-    return () => document.removeEventListener("keydown", handleEscape);
-  }, [isMobileOpen, onMobileClose]);
-
-  // Notify parent of collapse state changes
-  useEffect(() => {
-    onCollapseChange?.(true); // Always collapsed for layout purposes (overlay mode)
-  }, [onCollapseChange]);
-
-  // Get RGD and Instance counts for badges using lightweight count endpoints
+  // Project-aware counts for sidebar badges
+  const currentProject = useCurrentProject();
   const { data: rgdCountData } = useRGDCount();
   const { data: instanceCountData } = useInstanceCount();
   const { data: violationCount } = useViolationCount();
 
-  // Secrets nav visibility: only shown when user has any secrets permission (AC #5)
+  // When a project is selected, use full lists (already cached by pages) to compute filtered counts
+  const { data: rgdListData } = useRGDList();
+  const { data: instanceListData } = useInstanceList();
+  const { data: projectsData } = useProjects();
+
+  // Secrets nav visibility: only shown when user has any secrets permission
   const { allowed: canViewSecrets } = useCanI("secrets", "get", "-");
 
-  const rgdCount = rgdCountData?.count ?? 0;
-  const instanceCount = instanceCountData?.count ?? 0;
-
-  // Build view nav items from config (EE feature)
-  const viewNavItems: NavItem[] = useMemo(() => {
-    if (!customViews || customViews.length === 0) {
-      return [];
+  const rgdCount = useMemo(() => {
+    // When categories are available, sum their counts for an RBAC-accurate total.
+    // The WebSocket-pushed rgdCount is cluster-wide (unfiltered), so we prefer
+    // the per-category counts which are already Casbin-filtered by the server.
+    if (!currentProject && categories && categories.length > 0) {
+      return categories.reduce((sum, cat) => sum + cat.count, 0);
     }
-    return customViews.map((view) => ({
-      id: `view-${view.slug}`,
-      label: view.name,
-      icon: getLucideIcon(view.icon),
-      badge: view.count,
-      to: `/views/${view.slug}`,
-    }));
-  }, [customViews]);
+    if (!currentProject) return rgdCountData?.count ?? 0;
+    if (!rgdListData?.items) return 0;
+    return rgdListData.items.filter(
+      (rgd) => rgd.labels?.["knodex.io/project"] === currentProject
+    ).length;
+  }, [currentProject, rgdCountData, rgdListData, categories]);
 
-  // Core navigation items (always visible)
-  const coreNavItems: NavItem[] = [
-    { id: "catalog", label: "Catalog", icon: LayoutGrid, badge: rgdCount, to: "/catalog" },
-    { id: "instances", label: "Instances", icon: Box, badge: instanceCount, to: "/instances" },
-    // Secrets: only shown when user has secrets:get permission
-    // Use === true to avoid flashing the nav item while permission is loading (undefined)
-    ...(canViewSecrets === true ? [{ id: "secrets" as NavTab, label: "Secrets", icon: KeyRound, to: "/secrets" }] : []),
-  ];
+  const instanceCount = useMemo(() => {
+    if (!currentProject) return instanceCountData?.count ?? 0;
+    if (!instanceListData?.items) return 0;
+    const selectedProject = projectsData?.items?.find((p) => p.name === currentProject);
+    return filterByProjectNamespaces(instanceListData.items, selectedProject).length;
+  }, [currentProject, instanceCountData, instanceListData, projectsData]);
 
-  // Enterprise-only items after views
-  const enterpriseNavItems: NavItem[] = isEnterprise() ? [
-    {
-      id: "audit" as const,
-      label: "Audit",
-      icon: ScrollText,
-      to: "/audit",
-    },
-    {
-      id: "compliance" as const,
-      label: "Compliance",
-      icon: ShieldCheck,
-      badge: violationCount,
-      to: "/compliance",
-    },
-  ] : [];
-
-  // Render a single nav item
-  const renderNavItem = (item: NavItem, indented: boolean = false) => {
-    const Icon = item.icon;
-    const isActive = activeTab === item.id;
-
-    const linkContent = (
-      <Link
-        key={item.id}
-        to={item.to}
-        onClick={handleNavItemClick}
-        className={cn(
-          "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150",
-          isActive
-            ? "bg-sidebar-accent/15 text-sidebar-foreground border-l-2 border-primary"
-            : "text-sidebar-foreground/70 hover:bg-muted/50 hover:text-sidebar-foreground",
-          !isExpanded && "justify-center px-2",
-          indented && isExpanded && "ml-2"
-        )}
-        aria-label={item.label}
-        aria-current={isActive ? "page" : undefined}
-      >
-        <Icon className={cn("flex-shrink-0", indented ? "h-4 w-4" : "h-5 w-5")} />
-
-        {isExpanded && (
-          <>
-            <span className="flex-1 text-left whitespace-nowrap overflow-hidden text-ellipsis">
-              {item.label}
-            </span>
-            {item.badge !== undefined && item.badge > 0 && (
-              <span
-                className={cn(
-                  "flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-xs font-medium",
-                  isActive
-                    ? "bg-primary text-primary-foreground"
-                    : "bg-muted text-muted-foreground"
-                )}
-              >
-                {item.badge}
-              </span>
-            )}
-          </>
-        )}
-      </Link>
-    );
-
-    if (!isExpanded) {
-      return (
-        <Tooltip key={item.id}>
-          <TooltipTrigger asChild>{linkContent}</TooltipTrigger>
-          <TooltipContent side="right">
-            <p>{item.label}{item.badge !== undefined && item.badge > 0 ? ` (${item.badge})` : ''}</p>
-          </TooltipContent>
-        </Tooltip>
-      );
-    }
-
-    return linkContent;
-  };
-
-  // Render views section header
-  const renderViewsSectionHeader = () => {
-    if (viewNavItems.length === 0) return null;
-
-    const headerContent = (
-      <button
-        onClick={toggleViewsSection}
-        className={cn(
-          "w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold uppercase tracking-wider",
-          "text-sidebar-foreground/50 hover:text-sidebar-foreground/70 transition-colors",
-          !isExpanded && "justify-center px-2"
-        )}
-        aria-expanded={!isViewsCollapsed}
-        aria-controls="view-nav-items"
-        aria-label={`Views section, ${viewNavItems.length} views, ${isViewsCollapsed ? 'collapsed' : 'expanded'}`}
-      >
-        {isExpanded ? (
-          <>
-            <ChevronDown
-              className={cn(
-                "h-3 w-3 transition-transform duration-200",
-                isViewsCollapsed && "-rotate-90"
-              )}
-              aria-hidden="true"
-            />
-            <span className="flex-1 text-left">Views</span>
-          </>
-        ) : (
-          <FolderKanban className="h-4 w-4" aria-hidden="true" />
-        )}
-      </button>
-    );
-
-    if (!isExpanded) {
-      return (
-        <Tooltip>
-          <TooltipTrigger asChild>{headerContent}</TooltipTrigger>
-          <TooltipContent side="right" className="flex flex-col gap-1">
-            <p className="font-semibold">Views</p>
-            {viewNavItems.map((item) => (
-              <p key={item.id} className="text-xs text-muted-foreground">
-                {item.label} ({item.badge ?? 0})
-              </p>
-            ))}
-          </TooltipContent>
-        </Tooltip>
-      );
-    }
-
-    return headerContent;
-  };
-
-  // Render flyout menu for collapsed sidebar
-  const [showFlyout, setShowFlyout] = useState(false);
-  const [flyoutTimeout, setFlyoutTimeout] = useState<NodeJS.Timeout | null>(null);
-
-  const handleFlyoutEnter = useCallback(() => {
-    if (flyoutTimeout) {
-      clearTimeout(flyoutTimeout);
-      setFlyoutTimeout(null);
-    }
-    setShowFlyout(true);
-  }, [flyoutTimeout]);
-
-  const handleFlyoutLeave = useCallback(() => {
-    const timeout = setTimeout(() => {
-      setShowFlyout(false);
-    }, 150);
-    setFlyoutTimeout(timeout);
+  // Trigger route chunk preload on hover/focus
+  const handlePreload = useCallback((to: string) => {
+    const preload = routePreloads[to];
+    if (preload) preload().catch(() => {});
   }, []);
 
-  // Cleanup flyout timeout on unmount
-  useEffect(() => {
-    return () => {
-      if (flyoutTimeout) {
-        clearTimeout(flyoutTimeout);
-      }
-    };
-  }, [flyoutTimeout]);
+  // --- Section definitions ---
 
-  return (
-    <>
-      {/* Mobile Backdrop */}
-      {isMobileOpen && (
-        <div
-          className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm lg:hidden"
-          onClick={onMobileClose}
-          aria-hidden="true"
-        />
+  const infrastructureItems: NavItem[] = useMemo(() => [
+    { id: "catalog", label: "Catalog", icon: LayoutGrid, badge: rgdCount, to: "/catalog" },
+    { id: "instances", label: "Instances", icon: Box, badge: instanceCount, to: "/instances" },
+  ], [rgdCount, instanceCount]);
+
+  const manageItems: NavItem[] = useMemo(() => {
+    const items: NavItem[] = [];
+    if (canViewSecrets === true) {
+      items.push({ id: "secrets", label: "Secrets", icon: KeyRound, to: "/secrets" });
+    }
+    items.push({ id: "projects", label: "Projects", icon: FolderOpen, to: "/projects" });
+    items.push({ id: "repositories", label: "Repositories", icon: GitBranch, to: "/repositories" });
+    return items;
+  }, [canViewSecrets]);
+
+  const enterpriseItems: NavItem[] = useMemo(() => {
+    if (!isEnterprise()) return [];
+    return [
+      { id: "compliance", label: "Compliance", icon: ShieldCheck, badge: violationCount, to: "/compliance" },
+      { id: "audit", label: "Audit", icon: ScrollText, to: "/audit" },
+    ];
+  }, [violationCount]);
+
+  // Arrow key navigation within sections
+  const handleSectionKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+
+    const section = e.currentTarget;
+    const focusableItems = Array.from(
+      section.querySelectorAll<HTMLElement>('a[href], button')
+    );
+    const currentIndex = focusableItems.indexOf(e.target as HTMLElement);
+    if (currentIndex === -1) return;
+
+    e.preventDefault();
+    let nextIndex: number;
+    if (e.key === "ArrowDown") {
+      nextIndex = currentIndex < focusableItems.length - 1 ? currentIndex + 1 : 0;
+    } else {
+      nextIndex = currentIndex > 0 ? currentIndex - 1 : focusableItems.length - 1;
+    }
+    focusableItems[nextIndex]?.focus();
+  }, []);
+
+  // Render a single nav item — uses NavItemLink extracted below
+  const renderNavItem = useCallback((item: NavItem) => (
+    <NavItemLink
+      key={item.id}
+      item={item}
+      isActive={activeTab === item.id}
+      onClick={handleNavItemClick}
+      onPreload={handlePreload}
+    />
+  ), [activeTab, handleNavItemClick, handlePreload]);
+
+  // Render a section with a delimiter line (label is sr-only for accessibility)
+  const renderSection = (labelId: string, label: string, items: NavItem[], showDivider = false) => (
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- keyboard nav within section group
+    <div
+      role="group"
+      aria-label={label}
+      onKeyDown={handleSectionKeyDown}
+    >
+      {showDivider && (
+        <div className="mx-3 my-2 border-t border-[rgba(255,255,255,0.06)]" />
       )}
+      <div className="space-y-0.5">
+        {items.map((item) => renderNavItem(item))}
+      </div>
+    </div>
+  );
 
-      {/* Sidebar - Overlay mode: expands on hover */}
-      <aside
-          onMouseEnter={handleMouseEnter}
-          onMouseLeave={handleMouseLeave}
-          className={cn(
-            "fixed left-0 top-0 z-50 h-screen bg-sidebar transition-all duration-200 ease-in-out",
-            // Mobile: overlay mode, hidden by default
-            "w-64",
-            isMobileOpen ? "translate-x-0" : "-translate-x-full",
-            // Desktop: always visible, collapsed by default, expands on hover
-            "lg:translate-x-0",
-            isExpanded ? "lg:w-56" : "lg:w-16"
-          )}
-        >
-          <div className="flex h-full flex-col">
-          {/* Logo */}
-          <div className="flex h-16 items-center px-4">
-            <div className="flex items-center gap-3">
-              <img src="/logo.svg" alt="Knodex" className="h-10 w-10" />
-              {isExpanded && (
-                <span className="text-sm font-semibold text-sidebar-foreground whitespace-nowrap overflow-hidden">
-                  Knodex
-                </span>
-              )}
-            </div>
+  const isOnCatalogRoute = location.pathname.startsWith('/catalog');
+  const isOnComplianceRoute = location.pathname.startsWith('/compliance');
 
-            {/* Mobile Close Button */}
-            <button
-              onClick={onMobileClose}
-              className="lg:hidden ml-auto text-sidebar-foreground/60 hover:text-sidebar-foreground transition-colors"
-              aria-label="Close menu"
-            >
-              <X className="h-5 w-5" />
-            </button>
-          </div>
+  // Catalog sub-nav: "All Resources" + each Casbin-filtered category
+  const catalogSubNav: NavItem[] = useMemo(() => {
+    const items: NavItem[] = [
+      { id: "catalog-all", label: "All Resources", icon: LayoutGrid, badge: rgdCount, to: "/catalog" },
+    ];
+    if (categories && categories.length > 0) {
+      categories.forEach((category) => {
+        items.push({
+          id: `catalog-category-${category.slug}`,
+          label: category.name,
+          icon: getLucideIcon(category.icon),
+          badge: category.count,
+          to: `/catalog/categories/${category.slug}`,
+        });
+      });
+    }
+    return items;
+  }, [rgdCount, categories]);
 
-          {/* Primary Navigation */}
-          <nav className="flex-1 overflow-y-auto px-2 py-4" aria-label="Main navigation">
-            {/* Core Nav Items */}
-            <div className="space-y-1">
-              {coreNavItems.map((item) => renderNavItem(item))}
-            </div>
+  // When on an RGD detail page (/catalog/:rgdName), find the RGD's category
+  // from the cached list so we can keep the correct sidebar category highlighted.
+  const rgdDetailCategory = useMemo(() => {
+    if (categorySlugMatch) return null;
+    const rgdDetailMatch = location.pathname.match(/^\/catalog\/([^/]+)$/);
+    if (!rgdDetailMatch) return null;
+    const rgdName = decodeURIComponent(rgdDetailMatch[1]);
+    const rgd = rgdListData?.items?.find((r) => r.name === rgdName);
+    if (!rgd?.category) return null;
+    const slug = rgd.category.toLowerCase();
+    const matched = categories?.find((c) => c.slug === slug);
+    return matched ? `catalog-category-${matched.slug}` : null;
+  }, [location.pathname, categorySlugMatch, rgdListData?.items, categories]);
 
-            {/* Views Section */}
-            {viewNavItems.length > 0 && (
-              <div className="mt-4">
-                {/* Views Header */}
-                <div
-                  className="relative"
-                  onMouseEnter={!isExpanded ? handleFlyoutEnter : undefined}
-                  onMouseLeave={!isExpanded ? handleFlyoutLeave : undefined}
-                >
-                  {renderViewsSectionHeader()}
+  const catalogActiveTab = useMemo(() => {
+    if (categorySlugMatch) return `catalog-category-${categorySlugMatch[1]}`;
+    if (rgdDetailCategory) return rgdDetailCategory;
+    return "catalog-all";
+  }, [categorySlugMatch, rgdDetailCategory]);
 
-                  {/* Flyout Menu (collapsed sidebar only) */}
-                  {!isExpanded && showFlyout && (
-                    <div
-                      className="absolute left-full top-0 ml-2 min-w-48 bg-sidebar rounded-lg shadow-lg py-2 z-[60]"
-                      role="menu"
-                      aria-label="Views navigation"
-                      onMouseEnter={handleFlyoutEnter}
-                      onMouseLeave={handleFlyoutLeave}
-                    >
-                      <div className="px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-sidebar-foreground/50 mb-1">
-                        Views
-                      </div>
-                      {viewNavItems.map((item) => {
-                        const Icon = item.icon;
-                        const isActive = activeTab === item.id;
-                        return (
-                          <Link
-                            key={item.id}
-                            to={item.to}
-                            onClick={handleNavItemClick}
-                            role="menuitem"
-                            className={cn(
-                              "flex items-center gap-2 px-3 py-2 text-sm transition-colors",
-                              isActive
-                                ? "bg-sidebar-accent/15 text-sidebar-foreground border-l-2 border-primary"
-                                : "text-sidebar-foreground/70 hover:bg-muted/50 hover:text-sidebar-foreground"
-                            )}
-                          >
-                            <Icon className="h-4 w-4 flex-shrink-0" />
-                            <span className="flex-1">{item.label}</span>
-                            {item.badge !== undefined && item.badge > 0 && (
-                              <span className="text-xs text-sidebar-foreground/50">
-                                {item.badge}
-                              </span>
-                            )}
-                          </Link>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
+  const complianceSubNav: NavItem[] = useMemo(() => [
+    { id: "compliance-overview", label: "Overview", icon: ShieldCheck, to: "/compliance" },
+    { id: "compliance-templates", label: "Templates", icon: FileText, to: "/compliance/templates" },
+    { id: "compliance-constraints", label: "Constraints", icon: Shield, to: "/compliance/constraints" },
+    { id: "compliance-violations", label: "Violations", icon: AlertTriangle, badge: violationCount, to: "/compliance/violations" },
+  ], [violationCount]);
 
-                {/* View Items (expanded sidebar, section not collapsed) */}
-                {isExpanded && !isViewsCollapsed && (
-                  <div
-                    id="view-nav-items"
-                    className="mt-1 space-y-0.5 overflow-hidden"
-                    role="group"
-                    aria-label="Custom views"
-                  >
-                    {viewNavItems.map((item) => renderNavItem(item, true))}
-                  </div>
-                )}
-              </div>
-            )}
+  const complianceActiveTab = useMemo(() => {
+    if (location.pathname.startsWith('/compliance/templates')) return "compliance-templates";
+    if (location.pathname.startsWith('/compliance/constraints')) return "compliance-constraints";
+    if (location.pathname.startsWith('/compliance/violations')) return "compliance-violations";
+    return "compliance-overview";
+  }, [location.pathname]);
 
-            {/* Enterprise Nav Items */}
-            {enterpriseNavItems.length > 0 && (
-              <div className={cn("space-y-1", viewNavItems.length > 0 ? "mt-4" : "mt-1")}>
-                {enterpriseNavItems.map((item) => renderNavItem(item))}
-              </div>
-            )}
-          </nav>
-
-          {/* Settings Section - Always visible, API handles 403 for unauthorized access */}
-          <div className="px-2 py-2">
-            {!isExpanded ? (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Link
-                    to="/settings"
-                    onClick={handleNavItemClick}
-                    className={cn(
-                      "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150",
-                      activeTab === "settings"
-                        ? "bg-sidebar-accent/15 text-sidebar-foreground border-l-2 border-primary"
-                        : "text-sidebar-foreground/70 hover:bg-muted/50 hover:text-sidebar-foreground",
-                      !isExpanded && "justify-center px-2"
-                    )}
-                    aria-label="Settings"
-                    aria-current={activeTab === "settings" ? "page" : undefined}
-                  >
-                    <Settings className="h-5 w-5 flex-shrink-0" />
-                  </Link>
-                </TooltipTrigger>
-                <TooltipContent side="right">
-                  <p>Settings</p>
-                </TooltipContent>
-              </Tooltip>
-            ) : (
-              <Link
-                to="/settings"
-                onClick={handleNavItemClick}
-                className={cn(
-                  "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150",
-                  activeTab === "settings"
-                    ? "bg-sidebar-accent/15 text-sidebar-foreground border-l-2 border-primary"
-                    : "text-sidebar-foreground/70 hover:bg-muted/50 hover:text-sidebar-foreground",
-                  !isExpanded && "justify-center px-2"
-                )}
-                aria-label="Settings"
-                aria-current={activeTab === "settings" ? "page" : undefined}
-              >
-                <Settings className="h-5 w-5 flex-shrink-0" />
-                {isExpanded && (
-                  <span className="flex-1 text-left whitespace-nowrap overflow-hidden">
-                    Settings
-                  </span>
-                )}
-              </Link>
-            )}
-          </div>
-
-          {/* Footer */}
-          <div className="px-2 pb-4">
-            {!isExpanded ? (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <a
-                    href="https://knodex.io/docs"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    aria-label="Documentation"
-                    className={cn(
-                      "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-sidebar-foreground/70 hover:bg-muted/50 hover:text-sidebar-foreground transition-colors",
-                      !isExpanded && "justify-center px-2"
-                    )}
-                  >
-                    <ExternalLink className="h-5 w-5 flex-shrink-0" />
-                  </a>
-                </TooltipTrigger>
-                <TooltipContent side="right">
-                  <p>Documentation</p>
-                </TooltipContent>
-              </Tooltip>
-            ) : (
-              <a
-                href="https://knodex.io/docs"
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label="Documentation"
-                className={cn(
-                  "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-sidebar-foreground/70 hover:bg-muted/50 hover:text-sidebar-foreground transition-colors",
-                  !isExpanded && "justify-center px-2"
-                )}
-              >
-                <ExternalLink className="h-5 w-5 flex-shrink-0" />
-                {isExpanded && (
-                  <span className="whitespace-nowrap overflow-hidden">Documentation</span>
-                )}
-              </a>
-            )}
+  // Catalog sub-sidebar — shown when navigating within /catalog/*
+  if (isOnCatalogRoute && catalogSubNav.length > 1) {
+    return (
+      <div className="flex h-full flex-col">
+        <div className="flex h-16 items-center px-4">
+          <div className="flex items-center gap-3 min-w-0">
+            <img src="/logo.svg" alt="Knodex" className="h-10 w-10 shrink-0" />
+            <span className="text-sm font-semibold text-[var(--text-primary)] whitespace-nowrap overflow-hidden">
+              Knodex
+            </span>
           </div>
         </div>
-      </aside>
-    </>
+
+        <nav className="flex-1 overflow-y-auto px-2 py-2" aria-label="Catalog navigation">
+          <Link
+            to="/instances"
+            onClick={handleNavItemClick}
+            className="flex items-center gap-2 px-3 py-2 mb-2 text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
+          >
+            <ChevronLeft className="h-3.5 w-3.5" />
+            Back
+          </Link>
+          <div className="space-y-0.5">
+            {catalogSubNav.map((item) => {
+              const Icon = item.icon;
+              const isActive = catalogActiveTab === item.id;
+              return (
+                <Link
+                  key={item.id}
+                  to={item.to}
+                  onClick={handleNavItemClick}
+                  onMouseEnter={() => handlePreload(item.to)}
+                  onFocus={() => handlePreload(item.to)}
+                  className={cn(
+                    "w-full flex items-center gap-3 px-3 rounded-[var(--radius-token-md)] text-[14px] font-medium transition-all duration-150",
+                    "py-[9px]",
+                    isActive
+                      ? "bg-[rgba(255,255,255,0.1)] text-[var(--text-primary)]"
+                      : "text-[var(--text-secondary)] hover:bg-[rgba(255,255,255,0.04)] hover:text-[var(--text-primary)]"
+                  )}
+                  aria-current={isActive ? "page" : undefined}
+                >
+                  <Icon className="h-5 w-5 flex-shrink-0" aria-hidden="true" />
+                  <span className="flex-1 text-left whitespace-nowrap overflow-hidden text-ellipsis">
+                    {item.label}
+                  </span>
+                  {item.badge !== undefined && item.badge > 0 && (
+                    <span
+                      className={cn(
+                        "flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-xs font-medium",
+                        isActive
+                          ? "bg-[rgba(255,255,255,0.1)] text-[var(--text-secondary)]"
+                          : "bg-[rgba(255,255,255,0.06)] text-[var(--text-muted)]"
+                      )}
+                    >
+                      {item.badge}
+                    </span>
+                  )}
+                </Link>
+              );
+            })}
+          </div>
+        </nav>
+      </div>
+    );
+  }
+
+  if (isOnComplianceRoute && isEnterprise()) {
+    return (
+      <div className="flex h-full flex-col">
+        <div className="flex h-16 items-center px-4">
+          <div className="flex items-center gap-3 min-w-0">
+            <img src="/logo.svg" alt="Knodex" className="h-10 w-10 shrink-0" />
+            <span className="text-sm font-semibold text-[var(--text-primary)] whitespace-nowrap overflow-hidden">
+              Knodex
+            </span>
+          </div>
+        </div>
+
+        <nav className="flex-1 overflow-y-auto px-2 py-2" aria-label="Compliance navigation">
+          <Link
+            to="/instances"
+            onClick={handleNavItemClick}
+            className="flex items-center gap-2 px-3 py-2 mb-2 text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
+          >
+            <ChevronLeft className="h-3.5 w-3.5" />
+            Back
+          </Link>
+          <div className="space-y-0.5">
+            {complianceSubNav.map((item) => {
+              const Icon = item.icon;
+              const isActive = complianceActiveTab === item.id;
+              return (
+                <Link
+                  key={item.id}
+                  to={item.to}
+                  onClick={handleNavItemClick}
+                  className={cn(
+                    "w-full flex items-center gap-3 px-3 rounded-[var(--radius-token-md)] text-[14px] font-medium transition-all duration-150",
+                    "py-[9px]",
+                    isActive
+                      ? "bg-[rgba(255,255,255,0.1)] text-[var(--text-primary)]"
+                      : "text-[var(--text-secondary)] hover:bg-[rgba(255,255,255,0.04)] hover:text-[var(--text-primary)]"
+                  )}
+                  aria-current={isActive ? "page" : undefined}
+                >
+                  <Icon className="h-5 w-5 flex-shrink-0" aria-hidden="true" />
+                  <span className="flex-1 text-left whitespace-nowrap overflow-hidden text-ellipsis">
+                    {item.label}
+                  </span>
+                  {item.badge !== undefined && item.badge > 0 && (
+                    <span
+                      className={cn(
+                        "flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-xs font-medium",
+                        isActive
+                          ? "bg-[rgba(255,255,255,0.1)] text-[var(--text-secondary)]"
+                          : "bg-[rgba(255,255,255,0.06)] text-[var(--text-muted)]"
+                      )}
+                    >
+                      {item.badge}
+                    </span>
+                  )}
+                </Link>
+              );
+            })}
+          </div>
+        </nav>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-full flex-col">
+      {/* Logo */}
+      <div className="flex h-16 items-center px-4">
+        <div className="flex items-center gap-3 min-w-0">
+          <img src="/logo.svg" alt="Knodex" className="h-10 w-10 shrink-0" />
+          <span className="text-sm font-semibold text-[var(--text-primary)] whitespace-nowrap overflow-hidden">
+            Knodex
+          </span>
+        </div>
+      </div>
+
+      {/* Primary Navigation */}
+      <nav className="flex-1 overflow-y-auto px-2 py-4" aria-label="Main navigation">
+        {/* Infrastructure Section */}
+        {renderSection("nav-section-infrastructure", "Infrastructure", infrastructureItems)}
+
+        {/* Manage Section */}
+        {renderSection("nav-section-manage", "Manage", manageItems, true)}
+
+        {/* Enterprise Section — conditionally rendered */}
+        {isEnterprise() && renderSection("nav-section-enterprise", "Enterprise", enterpriseItems, true)}
+      </nav>
+
+      {/* Footer — Settings + Documentation (bottom-pinned) */}
+      <div className="px-2 py-2">
+        <Link
+          to="/settings"
+          onClick={handleNavItemClick}
+          onMouseEnter={() => handlePreload("/settings")}
+          onFocus={() => handlePreload("/settings")}
+          className={cn(
+            "w-full flex items-center gap-3 px-3 py-[9px] rounded-[var(--radius-token-md)] text-[14px] font-medium transition-all duration-150",
+            activeTab === "settings"
+              ? "bg-[rgba(255,255,255,0.1)] text-[var(--text-primary)]"
+              : "text-[var(--text-secondary)] hover:bg-[rgba(255,255,255,0.04)] hover:text-[var(--text-primary)]"
+          )}
+          aria-label="Settings"
+          aria-current={activeTab === "settings" ? "page" : undefined}
+        >
+          <Settings className="h-5 w-5 flex-shrink-0" aria-hidden="true" />
+          <span className="flex-1 text-left whitespace-nowrap overflow-hidden">
+            Settings
+          </span>
+        </Link>
+      </div>
+
+      <div className="px-2 pb-4">
+        <a
+          href="https://knodex.io/docs"
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="Documentation"
+          className="flex items-center gap-3 px-3 py-[9px] rounded-[var(--radius-token-md)] text-sm text-[var(--text-secondary)] hover:bg-[rgba(255,255,255,0.04)] hover:text-[var(--text-primary)] transition-colors"
+        >
+          <ExternalLink className="h-5 w-5 flex-shrink-0" aria-hidden="true" />
+          <span className="whitespace-nowrap overflow-hidden">Documentation</span>
+        </a>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Desktop sidebar — fixed, always visible at lg+ (1024px and above).
+ */
+export function Sidebar() {
+  return (
+    <aside className="hidden lg:block fixed left-0 top-0 z-50 h-screen w-[260px] bg-background border-r border-[var(--border-default)]">
+      <SidebarNav />
+    </aside>
   );
 }

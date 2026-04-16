@@ -160,7 +160,7 @@ test.describe('Global Admin - Deployment Modes', () => {
     await page.waitForURL(`/catalog/**`);
 
     // Click Deploy
-    const deployButton = page.locator('button:has-text("Deploy"), button:has-text("Create Instance")');
+    const deployButton = page.locator('button:has-text("Deploy"), button:has-text("Create Instance")').first();
     await deployButton.click();
 
     await page.waitForTimeout(1000);
@@ -267,7 +267,7 @@ test.describe('Global Admin - Deployment Modes', () => {
 
     await page.waitForURL(`/catalog/**`);
 
-    const deployButton = page.locator('button:has-text("Deploy")');
+    const deployButton = page.locator('button:has-text("Deploy")').first();
     await deployButton.click();
 
     await page.waitForTimeout(1000);
@@ -330,31 +330,38 @@ test.describe('Global Admin - Deployment Modes', () => {
         });
       }
 
-      // Verify via API
+      // Verify via API - use collection endpoint and find by name since kind/namespace are unknown
       const token = await page.evaluate(() => localStorage.getItem('token') || sessionStorage.getItem('token'));
 
       if (token) {
-        const response = await page.request.get(`${BASE_URL}/api/v1/instances/${instanceName}`, {
+        const listResponse = await page.request.get(`${BASE_URL}/api/v1/instances`, {
           headers: { Authorization: `Bearer ${token}` },
           failOnStatusCode: false
         });
 
-        if (response.ok()) {
-          const instance = await response.json();
-          console.log('GitOps instance:', JSON.stringify(instance, null, 2));
+        if (listResponse.ok()) {
+          const data = await listResponse.json();
+          const items = data.items || data.instances || data;
+          const instance = Array.isArray(items)
+            ? items.find((i: any) => (i.metadata?.name || i.name) === instanceName)
+            : null;
 
-          // Verify GitOps metadata
-          expect(
-            instance.deploymentMode === 'gitops' ||
-            instance.metadata?.annotations?.['deployment-mode'] === 'gitops'
-          ).toBeTruthy();
+          if (instance) {
+            console.log('GitOps instance:', JSON.stringify(instance, null, 2));
 
-          // Check for commit SHA or PR number
-          expect(
-            instance.gitCommit ||
-            instance.metadata?.annotations?.['git-commit'] ||
-            instance.metadata?.annotations?.['pr-number']
-          ).toBeDefined();
+            // Verify GitOps metadata
+            expect(
+              instance.deploymentMode === 'gitops' ||
+              instance.metadata?.annotations?.['deployment-mode'] === 'gitops'
+            ).toBeTruthy();
+
+            // Check for commit SHA or PR number
+            expect(
+              instance.gitCommit ||
+              instance.metadata?.annotations?.['git-commit'] ||
+              instance.metadata?.annotations?.['pr-number']
+            ).toBeDefined();
+          }
         }
       }
     } else {
@@ -395,7 +402,7 @@ test.describe('Global Admin - Deployment Modes', () => {
     const firstRGD = page.getByRole('button', { name: /View details for/ }).first();
     await firstRGD.click();
 
-    const deployButton = page.locator('button:has-text("Deploy")');
+    const deployButton = page.locator('button:has-text("Deploy")').first();
     await deployButton.click();
 
     await page.waitForTimeout(1000);
@@ -448,7 +455,7 @@ test.describe('Global Admin - Deployment Modes', () => {
     if (await secondRGD.isVisible({ timeout: 5000 })) {
       await secondRGD.click();
 
-      const deployButton2 = page.locator('button:has-text("Deploy")');
+      const deployButton2 = page.locator('button:has-text("Deploy")').first();
       await deployButton2.click();
 
       await page.waitForTimeout(1000);

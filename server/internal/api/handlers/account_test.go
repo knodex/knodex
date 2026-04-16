@@ -204,11 +204,11 @@ func TestAccountHandler_CanI_InvalidResource(t *testing.T) {
 
 func TestAccountHandler_CanI_EnterpriseResourceNotRegistered_Returns400(t *testing.T) {
 	t.Parallel()
-	// EE resources ("secrets", "compliance") must return 400 in OSS builds (not registered)
+	// EE-only resources (e.g., "compliance") must return 400 without EE registration
 	canIService := &mockCanIService{canIResult: true}
 	handler := NewAccountHandler(canIService)
 
-	for _, resource := range []string{"secrets", "compliance"} {
+	for _, resource := range []string{"compliance"} {
 		req := createAccountTestRequest(t, http.MethodGet,
 			"/api/v1/account/can-i/"+resource+"/get/-",
 			"test-user@example.com",

@@ -1,6 +1,7 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { useState } from "react";
 import {
   GitBranch,
   GitCommit,
@@ -12,7 +13,10 @@ import {
   Zap,
   Layers,
   FileCode,
-} from "lucide-react";
+  PauseCircle,
+  RefreshCw,
+  ChevronDown,
+} from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import type { DeploymentMode, GitInfo, GitPushStatus } from "@/types/rgd";
 import { extractGitOpsLocation, buildGitOpsFileURL } from "@/types/rgd";
@@ -26,6 +30,7 @@ interface GitStatusDisplayProps {
   deploymentMode?: DeploymentMode;
   gitInfo?: GitInfo;
   annotations?: Record<string, string>;
+  reconciliationSuspended?: boolean;
   className?: string;
 }
 
@@ -68,6 +73,11 @@ const GIT_PUSH_STATUS_CONFIG: Record<
     icon: <CheckCircle2 className="h-3.5 w-3.5" />,
     className: "text-status-success",
   },
+  success: {
+    label: "Pushed",
+    icon: <CheckCircle2 className="h-3.5 w-3.5" />,
+    className: "text-status-success",
+  },
   failed: {
     label: "Failed",
     icon: <AlertCircle className="h-3.5 w-3.5" />,
@@ -79,8 +89,11 @@ export function GitStatusDisplay({
   deploymentMode,
   gitInfo,
   annotations,
+  reconciliationSuspended,
   className,
 }: GitStatusDisplayProps) {
+  const [expanded, setExpanded] = useState(false);
+
   // Don't render if no deployment mode info
   if (!deploymentMode) {
     return null;
@@ -89,12 +102,26 @@ export function GitStatusDisplay({
   const modeConfig = DEPLOYMENT_MODE_LABELS[deploymentMode];
   const showGitInfo = deploymentMode !== "direct" && gitInfo;
   const pushStatusConfig = gitInfo
-    ? GIT_PUSH_STATUS_CONFIG[gitInfo.pushStatus]
+    ? (GIT_PUSH_STATUS_CONFIG[gitInfo.pushStatus] ?? GIT_PUSH_STATUS_CONFIG.not_applicable)
     : GIT_PUSH_STATUS_CONFIG.not_applicable;
 
   // Extract GitOps location from annotations
   const gitOpsLocation = extractGitOpsLocation(annotations);
   const manifestFileURL = gitOpsLocation ? buildGitOpsFileURL(gitOpsLocation) : null;
+
+  // Build repository root URL for the Repository row
+  const repoRootURL = gitInfo?.repositoryUrl
+    ? (() => {
+        const url = gitInfo.repositoryUrl;
+        if (url.includes("://")) return url;
+        const vcs = annotations?.["gitops.knodex.io/vcs"]?.toLowerCase() ?? "github";
+        switch (vcs) {
+          case "gitlab": return `https://gitlab.com/${url}`;
+          case "bitbucket": return `https://bitbucket.org/${url}`;
+          default: return `https://github.com/${url}`;
+        }
+      })()
+    : null;
 
   return (
     <div
@@ -103,13 +130,24 @@ export function GitStatusDisplay({
         className
       )}
     >
-      <div className="px-4 py-3 border-b border-border">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-muted/40 transition-colors"
+        aria-expanded={expanded}
+      >
         <h3 className="text-sm font-medium text-foreground">
           Deployment Information
         </h3>
-      </div>
+        <ChevronDown
+          className={cn(
+            "h-4 w-4 text-muted-foreground transition-transform duration-200",
+            expanded && "rotate-180"
+          )}
+        />
+      </button>
 
-      <div className="divide-y divide-border">
+      {expanded && <div className="divide-y divide-border">
         {/* Deployment Mode */}
         <div className="px-4 py-3 flex items-center justify-between">
           <span className="text-sm text-muted-foreground">Deployment Mode</span>
@@ -118,6 +156,24 @@ export function GitStatusDisplay({
             <span>{modeConfig.label}</span>
           </div>
         </div>
+
+        {/* Synchronisation status — shown for all GitOps/hybrid deployments */}
+        {showGitInfo && (
+          <div className="px-4 py-3 flex items-center justify-between">
+            <span className="text-sm text-muted-foreground">Synchronisation</span>
+            {reconciliationSuspended ? (
+              <div className="flex items-center gap-1.5 text-sm font-medium text-status-warning">
+                <PauseCircle className="h-3.5 w-3.5" />
+                <span>Suspended</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5 text-sm font-medium text-status-success">
+                <RefreshCw className="h-3.5 w-3.5" />
+                <span>Synced</span>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Git Status - Only show for gitops/hybrid modes */}
         {showGitInfo && (
@@ -135,6 +191,22 @@ export function GitStatusDisplay({
                 <span>{pushStatusConfig.label}</span>
               </div>
             </div>
+
+            {/* Repository */}
+            {repoRootURL && (
+              <div className="px-4 py-3 flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">Repository</span>
+                <a
+                  href={repoRootURL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1.5 text-sm font-mono text-foreground hover:text-primary hover:underline transition-colors"
+                >
+                  <GitBranch className="h-3.5 w-3.5 text-muted-foreground" />
+                  {gitInfo.repositoryUrl}
+                </a>
+              </div>
+            )}
 
             {/* Git Branch */}
             {gitInfo.branch && (
@@ -246,7 +318,7 @@ export function GitStatusDisplay({
             Instance was deployed directly to the cluster via API.
           </div>
         )}
-      </div>
+      </div>}
     </div>
   );
 }

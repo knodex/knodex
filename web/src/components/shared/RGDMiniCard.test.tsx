@@ -12,7 +12,6 @@ function createTestRGD(overrides: Partial<CatalogRGD> = {}): CatalogRGD {
     name: "test-rgd",
     namespace: "default",
     description: "A test RGD description",
-    version: "v1",
     tags: ["database", "cache", "infra"],
     category: "compute",
     labels: {},

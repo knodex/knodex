@@ -56,7 +56,7 @@ patches:
         value: "admin"
       - op: add
         path: /data/CASBIN_ADMIN_USERS
-        value: "user-global-admin"
+        value: "user-global-admin,admin@example.com,admin@test.local"
 
   # Enable OIDC authentication (providers are in knodex-sso-providers ConfigMap)
   - target:

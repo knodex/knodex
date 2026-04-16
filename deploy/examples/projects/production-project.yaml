@@ -1,5 +1,6 @@
 # Production Project - Strict access control for production environment
 # This project has tight restrictions on who can deploy and what resources
+# Apply with: kubectl apply -f <this-file> -n <knodex-namespace>
 apiVersion: knodex.io/v1alpha1
 kind: Project
 metadata:

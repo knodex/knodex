@@ -19,20 +19,21 @@ import (
 
 // Config holds all application configuration
 type Config struct {
-	Server         Server
-	Kubernetes     Kubernetes
-	Redis          Redis
-	Log            Log
-	Auth           Auth
-	RateLimit      RateLimit
-	PolicyCache    PolicyCache
-	CasbinRoles    CasbinRoles
-	Views          Views
-	License        License
-	Compliance     Compliance
-	Organization   string // Organization identity for multi-tenant deployments. Default: "default".
-	SwaggerEnabled bool   // Enable Swagger UI at /swagger/. Default: false. Env: SWAGGER_UI_ENABLED.
-	Cookie         Cookie // Session cookie configuration
+	Server               Server
+	Kubernetes           Kubernetes
+	Redis                Redis
+	Log                  Log
+	Auth                 Auth
+	RateLimit            RateLimit
+	PolicyCache          PolicyCache
+	CasbinRoles          CasbinRoles
+	License              License
+	Compliance           Compliance
+	Organization         string   // Organization identity for multi-tenant deployments. Default: "default".
+	KnodexNamespace      string   // Namespace where Knodex CRDs (Projects) live. Default: POD_NAMESPACE or "knodex-system".
+	SwaggerEnabled       bool     // Enable Swagger UI at /swagger/. Default: false. Env: SWAGGER_UI_ENABLED.
+	Cookie               Cookie   // Session cookie configuration
+	CatalogPackageFilter []string // Restrict catalog to RGDs with matching knodex.io/package label. Empty = no filtering. Env: CATALOG_PACKAGE_FILTER.
 }
 
 // Cookie holds session cookie configuration
@@ -64,14 +65,6 @@ type License struct {
 	// Takes precedence over Path when both are set.
 	// Set via KNODEX_LICENSE_TEXT environment variable.
 	Text string
-}
-
-// Views holds enterprise views configuration
-type Views struct {
-	// ConfigPath is the path to the views YAML configuration file.
-	// If empty, uses VIEWS_CONFIG_PATH environment variable or default.
-	// Default: /etc/knodex/views.yaml
-	ConfigPath string
 }
 
 // CasbinRoles holds Casbin user-role persistence configuration
@@ -268,9 +261,6 @@ func Load() (*Config, error) {
 			TTL:        utilenv.GetDuration("CASBIN_ROLE_TTL", 24*time.Hour),
 			AdminUsers: utilenv.GetStringSlice("CASBIN_ADMIN_USERS"),
 		},
-		Views: Views{
-			ConfigPath: utilenv.GetString("VIEWS_CONFIG_PATH", "/etc/knodex/views.yaml"),
-		},
 		License: License{
 			Path: utilenv.GetString("KNODEX_LICENSE_PATH", "/etc/knodex/license.jwt"),
 			Text: utilenv.GetString("KNODEX_LICENSE_TEXT", ""),
@@ -278,12 +268,31 @@ func Load() (*Config, error) {
 		Compliance: Compliance{
 			HistoryRetentionDays: utilenv.GetInt("COMPLIANCE_HISTORY_RETENTION_DAYS", 90),
 		},
-		Organization:   utilenv.GetString("KNODEX_ORGANIZATION", "default"),
-		SwaggerEnabled: utilenv.GetBool("SWAGGER_UI_ENABLED", false),
+		Organization:    utilenv.GetString("KNODEX_ORGANIZATION", "default"),
+		KnodexNamespace: utilenv.GetString("KNODEX_NAMESPACE", utilenv.GetString("POD_NAMESPACE", "knodex-system")),
+		SwaggerEnabled:  utilenv.GetBool("SWAGGER_UI_ENABLED", false),
 		Cookie: Cookie{
 			Secure: utilenv.GetBool("COOKIE_SECURE", true),
 			Domain: utilenv.GetString("COOKIE_DOMAIN", ""),
 		},
+	}
+
+	// Normalize catalog package filter: lowercase, trimmed, deduplicated
+	if rawFilter := utilenv.GetStringSlice("CATALOG_PACKAGE_FILTER"); len(rawFilter) > 0 {
+		seen := make(map[string]bool)
+		for _, pkg := range rawFilter {
+			pkg = strings.ToLower(pkg)
+			if pkg != "" && !seen[pkg] {
+				cfg.CatalogPackageFilter = append(cfg.CatalogPackageFilter, pkg)
+				seen[pkg] = true
+			}
+		}
+	}
+
+	// Normalize empty/whitespace KnodexNamespace to "knodex-system"
+	cfg.KnodexNamespace = strings.TrimSpace(cfg.KnodexNamespace)
+	if cfg.KnodexNamespace == "" {
+		cfg.KnodexNamespace = "knodex-system"
 	}
 
 	// Normalize empty/whitespace organization to "default", trim surrounding whitespace

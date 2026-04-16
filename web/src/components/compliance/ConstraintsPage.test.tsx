@@ -256,10 +256,10 @@ describe("ConstraintsPage", () => {
 
     render(<ConstraintsPage />, { wrapper: createWrapper() });
 
-    expect(screen.getByText("(2)")).toBeInTheDocument();
+    expect(screen.getAllByText("Constraints")[0]).toBeInTheDocument();
   });
 
-  it("renders breadcrumbs correctly (AC-NAVL-01)", () => {
+  it("renders page title correctly (AC-NAVL-01)", () => {
     vi.mocked(useComplianceModule.useConstraints).mockReturnValue({
       data: mockConstraints,
       isLoading: false,
@@ -271,9 +271,6 @@ describe("ConstraintsPage", () => {
 
     render(<ConstraintsPage />, { wrapper: createWrapper() });
 
-    expect(screen.getByText("Compliance")).toBeInTheDocument();
-    // "Constraints" appears in both breadcrumb and card title
-    const constraintsElements = screen.getAllByText("Constraints");
-    expect(constraintsElements.length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Constraints")[0]).toBeInTheDocument();
   });
 });

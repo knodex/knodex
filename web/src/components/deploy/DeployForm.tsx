@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { useMemo } from "react";
-import { useForm, FormProvider } from "react-hook-form";
+import { useForm, useWatch, FormProvider } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Loader2, Rocket, AlertTriangle } from "lucide-react";
+import { Loader2, Rocket, AlertTriangle } from "@/lib/icons";
 import type { FormSchema } from "@/types/rgd";
 import { buildFormSchema, getDefaultValues } from "@/lib/schema-to-zod";
 import { FormField } from "./FormField";
-import { AdvancedConfigToggle, useAdvancedConfigToggle } from "./AdvancedConfigToggle";
+import { AdvancedConfigToggle } from "./AdvancedConfigToggle";
 import { cn } from "@/lib/utils";
 import {
   Select,
@@ -17,10 +17,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  useConditionalFields,
-  getControllingFields,
-} from "@/hooks/useConditionalFields";
+import { useFieldVisibility } from "@/hooks/useFieldVisibility";
+import { useAdvancedFieldSplit } from "@/hooks/useAdvancedFieldSplit";
 
 interface DeployFormProps {
   schema: FormSchema;
@@ -68,84 +66,58 @@ export function DeployForm({
   const {
     handleSubmit,
     formState: { errors, isValid, isDirty },
-    watch,
   } = methods;
 
-  // Watch all form values for conditional field logic
-  const formValues = watch();
+  // Extract all field names needed for conditional visibility evaluation
+  // Includes both controllingField AND rule.field paths (which can differ)
+  const controllingFieldNames = useMemo(() => {
+    if (!schema.conditionalSections?.length) return [] as string[];
+    const names = new Set<string>();
+    for (const section of schema.conditionalSections) {
+      names.add(section.controllingField.replace(/^spec\./, ""));
+      if (section.rules) {
+        for (const rule of section.rules) {
+          names.add(rule.field.replace(/^spec\./, ""));
+        }
+      }
+    }
+    return [...names];
+  }, [schema.conditionalSections]);
 
-  // Get hidden fields based on conditional sections
-  const hiddenFields = useConditionalFields(
+  // Watch only the controlling fields instead of the entire form
+  const watchedValues = useWatch({
+    control: methods.control,
+    name: controllingFieldNames,
+  });
+
+  // Build a partial form values object for the visibility hook
+  const formValues = useMemo(() => {
+    if (!controllingFieldNames.length) return {} as Record<string, unknown>;
+    const values: Record<string, unknown> = {};
+    const watched = Array.isArray(watchedValues) ? watchedValues : [watchedValues];
+    for (let i = 0; i < controllingFieldNames.length; i++) {
+      const parts = controllingFieldNames[i].split(".");
+      let current = values;
+      for (let j = 0; j < parts.length - 1; j++) {
+        if (!(parts[j] in current)) {
+          current[parts[j]] = {};
+        }
+        current = current[parts[j]] as Record<string, unknown>;
+      }
+      current[parts[parts.length - 1]] = watched[i];
+    }
+    return values;
+  }, [controllingFieldNames, watchedValues]);
+
+  // Get field visibility based on conditional sections (CEL AST rules + AND-based hiding)
+  const { isFieldVisible } = useFieldVisibility(
     schema.conditionalSections,
     formValues
   );
 
-  // Get controlling fields that should always be visible
-  const controllingFields = useMemo(
-    () => getControllingFields(schema.conditionalSections),
-    [schema.conditionalSections]
-  );
-
-  // Advanced config toggle state
-  const { isExpanded: isAdvancedExpanded, toggle: toggleAdvanced } = useAdvancedConfigToggle();
-
-  // Check if a field is under the advanced section
-  const isAdvancedField = (fieldName: string): boolean => {
-    // "advanced" is the root property for advanced fields
-    return fieldName === "advanced" || fieldName.startsWith("advanced.");
-  };
-
-  // Separate properties into regular and advanced
-  const { regularProperties, advancedProperties } = useMemo(() => {
-    const regular: Array<[string, typeof schema.properties[string]]> = [];
-    const advanced: Array<[string, typeof schema.properties[string]]> = [];
-
-    for (const [name, property] of Object.entries(schema.properties)) {
-      if (isAdvancedField(name)) {
-        // If this is the "advanced" object container itself, flatten its children
-        // to avoid a redundant collapsible header inside AdvancedConfigToggle
-        if (name === "advanced" && property.type === "object" && property.properties) {
-          for (const [childName, childProp] of Object.entries(property.properties)) {
-            advanced.push([`advanced.${childName}`, childProp]);
-          }
-        } else {
-          advanced.push([name, property]);
-        }
-      } else {
-        regular.push([name, property]);
-      }
-    }
-
-    return { regularProperties: regular, advancedProperties: advanced };
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- schema.properties is the only relevant dependency
-  }, [schema.properties]);
-
-  // Determine if a field should be visible
-  const isFieldVisible = (fieldName: string): boolean => {
-    // Controlling fields are always visible
-    if (controllingFields.has(fieldName)) {
-      return true;
-    }
-    // Check if hidden by conditional section
-    // hiddenFields contains resource kinds from affectedProperties (e.g., "Ingress")
-    // Form field names are lowercase paths (e.g., "ingress.host")
-    // We need case-insensitive prefix matching
-    const fieldNameLower = fieldName.toLowerCase();
-    for (const hiddenProp of hiddenFields) {
-      const hiddenPropLower = hiddenProp.toLowerCase();
-      // Check if field starts with the hidden property name
-      // e.g., "ingress.host" starts with "ingress"
-      if (fieldNameLower.startsWith(hiddenPropLower)) {
-        // Make sure we're matching a full segment, not a partial match
-        // e.g., "ingress" should match "ingress.host" but not "ingressRoute"
-        const nextChar = fieldNameLower[hiddenPropLower.length];
-        if (nextChar === undefined || nextChar === ".") {
-          return false;
-        }
-      }
-    }
-    return true;
-  };
+  // Shared advanced field split hook
+  const { regularProperties, advancedProperties, globalSection, isAdvancedExpanded, toggleAdvanced } =
+    useAdvancedFieldSplit(schema.properties, schema.advancedSections, schema.propertyOrder);
 
   const hasErrors = Object.keys(errors).length > 0;
 
@@ -235,6 +207,7 @@ export function DeployForm({
                   property={property}
                   required={schema.required?.includes(name)}
                   deploymentNamespace={namespace}
+                  inlineAdvancedSection={schema.advancedSections?.find(s => s.path === `${name}.advanced`)}
                 />
               );
             })}
@@ -242,7 +215,7 @@ export function DeployForm({
 
           {/* Advanced Configuration Toggle */}
           <AdvancedConfigToggle
-            advancedSection={schema.advancedSection ?? null}
+            advancedSection={globalSection}
             isExpanded={isAdvancedExpanded}
             onToggle={toggleAdvanced}
           >

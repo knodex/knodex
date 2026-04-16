@@ -12,6 +12,11 @@ import (
 // TestKROExtractExpressions_Compatibility validates KRO's ParseSchemalessResource
 // correctly handles edge cases that the old regex-based extraction could not.
 // These tests serve as a compatibility contract with KRO's expression parsing.
+//
+// NOTE: In KRO v0.9.0, FieldDescriptor changed from Expressions []*Expression
+// (plural slice) to Expression *Expression (singular pointer). String templates
+// like "prefix-${a}-${b}" are now compiled into a single CEL concatenation
+// expression at parse time, yielding one FieldDescriptor per template string.
 
 func TestKROExtractExpressions_NestedBraces(t *testing.T) {
 	// Old regex [^}]+ would fail on nested braces like map literals
@@ -27,7 +32,11 @@ func TestKROExtractExpressions_NestedBraces(t *testing.T) {
 		t.Fatalf("expected 1 descriptor, got %d", len(descriptors))
 	}
 
-	expr := descriptors[0].Expressions[0].Original
+	if descriptors[0].Expression == nil {
+		t.Fatal("expected non-nil Expression")
+	}
+
+	expr := descriptors[0].Expression.Original
 	expected := `schema.spec.name + "}"`
 	if expr != expected {
 		t.Errorf("expression = %q, want %q", expr, expected)
@@ -48,7 +57,11 @@ func TestKROExtractExpressions_StringLiterals(t *testing.T) {
 		t.Fatalf("expected 1 descriptor, got %d", len(descriptors))
 	}
 
-	expr := descriptors[0].Expressions[0].Original
+	if descriptors[0].Expression == nil {
+		t.Fatal("expected non-nil Expression")
+	}
+
+	expr := descriptors[0].Expression.Original
 	expected := `schema.spec.prefix + "-suffix"`
 	if expr != expected {
 		t.Errorf("expression = %q, want %q", expr, expected)
@@ -68,18 +81,19 @@ func TestKROExtractExpressions_SimpleExpression(t *testing.T) {
 		t.Fatalf("expected 1 descriptor, got %d", len(descriptors))
 	}
 
-	expr := descriptors[0].Expressions[0].Original
-	if expr != "schema.spec.name" {
-		t.Errorf("expression = %q, want %q", expr, "schema.spec.name")
+	if descriptors[0].Expression == nil {
+		t.Fatal("expected non-nil Expression")
 	}
 
-	if !descriptors[0].StandaloneExpression {
-		t.Error("expected standalone expression")
+	expr := descriptors[0].Expression.Original
+	if expr != "schema.spec.name" {
+		t.Errorf("expression = %q, want %q", expr, "schema.spec.name")
 	}
 }
 
 func TestKROExtractExpressions_EmbeddedExpression(t *testing.T) {
-	// String with embedded expression is not standalone
+	// String with embedded expression — in v0.9.0, templates are compiled
+	// into a single CEL concatenation expression at parse time.
 	input := map[string]interface{}{
 		"label": "app-${schema.spec.name}-v1",
 	}
@@ -92,18 +106,24 @@ func TestKROExtractExpressions_EmbeddedExpression(t *testing.T) {
 		t.Fatalf("expected 1 descriptor, got %d", len(descriptors))
 	}
 
-	if descriptors[0].StandaloneExpression {
-		t.Error("expected embedded (non-standalone) expression")
+	if descriptors[0].Expression == nil {
+		t.Fatal("expected non-nil Expression")
 	}
 
-	expr := descriptors[0].Expressions[0].Original
-	if expr != "schema.spec.name" {
-		t.Errorf("expression = %q, want %q", expr, "schema.spec.name")
+	// The expression should contain the schema.spec.name reference — verify it
+	// is extractable by the downstream field-extraction logic, not just non-empty.
+	expr := descriptors[0].Expression.Original
+	fields := extractBareSchemaFields(expr)
+	if len(fields) != 1 || fields[0] != "spec.name" {
+		t.Errorf("schema fields from expression %q = %v, want [spec.name]", expr, fields)
 	}
 }
 
 func TestKROExtractExpressions_MultipleExpressions(t *testing.T) {
-	// Multiple expressions in one string
+	// Multiple expressions in one string — in v0.9.0, these are compiled
+	// into a single concatenation expression, yielding one FieldDescriptor.
+	// Asserting exactly 1 descriptor locks down the v0.9.0 contract; if KRO
+	// reverts to returning 2 (v0.8.x behaviour), this test will catch it.
 	input := map[string]interface{}{
 		"value": "${schema.spec.first}-${schema.spec.second}",
 	}
@@ -113,22 +133,22 @@ func TestKROExtractExpressions_MultipleExpressions(t *testing.T) {
 	}
 
 	if len(descriptors) != 1 {
-		t.Fatalf("expected 1 descriptor, got %d", len(descriptors))
+		t.Fatalf("expected exactly 1 descriptor (v0.9.0 compiles templates to single concatenation expression), got %d", len(descriptors))
 	}
 
-	if len(descriptors[0].Expressions) != 2 {
-		t.Fatalf("expected 2 expressions, got %d", len(descriptors[0].Expressions))
+	if descriptors[0].Expression == nil {
+		t.Fatal("expected non-nil Expression")
 	}
 
-	exprs := make(map[string]bool)
-	for _, e := range descriptors[0].Expressions {
-		exprs[e.Original] = true
+	// Both schema references must be extractable from the single concatenated expression.
+	expr := descriptors[0].Expression.Original
+	fields := extractBareSchemaFields(expr)
+	fieldSet := make(map[string]bool)
+	for _, f := range fields {
+		fieldSet[f] = true
 	}
-	if !exprs["schema.spec.first"] {
-		t.Error("missing expression 'schema.spec.first'")
-	}
-	if !exprs["schema.spec.second"] {
-		t.Error("missing expression 'schema.spec.second'")
+	if !fieldSet["spec.first"] || !fieldSet["spec.second"] {
+		t.Errorf("expected both spec.first and spec.second in expression %q, got fields: %v", expr, fields)
 	}
 }
 
@@ -177,8 +197,8 @@ func TestKROExtractExpressions_DeepNesting(t *testing.T) {
 
 	exprs := make(map[string]bool)
 	for _, d := range descriptors {
-		for _, e := range d.Expressions {
-			exprs[e.Original] = true
+		if d.Expression != nil {
+			exprs[d.Expression.Original] = true
 		}
 	}
 

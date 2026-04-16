@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { test, expect, TestUserRole, setupPermissionMocking } from '../fixture';
+import type { Page } from '@playwright/test';
 
 /**
  * Note: Global Admin - Projects Settings UI Tests
@@ -25,6 +26,43 @@ import { test, expect, TestUserRole, setupPermissionMocking } from '../fixture';
 // Use relative URLs - Playwright baseURL is set in playwright.config.ts
 // This allows tests to work with dynamic Kind cluster ports
 
+/**
+ * Helper: Navigate through the multi-step Create Project wizard.
+ * Steps: Project (name) -> Destinations (namespace) -> Roles -> "Create Project"
+ */
+async function openCreateWizardAndSubmit(page: Page, projectName: string) {
+  // Click Create button to open wizard modal
+  const createButton = page.getByRole('button', { name: 'Create', exact: true });
+  await expect(createButton).toBeVisible({ timeout: 10000 });
+  await createButton.click();
+
+  // Step 1: Project — fill name using label
+  await expect(page.getByText('Create Project')).toBeVisible();
+  const nameInput = page.getByLabel(/project name/i);
+  await nameInput.fill(projectName);
+
+  // Click Continue to Step 2 (Destinations)
+  await page.getByRole('button', { name: /continue/i }).click();
+
+  // Step 2: Destinations — add a namespace destination so step is valid
+  const nsInput = page.getByPlaceholder(/namespace/i).or(page.locator('input[placeholder*="namespace"]'));
+  if (await nsInput.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await nsInput.fill('default');
+    await nsInput.press('Enter');
+  }
+
+  // Click Continue to Step 3 (Roles)
+  const continueBtn2 = page.getByRole('button', { name: /continue/i });
+  if (await continueBtn2.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await continueBtn2.click();
+  }
+
+  // Step 3: Roles — click "Create Project" submit button
+  const submitButton = page.getByRole('button', { name: /create project/i });
+  await expect(submitButton).toBeVisible({ timeout: 5000 });
+  await submitButton.click();
+}
+
 test.describe('Global Admin - Projects Settings UI', () => {
   // Authenticate as Global Admin to manage projects
   test.use({ authenticateAs: TestUserRole.GLOBAL_ADMIN });
@@ -36,7 +74,7 @@ test.describe('Global Admin - Projects Settings UI', () => {
 
   test('AC-129-01: Project List View displays projects with badges', async ({ page }) => {
     // Navigate to Projects Settings page
-    await page.goto(`/settings/projects`);
+    await page.goto(`/projects`);
     await page.waitForLoadState('networkidle', { timeout: 15000 });
 
     await page.screenshot({
@@ -49,7 +87,7 @@ test.describe('Global Admin - Projects Settings UI', () => {
     await expect(pageTitle).toBeVisible({ timeout: 10000 });
 
     // Check for Create Project button in header
-    const createButton = page.locator('button:has-text("Create Project"), button:has-text("New Project")');
+    const createButton = page.getByRole('button', { name: 'Create', exact: true });
     await expect(createButton).toBeVisible({ timeout: 5000 });
 
     // Check for project cards or list items (if any projects exist)
@@ -81,11 +119,11 @@ test.describe('Global Admin - Projects Settings UI', () => {
     const testProjectName = `test-project-${Date.now()}`;
 
     // Navigate to Projects Settings page
-    await page.goto(`/settings/projects`);
+    await page.goto(`/projects`);
     await page.waitForLoadState('networkidle', { timeout: 15000 });
 
-    // Click Create Project button
-    const createButton = page.locator('button:has-text("Create Project"), button:has-text("New Project")');
+    // Open the wizard modal
+    const createButton = page.getByRole('button', { name: 'Create', exact: true });
     await expect(createButton).toBeVisible({ timeout: 10000 });
     await createButton.click();
 
@@ -96,18 +134,14 @@ test.describe('Global Admin - Projects Settings UI', () => {
       fullPage: true
     });
 
-    // Verify form fields exist
-    const nameInput = page.getByRole('textbox', { name: /name/i }).first();
+    // Step 1: Verify form fields exist on wizard step 1
+    const nameInput = page.getByLabel(/project name/i);
     await expect(nameInput).toBeVisible({ timeout: 5000 });
 
-    // Test validation - try to submit empty form
-    const submitButton = page.locator('button:has-text("Create"), button[type="submit"]');
-    await submitButton.click();
-    await page.waitForTimeout(500);
-
-    // Check for validation error
-    const validationError = page.locator('text=/required|invalid|must/i');
-    const hasValidation = await validationError.isVisible({ timeout: 3000 }).catch(() => false);
+    // Verify Continue button is disabled when name is empty (validation)
+    const continueButton = page.getByRole('button', { name: /continue/i });
+    await expect(continueButton).toBeDisabled();
+    const hasValidation = true; // Button disabled = validation working
     console.log(`Form validation present: ${hasValidation}`);
 
     await page.screenshot({
@@ -120,7 +154,7 @@ test.describe('Global Admin - Projects Settings UI', () => {
 
     // Fill description if available
     const descriptionInput = page.getByRole('textbox', { name: /description/i });
-    if (await descriptionInput.isVisible({ timeout: 2000 })) {
+    if (await descriptionInput.isVisible({ timeout: 2000 }).catch(() => false)) {
       await descriptionInput.fill('Test project created by E2E test');
     }
 
@@ -129,7 +163,25 @@ test.describe('Global Admin - Projects Settings UI', () => {
       fullPage: true
     });
 
-    // Submit form
+    // Navigate through wizard: Step 1 -> Step 2 (Destinations)
+    await continueButton.click();
+
+    // Step 2: Destinations — add a namespace
+    const nsInput = page.getByPlaceholder(/namespace/i).or(page.locator('input[placeholder*="namespace"]'));
+    if (await nsInput.isVisible({ timeout: 3000 }).catch(() => false)) {
+      await nsInput.fill('default');
+      await nsInput.press('Enter');
+    }
+
+    // Step 2 -> Step 3 (Roles)
+    const continueBtn2 = page.getByRole('button', { name: /continue/i });
+    if (await continueBtn2.isVisible({ timeout: 3000 }).catch(() => false)) {
+      await continueBtn2.click();
+    }
+
+    // Step 3: Submit with "Create Project" button
+    const submitButton = page.getByRole('button', { name: /create project/i });
+    await expect(submitButton).toBeVisible({ timeout: 5000 });
     await submitButton.click();
 
     // Wait for creation to complete
@@ -150,7 +202,7 @@ test.describe('Global Admin - Projects Settings UI', () => {
 
   test('AC-129-03: Project Detail View with tabbed interface', async ({ page }) => {
     // First, navigate to projects list
-    await page.goto(`/settings/projects`);
+    await page.goto(`/projects`);
     await page.waitForLoadState('load', { timeout: 15000 });
     await page.waitForTimeout(1000); // Wait for UI to settle
 
@@ -164,7 +216,7 @@ test.describe('Global Admin - Projects Settings UI', () => {
       '[data-testid="project-card"]',
       'article.cursor-pointer',
       '.cursor-pointer:has(h3)',
-      'a[href^="/settings/projects/"]'
+      'a[href^="/projects/"]'
     ];
 
     let projectCard = null;
@@ -281,26 +333,16 @@ test.describe('Global Admin - Projects Settings UI', () => {
     const testProjectName = `delete-test-${Date.now()}`;
 
     // Navigate to Projects Settings page
-    await page.goto(`/settings/projects`);
+    await page.goto(`/projects`);
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(2000); // Allow data to load
 
-    // First, create a project to delete
-    const createButton = page.locator('button:has-text("Create Project"), button:has-text("New Project")');
-    if (await createButton.isVisible({ timeout: 5000 })) {
-      await createButton.click();
-      await page.waitForTimeout(1000);
-
-      const nameInput = page.getByRole('textbox', { name: /name/i }).first();
-      await nameInput.fill(testProjectName);
-
-      const submitButton = page.locator('button:has-text("Create"), button[type="submit"]');
-      await submitButton.click();
-      await page.waitForTimeout(3000);
-    }
+    // First, create a project to delete using the wizard
+    await openCreateWizardAndSubmit(page, testProjectName);
+    await page.waitForTimeout(3000);
 
     // Refresh to see the new project
-    await page.goto(`/settings/projects`);
+    await page.goto(`/projects`);
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(2000); // Allow data to load
 
@@ -377,10 +419,10 @@ test.describe('Global Admin - Projects Settings UI', () => {
       });
     });
 
-    await page.goto(`/settings/projects`);
+    await page.goto(`/projects`);
 
-    // Wait for empty state to render - "No projects configured" from ProjectList component
-    const emptyState = page.getByText('No projects configured');
+    // Wait for empty state to render - "No projects yet" from ProjectList component
+    const emptyState = page.getByText('No projects yet');
     await expect(emptyState).toBeVisible({ timeout: 10000 });
 
     await page.screenshot({
@@ -388,47 +430,24 @@ test.describe('Global Admin - Projects Settings UI', () => {
       fullPage: true
     });
 
-    // Verify empty state has a CTA button (Create Project button)
-    const createCTA = page.getByRole('button', { name: /Create Project/i });
+    // Verify empty state has a CTA button (Create Project button in empty state)
+    const createCTA = page.getByRole('button', { name: 'Create Project', exact: true });
     await expect(createCTA).toBeVisible({ timeout: 5000 });
 
     console.log('✓ Empty State displays correctly with Create Project CTA');
   });
 
   test('AC-129-11: RBAC Protection - Settings accessible only to Global Admin', async ({ page }) => {
-    // Navigate to Settings hub first
-    await page.goto(`/settings`);
-    await page.waitForLoadState('domcontentloaded');
-    await page.waitForTimeout(2000); // Allow data to load
+    // Navigate directly to Projects page
+    await page.goto('/projects');
+    await page.waitForLoadState('networkidle');
 
-    await page.screenshot({
-      path: '../test-results/e2e/screenshots/projects-11-settings-hub.png',
-      fullPage: true
-    });
-
-    // Verify Settings page is accessible to Global Admin
-    const settingsTitle = page.locator('h1:has-text("Settings"), h2:has-text("Settings")').first();
-    await expect(settingsTitle).toBeVisible({ timeout: 10000 });
-
-    // Look for Projects card/link in settings
-    const projectsLink = page.locator('a[href*="/settings/projects"], button:has-text("Projects"), [href="/settings/projects"]');
-    await expect(projectsLink).toBeVisible({ timeout: 5000 });
-
-    // Click to navigate to Projects
-    await projectsLink.click();
-    await page.waitForTimeout(2000);
-
-    await page.screenshot({
-      path: '../test-results/e2e/screenshots/projects-11-projects-page-admin.png',
-      fullPage: true
-    });
-
-    // Verify we can access Projects Settings page
-    const projectsPage = page.locator('h1:has-text("Projects"), h2:has-text("Project")').first();
+    // Verify we can access Projects page (title renders)
+    const projectsPage = page.getByRole('heading', { name: /Projects/i });
     await expect(projectsPage).toBeVisible({ timeout: 10000 });
 
     // Verify Global Admin can see Create button
-    const createButton = page.locator('button:has-text("Create Project"), button:has-text("New Project")');
+    const createButton = page.getByRole('button', { name: 'Create', exact: true });
     await expect(createButton).toBeVisible({ timeout: 5000 });
 
     console.log('✓ RBAC Protection - Global Admin can access Projects Settings');
@@ -437,40 +456,30 @@ test.describe('Global Admin - Projects Settings UI', () => {
 
 test.describe('Viewer - Projects Settings Access Denied', () => {
   // Authenticate as Viewer (should not have access)
-  test.use({ authenticateAs: TestUserRole.VIEWER });
+  test.use({ authenticateAs: TestUserRole.ORG_VIEWER });
 
   test('AC-129-11: Viewer cannot access Settings page', async ({ page }) => {
-    // Try to navigate directly to Settings
-    await page.goto(`/settings`);
-    await page.waitForLoadState('networkidle', { timeout: 15000 });
-
-    await page.screenshot({
-      path: '../test-results/e2e/screenshots/projects-11-viewer-settings-attempt.png',
-      fullPage: true
+    // Mock permissions for Viewer (no create/delete)
+    await setupPermissionMocking(page, {
+      'projects:get': true,
+      'projects:create': false,
+      'projects:delete': false,
     });
 
-    // Viewer should be redirected to catalog or see access denied
-    const settingsTitle = page.locator('h1:has-text("Settings"), h2:has-text("Settings")').first();
-    const accessDenied = page.locator('text=/access denied|unauthorized|forbidden|not authorized/i');
-    const catalogPage = page.locator('h1:has-text("Catalog"), h2:has-text("Catalog")').first();
+    // Navigate to Projects page
+    await page.goto('/projects');
+    await page.waitForLoadState('networkidle', { timeout: 15000 });
 
-    const hasSettings = await settingsTitle.isVisible({ timeout: 3000 }).catch(() => false);
-    const hasDenied = await accessDenied.isVisible({ timeout: 3000 }).catch(() => false);
-    const hasCatalog = await catalogPage.isVisible({ timeout: 3000 }).catch(() => false);
+    // Viewer can see the page but should NOT see Create button
+    const createButton = page.getByRole('button', { name: 'Create', exact: true });
+    await expect(createButton).not.toBeVisible({ timeout: 5000 });
 
-    console.log(`Settings visible to Viewer: ${hasSettings}`);
-    console.log(`Access Denied shown: ${hasDenied}`);
-    console.log(`Redirected to Catalog: ${hasCatalog}`);
-
-    // Viewer should NOT see Settings, or should see access denied, or be redirected
-    expect(!hasSettings || hasDenied || hasCatalog).toBeTruthy();
-
-    console.log('✓ Viewer cannot access Settings page');
+    console.log('✓ Viewer cannot see Create button on Projects page');
   });
 
   test('AC-129-11: Viewer cannot access Projects Settings directly', async ({ page }) => {
     // Try to navigate directly to Projects Settings
-    await page.goto(`/settings/projects`);
+    await page.goto(`/projects`);
     await page.waitForLoadState('networkidle', { timeout: 15000 });
 
     await page.screenshot({
@@ -481,7 +490,7 @@ test.describe('Viewer - Projects Settings Access Denied', () => {
     // Viewer should be redirected or see access denied
     const projectsPage = page.locator('h1:has-text("Projects Settings"), h2:has-text("Projects")').first();
     const accessDenied = page.locator('text=/access denied|unauthorized|forbidden|not authorized/i');
-    const catalogPage = page.locator('h1:has-text("Catalog"), h2:has-text("Catalog")').first();
+    const catalogPage = page.locator('h1:has-text("Catalog"), h1:has-text("Catalog")').first();
 
     const hasProjects = await projectsPage.isVisible({ timeout: 3000 }).catch(() => false);
     const hasDenied = await accessDenied.isVisible({ timeout: 3000 }).catch(() => false);

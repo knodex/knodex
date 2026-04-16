@@ -1,0 +1,15 @@
+{{- if .Values.catalog.customIcons }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "knodex.fullname" . }}-custom-icons
+  labels:
+    {{- include "knodex.labels" . | nindent 4 }}
+    app.kubernetes.io/component: catalog
+    knodex.io/icon-registry: "true"
+data:
+  {{- range $slug, $svg := .Values.catalog.customIcons }}
+  {{ $slug }}: |
+    {{- $svg | nindent 4 }}
+  {{- end }}
+{{- end }}

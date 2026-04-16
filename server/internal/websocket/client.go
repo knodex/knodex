@@ -14,6 +14,12 @@ import (
 )
 
 const (
+	// globalAdminCacheTTL is how long a cached global admin check remains valid.
+	// WebSocket sessions are token-scoped and short-lived; admin status changing
+	// mid-session is rare. A 60s lag is acceptable for the performance gain of
+	// avoiding per-message Casbin calls.
+	globalAdminCacheTTL = 60 * time.Second
+
 	// Time allowed to write a message to the peer
 	writeWait = 10 * time.Second
 
@@ -54,6 +60,11 @@ type Client struct {
 	projects []string
 	groups   []string // OIDC groups for Casbin policy evaluation
 	userMu   sync.RWMutex
+
+	// Cached global admin status to avoid per-message Casbin calls.
+	// Guarded by userMu. Lazily populated on first CachedHasGlobalAccess call.
+	isGlobalAdmin       bool
+	globalAdminCachedAt time.Time
 
 	// Policy enforcer for permission checks (ArgoCD-aligned: use Casbin, not booleans)
 	policyEnforcer ClientPolicyEnforcer
@@ -102,6 +113,9 @@ func (c *Client) SetUserContext(userID string, projects []string, groups []strin
 	copy(c.groups, groups)
 
 	c.policyEnforcer = policyEnforcer
+
+	// Invalidate cached admin status — the new enforcer may return a different result.
+	c.globalAdminCachedAt = time.Time{}
 }
 
 // GetUserContext returns the user context with defensive copying to prevent races
@@ -149,6 +163,42 @@ func (c *Client) HasGlobalAccess(ctx context.Context) bool {
 	}
 
 	return hasAccess
+}
+
+// CachedHasGlobalAccess returns the cached global admin status, re-evaluating
+// via Casbin only when the cache is empty or older than globalAdminCacheTTL.
+// This avoids a full Casbin call on every broadcast message for every client.
+// Uses double-checked locking to prevent thundering-herd re-evaluation when
+// multiple goroutines observe an expired cache simultaneously.
+func (c *Client) CachedHasGlobalAccess(ctx context.Context) bool {
+	c.userMu.RLock()
+	cached := c.globalAdminCachedAt
+	result := c.isGlobalAdmin
+	c.userMu.RUnlock()
+
+	if !cached.IsZero() && time.Since(cached) < globalAdminCacheTTL {
+		return result
+	}
+
+	// Cache miss or expired — acquire write lock and re-check before calling Casbin.
+	// Another goroutine may have already refreshed while we waited for the lock.
+	c.userMu.Lock()
+	if !c.globalAdminCachedAt.IsZero() && time.Since(c.globalAdminCachedAt) < globalAdminCacheTTL {
+		result = c.isGlobalAdmin
+		c.userMu.Unlock()
+		return result
+	}
+	c.userMu.Unlock()
+
+	// Re-evaluate via Casbin (outside lock — may be slow)
+	fresh := c.HasGlobalAccess(ctx)
+
+	c.userMu.Lock()
+	c.isGlobalAdmin = fresh
+	c.globalAdminCachedAt = time.Now()
+	c.userMu.Unlock()
+
+	return fresh
 }
 
 // ReadPump pumps messages from the WebSocket connection to the hub

@@ -30,7 +30,7 @@ func createTestProjectService() *rbac.ProjectService {
 	dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme)
 	k8sClient := fake.NewSimpleClientset()
 
-	return rbac.NewProjectService(k8sClient, dynamicClient)
+	return rbac.NewProjectService(k8sClient, dynamicClient, "knodex-system")
 }
 
 // createTestProjectSpec creates a valid ArgoCD-aligned ProjectSpec for testing

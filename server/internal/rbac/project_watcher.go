@@ -69,6 +69,7 @@ type projectWatcher struct {
 	dynamicClient dynamic.Interface
 	handler       ProjectPolicyHandler
 	config        ProjectWatcherConfig
+	namespace     string // Namespace to watch for Project CRDs
 	logger        *slog.Logger
 
 	// State tracking
@@ -77,14 +78,15 @@ type projectWatcher struct {
 	lastSyncTime time.Time
 	stopCh       chan struct{}
 	informer     cache.SharedIndexInformer
+	parentCtx    context.Context
 
 	// stopOnce ensures the stop channel is only closed once
 	// preventing panic from concurrent Stop() calls
 	stopOnce sync.Once
 }
 
-// NewProjectWatcher creates a new Project CRD watcher
-func NewProjectWatcher(dynamicClient dynamic.Interface, handler ProjectPolicyHandler, config ProjectWatcherConfig) ProjectWatcher {
+// NewProjectWatcher creates a new Project CRD watcher scoped to the given namespace.
+func NewProjectWatcher(dynamicClient dynamic.Interface, handler ProjectPolicyHandler, namespace string, config ProjectWatcherConfig) ProjectWatcher {
 	logger := config.Logger
 	if logger == nil {
 		logger = slog.Default()
@@ -99,6 +101,7 @@ func NewProjectWatcher(dynamicClient dynamic.Interface, handler ProjectPolicyHan
 		dynamicClient: dynamicClient,
 		handler:       handler,
 		config:        config,
+		namespace:     namespace,
 		logger:        logger,
 		stopCh:        make(chan struct{}),
 	}
@@ -113,17 +116,21 @@ func (w *projectWatcher) Start(ctx context.Context) error {
 	}
 	w.running = true
 	w.stopCh = make(chan struct{})
+	w.parentCtx = ctx
 	// Reset stopOnce when starting fresh - allows restart after stop
 	w.stopOnce = sync.Once{}
 	w.mu.Unlock()
 
 	w.logger.Info("starting project watcher",
-		"resyncPeriod", w.config.ResyncPeriod.String())
+		"resyncPeriod", w.config.ResyncPeriod.String(),
+		"namespace", w.namespace)
 
-	// Create dynamic informer factory
-	factory := dynamicinformer.NewDynamicSharedInformerFactory(
+	// Create namespace-scoped dynamic informer factory
+	factory := dynamicinformer.NewFilteredDynamicSharedInformerFactory(
 		w.dynamicClient,
 		w.config.ResyncPeriod,
+		w.namespace,
+		nil,
 	)
 
 	// Get GVR for Project CRD
@@ -137,11 +144,15 @@ func (w *projectWatcher) Start(ctx context.Context) error {
 	informer := factory.ForResource(gvr).Informer()
 
 	// Register event handlers
-	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    w.onAdd,
 		UpdateFunc: w.onUpdate,
 		DeleteFunc: w.onDelete,
 	})
+	if err != nil {
+		w.logger.Error("failed to add event handler", "error", err)
+		return fmt.Errorf("add event handler: %w", err)
+	}
 
 	w.mu.Lock()
 	w.informer = informer
@@ -230,7 +241,13 @@ func (w *projectWatcher) onAdd(obj interface{}) {
 	w.logger.Info("project added, loading policies",
 		"project", projectName)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	w.mu.RLock()
+	parentCtx := w.parentCtx
+	w.mu.RUnlock()
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parentCtx, 30*time.Second)
 	defer cancel()
 
 	if err := w.handler.LoadProjectPolicies(ctx, projectName); err != nil {
@@ -269,7 +286,13 @@ func (w *projectWatcher) onUpdate(oldObj, newObj interface{}) {
 		"oldVersion", oldProject.GetResourceVersion(),
 		"newVersion", newProject.GetResourceVersion())
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	w.mu.RLock()
+	parentCtx := w.parentCtx
+	w.mu.RUnlock()
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parentCtx, 30*time.Second)
 	defer cancel()
 
 	// Reload policies for the updated project
@@ -309,7 +332,13 @@ func (w *projectWatcher) onDelete(obj interface{}) {
 	projectName := project.GetName()
 	w.logger.Info("project deleted, removing policies", "project", projectName)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	w.mu.RLock()
+	parentCtx := w.parentCtx
+	w.mu.RUnlock()
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parentCtx, 30*time.Second)
 	defer cancel()
 
 	if err := w.handler.RemoveProjectPolicies(ctx, projectName); err != nil {
@@ -341,132 +370,4 @@ type ProjectWatcherError struct {
 
 func (e *ProjectWatcherError) Error() string {
 	return e.Message
-}
-
-// ProjectWatcherManager manages the watcher lifecycle with reconnection
-type ProjectWatcherManager struct {
-	watcher ProjectWatcher
-	handler ProjectPolicyHandler
-	logger  *slog.Logger
-
-	// Reconnection settings
-	initialBackoff time.Duration
-	maxBackoff     time.Duration
-
-	// State
-	mu      sync.RWMutex
-	running bool
-	stopCh  chan struct{}
-
-	// stopOnce ensures the stop channel is only closed once
-	// preventing panic from concurrent Stop() calls
-	stopOnce sync.Once
-}
-
-// NewProjectWatcherManager creates a manager that handles watcher lifecycle
-func NewProjectWatcherManager(watcher ProjectWatcher, handler ProjectPolicyHandler, logger *slog.Logger) *ProjectWatcherManager {
-	if logger == nil {
-		logger = slog.Default()
-	}
-
-	return &ProjectWatcherManager{
-		watcher:        watcher,
-		handler:        handler,
-		logger:         logger,
-		initialBackoff: 1 * time.Second,
-		maxBackoff:     5 * time.Minute,
-	}
-}
-
-// Start begins the managed watcher with automatic reconnection
-func (m *ProjectWatcherManager) Start(ctx context.Context) error {
-	m.mu.Lock()
-	if m.running {
-		m.mu.Unlock()
-		return nil
-	}
-	m.running = true
-	m.stopCh = make(chan struct{})
-	// Reset stopOnce when starting fresh - allows restart after stop
-	m.stopOnce = sync.Once{}
-	m.mu.Unlock()
-
-	go m.runWithReconnect(ctx)
-	return nil
-}
-
-// Stop stops the managed watcher
-// Safe to call multiple times - uses sync.Once to prevent double-close panic
-func (m *ProjectWatcherManager) Stop() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if !m.running {
-		return
-	}
-
-	m.stopOnce.Do(func() {
-		close(m.stopCh)
-	})
-	m.watcher.Stop()
-	m.running = false
-}
-
-// runWithReconnect runs the watcher with exponential backoff reconnection
-func (m *ProjectWatcherManager) runWithReconnect(ctx context.Context) {
-	backoff := m.initialBackoff
-	restartCount := 0
-
-	for {
-		select {
-		case <-ctx.Done():
-			m.logger.Info("watcher manager stopping due to context cancellation")
-			return
-		case <-m.stopCh:
-			m.logger.Info("watcher manager stopping due to stop signal")
-			return
-		default:
-		}
-
-		// Run the watcher
-		m.logger.Info("starting project watcher", "restartCount", restartCount)
-		err := m.watcher.Start(ctx)
-
-		if err != nil {
-			m.logger.Error("watcher error", "error", err)
-		}
-
-		// Check if we should stop
-		select {
-		case <-ctx.Done():
-			return
-		case <-m.stopCh:
-			return
-		default:
-		}
-
-		// Watcher stopped unexpectedly, reconnect with backoff
-		restartCount++
-		if m.handler != nil {
-			m.handler.IncrementWatcherRestarts()
-		}
-
-		m.logger.Warn("watcher stopped, reconnecting with backoff",
-			"backoff", backoff.String(),
-			"restartCount", restartCount)
-
-		select {
-		case <-time.After(backoff):
-		case <-ctx.Done():
-			return
-		case <-m.stopCh:
-			return
-		}
-
-		// Exponential backoff with max
-		backoff = backoff * 2
-		if backoff > m.maxBackoff {
-			backoff = m.maxBackoff
-		}
-	}
 }

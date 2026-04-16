@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { useMemo } from "react";
-import { ChevronRight, Home } from "lucide-react";
+import { ChevronRight, Home } from "@/lib/icons";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { cn } from "@/lib/utils";
 
@@ -22,9 +22,18 @@ export function Breadcrumbs({ className }: BreadcrumbsProps) {
 
   const items = useMemo((): BreadcrumbItem[] => {
     const path = location.pathname;
-    const breadcrumbs: BreadcrumbItem[] = [];
+    const breadcrumbs: BreadcrumbItem[] = [
+      { label: 'Home', to: '/' },
+    ];
 
-    if (path.startsWith('/catalog')) {
+    if (path.startsWith('/deploy') && params.rgdName) {
+      breadcrumbs.push({ label: 'Catalog', to: '/catalog' });
+      breadcrumbs.push({
+        label: decodeURIComponent(params.rgdName),
+        to: `/catalog/${params.rgdName}`
+      });
+      breadcrumbs.push({ label: 'Deploy' });
+    } else if (path.startsWith('/catalog')) {
       breadcrumbs.push({ label: 'Catalog', to: '/catalog' });
 
       if (params.rgdName) {
@@ -40,28 +49,67 @@ export function Breadcrumbs({ className }: BreadcrumbsProps) {
     } else if (path.startsWith('/instances')) {
       breadcrumbs.push({ label: 'Instances', to: '/instances' });
 
-      if (params.namespace && params.name) {
-        const instanceLabel = `${decodeURIComponent(params.namespace)}/${decodeURIComponent(params.name)}`;
+      if (params.name) {
+        const instanceLabel = params.kind
+          ? `${decodeURIComponent(params.namespace || '')}/${decodeURIComponent(params.kind)}/${decodeURIComponent(params.name)}`
+          : `${decodeURIComponent(params.namespace || '')}/${decodeURIComponent(params.name)}`;
         breadcrumbs.push({
           label: instanceLabel
         });
+      }
+    } else if (path.startsWith('/audit')) {
+      breadcrumbs.push({ label: 'Audit' });
+    } else if (path.startsWith('/compliance')) {
+      breadcrumbs.push({ label: 'Compliance', to: '/compliance' });
+
+      if (path.includes('/templates/')) {
+        breadcrumbs.push({ label: 'Templates', to: '/compliance/templates' });
+        const templateName = path.split('/templates/')[1];
+        if (templateName) {
+          breadcrumbs.push({ label: decodeURIComponent(templateName) });
+        }
+      } else if (path.includes('/constraints/')) {
+        breadcrumbs.push({ label: 'Constraints', to: '/compliance/constraints' });
+        const constraintName = path.split('/constraints/')[1];
+        if (constraintName) {
+          breadcrumbs.push({ label: decodeURIComponent(constraintName) });
+        }
+      }
+    } else if (path.startsWith('/secrets')) {
+      breadcrumbs.push({ label: 'Secrets' });
+    } else if (path.startsWith('/settings')) {
+      breadcrumbs.push({ label: 'Settings', to: '/settings' });
+
+      if (path.includes('/repositories')) {
+        breadcrumbs.push({ label: 'Repositories' });
+      } else if (path.includes('/projects')) {
+        breadcrumbs.push({ label: 'Projects' });
+      } else if (path.includes('/audit')) {
+        breadcrumbs.push({ label: 'Audit' });
+      } else if (path.includes('/sso')) {
+        breadcrumbs.push({ label: 'SSO' });
+      }
+    } else if (path.startsWith('/views')) {
+      breadcrumbs.push({ label: 'Views', to: '/views' });
+
+      const viewSlug = path.match(/^\/views\/([^/]+)/);
+      if (viewSlug) {
+        breadcrumbs.push({ label: decodeURIComponent(viewSlug[1]) });
       }
     }
 
     return breadcrumbs;
   }, [location, params]);
 
-  // Don't show breadcrumbs if only one item (top-level page)
-  if (items.length <= 1) {
-    return null;
-  }
+  // Hide breadcrumbs — title is in TopBar, detail pages use back button
+  return null;
 
   return (
-    <div className="bg-card/30">
-      <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-3">
+    <div>
+      <div className="px-6 lg:px-10 max-w-[1280px] mx-auto py-2">
         <nav
           aria-label="Breadcrumb"
-          className={cn("flex items-center text-sm", className)}
+          className={cn("flex items-center text-[var(--text-size-sm)]", className)}
         >
           <ol className="flex items-center gap-1.5">
             {items.map((item, index) => {

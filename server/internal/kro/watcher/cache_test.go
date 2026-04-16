@@ -34,7 +34,6 @@ func TestRGDCache_SetAndGet(t *testing.T) {
 		Name:        "test-rgd",
 		Namespace:   "default",
 		Description: "Test RGD",
-		Version:     "v1",
 		Category:    "database",
 		Tags:        []string{"postgres", "database"},
 		CreatedAt:   time.Now(),
@@ -550,7 +549,6 @@ func TestRGDCache_Update(t *testing.T) {
 		Name:        "test-rgd",
 		Namespace:   "default",
 		Description: "Original",
-		Version:     "v1",
 	}
 
 	cache.Set(rgd)
@@ -560,7 +558,6 @@ func TestRGDCache_Update(t *testing.T) {
 		Name:        "test-rgd",
 		Namespace:   "default",
 		Description: "Updated",
-		Version:     "v2",
 	}
 	cache.Set(updated)
 
@@ -573,9 +570,6 @@ func TestRGDCache_Update(t *testing.T) {
 	got, _ := cache.Get("default", "test-rgd")
 	if got.Description != "Updated" {
 		t.Errorf("expected updated description, got %q", got.Description)
-	}
-	if got.Version != "v2" {
-		t.Errorf("expected version v2, got %q", got.Version)
 	}
 }
 
@@ -1886,5 +1880,208 @@ func TestRGDCache_DependsOnKindIndex_ListWithFilter(t *testing.T) {
 		if rgd.Name != "logging" && rgd.Name != "monitoring" {
 			t.Errorf("unexpected RGD in results: %s", rgd.Name)
 		}
+	}
+}
+
+// --- CatalogTier filter tests (STORY-416) ---
+
+func TestRGDCache_CatalogTierFilter_NilTiersShowsAll(t *testing.T) {
+	t.Parallel()
+
+	cache := NewRGDCache()
+
+	appRGD := catalogRGD("web-app", "default")
+	appRGD.CatalogTier = "app"
+	cache.Set(appRGD)
+
+	infraRGD := catalogRGD("aks-cluster", "default")
+	infraRGD.CatalogTier = "infrastructure"
+	cache.Set(infraRGD)
+
+	bothRGD := catalogRGD("shared-db", "default")
+	bothRGD.CatalogTier = "both"
+	cache.Set(bothRGD)
+
+	// nil CatalogTiers = no filtering, all visible
+	opts := models.DefaultListOptions()
+	opts.CatalogTiers = nil
+	result := cache.List(opts)
+
+	if result.TotalCount != 3 {
+		t.Errorf("expected 3 RGDs with nil tier filter, got %d", result.TotalCount)
+	}
+}
+
+func TestRGDCache_CatalogTierFilter_AppAndBoth(t *testing.T) {
+	t.Parallel()
+
+	cache := NewRGDCache()
+
+	appRGD := catalogRGD("web-app", "default")
+	appRGD.CatalogTier = "app"
+	cache.Set(appRGD)
+
+	infraRGD := catalogRGD("aks-cluster", "default")
+	infraRGD.CatalogTier = "infrastructure"
+	cache.Set(infraRGD)
+
+	bothRGD := catalogRGD("shared-db", "default")
+	bothRGD.CatalogTier = "both"
+	cache.Set(bothRGD)
+
+	// Filter to app + both (exclude infrastructure)
+	opts := models.DefaultListOptions()
+	opts.CatalogTiers = []string{"app", "both"}
+	result := cache.List(opts)
+
+	if result.TotalCount != 2 {
+		t.Errorf("expected 2 RGDs with app+both tier filter, got %d", result.TotalCount)
+	}
+	for _, rgd := range result.Items {
+		if rgd.Name == "aks-cluster" {
+			t.Error("infrastructure RGD should be excluded by app+both tier filter")
+		}
+	}
+}
+
+func TestRGDCache_CatalogTierFilter_InfraAndBoth(t *testing.T) {
+	t.Parallel()
+
+	cache := NewRGDCache()
+
+	appRGD := catalogRGD("web-app", "default")
+	appRGD.CatalogTier = "app"
+	cache.Set(appRGD)
+
+	infraRGD := catalogRGD("aks-cluster", "default")
+	infraRGD.CatalogTier = "infrastructure"
+	cache.Set(infraRGD)
+
+	bothRGD := catalogRGD("shared-db", "default")
+	bothRGD.CatalogTier = "both"
+	cache.Set(bothRGD)
+
+	// Filter to infrastructure + both (exclude app)
+	opts := models.DefaultListOptions()
+	opts.CatalogTiers = []string{"infrastructure", "both"}
+	result := cache.List(opts)
+
+	if result.TotalCount != 2 {
+		t.Errorf("expected 2 RGDs with infrastructure+both tier filter, got %d", result.TotalCount)
+	}
+	for _, rgd := range result.Items {
+		if rgd.Name == "web-app" {
+			t.Error("app RGD should be excluded by infrastructure+both tier filter")
+		}
+	}
+}
+
+func TestRGDCache_ProducesKindIndex_SetAndQuery(t *testing.T) {
+	t.Parallel()
+
+	cache := NewRGDCache()
+
+	rgd1 := catalogRGD("aks-cilium", "default")
+	rgd1.ProducesKinds = []models.GVKRef{
+		{Group: "containerservice.azure.com", Version: "v1api20231001", Kind: "ManagedCluster"},
+		{Group: "containerservice.azure.com", Version: "v1api20231001", Kind: "ManagedClustersAgentPool"},
+	}
+	cache.Set(rgd1)
+
+	rgd2 := catalogRGD("eks-cluster", "default")
+	rgd2.ProducesKinds = []models.GVKRef{
+		{Group: "eks.aws.com", Version: "v1beta1", Kind: "ManagedCluster"},
+	}
+	cache.Set(rgd2)
+
+	// Query by Kind "ManagedCluster" — both RGDs produce it
+	result := cache.List(models.ListOptions{
+		ProducesKind: "ManagedCluster",
+		Page:         1,
+		PageSize:     20,
+	})
+	if result.TotalCount != 2 {
+		t.Fatalf("expected 2 results for ManagedCluster, got %d", result.TotalCount)
+	}
+
+	// Query by Kind "ManagedClustersAgentPool" — only aks-cilium
+	result = cache.List(models.ListOptions{
+		ProducesKind: "ManagedClustersAgentPool",
+		Page:         1,
+		PageSize:     20,
+	})
+	if result.TotalCount != 1 {
+		t.Fatalf("expected 1 result for ManagedClustersAgentPool, got %d", result.TotalCount)
+	}
+	if result.Items[0].Name != "aks-cilium" {
+		t.Errorf("expected aks-cilium, got %s", result.Items[0].Name)
+	}
+
+	// Query for non-existent kind — should return 0
+	result = cache.List(models.ListOptions{
+		ProducesKind: "NonExistent",
+		Page:         1,
+		PageSize:     20,
+	})
+	if result.TotalCount != 0 {
+		t.Errorf("expected 0 results for NonExistent, got %d", result.TotalCount)
+	}
+}
+
+func TestRGDCache_ProducesKindIndex_Update(t *testing.T) {
+	t.Parallel()
+
+	cache := NewRGDCache()
+
+	rgd := catalogRGD("app", "default")
+	rgd.ProducesKinds = []models.GVKRef{
+		{Group: "apps", Version: "v1", Kind: "Deployment"},
+	}
+	cache.Set(rgd)
+
+	result := cache.List(models.ListOptions{ProducesKind: "Deployment", Page: 1, PageSize: 20})
+	if result.TotalCount != 1 {
+		t.Fatalf("expected 1 result before update, got %d", result.TotalCount)
+	}
+
+	// Update: change ProducesKinds from Deployment to StatefulSet
+	rgd2 := catalogRGD("app", "default")
+	rgd2.ProducesKinds = []models.GVKRef{
+		{Group: "apps", Version: "v1", Kind: "StatefulSet"},
+	}
+	cache.Set(rgd2)
+
+	result = cache.List(models.ListOptions{ProducesKind: "Deployment", Page: 1, PageSize: 20})
+	if result.TotalCount != 0 {
+		t.Errorf("expected 0 results for Deployment after update, got %d", result.TotalCount)
+	}
+
+	result = cache.List(models.ListOptions{ProducesKind: "StatefulSet", Page: 1, PageSize: 20})
+	if result.TotalCount != 1 {
+		t.Fatalf("expected 1 result for StatefulSet after update, got %d", result.TotalCount)
+	}
+}
+
+func TestRGDCache_ProducesKindIndex_Delete(t *testing.T) {
+	t.Parallel()
+
+	cache := NewRGDCache()
+
+	rgd := catalogRGD("app", "default")
+	rgd.ProducesKinds = []models.GVKRef{
+		{Group: "apps", Version: "v1", Kind: "Deployment"},
+	}
+	cache.Set(rgd)
+
+	result := cache.List(models.ListOptions{ProducesKind: "Deployment", Page: 1, PageSize: 20})
+	if result.TotalCount != 1 {
+		t.Fatalf("expected 1 result before delete, got %d", result.TotalCount)
+	}
+
+	cache.Delete("default", "app")
+
+	result = cache.List(models.ListOptions{ProducesKind: "Deployment", Page: 1, PageSize: 20})
+	if result.TotalCount != 0 {
+		t.Errorf("expected 0 results after delete, got %d", result.TotalCount)
 	}
 }

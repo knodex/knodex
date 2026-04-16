@@ -26,6 +26,9 @@ type ProjectServiceInterface interface {
 
 	// Exists checks if a project exists by name
 	Exists(ctx context.Context, name string) (bool, error)
+
+	// UpdateProjectStatus updates only the status subresource of a Project
+	UpdateProjectStatus(ctx context.Context, project *Project) (*Project, error)
 }
 
 // Ensure ProjectService implements ProjectServiceInterface

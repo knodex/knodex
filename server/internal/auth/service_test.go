@@ -68,7 +68,7 @@ func setupTestAccountStore(t *testing.T) (*AccountStore, *rbac.ProjectService, *
 	}
 	dynamicClient := testutil.NewFakeDynamicClientWithListKinds(t, gvrToListKind)
 
-	projectService := rbac.NewProjectService(k8sClient, dynamicClient)
+	projectService := rbac.NewProjectService(k8sClient, dynamicClient, "knodex-system")
 
 	return accountStore, projectService, k8sClient
 }
@@ -224,7 +224,7 @@ func TestNewService_MissingAdminAccountLogsWarning(t *testing.T) {
 	accountStore := NewAccountStore(k8sClient, namespace)
 
 	dynamicClient := testutil.NewFakeDynamicClient(t)
-	projectSvc := rbac.NewProjectService(k8sClient, dynamicClient)
+	projectSvc := rbac.NewProjectService(k8sClient, dynamicClient, "knodex-system")
 
 	redisClient := NewMockRedisClientAdapter()
 
@@ -286,7 +286,7 @@ func TestNewService_DisabledAdminAccountLogsWarning(t *testing.T) {
 	accountStore := NewAccountStore(k8sClient, namespace)
 
 	dynamicClient := testutil.NewFakeDynamicClient(t)
-	projectSvc := rbac.NewProjectService(k8sClient, dynamicClient)
+	projectSvc := rbac.NewProjectService(k8sClient, dynamicClient, "knodex-system")
 
 	redisClient := NewMockRedisClientAdapter()
 

@@ -80,7 +80,7 @@ describe("AuditStats", () => {
     const { container } = render(<AuditStats isLoading />);
 
     // Should have skeleton elements (Skeleton renders divs with specific classes)
-    const skeletons = container.querySelectorAll('[class*="animate-pulse"]');
+    const skeletons = container.querySelectorAll('[class*="animate-token-shimmer"]');
     expect(skeletons.length).toBeGreaterThan(0);
   });
 

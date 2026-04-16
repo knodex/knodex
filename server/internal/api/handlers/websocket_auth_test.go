@@ -81,7 +81,7 @@ func storeWSTicket(t *testing.T, redisClient *redis.Client, userID, email string
 
 func TestWebSocketHandler_MissingTicket(t *testing.T) {
 	t.Parallel()
-	hub := websocket.NewHub()
+	hub := websocket.NewHub(nil)
 	_, redisClient := testutil.NewRedis(t)
 	authService := &mockAuthService{}
 	handler := NewWebSocketHandler(hub, authService, redisClient)
@@ -105,7 +105,7 @@ func TestWebSocketHandler_MissingTicket(t *testing.T) {
 // TestWebSocketHandler_RejectLegacyToken verifies that ?token= parameter is rejected (AC-3)
 func TestWebSocketHandler_RejectLegacyToken(t *testing.T) {
 	t.Parallel()
-	hub := websocket.NewHub()
+	hub := websocket.NewHub(nil)
 	_, redisClient := testutil.NewRedis(t)
 	authService := &mockAuthService{}
 	handler := NewWebSocketHandler(hub, authService, redisClient)
@@ -128,7 +128,7 @@ func TestWebSocketHandler_RejectLegacyToken(t *testing.T) {
 
 func TestWebSocketHandler_InvalidTicket(t *testing.T) {
 	t.Parallel()
-	hub := websocket.NewHub()
+	hub := websocket.NewHub(nil)
 	_, redisClient := testutil.NewRedis(t)
 	authService := &mockAuthService{}
 	handler := NewWebSocketHandler(hub, authService, redisClient)
@@ -151,7 +151,7 @@ func TestWebSocketHandler_InvalidTicket(t *testing.T) {
 
 func TestWebSocketHandler_ExpiredTicket(t *testing.T) {
 	t.Parallel()
-	hub := websocket.NewHub()
+	hub := websocket.NewHub(nil)
 	mr, redisClient := testutil.NewRedis(t)
 	authService := &mockAuthService{}
 	handler := NewWebSocketHandler(hub, authService, redisClient)
@@ -174,7 +174,7 @@ func TestWebSocketHandler_ExpiredTicket(t *testing.T) {
 
 func TestWebSocketHandler_TicketSingleUse(t *testing.T) {
 	t.Parallel()
-	hub := websocket.NewHub()
+	hub := websocket.NewHub(nil)
 	_, redisClient := testutil.NewRedis(t)
 	authService := &mockAuthService{}
 	handler := NewWebSocketHandler(hub, authService, redisClient)
@@ -209,7 +209,7 @@ func TestWebSocketHandler_TicketSingleUse(t *testing.T) {
 
 func TestWebSocketHandler_ValidTicket_RegularUser(t *testing.T) {
 	t.Parallel()
-	hub := websocket.NewHub()
+	hub := websocket.NewHub(nil)
 	_, redisClient := testutil.NewRedis(t)
 	authService := &mockAuthService{}
 	handler := NewWebSocketHandler(hub, authService, redisClient)
@@ -236,7 +236,7 @@ func TestWebSocketHandler_ValidTicket_RegularUser(t *testing.T) {
 
 func TestWebSocketHandler_ValidTicket_GlobalAdmin(t *testing.T) {
 	t.Parallel()
-	hub := websocket.NewHub()
+	hub := websocket.NewHub(nil)
 	_, redisClient := testutil.NewRedis(t)
 	authService := &mockAuthService{}
 	handler := NewWebSocketHandler(hub, authService, redisClient)
@@ -262,7 +262,7 @@ func TestWebSocketHandler_ValidTicket_GlobalAdmin(t *testing.T) {
 
 func TestWebSocketHandler_EmptyTicketParameter(t *testing.T) {
 	t.Parallel()
-	hub := websocket.NewHub()
+	hub := websocket.NewHub(nil)
 	_, redisClient := testutil.NewRedis(t)
 	authService := &mockAuthService{}
 	handler := NewWebSocketHandler(hub, authService, redisClient)
@@ -287,7 +287,7 @@ func TestWebSocketHandler_EmptyTicketParameter(t *testing.T) {
 // when no Redis client is configured (fail closed).
 func TestWebSocketHandler_NoRedisClient(t *testing.T) {
 	t.Parallel()
-	hub := websocket.NewHub()
+	hub := websocket.NewHub(nil)
 	authService := &mockAuthService{}
 	handler := NewWebSocketHandler(hub, authService, nil) // No Redis client
 
@@ -305,7 +305,7 @@ func TestWebSocketHandler_NoRedisClient(t *testing.T) {
 // CanAccessWithGroups method, NOT via direct role string comparison.
 func TestWebSocketHandler_GlobalAdmin_ViaCasbin(t *testing.T) {
 	t.Parallel()
-	hub := websocket.NewHub()
+	hub := websocket.NewHub(nil)
 	_, redisClient := testutil.NewRedis(t)
 	authService := &mockAuthService{}
 
@@ -345,7 +345,7 @@ func TestWebSocketHandler_GlobalAdmin_ViaCasbin(t *testing.T) {
 // TestWebSocketHandler_NonAdmin_ViaCasbin tests that non-admin users are correctly identified
 func TestWebSocketHandler_NonAdmin_ViaCasbin(t *testing.T) {
 	t.Parallel()
-	hub := websocket.NewHub()
+	hub := websocket.NewHub(nil)
 	_, redisClient := testutil.NewRedis(t)
 	authService := &mockAuthService{}
 
@@ -381,7 +381,7 @@ func TestWebSocketHandler_NonAdmin_ViaCasbin(t *testing.T) {
 // TestWebSocketHandler_Casbin_ErrorHandling tests that Casbin errors don't grant admin access
 func TestWebSocketHandler_Casbin_ErrorHandling(t *testing.T) {
 	t.Parallel()
-	hub := websocket.NewHub()
+	hub := websocket.NewHub(nil)
 	_, redisClient := testutil.NewRedis(t)
 	authService := &mockAuthService{}
 
@@ -416,7 +416,7 @@ func TestWebSocketHandler_Casbin_ErrorHandling(t *testing.T) {
 // AC-1: Given authService is nil, WebSocket upgrade is rejected with 500 "server not ready".
 func TestWebSocketHandler_NilAuthService(t *testing.T) {
 	t.Parallel()
-	hub := websocket.NewHub()
+	hub := websocket.NewHub(nil)
 	_, redisClient := testutil.NewRedis(t)
 	handler := NewWebSocketHandler(hub, nil, redisClient) // nil authService
 
@@ -442,7 +442,7 @@ func TestWebSocketHandler_NilAuthService(t *testing.T) {
 // The handler's defense-in-depth TrimSpace check is tested separately in WhitespaceUserID test.
 func TestWebSocketHandler_EmptyUserIDFromTicket(t *testing.T) {
 	t.Parallel()
-	hub := websocket.NewHub()
+	hub := websocket.NewHub(nil)
 	_, redisClient := testutil.NewRedis(t)
 	authService := &mockAuthService{}
 	handler := NewWebSocketHandler(hub, authService, redisClient)
@@ -467,7 +467,7 @@ func TestWebSocketHandler_EmptyUserIDFromTicket(t *testing.T) {
 // (not at the handler's defense-in-depth check), returning an "invalid ticket" error.
 func TestWebSocketHandler_WhitespaceUserIDFromTicket(t *testing.T) {
 	t.Parallel()
-	hub := websocket.NewHub()
+	hub := websocket.NewHub(nil)
 	_, redisClient := testutil.NewRedis(t)
 	authService := &mockAuthService{}
 	handler := NewWebSocketHandler(hub, authService, redisClient)
@@ -496,7 +496,7 @@ func TestWebSocketHandler_WhitespaceUserIDFromTicket(t *testing.T) {
 // from the ticket are correctly extracted and used.
 func TestWebSocketHandler_GroupsAndRoles_ExtractedFromTicket(t *testing.T) {
 	t.Parallel()
-	hub := websocket.NewHub()
+	hub := websocket.NewHub(nil)
 	_, redisClient := testutil.NewRedis(t)
 	authService := &mockAuthService{}
 
@@ -594,7 +594,7 @@ func TestGetClientIP_UsesRemoteAddr(t *testing.T) {
 // mirrors the window where 10 requests are all being processed simultaneously.
 func TestWebSocketHandler_RateLimitUsesRealIP(t *testing.T) {
 	t.Parallel()
-	hub := websocket.NewHub()
+	hub := websocket.NewHub(nil)
 	_, redisClient := testutil.NewRedis(t)
 	authService := &mockAuthService{}
 	handler := NewWebSocketHandler(hub, authService, redisClient)
@@ -625,7 +625,7 @@ func TestWebSocketHandler_RateLimitUsesRealIP(t *testing.T) {
 // TestWebSocketHandler_SetMaxConnectionsPerIP verifies that the rate limit can be overridden.
 func TestWebSocketHandler_SetMaxConnectionsPerIP(t *testing.T) {
 	t.Parallel()
-	hub := websocket.NewHub()
+	hub := websocket.NewHub(nil)
 	_, redisClient := testutil.NewRedis(t)
 	authService := &mockAuthService{}
 	handler := NewWebSocketHandler(hub, authService, redisClient)
@@ -656,7 +656,7 @@ func TestWebSocketHandler_SetMaxConnectionsPerIP(t *testing.T) {
 // (zero, negative) are ignored — the default rate limit is retained.
 func TestWebSocketHandler_SetMaxConnectionsPerIP_InvalidValues(t *testing.T) {
 	t.Parallel()
-	hub := websocket.NewHub()
+	hub := websocket.NewHub(nil)
 	_, redisClient := testutil.NewRedis(t)
 	authService := &mockAuthService{}
 	handler := NewWebSocketHandler(hub, authService, redisClient)

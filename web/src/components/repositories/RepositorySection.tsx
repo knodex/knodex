@@ -1,17 +1,18 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
-/**
- * Repository section for project settings
- * Manages repository configurations with React Query
- */
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, GitBranch, ShieldAlert } from "lucide-react";
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
+import { toast } from "sonner";
+import { ShieldAlert } from "@/lib/icons";
 import { AxiosError } from "axios";
-import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
 import { RepositoryList } from "./RepositoryList";
 import { RepositoryForm } from "./RepositoryForm";
 import { DeleteRepositoryDialog } from "./DeleteRepositoryDialog";
@@ -42,13 +43,12 @@ export function RepositorySection({
   isLoadingPermission = false,
   isErrorPermission = false,
 }: RepositorySectionProps) {
-  const [showForm, setShowForm] = useState(false);
+  const [dialogOpen, setDialogOpen] = useState(false);
   const [editingRepo, setEditingRepo] = useState<RepositoryConfig | null>(null);
   const [deletingRepo, setDeletingRepo] = useState<RepositoryConfig | null>(null);
 
   const queryClient = useQueryClient();
 
-  // Fetch repositories
   const {
     data: repositoriesData,
     isLoading,
@@ -58,180 +58,139 @@ export function RepositorySection({
     queryFn: () => listRepositories(),
   });
 
-  // Fetch projects for the form
   const { data: projectsData } = useProjects();
   const projects = projectsData?.items ?? [];
 
-  // Create repository mutation
+  const closeDialog = useCallback(() => {
+    setDialogOpen(false);
+    setEditingRepo(null);
+  }, []);
+
   const createMutation = useMutation({
     mutationFn: (data: CreateRepositoryRequest) => createRepository(data),
-    onSuccess: () => {
+    onSuccess: (_, data) => {
       queryClient.invalidateQueries({ queryKey: ["repositories"] });
-      setShowForm(false);
-      setEditingRepo(null);
+      closeDialog();
+      toast.success(`Repository "${data.name}" added successfully`);
+    },
+    onError: (err: Error) => {
+      toast.error(err.message || "Failed to add repository");
     },
   });
 
-  // Update repository mutation
   const updateMutation = useMutation({
     mutationFn: ({ repoId, data }: { repoId: string; data: UpdateRepositoryRequest }) =>
       updateRepository(repoId, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["repositories"] });
-      setShowForm(false);
-      setEditingRepo(null);
+      closeDialog();
+      toast.success("Repository updated successfully");
+    },
+    onError: (err: Error) => {
+      toast.error(err.message || "Failed to update repository");
     },
   });
 
-  // Delete repository mutation
   const deleteMutation = useMutation({
     mutationFn: (repoId: string) => deleteRepository(repoId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["repositories"] });
+      toast.success(`Repository "${deletingRepo?.name}" deleted`);
       setDeletingRepo(null);
+    },
+    onError: (err: Error) => {
+      toast.error(err.message || "Failed to delete repository");
     },
   });
 
-  // Handle form submit
   const handleFormSubmit = async (data: CreateRepositoryRequest) => {
     if (editingRepo) {
-      // For updates, use the update endpoint with limited fields
       await updateMutation.mutateAsync({
         repoId: editingRepo.id,
-        data: {
-          name: data.name,
-          defaultBranch: data.defaultBranch,
-        },
+        data: { name: data.name, defaultBranch: data.defaultBranch },
       });
     } else {
       await createMutation.mutateAsync(data);
     }
   };
 
-  // Handle test connection with inline credentials
   const handleTestConnection = async (data: TestConnectionRequest): Promise<TestConnectionResponse> => {
     return await testConnection(data);
   };
 
-  // Handle edit
   const handleEdit = (repo: RepositoryConfig) => {
     setEditingRepo(repo);
-    setShowForm(true);
+    setDialogOpen(true);
   };
 
-  // Handle delete
   const handleDelete = (repoId: string) => {
     const repo = repositoriesData?.items.find((r) => r.id === repoId);
-    if (repo) {
-      setDeletingRepo(repo);
-    }
+    if (repo) setDeletingRepo(repo);
   };
 
-  // Handle cancel
-  const handleCancel = () => {
-    setShowForm(false);
-    setEditingRepo(null);
-  };
+  const handleDialogOpenChange = useCallback((open: boolean) => {
+    if (!open) {
+      closeDialog();
+    } else {
+      setDialogOpen(true);
+    }
+  }, [closeDialog]);
 
   const repositories = repositoriesData?.items || [];
-
-  // Check if error is a 403 Forbidden
   const is403Error = error && (error as AxiosError)?.response?.status === 403;
 
-  // If user doesn't have permission, show access denied message
   if (is403Error) {
     return (
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <GitBranch className="h-5 w-5" />
-            Repositories
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="text-center py-12 text-muted-foreground">
-            <ShieldAlert className="h-12 w-12 mx-auto mb-3 opacity-50" />
-            <p className="text-sm font-medium">Access Denied</p>
-            <p className="text-xs mt-2">
-              You do not have permission to view repository configurations.
-              Contact an administrator if you need access.
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  if (showForm) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <GitBranch className="h-5 w-5" />
-            {editingRepo ? "Edit Repository" : "Add Repository"}
-          </CardTitle>
-          <CardDescription>
-            {editingRepo
-              ? "Update repository configuration for GitOps deployments"
-              : "Configure a repository with SSH, HTTPS, or GitHub App authentication"}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <RepositoryForm
-            initialData={editingRepo || undefined}
-            projects={projects}
-            onSubmit={handleFormSubmit}
-            onCancel={handleCancel}
-            onTestConnection={handleTestConnection}
-            isLoading={createMutation.isPending || updateMutation.isPending}
-          />
-        </CardContent>
-      </Card>
+      <section className="flex flex-col items-center justify-center py-16 text-center">
+        <ShieldAlert className="h-12 w-12 text-muted-foreground mb-4" />
+        <h2 className="text-lg font-semibold">Access Denied</h2>
+        <p className="text-sm text-muted-foreground mt-1">
+          You do not have permission to view repositories.
+        </p>
+      </section>
     );
   }
 
   return (
     <>
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="flex items-center gap-2">
-                <GitBranch className="h-5 w-5" />
-                Repositories
-              </CardTitle>
-              <CardDescription className="mt-1">
-                {repositories.length} repository configuration{repositories.length !== 1 ? "s" : ""}
-              </CardDescription>
-            </div>
-            {isLoadingPermission ? (
-              <Skeleton className="h-9 w-36" />
-            ) : (isErrorPermission || canManage) ? (
-              <Button onClick={() => setShowForm(true)}>
-                <Plus className="h-4 w-4 mr-2" />
-                Add Repository
-              </Button>
-            ) : null}
-          </div>
-        </CardHeader>
-        <CardContent>
-          {error && !is403Error && (
-            <div className="mb-4 p-3 bg-destructive/10 border border-destructive/20 rounded-md">
-              <p className="text-sm text-destructive">
-                Failed to load repositories: {error instanceof Error ? error.message : "Unknown error"}
-              </p>
-            </div>
-          )}
+      {error && !is403Error && (
+        <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-md">
+          <p className="text-sm text-destructive">
+            Failed to load repositories: {error instanceof Error ? error.message : "Unknown error"}
+          </p>
+        </div>
+      )}
 
-          <RepositoryList
-            repositories={repositories}
-            onEdit={(isLoadingPermission || isErrorPermission || canManage) ? handleEdit : undefined}
-            onDelete={(isLoadingPermission || isErrorPermission || canManage) ? handleDelete : undefined}
-            canManage={isLoadingPermission || isErrorPermission || canManage}
-            isLoading={isLoading}
+      <RepositoryList
+        repositories={repositories}
+        onEdit={(isLoadingPermission || isErrorPermission || canManage) ? handleEdit : undefined}
+        onDelete={(isLoadingPermission || isErrorPermission || canManage) ? handleDelete : undefined}
+        onCreate={() => setDialogOpen(true)}
+        canManage={isLoadingPermission || isErrorPermission || canManage}
+        isLoadingPermission={isLoadingPermission}
+        isLoading={isLoading}
+      />
+
+      <Dialog open={dialogOpen} onOpenChange={handleDialogOpenChange}>
+        <DialogContent className="sm:max-w-[700px] max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{editingRepo ? "Edit Repository" : "Add Repository"}</DialogTitle>
+            <DialogDescription>
+              {editingRepo
+                ? "Update the repository configuration."
+                : "Connect a Git repository for deployment tracking."}
+            </DialogDescription>
+          </DialogHeader>
+          <RepositoryForm
+            initialData={editingRepo || undefined}
+            projects={projects}
+            onSubmit={handleFormSubmit}
+            onCancel={closeDialog}
+            onTestConnection={handleTestConnection}
+            isLoading={createMutation.isPending || updateMutation.isPending}
           />
-        </CardContent>
-      </Card>
+        </DialogContent>
+      </Dialog>
 
       {deletingRepo && (
         <DeleteRepositoryDialog

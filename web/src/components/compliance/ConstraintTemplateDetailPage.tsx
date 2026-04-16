@@ -1,19 +1,20 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useState } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
-import { FileText, ExternalLink, Layers, AlertCircle, Plus } from "lucide-react";
+import { FileText, ExternalLink, Layers, AlertCircle, Plus } from "@/lib/icons";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useConstraintTemplate, useConstraints } from "@/hooks/useCompliance";
-import { PageHeader } from "./PageHeader";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { RegoCodeViewer } from "./RegoCodeViewer";
 import { ErrorState } from "./ErrorState";
 import { CreateConstraintDialog } from "./CreateConstraintDialog";
 import { formatDate } from "@/lib/date";
+import { getEnforcementClassName } from "@/types/compliance";
 
 /**
  * ConstraintTemplate detail page
@@ -41,12 +42,32 @@ export function ConstraintTemplateDetailPage() {
     template ? { kind: template.kind, pageSize: 100 } : undefined
   );
 
-  // Navigate to the newly created constraint
-  const handleConstraintCreated = (constraintName: string) => {
+  // All hooks must be before any early returns
+  const handleConstraintCreated = useCallback((constraintName: string) => {
     if (template) {
       navigate(`/compliance/constraints/${template.kind}/${constraintName}`);
     }
-  };
+  }, [template, navigate]);
+
+  const constraints = useMemo(() => constraintsData?.items || [], [constraintsData?.items]);
+
+  const handleOpenCreateDialog = useCallback(() => setIsCreateDialogOpen(true), []);
+
+  const breadcrumbs = useMemo(() => [
+    { label: "Compliance", href: "/compliance" },
+    { label: "Templates", href: "/compliance/templates" },
+    { label: template?.name || name || "" },
+  ], [template?.name, name]);
+
+  const parametersJson = useMemo(
+    () => template?.parameters ? JSON.stringify(template.parameters, null, 2) : null,
+    [template]
+  );
+
+  const labelEntries = useMemo(
+    () => template?.labels ? Object.entries(template.labels) : [],
+    [template]
+  );
 
   if (!name) {
     return (
@@ -101,22 +122,16 @@ export function ConstraintTemplateDetailPage() {
     );
   }
 
-  const constraints = constraintsData?.items || [];
-
   return (
     <div className="space-y-6">
       <PageHeader
         title={template.name}
         subtitle={template.description || "No description available"}
-        breadcrumbs={[
-          { label: "Compliance", href: "/compliance" },
-          { label: "Templates", href: "/compliance/templates" },
-          { label: template.name },
-        ]}
+        breadcrumbs={breadcrumbs}
         actions={
           <div className="flex items-center gap-2">
             <Button
-              onClick={() => setIsCreateDialogOpen(true)}
+              onClick={handleOpenCreateDialog}
               data-testid="create-constraint-btn"
             >
               <Plus className="h-4 w-4 mr-2" />
@@ -179,7 +194,7 @@ export function ConstraintTemplateDetailPage() {
                     Labels
                   </p>
                   <div className="flex flex-wrap gap-1.5">
-                    {Object.entries(template.labels).map(([key, value]) => (
+                    {labelEntries.map(([key, value]) => (
                       <Badge key={key} variant="secondary" className="text-xs">
                         {key}: {value}
                       </Badge>
@@ -221,7 +236,7 @@ export function ConstraintTemplateDetailPage() {
                 </CardHeader>
                 <CardContent>
                   <pre className="p-4 bg-muted rounded-lg overflow-x-auto text-sm">
-                    <code>{JSON.stringify(template.parameters, null, 2)}</code>
+                    <code>{parametersJson}</code>
                   </pre>
                 </CardContent>
               </Card>
@@ -259,9 +274,7 @@ export function ConstraintTemplateDetailPage() {
                         </span>
                         <Badge
                           variant="outline"
-                          className={getEnforcementClass(
-                            constraint.enforcementAction
-                          )}
+                          className={getEnforcementClassName(constraint.enforcementAction)}
                         >
                           {constraint.enforcementAction}
                         </Badge>
@@ -349,19 +362,6 @@ function TemplateDetailSkeleton() {
       </div>
     </div>
   );
-}
-
-function getEnforcementClass(action: string): string {
-  switch (action.toLowerCase()) {
-    case "deny":
-      return "bg-red-50 text-red-700 border-red-200 dark:bg-red-950/30 dark:text-red-400 dark:border-red-900";
-    case "warn":
-      return "bg-yellow-50 text-yellow-700 border-yellow-200 dark:bg-yellow-950/30 dark:text-yellow-400 dark:border-yellow-900";
-    case "dryrun":
-      return "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/30 dark:text-blue-400 dark:border-blue-900";
-    default:
-      return "";
-  }
 }
 
 export default ConstraintTemplateDetailPage;

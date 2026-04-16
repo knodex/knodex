@@ -8,8 +8,10 @@ import {
   createProject,
   updateProject,
   deleteProject,
+  getProjectResources,
 } from "@/api/projects";
 import type { CreateProjectRequest, UpdateProjectRequest } from "@/types/project";
+import { STALE_TIME } from "@/lib/query-client";
 
 /**
  * Hook for fetching projects list
@@ -18,7 +20,7 @@ export function useProjects() {
   return useQuery({
     queryKey: ["projects"],
     queryFn: () => listProjects(),
-    staleTime: 5 * 60 * 1000, // 5 minutes - projects don't change often
+    staleTime: STALE_TIME.STATIC, // projects don't change often
   });
 }
 
@@ -30,7 +32,7 @@ export function useProject(name: string) {
     queryKey: ["project", name],
     queryFn: () => getProject(name),
     enabled: !!name,
-    staleTime: 5 * 60 * 1000,
+    staleTime: STALE_TIME.STATIC,
   });
 }
 
@@ -69,6 +71,23 @@ export function useUpdateProject() {
       // Invalidate list
       queryClient.invalidateQueries({ queryKey: ["projects"] });
     },
+  });
+}
+
+/**
+ * Hook for fetching aggregated resources for a project across clusters
+ */
+export function useProjectResources(
+  projectName: string,
+  kind: "Certificate" | "Ingress",
+  enabled = true
+) {
+  return useQuery({
+    queryKey: ["projectResources", projectName, kind],
+    queryFn: () => getProjectResources(projectName, kind),
+    enabled: enabled && !!projectName,
+    staleTime: STALE_TIME.FREQUENT,
+    refetchInterval: 30_000, // polling interval — independent of staleTime
   });
 }
 

@@ -1,0 +1,12 @@
+{{- if .Values.catalog.categoryConfig }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: knodex-category-config
+  labels:
+    {{- include "knodex.labels" . | nindent 4 }}
+    app.kubernetes.io/component: catalog
+data:
+  categories: |
+    {{- .Values.catalog.categoryConfig | toYaml | nindent 4 }}
+{{- end }}

@@ -50,9 +50,14 @@ const (
 // NewRedisClient creates a new Redis client from configuration
 // Returns nil if Redis is not configured or connection fails
 // Retries connection up to 10 times with exponential backoff (max 30 seconds total wait)
-func NewRedisClient(cfg *config.Redis) *redis.Client {
+func NewRedisClient(cfg *config.Redis, logger *slog.Logger) *redis.Client {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	logger = logger.With("component", "redis-client")
+
 	if cfg.Address == "" {
-		slog.Info("redis not configured, skipping client initialization")
+		logger.Info("redis not configured, skipping client initialization")
 		return nil
 	}
 
@@ -73,12 +78,12 @@ func NewRedisClient(cfg *config.Redis) *redis.Client {
 			MinVersion:         tls.VersionTLS12,
 			InsecureSkipVerify: cfg.TLSInsecureSkipVerify, //nolint:gosec // Operator opt-in for dev/self-signed certs
 		}
-		slog.Info("redis TLS enabled",
+		logger.Info("redis TLS enabled",
 			"address", cfg.Address,
 			"min_tls_version", "TLS1.2",
 		)
 		if cfg.TLSInsecureSkipVerify {
-			slog.Warn("redis TLS certificate verification disabled (REDIS_TLS_INSECURE_SKIP_VERIFY=true) — do not use in production")
+			logger.Warn("redis TLS certificate verification disabled (REDIS_TLS_INSECURE_SKIP_VERIFY=true) — do not use in production")
 		}
 	}
 
@@ -93,7 +98,7 @@ func NewRedisClient(cfg *config.Redis) *redis.Client {
 		cancel()
 
 		if err == nil {
-			slog.Info("connected to redis",
+			logger.Info("connected to redis",
 				"address", cfg.Address,
 				"attempt", attempt+1,
 			)
@@ -122,7 +127,7 @@ func NewRedisClient(cfg *config.Redis) *redis.Client {
 				}
 			}
 
-			slog.Debug("redis connection attempt failed, retrying",
+			logger.Debug("redis connection attempt failed, retrying",
 				"error", errMsg,
 				"address", cfg.Address,
 				"attempt", attempt+1,
@@ -145,7 +150,7 @@ func NewRedisClient(cfg *config.Redis) *redis.Client {
 		}
 	}
 
-	slog.Warn("failed to connect to redis after retries, continuing without redis",
+	logger.Warn("failed to connect to redis after retries, continuing without redis",
 		"error", finalErrMsg,
 		"address", cfg.Address,
 		"attempts", redisMaxRetries,
@@ -155,12 +160,15 @@ func NewRedisClient(cfg *config.Redis) *redis.Client {
 }
 
 // CloseRedisClient closes the Redis client connection
-func CloseRedisClient(client *redis.Client) {
+func CloseRedisClient(client *redis.Client, logger *slog.Logger) {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	if client != nil {
 		if err := client.Close(); err != nil {
-			slog.Error("failed to close redis connection", "error", err)
+			logger.Error("failed to close redis connection", "error", err)
 		} else {
-			slog.Info("redis connection closed")
+			logger.Info("redis connection closed")
 		}
 	}
 }

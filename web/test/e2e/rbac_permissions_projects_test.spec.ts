@@ -40,7 +40,8 @@ test.describe("RBAC: Project Feature Tests", () => {
       await loginAs(page, tokens.users.global_admin, "/projects");
 
       // Wait for Projects page to load properly
-      await page.waitForSelector('h2:has-text("Projects")', { timeout: 10000 });
+      // h1 is sr-only (screen reader only) — use getByRole which finds sr-only headings
+      await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible({ timeout: 10000 });
 
       // Wait for either project cards or empty state
       const projectCards = page.locator('[data-testid="project-card"]');
@@ -75,13 +76,15 @@ test.describe("RBAC: Project Feature Tests", () => {
       await loginAs(page, tokens.users.global_admin, "/projects");
 
       // Wait for Projects page to load properly
-      await page.waitForSelector('h2:has-text("Projects")', { timeout: 10000 });
+      // h1 is sr-only (screen reader only) — use getByRole which finds sr-only headings
+      await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible({ timeout: 10000 });
       // Wait for page to stabilize
       await page.waitForLoadState('networkidle', { timeout: 15000 });
 
+      // Use first() to avoid strict mode violation when multiple buttons match /Create/i
       const createButton = page.getByRole("button", {
-        name: /Create Project/i,
-      });
+        name: /Create/i,
+      }).first();
       await expect(createButton).toBeVisible({ timeout: 10000 });
 
       await page.screenshot({
@@ -119,10 +122,11 @@ test.describe("RBAC: Project Feature Tests", () => {
       // Should stay on settings/projects page (no redirect)
       const url = page.url();
       console.log(`Project Admin stays on: ${url}`);
-      expect(url).toContain("/settings/projects");
+      expect(url).toContain("/projects");
 
       // Wait for page to render - either Projects header or Access Denied
-      const projectsHeader = page.locator('h2:has-text("Projects")');
+      // h1 is sr-only — use getByRole for the heading, locator for Access Denied text
+      const projectsHeader = page.getByRole('heading', { name: 'Projects' });
       const accessDenied = page.locator("text=Access Denied");
 
       await expect(projectsHeader.or(accessDenied).first()).toBeVisible({ timeout: 10000 });
@@ -147,12 +151,12 @@ test.describe("RBAC: Project Feature Tests", () => {
       // Should stay on settings/projects page (no redirect)
       const url = page.url();
       console.log(`Project Admin on settings page: ${url}`);
-      expect(url).toContain("/settings/projects");
+      expect(url).toContain("/projects");
 
       // The Create Project button should NOT be visible for non-global-admin users
       // (Casbin permission check via useCanI() hides the button)
       const createButton = page.getByRole("button", {
-        name: /Create Project/i,
+        name: /Create/i,
       });
       const isVisible = await createButton
         .isVisible({ timeout: 3000 })
@@ -177,7 +181,7 @@ test.describe("RBAC: Project Feature Tests", () => {
       // Should stay on settings/projects page (no redirect)
       const url = page.url();
       console.log(`Viewer stays on: ${url}`);
-      expect(url).toContain("/settings/projects");
+      expect(url).toContain("/projects");
 
       await page.screenshot({
         path: path.join(
@@ -199,11 +203,11 @@ test.describe("RBAC: Project Feature Tests", () => {
       // Should stay on settings/projects page (no redirect)
       const url = page.url();
       console.log(`Viewer stays on: ${url}`);
-      expect(url).toContain("/settings/projects");
+      expect(url).toContain("/projects");
 
       // Viewers should NOT see Create/Edit buttons (Casbin permission check)
       const createButton = page.getByRole("button", {
-        name: /Create Project/i,
+        name: /Create/i,
       });
       const editButton = page.getByRole("button", { name: /Edit/i });
       const deleteButton = page.locator('[data-testid="delete-project-btn"]');
@@ -244,11 +248,11 @@ test.describe("RBAC: Project Feature Tests", () => {
       // Should stay on settings/projects page (no redirect)
       const url = page.url();
       console.log(`User with no projects stays on: ${url}`);
-      expect(url).toContain("/settings/projects");
+      expect(url).toContain("/projects");
 
       // User without projects should not see Create button (not global admin)
       const createButton = page.getByRole("button", {
-        name: /Create Project/i,
+        name: /Create/i,
       });
       const isVisible = await createButton
         .isVisible({ timeout: 2000 })
@@ -272,8 +276,9 @@ test.describe("RBAC: Project Feature Tests", () => {
       await page.waitForLoadState('networkidle', { timeout: 15000 });
 
       // Wait for either heading, project cards, or empty state
+      // h1 is sr-only — use getByRole for the heading
       const projectCards = page.locator('[data-testid="project-card"]');
-      const heading = page.locator('h2:has-text("Projects")');
+      const heading = page.getByRole('heading', { name: 'Projects' });
       const emptyState = page.locator('text=/no projects/i, text=/empty/i');
 
       await Promise.race([
@@ -317,7 +322,7 @@ test.describe("RBAC: Project Feature Tests", () => {
       // Should stay on settings/projects page (no redirect)
       const url = page.url();
       console.log(`Project Admin stays on: ${url}`);
-      expect(url).toContain("/settings/projects");
+      expect(url).toContain("/projects");
 
       // Project Admins should NOT see Delete button (Casbin permission check)
       const deleteButton = page.locator('[data-testid="delete-project-btn"]');
@@ -344,7 +349,8 @@ test.describe("RBAC: Project Feature Tests", () => {
       await page.waitForLoadState('networkidle', { timeout: 15000 });
 
       // Wait for either heading or project cards - using multiple selectors for flexibility
-      const projectsHeading = page.locator('h2:has-text("Projects")');
+      // h1 is sr-only — use getByRole for the heading
+      const projectsHeading = page.getByRole('heading', { name: 'Projects' });
       const projectCards = page.locator('[data-testid="project-card"], .project-card, [class*="project"]');
 
       await Promise.race([
@@ -381,7 +387,7 @@ test.describe("RBAC: Project Feature Tests", () => {
       // Should stay on settings/projects page (no redirect)
       const url = page.url();
       console.log(`Viewer stays on: ${url}`);
-      expect(url).toContain("/settings/projects");
+      expect(url).toContain("/projects");
 
       // Viewer should NOT see delete button (Casbin permission check hides it)
       const deleteButton = page.locator('[data-testid="delete-project-btn"]');
@@ -426,10 +432,11 @@ test.describe("RBAC: Project Feature Tests", () => {
       // Should stay on settings/projects page (no redirect)
       const url = page.url();
       console.log(`Viewer stays on: ${url}`);
-      expect(url).toContain("/settings/projects");
+      expect(url).toContain("/projects");
 
       // Wait for page to render - either Projects header or Access Denied
-      const projectsHeader = page.locator('h2:has-text("Projects")');
+      // h1 is sr-only — use getByRole for the heading
+      const projectsHeader = page.getByRole('heading', { name: 'Projects' });
       const accessDenied = page.locator("text=Access Denied");
 
       await expect(projectsHeader.or(accessDenied).first()).toBeVisible({ timeout: 10000 });
@@ -454,11 +461,11 @@ test.describe("RBAC: Project Feature Tests", () => {
       // Should stay on settings/projects page (no redirect)
       const url = page.url();
       console.log(`Viewer stays on: ${url}`);
-      expect(url).toContain("/settings/projects");
+      expect(url).toContain("/projects");
 
       // Viewer should NOT see Create Project button (Casbin permission check)
       const createButton = page.getByRole("button", {
-        name: /Create Project/i,
+        name: /Create/i,
       });
       const isVisible = await createButton
         .isVisible({ timeout: 2000 })
@@ -482,7 +489,8 @@ test.describe("RBAC: Project Feature Tests", () => {
       await setupPermissionMocking(page, { '*:*': true });
       await loginAs(page, tokens.users.global_admin, "/projects");
 
-      await page.waitForSelector('h2:has-text("Projects")', { timeout: 10000 });
+      // h1 is sr-only (screen reader only) — use getByRole which finds sr-only headings
+      await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible({ timeout: 10000 });
       await page.waitForLoadState('networkidle', { timeout: 15000 });
 
       // Wait for either project cards or empty state
@@ -519,16 +527,16 @@ test.describe("RBAC: Project Feature Tests", () => {
       await setupPermissionMocking(page, { '*:*': true });
       await loginAs(page, tokens.users.global_admin, "/projects");
 
-      await page.waitForSelector('h2:has-text("Projects")', { timeout: 10000 });
-      await page.waitForSelector('[data-testid="project-card"]', {
-        timeout: 15000,
-      });
+      // h1 is sr-only (screen reader only) — use getByRole which finds sr-only headings
+      await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible({ timeout: 10000 });
+      // Projects now render as a table — wait for at least one project row
+      await expect(page.getByRole('button', { name: /view details for/i }).first()).toBeVisible({ timeout: 15000 });
 
-      // Global Admin can access the Settings page itself (/settings/projects)
+      // Global Admin can access the Settings page itself (/projects)
       // This is verified by simply being on this page without redirect
       const url = page.url();
       console.log(`Global Admin is on: ${url}`);
-      expect(url).toContain("/settings/projects");
+      expect(url).toContain("/projects");
 
       await page.screenshot({
         path: path.join(
@@ -546,22 +554,14 @@ test.describe("RBAC: Project Feature Tests", () => {
       // Wait for page to load - check for either projects heading or create button
       await page.waitForLoadState('networkidle', { timeout: 10000 });
 
-      // Look for various indicators that the page has loaded
-      const projectsHeading = page.locator('h2:has-text("Projects")');
-      const projectCards = page.locator('[data-testid="project-card"], .project-card, [class*="project"]');
-
-      // Wait for either heading or cards
-      await Promise.race([
-        projectsHeading.waitFor({ state: 'visible', timeout: 10000 }).catch(() => null),
-        projectCards.first().waitFor({ state: 'visible', timeout: 10000 }).catch(() => null),
-      ]);
+      // Wait for the Projects heading to confirm page loaded
+      await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible({ timeout: 10000 });
 
       // Global Admin should see the Create Project button which allows adding members
-      const createButton = page.getByRole("button", {
-        name: /Create Project/i,
-      });
-      const isVisible = await createButton.isVisible({ timeout: 5000 }).catch(() => false);
+      const createButton = page.getByRole("button", { name: /^Create$/i });
+      await expect(createButton).toBeVisible({ timeout: 10000 });
 
+      const isVisible = await createButton.isVisible();
       console.log(`Global Admin can see Create Project button: ${isVisible}`);
       expect(isVisible).toBe(true);
 
@@ -633,11 +633,11 @@ test.describe("RBAC: Project Feature Tests", () => {
       // Should stay on settings/projects page (no redirect)
       const url = page.url();
       console.log(`Platform Admin stays on: ${url}`);
-      expect(url).toContain("/settings/projects");
+      expect(url).toContain("/projects");
 
       // Platform Admin should NOT see Create/Delete buttons (not global admin)
       const createButton = page.getByRole("button", {
-        name: /Create Project/i,
+        name: /Create/i,
       });
       const isVisible = await createButton
         .isVisible({ timeout: 2000 })
@@ -664,11 +664,11 @@ test.describe("RBAC: Project Feature Tests", () => {
       // Should stay on settings/projects page (no redirect)
       const url = page.url();
       console.log(`Viewer stays on: ${url}`);
-      expect(url).toContain("/settings/projects");
+      expect(url).toContain("/projects");
 
       // Viewer should NOT see any edit controls
       const createButton = page.getByRole("button", {
-        name: /Create Project/i,
+        name: /Create/i,
       });
       const editButton = page.locator('[data-testid="edit-project-btn"]');
       const deleteButton = page.locator('[data-testid="delete-project-btn"]');
@@ -709,11 +709,11 @@ test.describe("RBAC: Project Feature Tests", () => {
       // Should stay on settings/projects page (no redirect)
       const url = page.url();
       console.log(`Developer stays on: ${url}`);
-      expect(url).toContain("/settings/projects");
+      expect(url).toContain("/projects");
 
       // Developer should NOT see any edit controls
       const createButton = page.getByRole("button", {
-        name: /Create Project/i,
+        name: /Create/i,
       });
       const hasCreate = await createButton
         .isVisible({ timeout: 2000 })
@@ -737,16 +737,14 @@ test.describe("RBAC: Project Feature Tests", () => {
       await setupPermissionMocking(page, { '*:*': true });
       await loginAs(page, tokens.users.global_admin, "/projects");
 
-      await page.waitForSelector('h2:has-text("Projects")', { timeout: 10000 });
-      // Wait for project cards to load - Global Admin should see at least 1 project
-      await page.waitForSelector('[data-testid="project-card"]', {
-        timeout: 10000,
-      });
+      // h1 is sr-only (screen reader only) — use getByRole which finds sr-only headings
+      await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible({ timeout: 10000 });
+      // Wait for project rows to load - Projects now use a table layout
+      const projectRows = page.getByRole('button', { name: /view details for/i });
+      await expect(projectRows.first()).toBeVisible({ timeout: 10000 });
       await page.waitForLoadState('networkidle'); // Additional buffer for animations
 
-      // Project cards use data-testid="project-card"
-      const projectCards = page.locator('[data-testid="project-card"]');
-      const projectCount = await projectCards.count();
+      const projectCount = await projectRows.count();
 
       console.log(`Global Admin sees ${projectCount} projects for delete test`);
 
@@ -754,7 +752,7 @@ test.describe("RBAC: Project Feature Tests", () => {
       // This test passes if Global Admin can see projects and the UI exists
       // The actual delete protection logic is verified through the dialog
       if (projectCount > 0) {
-        await projectCards.first().click();
+        await projectRows.first().click();
         await page.waitForLoadState("load");
         await page.waitForLoadState('networkidle');
 

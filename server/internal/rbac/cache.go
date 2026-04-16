@@ -57,6 +57,9 @@ type CacheStats struct {
 // DefaultCacheTTL is the default TTL for cache entries (5 minutes)
 const DefaultCacheTTL = 5 * time.Minute
 
+// Compile-time interface compliance check
+var _ AuthorizationCache = (*inMemoryCache)(nil)
+
 // inMemoryCache implements AuthorizationCache using sync.Map
 type inMemoryCache struct {
 	data   sync.Map
@@ -84,20 +87,6 @@ func NewAuthorizationCacheWithTTL(ttl time.Duration) AuthorizationCache {
 
 	// Start background cleanup goroutine
 	go cache.cleanupLoop()
-
-	return cache
-}
-
-// NewAuthorizationCacheWithCleanupInterval creates cache with custom cleanup interval
-// This is primarily for testing to avoid long waits
-func NewAuthorizationCacheWithCleanupInterval(cleanupInterval time.Duration) *inMemoryCache {
-	cache := &inMemoryCache{
-		ttl:    DefaultCacheTTL,
-		stopCh: make(chan struct{}),
-	}
-
-	// Start background cleanup goroutine with custom interval
-	go cache.cleanupLoopWithInterval(cleanupInterval)
 
 	return cache
 }

@@ -3,7 +3,7 @@
 
 import { useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { ExternalLink, Box, LayoutGrid, LogOut } from "lucide-react";
+import { ExternalLink, Box, LayoutGrid, LogOut } from "@/lib/icons";
 import { ConnectionStatus } from "@/components/ConnectionStatus";
 import { NamespaceSelector } from "./NamespaceSelector";
 import { useAuth } from "@/hooks/useAuth";

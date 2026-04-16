@@ -116,7 +116,7 @@ describe("EnforcementSelector", () => {
       render(<EnforcementSelector {...defaultProps} currentAction="warn" />);
 
       const trigger = screen.getByRole("combobox");
-      expect(trigger.className).toMatch(/yellow/i);
+      expect(trigger.className).toMatch(/amber/i);
     });
 
     it("applies correct color styling for deny (AC-UI-02)", () => {

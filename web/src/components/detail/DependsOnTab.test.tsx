@@ -21,7 +21,6 @@ function createTestRGD(overrides: Partial<CatalogRGD> = {}): CatalogRGD {
     name: "test-rgd",
     namespace: "default",
     description: "Test RGD",
-    version: "v1",
     tags: [],
     category: "compute",
     labels: {},
@@ -44,34 +43,24 @@ function renderWithProviders(ui: React.ReactElement) {
 }
 
 describe("DependsOnTab", () => {
-  it("renders empty state when no dependencies", () => {
+  it("renders nothing when no dependencies", () => {
     const rgd = createTestRGD({ dependsOnKinds: [] });
-    renderWithProviders(<DependsOnTab rgd={rgd} />);
-    expect(screen.getByText("No dependencies")).toBeInTheDocument();
+    const { container } = renderWithProviders(<DependsOnTab rgd={rgd} />);
+    expect(container.innerHTML).toBe("");
   });
 
-  it("renders empty state when dependsOnKinds is undefined", () => {
+  it("renders nothing when dependsOnKinds is undefined", () => {
     const rgd = createTestRGD();
-    renderWithProviders(<DependsOnTab rgd={rgd} />);
-    expect(screen.getByText("No dependencies")).toBeInTheDocument();
+    const { container } = renderWithProviders(<DependsOnTab rgd={rgd} />);
+    expect(container.innerHTML).toBe("");
   });
 
-  it("renders dependency cards when dependsOnKinds has entries", () => {
+  it("hides dependencies not found in catalog", () => {
     const rgd = createTestRGD({
       dependsOnKinds: ["AKSCluster", "KeyVault"],
     });
-    renderWithProviders(<DependsOnTab rgd={rgd} />);
-    expect(screen.getByText("Dependencies")).toBeInTheDocument();
-    expect(screen.getByText("AKSCluster")).toBeInTheDocument();
-    expect(screen.getByText("KeyVault")).toBeInTheDocument();
-  });
-
-  it("shows 'Not found in catalog' for unresolved kinds", () => {
-    const rgd = createTestRGD({
-      dependsOnKinds: ["AKSCluster"],
-    });
-    renderWithProviders(<DependsOnTab rgd={rgd} />);
-    expect(screen.getByText("Not found in catalog")).toBeInTheDocument();
+    const { container } = renderWithProviders(<DependsOnTab rgd={rgd} />);
+    expect(container.innerHTML).toBe("");
   });
 
   it("renders resolved card as a link when parent RGD is found", async () => {
@@ -91,9 +80,10 @@ describe("DependsOnTab", () => {
     const rgd = createTestRGD({ dependsOnKinds: ["AKSCluster"] });
     renderWithProviders(<DependsOnTab rgd={rgd} />);
 
-    // Should render links to the parent RGD (title link + view details link)
+    // Should render links to the parent RGD (title link + deploy button both point to catalog page)
     const links = screen.getAllByRole("link");
     expect(links.some((l) => l.getAttribute("href") === "/catalog/aks-cluster-rgd")).toBe(true);
+    expect(screen.getByText("Deploy")).toBeInTheDocument();
 
     // Should show title, description, and first 3 tags
     expect(screen.getByText("aks-cluster-rgd")).toBeInTheDocument();

@@ -44,14 +44,12 @@ type UserAuthContext struct {
 	AccessibleProjects []string
 
 	// AccessibleNamespaces contains Kubernetes namespaces the user can access.
-	// nil = user can access all namespaces (global admin)
-	// empty slice = user has no namespace access (secure default)
+	// ["*"] = user can access all namespaces (global admin)
+	// empty slice = user has no namespace access (secure default, fail-closed)
 	// non-empty = user can only access these namespaces
+	// SECURITY: Never nil. A zero-value []string{} means "no access".
+	// Admin access requires an explicit ["*"] entry from the authorization service.
 	AccessibleNamespaces []string
-
-	// IsGlobalAccess indicates if the user has unrestricted access (global admin).
-	// When true, AccessibleNamespaces will be nil and filtering should be skipped.
-	IsGlobalAccess bool
 }
 
 // NewUserAuthContextFromMiddleware creates a UserAuthContext from the middleware UserContext.
@@ -62,9 +60,11 @@ func NewUserAuthContextFromMiddleware(userCtx *middleware.UserContext) *UserAuth
 		return nil
 	}
 	return &UserAuthContext{
-		UserID: userCtx.UserID,
-		Groups: userCtx.Groups,
-		Roles:  userCtx.CasbinRoles,
+		UserID:               userCtx.UserID,
+		Groups:               userCtx.Groups,
+		Roles:                userCtx.CasbinRoles,
+		AccessibleProjects:   []string{}, // fail-closed: no projects without auth service
+		AccessibleNamespaces: []string{}, // fail-closed: no namespaces without auth service
 	}
 }
 
@@ -88,6 +88,15 @@ type RGDFilters struct {
 
 	// DependsOnKind filters RGDs that depend on a specific Kind via externalRef
 	DependsOnKind string
+
+	// ProducesKind filters RGDs that produce a specific Kind as a non-external resource
+	ProducesKind string
+
+	// ProducesGroup narrows ProducesKind filtering to a specific API group (optional)
+	ProducesGroup string
+
+	// Status filters RGDs by status (e.g., "Active", "Inactive"). Empty = all statuses.
+	Status string
 
 	// Page is the page number (1-indexed)
 	Page int
@@ -134,11 +143,11 @@ type RGDResponse struct {
 	Title                  string                `json:"title"`
 	Namespace              string                `json:"namespace"`
 	Description            string                `json:"description"`
-	Version                string                `json:"version"`
 	Tags                   []string              `json:"tags"`
 	Category               string                `json:"category"`
 	Icon                   string                `json:"icon,omitempty"`
 	DocsURL                string                `json:"docsUrl,omitempty"`
+	CatalogTier            string                `json:"catalogTier"`
 	Labels                 map[string]string     `json:"labels"`
 	Instances              int                   `json:"instances"`
 	APIVersion             string                `json:"apiVersion,omitempty"`
@@ -146,10 +155,15 @@ type RGDResponse struct {
 	ExtendsKinds           []string              `json:"extendsKinds,omitempty"`
 	Status                 string                `json:"status,omitempty"`
 	DependsOnKinds         []string              `json:"dependsOnKinds,omitempty"`
+	ProducesKinds          []models.GVKRef       `json:"producesKinds,omitempty"`
 	SecretRefs             []kroparser.SecretRef `json:"secretRefs,omitempty"`
 	AllowedDeploymentModes []string              `json:"allowedDeploymentModes,omitempty"`
-	CreatedAt              string                `json:"createdAt"`
-	UpdatedAt              string                `json:"updatedAt"`
+	// IsClusterScoped indicates the RGD produces cluster-scoped (not namespaced) instance CRDs.
+	// Intentionally omits `omitempty` so the field is always present in JSON responses,
+	// allowing frontends to distinguish "namespace-scoped" (false) from "field absent".
+	IsClusterScoped bool   `json:"isClusterScoped"`
+	CreatedAt       string `json:"createdAt"`
+	UpdatedAt       string `json:"updatedAt"`
 }
 
 // RGDFilterOptions represents available filter values for the catalog UI.
@@ -162,6 +176,20 @@ type RGDFilterOptions struct {
 
 	// Categories contains all unique categories from visible RGDs
 	Categories []string `json:"categories"`
+}
+
+// GraphRevisionProvider provides access to GraphRevision data.
+// Implementations: *watcher.GraphRevisionWatcher
+type GraphRevisionProvider interface {
+	ListRevisions(rgdName string) models.GraphRevisionList
+	GetRevision(rgdName string, revision int) (*models.GraphRevision, bool)
+	GetLatestRevision(rgdName string) (*models.GraphRevision, bool)
+}
+
+// InstanceUIDProvider resolves Kubernetes UIDs to cached Instance objects.
+// Implementations: *watcher.InstanceTracker
+type InstanceUIDProvider interface {
+	GetInstanceByUID(uid string) (*models.Instance, bool)
 }
 
 // CountResult represents a simple count response.
@@ -190,11 +218,11 @@ func ToRGDResponse(rgd *models.CatalogRGD, instanceCount int) RGDResponse {
 		Title:                  rgd.Title,
 		Namespace:              rgd.Namespace,
 		Description:            rgd.Description,
-		Version:                rgd.Version,
 		Tags:                   tags,
 		Category:               rgd.Category,
 		Icon:                   rgd.Icon,
 		DocsURL:                rgd.DocsURL,
+		CatalogTier:            rgd.CatalogTier,
 		Labels:                 labels,
 		Instances:              instanceCount,
 		APIVersion:             rgd.APIVersion,
@@ -202,8 +230,10 @@ func ToRGDResponse(rgd *models.CatalogRGD, instanceCount int) RGDResponse {
 		ExtendsKinds:           rgd.ExtendsKinds,
 		Status:                 rgd.Status,
 		DependsOnKinds:         rgd.DependsOnKinds,
+		ProducesKinds:          rgd.ProducesKinds,
 		SecretRefs:             rgd.SecretRefs,
 		AllowedDeploymentModes: rgd.AllowedDeploymentModes,
+		IsClusterScoped:        rgd.IsClusterScoped,
 		CreatedAt:              rgd.CreatedAt.Format("2006-01-02T15:04:05Z"),
 		UpdatedAt:              rgd.UpdatedAt.Format("2006-01-02T15:04:05Z"),
 	}

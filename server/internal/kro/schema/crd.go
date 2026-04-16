@@ -22,6 +22,8 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/knodex/knodex/server/internal/config"
+	k8sparser "github.com/knodex/knodex/server/internal/k8s/parser"
+	kro "github.com/knodex/knodex/server/internal/kro"
 	"github.com/knodex/knodex/server/internal/models"
 )
 
@@ -231,7 +233,7 @@ func (e *Extractor) extractCRDInfo(rgd *models.CatalogRGD) (group, kind, version
 	// Fallback: parse from RawSpec if pre-computed values are incomplete
 	if (group == "" || kind == "" || version == "") && rgd.RawSpec != nil {
 		// Try top-level spec.apiVersion / spec.kind
-		if apiVersion, ok := rgd.RawSpec["apiVersion"].(string); ok && (group == "" || version == "") {
+		if apiVersion := k8sparser.GetStringOrDefault(rgd.RawSpec, "", "apiVersion"); apiVersion != "" && (group == "" || version == "") {
 			parts := strings.Split(apiVersion, "/")
 			if len(parts) == 2 {
 				if group == "" {
@@ -244,13 +246,13 @@ func (e *Extractor) extractCRDInfo(rgd *models.CatalogRGD) (group, kind, version
 				version = parts[0]
 			}
 		}
-		if k, ok := rgd.RawSpec["kind"].(string); ok && kind == "" {
+		if k := k8sparser.GetStringOrDefault(rgd.RawSpec, "", "kind"); k != "" && kind == "" {
 			kind = k
 		}
 
 		// Try spec.schema.apiVersion / spec.schema.kind / spec.schema.group
-		if schema, ok := rgd.RawSpec["schema"].(map[string]interface{}); ok {
-			if apiVer, ok := schema["apiVersion"].(string); ok && (group == "" || version == "") {
+		if schema, err := k8sparser.GetMap(rgd.RawSpec, "schema"); err == nil {
+			if apiVer := k8sparser.GetStringOrDefault(schema, "", "apiVersion"); apiVer != "" && (group == "" || version == "") {
 				parts := strings.Split(apiVer, "/")
 				if len(parts) == 2 {
 					if group == "" {
@@ -263,13 +265,13 @@ func (e *Extractor) extractCRDInfo(rgd *models.CatalogRGD) (group, kind, version
 					version = parts[0]
 				}
 			}
-			if g, ok := schema["group"].(string); ok && group == "" {
+			if g := k8sparser.GetStringOrDefault(schema, "", "group"); g != "" && group == "" {
 				group = g
 			}
-			if k, ok := schema["kind"].(string); ok && kind == "" {
+			if k := k8sparser.GetStringOrDefault(schema, "", "kind"); k != "" && kind == "" {
 				kind = k
 			}
-			if v, ok := schema["version"].(string); ok && version == "" {
+			if v := k8sparser.GetStringOrDefault(schema, "", "version"); v != "" && version == "" {
 				version = v
 			}
 		}
@@ -296,14 +298,15 @@ func (e *Extractor) extractCRDInfo(rgd *models.CatalogRGD) (group, kind, version
 // convertToFormSchema converts an OpenAPI schema to a form-friendly schema
 func (e *Extractor) convertToFormSchema(rgd *models.CatalogRGD, group, kind, version string, schema *apiextensionsv1.JSONSchemaProps) *models.FormSchema {
 	formSchema := &models.FormSchema{
-		Name:        rgd.Name,
-		Namespace:   rgd.Namespace,
-		Group:       group,
-		Kind:        kind,
-		Version:     version,
-		Title:       rgd.Name,
-		Description: rgd.Description,
-		Properties:  make(map[string]models.FormProperty),
+		Name:            rgd.Name,
+		Namespace:       rgd.Namespace,
+		Group:           group,
+		Kind:            kind,
+		Version:         version,
+		Title:           rgd.Name,
+		Description:     rgd.Description,
+		IsClusterScoped: rgd.IsClusterScoped, // frontend uses this to hide the namespace selector
+		Properties:      make(map[string]models.FormProperty),
 	}
 
 	// Extract spec schema (this is what users fill in)
@@ -321,7 +324,69 @@ func (e *Extractor) convertToFormSchema(rgd *models.CatalogRGD, group, kind, ver
 			"topLevelProperties", schemaPropertyNames(schema))
 	}
 
+	// Apply property ordering from annotation
+	if orderMap := parsePropertyOrderAnnotation(rgd.Annotations, e.logger); orderMap != nil {
+		if topLevel, ok := orderMap[""]; ok {
+			formSchema.PropertyOrder = topLevel
+		}
+		applyNestedPropertyOrder(formSchema.Properties, orderMap, "")
+	}
+
 	return formSchema
+}
+
+// parsePropertyOrderAnnotation parses the knodex.io/property-order annotation.
+// The annotation value is a JSON object mapping spec-relative paths to ordered field arrays.
+// Example: {"": ["name", "version"], "config": ["replicas", "memory"]}
+// Returns nil if the annotation is missing or malformed.
+func parsePropertyOrderAnnotation(annotations map[string]string, logger *slog.Logger) map[string][]string {
+	raw, ok := annotations[kro.PropertyOrderAnnotation]
+	if !ok || raw == "" {
+		return nil
+	}
+
+	// Guard against oversized annotations (K8s allows up to 256KiB per key)
+	const maxAnnotationSize = 8192
+	if len(raw) > maxAnnotationSize {
+		logger.Warn("property-order annotation exceeds size limit, ignoring",
+			"annotation", kro.PropertyOrderAnnotation,
+			"size", len(raw),
+			"maxSize", maxAnnotationSize)
+		return nil
+	}
+
+	var orderMap map[string][]string
+	if err := json.Unmarshal([]byte(raw), &orderMap); err != nil {
+		logger.Warn("malformed property-order annotation, ignoring",
+			"annotation", kro.PropertyOrderAnnotation,
+			"error", err)
+		return nil
+	}
+
+	return orderMap
+}
+
+// applyNestedPropertyOrder recursively walks nested object properties and applies
+// ordering from the order map. Keys in the order map are spec-relative dot-paths
+// (e.g., "config", "config.resources").
+func applyNestedPropertyOrder(props map[string]models.FormProperty, orderMap map[string][]string, parentPath string) {
+	for name, prop := range props {
+		if prop.Type != "object" || prop.Properties == nil {
+			continue
+		}
+
+		dotPath := name
+		if parentPath != "" {
+			dotPath = parentPath + "." + name
+		}
+
+		if order, ok := orderMap[dotPath]; ok {
+			prop.PropertyOrder = order
+			props[name] = prop // write back (Go maps hold values, not pointers)
+		}
+
+		applyNestedPropertyOrder(prop.Properties, orderMap, dotPath)
+	}
 }
 
 // convertProperties converts OpenAPI properties to form properties

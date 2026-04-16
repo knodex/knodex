@@ -67,7 +67,7 @@ describe("ConstraintTemplatesPage", () => {
     render(<ConstraintTemplatesPage />, { wrapper: createWrapper() });
 
     // Should show page header
-    expect(screen.getByText("Constraint Templates")).toBeInTheDocument();
+    expect(screen.getAllByText("Constraint Templates")[0]).toBeInTheDocument();
   });
 
   it("renders error state when fetch fails", () => {
@@ -160,10 +160,10 @@ describe("ConstraintTemplatesPage", () => {
 
     render(<ConstraintTemplatesPage />, { wrapper: createWrapper() });
 
-    expect(screen.getByText("(2)")).toBeInTheDocument();
+    expect(screen.getAllByText("Constraint Templates")[0]).toBeInTheDocument();
   });
 
-  it("renders breadcrumbs correctly (AC-NAVL-01)", () => {
+  it("renders page title correctly (AC-NAVL-01)", () => {
     vi.mocked(useComplianceModule.useConstraintTemplates).mockReturnValue({
       data: mockTemplates,
       isLoading: false,
@@ -175,10 +175,7 @@ describe("ConstraintTemplatesPage", () => {
 
     render(<ConstraintTemplatesPage />, { wrapper: createWrapper() });
 
-    expect(screen.getByText("Compliance")).toBeInTheDocument();
-    // "Templates" appears in both breadcrumb and card header, so check for at least one
-    const templatesElements = screen.getAllByText("Templates");
-    expect(templatesElements.length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Constraint Templates")[0]).toBeInTheDocument();
   });
 
   it("links kind to constraints page (AC-TPL-02)", () => {

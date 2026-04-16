@@ -394,10 +394,16 @@ func (c *RedisAuthorizationCache) publishInvalidation(message string) {
 }
 
 // subscribeInvalidation listens for cache invalidation messages from other replicas.
+// If the pub/sub channel is closed (Redis disconnect), it reconnects with exponential backoff.
 func (c *RedisAuthorizationCache) subscribeInvalidation() {
 	if c.client == nil {
 		return
 	}
+
+	const (
+		initialBackoff = 1 * time.Second
+		maxBackoff     = 30 * time.Second
+	)
 
 	pubsub := c.client.Subscribe(context.Background(), redisCacheInvalidateChannel)
 
@@ -405,16 +411,67 @@ func (c *RedisAuthorizationCache) subscribeInvalidation() {
 	c.pubsub = pubsub
 	c.mu.Unlock()
 
-	ch := pubsub.Channel()
 	for {
-		select {
-		case <-c.stopCh:
-			return
-		case msg, ok := <-ch:
-			if !ok {
+		ch := pubsub.Channel()
+		for {
+			select {
+			case <-c.stopCh:
 				return
+			case msg, ok := <-ch:
+				if !ok {
+					// Channel closed — break to reconnection loop
+					goto reconnect
+				}
+				c.handleInvalidationMessage(msg.Payload)
 			}
-			c.handleInvalidationMessage(msg.Payload)
+		}
+
+	reconnect:
+		c.logger.Warn("redis cache: pub/sub channel closed, attempting reconnection")
+
+		// Close old pubsub before reconnecting
+		if err := pubsub.Close(); err != nil {
+			c.logger.Warn("redis cache: failed to close old pub/sub during reconnect", "error", err)
+		}
+
+		backoff := initialBackoff
+		for {
+			timer := time.NewTimer(backoff)
+			select {
+			case <-c.stopCh:
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+
+			newPubsub := c.client.Subscribe(context.Background(), redisCacheInvalidateChannel)
+
+			// Verify the subscription is healthy by receiving the confirmation
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			err := newPubsub.Ping(ctx)
+			cancel()
+
+			if err != nil {
+				_ = newPubsub.Close()
+				backoff *= 2
+				if backoff > maxBackoff {
+					backoff = maxBackoff
+				}
+				c.logger.Warn("redis cache: pub/sub reconnection failed, retrying",
+					"error", err,
+					"next_backoff", backoff.String(),
+				)
+				continue
+			}
+
+			// Reconnection succeeded
+			pubsub = newPubsub
+			c.mu.Lock()
+			c.pubsub = pubsub
+			c.mu.Unlock()
+
+			c.logger.Info("redis cache: pub/sub reconnected successfully")
+			break
 		}
 	}
 }

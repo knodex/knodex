@@ -12,7 +12,7 @@ import type {
   InstanceListResponse,
   RGDListResponse,
 } from "../../src/types/rgd";
-import type { View, ViewList } from "../../src/types/view";
+import type { Category, CategoryList } from "../../src/types/category";
 
 /**
  * Mock RGD catalog data
@@ -235,7 +235,7 @@ export const mockMicroservicesPlatformSchema = {
             externalRefSelector: {
               apiVersion: "v1",
               kind: "Service",
-              useInstanceNamespace: true,
+              useInstanceNamespace: false,
               autoFillFields: { name: "name", namespace: "namespace" },
             },
           },
@@ -247,12 +247,17 @@ export const mockMicroservicesPlatformSchema = {
         default: false,
       },
     },
+    propertyOrder: ["platformName", "environment", "useExistingDatabase", "externalRef", "highAvailability"],
     required: ["platformName"],
     conditionalSections: [
       {
         controllingField: "spec.useExistingDatabase",
         condition: "${schema.spec.useExistingDatabase == true}",
         expectedValue: true,
+        clientEvaluable: true,
+        rules: [
+          { field: "spec.useExistingDatabase", op: "==", value: true },
+        ],
         affectedProperties: ["externalRef"],
       },
     ],
@@ -320,7 +325,7 @@ export const mockCompositeRGDSchema = {
             externalRefSelector: {
               apiVersion: "kro.run/v1alpha1",
               kind: "ArgoCDAKSCluster",
-              useInstanceNamespace: true,
+              useInstanceNamespace: false,
               autoFillFields: { name: "name", namespace: "namespace" },
             },
           },
@@ -343,7 +348,7 @@ export const mockCompositeRGDSchema = {
             externalRefSelector: {
               apiVersion: "kro.run/v1alpha1",
               kind: "AzureKeyVault",
-              useInstanceNamespace: true,
+              useInstanceNamespace: false,
               autoFillFields: { name: "name", namespace: "namespace" },
             },
           },
@@ -527,43 +532,37 @@ export const mockProjectListResponse: ProjectListResponse = {
 export const mockUserProjects: Project[] = mockProjects;
 
 /**
- * Mock view data (Enterprise feature)
+ * Mock category data (OSS feature)
  */
-export const mockViews: View[] = [
+export const mockCategories: Category[] = [
   {
     name: "Testing Resources",
     slug: "testing",
     icon: "TestTube2",
-    category: "testing",
-    order: 1,
-    description: "Resources for testing and QA workflows",
+    iconType: "lucide",
     count: 3,
   },
   {
     name: "Databases",
     slug: "databases",
     icon: "Database",
-    category: "database",
-    order: 2,
-    description: "Database resources and storage",
+    iconType: "lucide",
     count: 5,
   },
   {
     name: "Networking",
     slug: "networking",
     icon: "Network",
-    category: "networking",
-    order: 3,
-    description: "Networking and ingress resources",
+    iconType: "lucide",
     count: 2,
   },
 ];
 
 /**
- * Mock view list response
+ * Mock category list response
  */
-export const mockViewListResponse: ViewList = {
-  views: mockViews,
+export const mockCategoryListResponse: CategoryList = {
+  categories: mockCategories,
 };
 
 /**
@@ -574,8 +573,11 @@ export const API_PATHS = {
   rgdCount: "/api/v1/rgds/count",
   instances: "/api/v1/instances",
   instanceCount: "/api/v1/instances/count",
+  // K8s-aligned namespaced instance path: /api/v1/namespaces/{ns}/instances/{kind}/{name}
+  // Tests that mock instance detail pages must also intercept this pattern
+  namespacedInstances: "/api/v1/namespaces/*/instances",
   projects: "/api/v1/projects",
-  views: "/api/v1/ee/views",
+  categories: "/api/v1/categories",
   canI: "/api/v1/account/can-i",
   health: "/healthz",
   ready: "/readyz",

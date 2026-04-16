@@ -5,6 +5,7 @@ package auth
 
 import (
 	"context"
+	"crypto/subtle"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -30,6 +31,20 @@ const (
 	MaxOIDCGroups = 500
 	// MaxOIDCGroupNameLength is the maximum length of a single group name
 	MaxOIDCGroupNameLength = 256
+
+	// HTTP client timeouts for OIDC provider discovery.
+	// Tighter than github.go (10s vs 30s) because OIDC discovery is critical-path during login.
+
+	// OIDCClientTimeout is the overall HTTP request timeout for OIDC provider calls
+	OIDCClientTimeout = 10 * time.Second
+	// OIDCTLSHandshakeTimeout is the TLS handshake timeout for OIDC provider connections
+	OIDCTLSHandshakeTimeout = 5 * time.Second
+	// OIDCIdleConnTimeout is how long idle connections to OIDC providers stay open
+	OIDCIdleConnTimeout = 90 * time.Second
+	// OIDCMaxIdleConns is the max idle connections across all OIDC provider hosts
+	OIDCMaxIdleConns = 100
+	// OIDCMaxIdleConnsPerHost is the max idle connections per OIDC provider host
+	OIDCMaxIdleConnsPerHost = 10
 )
 
 // RedisClient defines the interface for Redis operations needed by OIDC service
@@ -301,7 +316,7 @@ func (s *OIDCService) ExchangeCodeForToken(ctx context.Context, providerName, co
 
 	// Validate nonce: the ID token's nonce claim must match the stored nonce
 	// to prevent token replay attacks (AUTH-VULN-04 mitigation)
-	if nonce == "" || claims.Nonce == "" || claims.Nonce != nonce {
+	if nonce == "" || claims.Nonce == "" || subtle.ConstantTimeCompare([]byte(claims.Nonce), []byte(nonce)) != 1 {
 		slog.Error("OIDC nonce validation failed",
 			"provider", providerName,
 			"nonce_present", claims.Nonce != "",
@@ -577,11 +592,7 @@ func (s *OIDCService) initializeProviderInto(ctx context.Context, config OIDCPro
 	// Tests may inject s.httpClient to allow loopback connections.
 	client := s.httpClient
 	if client == nil {
-		client = &http.Client{
-			Transport: &http.Transport{
-				DialContext: netutil.NewSSRFSafeDialer(),
-			},
-		}
+		client = s.defaultHTTPClient()
 	}
 	safeCtx := oidc.ClientContext(ctx, client)
 	provider, err := oidc.NewProvider(safeCtx, config.IssuerURL)
@@ -610,6 +621,22 @@ func (s *OIDCService) initializeProviderInto(ctx context.Context, config OIDCPro
 	}
 
 	return nil
+}
+
+// defaultHTTPClient returns the production HTTP client for OIDC provider discovery.
+// It includes timeouts to prevent indefinite blocking and an SSRF-safe dialer
+// that blocks connections to private/reserved IP addresses.
+func (s *OIDCService) defaultHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout: OIDCClientTimeout,
+		Transport: &http.Transport{
+			DialContext:         netutil.NewSSRFSafeDialer(),
+			TLSHandshakeTimeout: OIDCTLSHandshakeTimeout,
+			IdleConnTimeout:     OIDCIdleConnTimeout,
+			MaxIdleConns:        OIDCMaxIdleConns,
+			MaxIdleConnsPerHost: OIDCMaxIdleConnsPerHost,
+		},
+	}
 }
 
 // sanitizeOIDCGroups filters and cleans OIDC group claims.

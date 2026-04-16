@@ -5,6 +5,7 @@ metadata:
   namespace: default
 spec:
   name: demo-webapp
-  replicas: 2
-  enableDatabase: false
-  enableCache: false
+  database:
+    enabled: false
+  cache:
+    enabled: false

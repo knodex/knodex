@@ -59,6 +59,7 @@ export const TEST_USERS: Record<TestUserRole, TestUser> = {
     displayName: 'Global Administrator',
     casbinRoles: [CASBIN_ROLE_ADMIN], // ArgoCD-aligned: Global admin via Casbin role
     projects: ['proj-alpha-team', 'proj-beta-team', 'proj-shared'],
+    groups: ['knodex-admins'], // OIDC group (also configured via CASBIN_ADMIN_USERS)
     permissions: { '*:*': true, 'settings:get': true, 'settings:update': true, 'projects:create': true, 'projects:delete': true },
   },
   [TestUserRole.ORG_ADMIN]: {
@@ -68,6 +69,7 @@ export const TEST_USERS: Record<TestUserRole, TestUser> = {
     casbinRoles: [], // Not a global admin
     projects: ['proj-alpha-team'],
     roles: { 'proj-alpha-team': 'admin' },
+    groups: ['alpha-admins'], // OIDC group → proj:proj-alpha-team:admin via Project CRD
     permissions: { 'settings:get': false, 'settings:update': false, 'projects:create': false, 'projects:delete': false },
   },
   [TestUserRole.ORG_DEVELOPER]: {
@@ -77,15 +79,17 @@ export const TEST_USERS: Record<TestUserRole, TestUser> = {
     casbinRoles: [], // Not a global admin
     projects: ['proj-alpha-team'],
     roles: { 'proj-alpha-team': 'developer' },
+    groups: ['alpha-developers'], // OIDC group → proj:proj-alpha-team:developer via Project CRD
     permissions: { 'settings:get': false, 'settings:update': false, 'projects:create': false, 'projects:delete': false },
   },
   [TestUserRole.ORG_VIEWER]: {
     sub: 'user-alpha-viewer',
     email: 'alpha-viewer@e2e-test.local',
     displayName: 'Alpha Viewer',
-    casbinRoles: ['proj:proj-alpha-team:readonly'], // Project-scoped readonly role (role:readonly removed as global role)
+    casbinRoles: ['proj:proj-alpha-team:viewer'], // Project-scoped viewer role via group mapping
     projects: ['proj-alpha-team'],
     roles: { 'proj-alpha-team': 'viewer' },
+    groups: ['alpha-viewers'], // OIDC group → proj:proj-alpha-team:viewer via Project CRD
     permissions: { 'settings:get': false, 'settings:update': false, 'projects:create': false, 'projects:delete': false },
   },
   /**
@@ -185,10 +189,15 @@ export async function authenticateAs(page: Page, role: TestUserRole): Promise<vo
       // - currentProject: preserves project selection across refreshes
       // All other user state (roles, groups, etc.) is populated by useSessionRestore
       // calling GET /api/v1/account/info on page load.
+      //
+      // NOTE: currentProject is set to null so tests start with an unfiltered view.
+      // The InstancesPage/CatalogPage filter by project destinations when a project is
+      // selected, and mock data uses arbitrary namespaces that don't match real projects.
+      // Tests that need project filtering should explicitly set the project in the test.
       const userStorage = {
         state: {
           hasSession: true,
-          currentProject: user.projects[0] || null,
+          currentProject: null,
         },
         version: 0
       }
@@ -490,7 +499,7 @@ export async function setupPermissionMocking(
  *
  * @example
  * // Test admin UI
- * await setupAuthWithMocking(page, TestUserRole.GLOBAL_ADMIN, '/settings/projects')
+ * await setupAuthWithMocking(page, TestUserRole.GLOBAL_ADMIN, '/projects')
  *
  * // Test viewer UI (read-only)
  * await setupAuthWithMocking(page, TestUserRole.ORG_VIEWER, '/catalog')

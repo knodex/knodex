@@ -1,7 +1,7 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { Globe } from "lucide-react";
+import { Globe } from "@/lib/icons";
 import {
   Select,
   SelectContent,

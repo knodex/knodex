@@ -54,6 +54,9 @@ const (
 	NoncePrefix = "oidc:nonce:"
 )
 
+// Compile-time interface compliance check
+var _ ServiceInterface = (*Service)(nil)
+
 // Service provides authentication operations
 type Service struct {
 	config           *Config

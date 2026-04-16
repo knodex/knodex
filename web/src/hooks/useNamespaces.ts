@@ -3,6 +3,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { listNamespaces, getProjectNamespaces } from "@/api/namespaces";
+import { STALE_TIME } from "@/lib/query-client";
 
 /**
  * Hook for fetching all cluster namespaces
@@ -12,7 +13,7 @@ export function useNamespaces(excludeSystem: boolean = true) {
   return useQuery({
     queryKey: ["namespaces", { excludeSystem }],
     queryFn: () => listNamespaces(excludeSystem),
-    staleTime: 30 * 1000, // 30 seconds - namespaces can change
+    staleTime: STALE_TIME.FREQUENT, // namespaces can change
     gcTime: 5 * 60 * 1000, // 5 minutes
   });
 }
@@ -26,7 +27,7 @@ export function useProjectNamespaces(projectName: string) {
     queryKey: ["projectNamespaces", projectName],
     queryFn: () => getProjectNamespaces(projectName),
     enabled: !!projectName, // Only fetch when projectName is provided
-    staleTime: 30 * 1000, // 30 seconds - namespaces can change
+    staleTime: STALE_TIME.FREQUENT, // namespaces can change
     gcTime: 5 * 60 * 1000, // 5 minutes
   });
 }

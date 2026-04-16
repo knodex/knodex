@@ -19,6 +19,10 @@ vi.mock("@/hooks/useSecrets", () => ({
   })),
 }));
 
+vi.mock("@/hooks/useAuth", () => ({
+  useCurrentProject: vi.fn(() => "alpha"),
+}));
+
 const mockNavigate = vi.fn();
 vi.mock("react-router-dom", async () => {
   const actual = await vi.importActual("react-router-dom");
@@ -38,7 +42,6 @@ function renderDialog(props: Partial<React.ComponentProps<typeof DeleteSecretDia
     onOpenChange: vi.fn(),
     secretName: "db-credentials",
     secretNamespace: "alpha-ns",
-    project: "alpha",
     ...props,
   };
 
@@ -85,7 +88,7 @@ describe("DeleteSecretDialog", () => {
       namespace: "alpha-ns",
     });
     expect(props.onOpenChange).toHaveBeenCalledWith(false);
-    expect(mockNavigate).toHaveBeenCalledWith("/secrets?project=alpha");
+    expect(mockNavigate).toHaveBeenCalledWith("/secrets");
   });
 
   it("shows warnings from API response in dialog after deletion", async () => {

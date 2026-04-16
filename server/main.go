@@ -40,9 +40,10 @@ func main() {
 	// These are called during Run() after those dependencies are created.
 	a.SetComplianceInitFunc(InitComplianceService)
 	a.SetViolationHistoryInitFunc(InitViolationHistoryService)
-	a.SetViewsInitFunc(InitViewsService)
+	a.SetCategoryInitFunc(InitCategoryService)
 	a.SetAuditRecorderInitFunc(InitAuditRecorder)
 	a.SetAuditLoginMiddlewareInitFunc(InitAuditLoginMiddleware)
+	a.SetAuditMiddlewareInitFunc(InitAuditMiddleware)
 	a.SetAuditAPIServiceInitFunc(InitAuditAPIService)
 
 	if err := a.Run(context.Background()); err != nil {

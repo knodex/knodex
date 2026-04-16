@@ -140,6 +140,37 @@ func TestServerAdminFullAccess(t *testing.T) {
 	assert.True(t, allowed, "Server admin should have settings access")
 }
 
+func TestServerAdminViaWildcardPolicy(t *testing.T) {
+	t.Parallel()
+	// Verify that role:serveradmin gets access via the wildcard policy
+	// ("role:serveradmin", "*", "*", "allow") rather than a matcher short-circuit.
+	// We intentionally avoid Casbin's super admin matcher pattern because
+	// our model uses deny policies — a matcher short-circuit would bypass deny evaluation.
+	enforcer, err := NewCasbinEnforcer()
+	require.NoError(t, err)
+
+	_, err = enforcer.AddUserRole("user:superuser", CasbinRoleServerAdmin)
+	require.NoError(t, err)
+
+	// Admin should access any resource via wildcard policy match
+	allowed, err := enforcer.Enforce("user:superuser", "custom-resource/anything", "custom-action")
+	require.NoError(t, err)
+	assert.True(t, allowed, "Server admin should access any resource via wildcard policy")
+
+	// Non-admin should NOT access the same resource
+	allowed, err = enforcer.Enforce("user:regular", "custom-resource/anything", "custom-action")
+	require.NoError(t, err)
+	assert.False(t, allowed, "Non-admin should be denied when no policy exists")
+
+	// Admin with deny policy: deny should override wildcard allow
+	_, err = enforcer.AddPolicy(CasbinRoleServerAdmin, "restricted/secret", "*", "deny")
+	require.NoError(t, err)
+
+	allowed, err = enforcer.Enforce("user:superuser", "restricted/secret", "get")
+	require.NoError(t, err)
+	assert.False(t, allowed, "Deny policy should block even server admin")
+}
+
 func TestGlobPatternMatching(t *testing.T) {
 	enforcer, err := NewCasbinEnforcer()
 	require.NoError(t, err)
@@ -773,9 +804,9 @@ func TestBuiltinPolicies_AllRolesCount(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, policies, "Should have built-in policies")
 
-	// 1-global-role model: only role:serveradmin has built-in policies (11 total)
+	// 1-global-role model: only role:serveradmin has built-in policies (10 total)
 	// No global readonly role — readonly is project-scoped only
-	assert.GreaterOrEqual(t, len(policies), 11, "Should have at least 11 built-in serveradmin policies")
+	assert.GreaterOrEqual(t, len(policies), 10, "Should have at least 10 built-in serveradmin policies")
 }
 
 func TestConcurrentAccess(t *testing.T) {
@@ -1471,4 +1502,340 @@ func TestBuiltinPolicies_ComplianceAccess_CustomRoleWithoutPermission(t *testing
 				"user:dev", tt.obj, tt.act, allowed, tt.expected)
 		})
 	}
+}
+
+func TestBuiltinPolicies_ClustersResourceRemoved(t *testing.T) {
+	// Verify the clusters/* resource is no longer present in built-in policies
+	// (CAPI-specific resource was removed; instances/* wildcard covers all KRO instances)
+	enforcer, err := NewCasbinEnforcer()
+	require.NoError(t, err)
+
+	policies, err := enforcer.GetAllPolicies()
+	require.NoError(t, err)
+
+	for _, policy := range policies {
+		if len(policy) >= 2 {
+			obj := policy[1]
+			assert.NotContains(t, obj, "clusters/", "clusters/* should not be in built-in policies")
+		}
+	}
+}
+
+func TestBuiltinPolicies_ServerAdminInstanceAccess(t *testing.T) {
+	// Verify role:serveradmin can access instances (via instances/* wildcard)
+	enforcer, err := NewCasbinEnforcer()
+	require.NoError(t, err)
+
+	_, err = enforcer.AddUserRole("user:admin", CasbinRoleServerAdmin)
+	require.NoError(t, err)
+
+	// Cluster-scoped instance format: instances/<project>/*
+	// Namespace-scoped instance format: instances/<project>/<namespace>
+	tests := []struct {
+		name     string
+		obj      string
+		act      string
+		expected bool
+	}{
+		{"admin can get cluster-scoped instance", "instances/infra/*", "get", true},
+		{"admin can delete cluster-scoped instance", "instances/infra/*", "delete", true},
+		{"admin can create cluster-scoped instance", "instances/infra/*", "create", true},
+		{"admin can get any project cluster-scoped", "instances/payments/*", "get", true},
+		// Namespace-scoped still works (no regression)
+		{"admin can get namespace-scoped instance", "instances/infra/production", "get", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			allowed, err := enforcer.Enforce("user:admin", tt.obj, tt.act)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, allowed)
+		})
+	}
+}
+
+func TestBuiltinPolicies_ProjectRolesClusterScoped(t *testing.T) {
+	// Verify project-scoped roles cover both namespace-scoped and cluster-scoped
+	enforcer, err := NewCasbinEnforcer()
+	require.NoError(t, err)
+
+	// Simulate project "infra" admin policies (same as getBuiltInAdminPolicies)
+	_, err = enforcer.AddPolicy("proj:infra:admin", "instances/infra/*", "*", "allow")
+	require.NoError(t, err)
+	_, err = enforcer.AddUserRole("user:infra-admin", "proj:infra:admin")
+	require.NoError(t, err)
+
+	// Simulate project "infra" readonly policies (same as getBuiltInReadonlyPolicies)
+	_, err = enforcer.AddPolicy("proj:infra:readonly", "instances/infra/*", "get", "allow")
+	require.NoError(t, err)
+	_, err = enforcer.AddPolicy("proj:infra:readonly", "instances/infra/*", "list", "allow")
+	require.NoError(t, err)
+	_, err = enforcer.AddUserRole("user:infra-viewer", "proj:infra:readonly")
+	require.NoError(t, err)
+
+	// Payments project user - should NOT access infra
+	_, err = enforcer.AddPolicy("proj:payments:developer", "instances/payments/*", "*", "allow")
+	require.NoError(t, err)
+	_, err = enforcer.AddUserRole("user:pay-dev", "proj:payments:developer")
+	require.NoError(t, err)
+
+	tests := []struct {
+		name     string
+		user     string
+		obj      string
+		act      string
+		expected bool
+	}{
+		// Project role grants cluster-scoped access within same project
+		{"infra admin can get cluster-scoped infra instance", "user:infra-admin",
+			"instances/infra/*", "get", true},
+		{"infra admin can delete cluster-scoped infra instance", "user:infra-admin",
+			"instances/infra/*", "delete", true},
+		// Same role also works for namespace-scoped (no regression)
+		{"infra admin can get namespace-scoped infra instance", "user:infra-admin",
+			"instances/infra/production", "get", true},
+		// Readonly role can view but not modify
+		{"infra viewer can get cluster-scoped infra instance", "user:infra-viewer",
+			"instances/infra/*", "get", true},
+		{"infra viewer cannot delete cluster-scoped infra instance", "user:infra-viewer",
+			"instances/infra/*", "delete", false},
+		// Cross-project access denied
+		{"payments dev CANNOT get cluster-scoped infra instance", "user:pay-dev",
+			"instances/infra/*", "get", false},
+		{"payments dev CAN get cluster-scoped payments instance", "user:pay-dev",
+			"instances/payments/*", "get", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			allowed, err := enforcer.Enforce(tt.user, tt.obj, tt.act)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, allowed, "Enforce(%s, %s, %s)", tt.user, tt.obj, tt.act)
+		})
+	}
+}
+
+func TestFormatRGDObject(t *testing.T) {
+	tests := []struct {
+		name     string
+		category string
+		rgdName  string
+		expected string
+		wantErr  bool
+	}{
+		{"infrastructure category", "infrastructure", "my-rgd", "rgds/infrastructure/my-rgd", false},
+		{"applications category", "applications", "web-app", "rgds/applications/web-app", false},
+		{"empty category defaults to uncategorized", "", "my-rgd", "rgds/uncategorized/my-rgd", false},
+		{"wildcard name", "infrastructure", "*", "rgds/infrastructure/*", false},
+		{"empty name", "infrastructure", "", "rgds/infrastructure/*", false},
+		{"wildcard with empty category", "", "*", "rgds/uncategorized/*", false},
+		{"name exceeds max length", "infrastructure", string(make([]byte, MaxResourceNameLength+1)), "", true},
+		{"category exceeds max length", string(make([]byte, MaxResourceNameLength+1)), "my-rgd", "", true},
+		// Slash in category must be replaced with '-' to keep 3-segment path and prevent
+		// inadvertent keyMatch broadening (e.g., "rgds/infra/*" matching "rgds/infra/networking/my-rgd").
+		{"category with slash normalized to dash", "infra/networking", "my-rgd", "rgds/infra-networking/my-rgd", false},
+		{"category with slash wildcard name", "infra/networking", "*", "rgds/infra-networking/*", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := FormatRGDObject(tt.category, tt.rgdName)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestFormatRGDObjectUnsafe(t *testing.T) {
+	assert.Equal(t, "rgds/infrastructure/my-rgd", FormatRGDObjectUnsafe("infrastructure", "my-rgd"))
+	assert.Equal(t, "rgds/uncategorized/my-rgd", FormatRGDObjectUnsafe("", "my-rgd"))
+	assert.Equal(t, "rgds/infrastructure/*", FormatRGDObjectUnsafe("infrastructure", "*"))
+	assert.Equal(t, "rgds/infrastructure/*", FormatRGDObjectUnsafe("infrastructure", ""))
+}
+
+func TestKeyMatch_CategoryScoped_RGD(t *testing.T) {
+	enforcer, err := NewCasbinEnforcer()
+	require.NoError(t, err)
+
+	// Add category-scoped RGD policy
+	_, err = enforcer.AddPolicy("role:infra-viewer", "rgds/infrastructure/*", "get", "allow")
+	require.NoError(t, err)
+
+	// Add wildcard RGD policy (backward compat)
+	_, err = enforcer.AddPolicy("role:all-rgd-viewer", "rgds/*", "get", "allow")
+	require.NoError(t, err)
+
+	// Assign roles
+	_, err = enforcer.AddUserRole("user:infra", "role:infra-viewer")
+	require.NoError(t, err)
+	_, err = enforcer.AddUserRole("user:all", "role:all-rgd-viewer")
+	require.NoError(t, err)
+
+	tests := []struct {
+		name     string
+		user     string
+		obj      string
+		expected bool
+	}{
+		// Category-scoped user
+		{"infra user sees infrastructure RGD", "user:infra", "rgds/infrastructure/my-rgd", true},
+		{"infra user denied applications RGD", "user:infra", "rgds/applications/my-rgd", false},
+		{"infra user denied uncategorized RGD", "user:infra", "rgds/uncategorized/some-rgd", false},
+
+		// Wildcard user (backward compat: rgds/* matches rgds/infrastructure/my-rgd via keyMatch)
+		{"wildcard user sees infrastructure RGD", "user:all", "rgds/infrastructure/my-rgd", true},
+		{"wildcard user sees applications RGD", "user:all", "rgds/applications/my-rgd", true},
+		{"wildcard user sees uncategorized RGD", "user:all", "rgds/uncategorized/some-rgd", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			allowed, err := enforcer.Enforce(tt.user, tt.obj, "get")
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, allowed, "Enforce(%s, %s, get)", tt.user, tt.obj)
+		})
+	}
+}
+
+func TestBuiltinPolicies_OperatorRole(t *testing.T) {
+	t.Parallel()
+
+	enforcer, err := NewCasbinEnforcer()
+	require.NoError(t, err)
+
+	// Assign role:operator to a user
+	_, err = enforcer.AddUserRole("user:operator1", "role:operator")
+	require.NoError(t, err)
+
+	tests := []struct {
+		name     string
+		obj      string
+		act      string
+		expected bool
+	}{
+		// Operator gets infra/networking/storage category access
+		{"operator get infra RGD", "rgds/infrastructure/my-rgd", "get", true},
+		{"operator list infra RGDs", "rgds/infrastructure/my-rgd", "list", true},
+		{"operator get networking RGD", "rgds/networking/my-rgd", "get", true},
+		{"operator list networking RGDs", "rgds/networking/my-rgd", "list", true},
+		{"operator get storage RGD", "rgds/storage/my-rgd", "get", true},
+		{"operator list storage RGDs", "rgds/storage/my-rgd", "list", true},
+		// Operator does NOT get applications or observability access
+		{"operator denied applications", "rgds/applications/my-rgd", "get", false},
+		{"operator denied observability", "rgds/observability/my-rgd", "get", false},
+		// Operator does NOT get project/instance access
+		{"operator denied projects", "projects/test", "get", false},
+		{"operator denied instances", "instances/test/my-inst", "get", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			allowed, err := enforcer.Enforce("user:operator1", tt.obj, tt.act)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, allowed, "Enforce(operator, %s, %s)", tt.obj, tt.act)
+		})
+	}
+}
+
+func TestBuiltinPolicies_DeveloperRole(t *testing.T) {
+	t.Parallel()
+
+	enforcer, err := NewCasbinEnforcer()
+	require.NoError(t, err)
+
+	// Assign role:developer to a user
+	_, err = enforcer.AddUserRole("user:dev1", "role:developer")
+	require.NoError(t, err)
+
+	tests := []struct {
+		name     string
+		obj      string
+		act      string
+		expected bool
+	}{
+		// Developer gets applications/observability category access
+		{"developer get applications RGD", "rgds/applications/my-rgd", "get", true},
+		{"developer list applications RGDs", "rgds/applications/my-rgd", "list", true},
+		{"developer get observability RGD", "rgds/observability/my-rgd", "get", true},
+		{"developer list observability RGDs", "rgds/observability/my-rgd", "list", true},
+		// Developer does NOT get infra/networking/storage access
+		{"developer denied infrastructure", "rgds/infrastructure/my-rgd", "get", false},
+		{"developer denied networking", "rgds/networking/my-rgd", "get", false},
+		{"developer denied storage", "rgds/storage/my-rgd", "get", false},
+		// Developer does NOT get project/instance access
+		{"developer denied projects", "projects/test", "get", false},
+		{"developer denied instances", "instances/test/my-inst", "get", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			allowed, err := enforcer.Enforce("user:dev1", tt.obj, tt.act)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, allowed, "Enforce(developer, %s, %s)", tt.obj, tt.act)
+		})
+	}
+}
+
+func TestBuiltinPolicies_WildcardCoversAllCategories(t *testing.T) {
+	t.Parallel()
+
+	enforcer, err := NewCasbinEnforcer()
+	require.NoError(t, err)
+
+	// Assign serveradmin (wildcard) role
+	_, err = enforcer.AddUserRole("user:admin1", CasbinRoleServerAdmin)
+	require.NoError(t, err)
+
+	// serveradmin with rgds/* should see all categories including operator/developer ones
+	cats := []string{"infrastructure", "networking", "storage", "applications", "observability", "uncategorized"}
+	for _, cat := range cats {
+		allowed, err := enforcer.Enforce("user:admin1", "rgds/"+cat+"/my-rgd", "get")
+		require.NoError(t, err)
+		assert.True(t, allowed, "serveradmin should access rgds/%s/my-rgd", cat)
+	}
+}
+
+// TestBuiltinPolicies_RgdsWildcardMatchesCategoryObject verifies AC #2:
+// A user with "rgds/*, get, allow" should be able to see ALL categories when the
+// categories handler checks "rgds/{category}/*" (trailing wildcard, not a specific RGD name).
+// This directly tests the Casbin keyMatch behavior that the CategoriesHandler depends on.
+func TestBuiltinPolicies_RgdsWildcardMatchesCategoryObject(t *testing.T) {
+	t.Parallel()
+
+	enforcer, err := NewCasbinEnforcer()
+	require.NoError(t, err)
+
+	// Add a non-admin user with broad rgds/* read access (AC #2 scenario)
+	_, err = enforcer.AddPolicy("role:catalog-viewer", "rgds/*", "get", "allow")
+	require.NoError(t, err)
+	_, err = enforcer.AddUserRole("user:catalog-viewer", "role:catalog-viewer")
+	require.NoError(t, err)
+
+	// The handler checks "rgds/{category}/*" (e.g. "rgds/infrastructure/*"), not "rgds/{category}/{name}".
+	// Verify the policy "rgds/*" matches the handler's check format for all categories.
+	cats := []string{"infrastructure", "networking", "storage", "applications", "observability", "uncategorized"}
+	for _, cat := range cats {
+		handlerObj := "rgds/" + cat + "/*"
+		allowed, err := enforcer.Enforce("user:catalog-viewer", handlerObj, "get")
+		require.NoError(t, err)
+		assert.True(t, allowed, "rgds/* policy should match handler check %q for category %q", handlerObj, cat)
+	}
+
+	// A user with only infrastructure access must NOT pass the handler's check for other categories
+	_, err = enforcer.AddPolicy("role:infra-only", "rgds/infrastructure/*", "get", "allow")
+	require.NoError(t, err)
+	_, err = enforcer.AddUserRole("user:infra-only", "role:infra-only")
+	require.NoError(t, err)
+
+	allowed, err := enforcer.Enforce("user:infra-only", "rgds/infrastructure/*", "get")
+	require.NoError(t, err)
+	assert.True(t, allowed, "infra-only user should pass handler check for infrastructure")
+
+	allowed, err = enforcer.Enforce("user:infra-only", "rgds/networking/*", "get")
+	require.NoError(t, err)
+	assert.False(t, allowed, "infra-only user must NOT pass handler check for networking")
 }

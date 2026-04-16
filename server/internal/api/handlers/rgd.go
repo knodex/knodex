@@ -275,9 +275,34 @@ func (h *RGDHandler) parseAndValidateFilters(r *http.Request) (services.RGDFilte
 		filters.Search = search
 	}
 
+	// Status filter (e.g., "Active", "Inactive")
+	if status := q.Get("status"); status != "" {
+		filters.Status = status
+	}
+
 	// DependsOnKind filter
 	if dok := q.Get("dependsOnKind"); dok != "" {
 		filters.DependsOnKind = dok
+	}
+
+	// ProducesKind filter
+	if pk := q.Get("producesKind"); pk != "" {
+		if len(pk) > 63 {
+			errs["producesKind"] = "must be at most 63 characters"
+		} else {
+			filters.ProducesKind = pk
+		}
+	}
+
+	// ProducesGroup filter (optional narrowing on top of producesKind)
+	if pg := q.Get("producesGroup"); pg != "" {
+		if filters.ProducesKind == "" {
+			errs["producesGroup"] = "requires producesKind to also be set"
+		} else if len(pg) > 253 {
+			errs["producesGroup"] = "must be at most 253 characters"
+		} else {
+			filters.ProducesGroup = pg
+		}
 	}
 
 	// Pagination - page

@@ -48,7 +48,7 @@ To get the admin password:
 Default admin username: {{ .Values.server.auth.adminUsername | default "admin" }}
 {{- end }}
 
-{{- if or .Values.enterprise.organization .Values.enterprise.license.existingSecret .Values.enterprise.license.text .Values.enterprise.gatekeeper.enabled .Values.enterprise.views.enabled }}
+{{- if or .Values.enterprise.organization .Values.enterprise.license.existingSecret .Values.enterprise.license.text .Values.enterprise.gatekeeper.enabled }}
 
 --------------------------------------------------------------------------------
 ENTERPRISE FEATURES
@@ -79,9 +79,6 @@ SSO secret: {{ .Values.server.auth.oidc.existingSecret }}
 OPA Gatekeeper integration is enabled.
 {{- end }}
 
-{{- if .Values.enterprise.views.enabled }}
-Custom views are enabled (Enterprise feature).
-{{- end }}
 
 --------------------------------------------------------------------------------
 NEXT STEPS

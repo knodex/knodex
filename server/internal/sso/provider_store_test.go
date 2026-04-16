@@ -9,6 +9,8 @@ package sso
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -373,5 +375,57 @@ func TestProviderStore_MultipleProviders(t *testing.T) {
 	}
 	if !names["google"] || !names["auth0"] {
 		t.Error("google and auth0 should still exist")
+	}
+}
+
+func TestErrorChain_ConflictError(t *testing.T) {
+	original := &ConflictError{Name: "test-provider"}
+	wrapped := fmt.Errorf("outer context: %w", original)
+
+	var target *ConflictError
+	if !errors.As(wrapped, &target) {
+		t.Error("errors.As should find *ConflictError through fmt.Errorf wrapping")
+	}
+	if target.Name != "test-provider" {
+		t.Errorf("expected Name 'test-provider', got %q", target.Name)
+	}
+}
+
+func TestErrorChain_NotFoundError(t *testing.T) {
+	original := &NotFoundError{Name: "missing-provider"}
+	wrapped := fmt.Errorf("outer context: %w", original)
+
+	var target *NotFoundError
+	if !errors.As(wrapped, &target) {
+		t.Error("errors.As should find *NotFoundError through fmt.Errorf wrapping")
+	}
+	if target.Name != "missing-provider" {
+		t.Errorf("expected Name 'missing-provider', got %q", target.Name)
+	}
+}
+
+func TestConflictError_Unwrap(t *testing.T) {
+	inner := fmt.Errorf("inner error")
+	e := &ConflictError{Name: "test", Err: inner}
+	if e.Unwrap() != inner {
+		t.Error("ConflictError.Unwrap() should return the inner error when set")
+	}
+
+	e2 := &ConflictError{Name: "test"}
+	if e2.Unwrap() != nil {
+		t.Error("ConflictError.Unwrap() should return nil when Err is not set")
+	}
+}
+
+func TestNotFoundError_Unwrap(t *testing.T) {
+	inner := fmt.Errorf("inner error")
+	e := &NotFoundError{Name: "test", Err: inner}
+	if e.Unwrap() != inner {
+		t.Error("NotFoundError.Unwrap() should return the inner error when set")
+	}
+
+	e2 := &NotFoundError{Name: "test"}
+	if e2.Unwrap() != nil {
+		t.Error("NotFoundError.Unwrap() should return nil when Err is not set")
 	}
 }

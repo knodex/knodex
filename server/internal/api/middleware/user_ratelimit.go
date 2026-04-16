@@ -38,6 +38,7 @@ type UserRateLimiter struct {
 	// IP-based limiter for unauthenticated requests (if FallbackToIP is true)
 	ipLimiter   *IPRateLimiter
 	stopCleanup chan struct{}
+	stopOnce    sync.Once
 }
 
 // NewUserRateLimiter creates a new user rate limiter
@@ -138,18 +139,21 @@ func (u *UserRateLimiter) periodicCleanup() {
 }
 
 // Stop stops the background cleanup goroutine.
-// Should be called during server shutdown to prevent resource leaks.
-// Note: Currently not wired into main.go shutdown sequence.
+// Called during server shutdown via shutdownServices to prevent resource leaks.
+// Safe to call multiple times — uses sync.Once to prevent double-close panic.
 func (u *UserRateLimiter) Stop() {
-	close(u.stopCleanup)
+	u.stopOnce.Do(func() {
+		close(u.stopCleanup)
+	})
 }
 
-// UserRateLimit creates a per-user rate limiting middleware
-// This middleware should be placed AFTER Auth middleware in the chain
-func UserRateLimit(config UserRateLimitConfig) func(http.Handler) http.Handler {
+// UserRateLimit creates a per-user rate limiting middleware and returns the underlying
+// UserRateLimiter so the caller can call Stop() during shutdown.
+// This middleware should be placed AFTER Auth middleware in the chain.
+func UserRateLimit(config UserRateLimitConfig) (func(http.Handler) http.Handler, *UserRateLimiter) {
 	limiter := NewUserRateLimiter(config)
 
-	return func(next http.Handler) http.Handler {
+	mw := func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Try to get user context
 			userCtx, ok := GetUserContext(r)
@@ -195,4 +199,6 @@ func UserRateLimit(config UserRateLimitConfig) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+
+	return mw, limiter
 }

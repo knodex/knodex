@@ -20,8 +20,16 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/restmapper"
 
+	"github.com/knodex/knodex/server/internal/api/helpers"
+	"github.com/knodex/knodex/server/internal/api/middleware"
 	"github.com/knodex/knodex/server/internal/api/response"
+	"github.com/knodex/knodex/server/internal/rbac"
 )
+
+// NamespaceAccessProvider resolves which namespaces a user can access.
+type NamespaceAccessProvider interface {
+	GetAccessibleNamespaces(ctx context.Context, userCtx *middleware.UserContext) ([]string, error)
+}
 
 const (
 	// k8sListTimeout is the max time for listing Kubernetes resources.
@@ -40,6 +48,7 @@ const (
 type K8sResourceHandler struct {
 	dynamicClient   dynamic.Interface
 	discoveryClient discovery.DiscoveryInterface
+	nsAccess        NamespaceAccessProvider // Filters results to user's accessible namespaces
 
 	// Cached discovery state for Kind → GVR resolution
 	mu             sync.RWMutex
@@ -53,6 +62,11 @@ func NewK8sResourceHandler(dynamicClient dynamic.Interface, discoveryClient disc
 		dynamicClient:   dynamicClient,
 		discoveryClient: discoveryClient,
 	}
+}
+
+// SetNamespaceAccessProvider sets the namespace access provider for filtering results.
+func (h *K8sResourceHandler) SetNamespaceAccessProvider(provider NamespaceAccessProvider) {
+	h.nsAccess = provider
 }
 
 // K8sResourceItem represents a K8s resource in the API response
@@ -193,6 +207,33 @@ func (h *K8sResourceHandler) ListResources(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Resolve the user's accessible namespaces for security filtering.
+	// ["*"] = global admin (all namespaces), empty = no access, non-empty = filter to these.
+	var accessibleNamespaces []string
+	if h.nsAccess != nil {
+		userCtx := helpers.RequireUserContext(w, r)
+		if userCtx == nil {
+			return // 401 already sent
+		}
+		var nsErr error
+		accessibleNamespaces, nsErr = h.nsAccess.GetAccessibleNamespaces(r.Context(), userCtx)
+		if nsErr != nil {
+			slog.Warn("failed to get accessible namespaces for resource listing",
+				"user_id", userCtx.UserID, "error", nsErr)
+			// Secure default: empty list (show nothing)
+			accessibleNamespaces = []string{}
+		}
+
+		// If a specific namespace was requested, verify the user has access to it
+		// MatchNamespaceInList handles ["*"] → true for any namespace
+		if namespace != "" {
+			if !rbac.MatchNamespaceInList(namespace, accessibleNamespaces) {
+				response.Forbidden(w, "no access to namespace "+namespace)
+				return
+			}
+		}
+	}
+
 	// Resolve Kind to GVR using K8s discovery API (supports custom CRDs)
 	gvr, err := h.resolveGVR(apiVersion, kind)
 	if err != nil {
@@ -208,29 +249,62 @@ func (h *K8sResourceHandler) ListResources(w http.ResponseWriter, r *http.Reques
 		Limit: 100, // Limit results for performance
 	}
 
-	// List resources (namespaced or cluster-scoped)
-	var resourceClient dynamic.ResourceInterface
+	// Determine which namespaces to query.
+	// ["*"] means global admin — use cluster-wide list (can't pass "*" as a K8s namespace).
+	isGlobalAccess := len(accessibleNamespaces) == 1 && accessibleNamespaces[0] == "*"
+	var namespacesToQuery []string
 	if namespace != "" {
-		resourceClient = h.dynamicClient.Resource(gvr).Namespace(namespace)
+		// Specific namespace requested (already access-checked above)
+		namespacesToQuery = []string{namespace}
+	} else if !isGlobalAccess {
+		// Non-admin: query only accessible namespaces
+		namespacesToQuery = accessibleNamespaces
+	}
+	// else: global admin, namespacesToQuery stays nil → cluster-wide call below
+
+	var items []K8sResourceItem
+	if namespacesToQuery != nil {
+		// Query each accessible namespace individually
+		for _, ns := range namespacesToQuery {
+			resourceClient := h.dynamicClient.Resource(gvr).Namespace(ns)
+			unstructuredList, listErr := resourceClient.List(ctx, listOptions)
+			if listErr != nil {
+				// Skip namespaces where the SA lacks permissions (non-fatal)
+				if k8serrors.IsForbidden(listErr) {
+					continue
+				}
+				h.handleK8sError(w, listErr, apiVersion, kind)
+				return
+			}
+			for _, item := range unstructuredList.Items {
+				items = append(items, K8sResourceItem{
+					Name:      item.GetName(),
+					Namespace: item.GetNamespace(),
+					Labels:    item.GetLabels(),
+					CreatedAt: item.GetCreationTimestamp().Format(time.RFC3339),
+				})
+			}
+		}
 	} else {
-		resourceClient = h.dynamicClient.Resource(gvr)
+		// Admin: single cluster-wide list
+		resourceClient := h.dynamicClient.Resource(gvr)
+		unstructuredList, listErr := resourceClient.List(ctx, listOptions)
+		if listErr != nil {
+			h.handleK8sError(w, listErr, apiVersion, kind)
+			return
+		}
+		for _, item := range unstructuredList.Items {
+			items = append(items, K8sResourceItem{
+				Name:      item.GetName(),
+				Namespace: item.GetNamespace(),
+				Labels:    item.GetLabels(),
+				CreatedAt: item.GetCreationTimestamp().Format(time.RFC3339),
+			})
+		}
 	}
 
-	unstructuredList, err := resourceClient.List(ctx, listOptions)
-	if err != nil {
-		h.handleK8sError(w, err, apiVersion, kind)
-		return
-	}
-
-	// Convert to response items
-	items := make([]K8sResourceItem, 0, len(unstructuredList.Items))
-	for _, item := range unstructuredList.Items {
-		items = append(items, K8sResourceItem{
-			Name:      item.GetName(),
-			Namespace: item.GetNamespace(),
-			Labels:    item.GetLabels(),
-			CreatedAt: item.GetCreationTimestamp().Format(time.RFC3339),
-		})
+	if items == nil {
+		items = []K8sResourceItem{}
 	}
 
 	response.WriteJSON(w, http.StatusOK, K8sResourceListResponse{

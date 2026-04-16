@@ -8,6 +8,7 @@ import {
   getApiGroupDisplayName,
   type APIResource,
 } from "@/api/apiResources";
+import { STALE_TIME } from "@/lib/query-client";
 
 /**
  * Hook for fetching and managing Kubernetes API resources
@@ -25,7 +26,7 @@ export function useApiResources() {
   const query = useQuery({
     queryKey: ["kubernetes", "api-resources"],
     queryFn: () => listApiResources(),
-    staleTime: 5 * 60 * 1000, // 5 minutes - matches backend cache
+    staleTime: STALE_TIME.STATIC, // matches backend cache
     gcTime: 10 * 60 * 1000, // 10 minutes
     retry: 2,
   });

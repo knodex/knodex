@@ -33,23 +33,20 @@ function renderCard(instance: Instance) {
 }
 
 describe("InstanceCard", () => {
-  it("does not show RGD status warning for active parent", () => {
-    renderCard(createTestInstance({ rgdStatus: "Active" }));
-    expect(screen.queryByText("RGD Inactive")).not.toBeInTheDocument();
+  it("shows Cluster-Scoped indicator for cluster-scoped instances", () => {
+    renderCard(createTestInstance({ isClusterScoped: true, namespace: "" }));
+    expect(screen.getByText("Cluster-Scoped")).toBeInTheDocument();
   });
 
-  it("shows RGD Inactive warning when parent RGD is inactive", () => {
-    renderCard(createTestInstance({ rgdStatus: "Inactive" }));
-    expect(screen.getByText("RGD Inactive")).toBeInTheDocument();
+  it("shows namespace for namespace-scoped instances", () => {
+    renderCard(createTestInstance({ isClusterScoped: false, namespace: "my-namespace" }));
+    expect(screen.queryByText("Cluster-Scoped")).not.toBeInTheDocument();
+    expect(screen.getByText("my-namespace")).toBeInTheDocument();
   });
 
-  it("does not show warning when rgdStatus is undefined", () => {
-    renderCard(createTestInstance({ rgdStatus: undefined }));
-    expect(screen.queryByText("RGD Inactive")).not.toBeInTheDocument();
-  });
-
-  it("does not show warning when rgdStatus is empty string", () => {
-    renderCard(createTestInstance({ rgdStatus: "" }));
-    expect(screen.queryByText("RGD Inactive")).not.toBeInTheDocument();
+  it("shows namespace when isClusterScoped is undefined", () => {
+    renderCard(createTestInstance({ namespace: "default" }));
+    expect(screen.queryByText("Cluster-Scoped")).not.toBeInTheDocument();
+    expect(screen.getByText("default")).toBeInTheDocument();
   });
 });

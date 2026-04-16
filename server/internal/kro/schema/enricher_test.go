@@ -449,8 +449,8 @@ func TestAddExternalRefSelectors_PairedPattern(t *testing.T) {
 		t.Errorf("expected APIVersion 'v1', got %q", parentProp.ExternalRefSelector.APIVersion)
 	}
 
-	if !parentProp.ExternalRefSelector.UseInstanceNamespace {
-		t.Error("expected UseInstanceNamespace to be true")
+	if parentProp.ExternalRefSelector.UseInstanceNamespace {
+		t.Error("expected UseInstanceNamespace to be false (paired name/namespace has explicit namespace field)")
 	}
 
 	// Verify AutoFillFields
@@ -789,8 +789,8 @@ func TestAddExternalRefSelectors_ErrorOnMissingParent(t *testing.T) {
 	}
 }
 
-// TestExtractAdvancedSection_NoAdvancedProperty tests schema without advanced property
-func TestExtractAdvancedSection_NoAdvancedProperty(t *testing.T) {
+// TestExtractAdvancedSections_NoAdvancedProperty tests schema without advanced property
+func TestExtractAdvancedSections_NoAdvancedProperty(t *testing.T) {
 	schema := &models.FormSchema{
 		Properties: map[string]models.FormProperty{
 			"name": {Type: "string"},
@@ -798,15 +798,15 @@ func TestExtractAdvancedSection_NoAdvancedProperty(t *testing.T) {
 		},
 	}
 
-	section := extractAdvancedSection(schema)
+	sections := extractAdvancedSections(schema)
 
-	if section != nil {
-		t.Error("expected nil section for schema without advanced property")
+	if len(sections) != 0 {
+		t.Errorf("expected no sections for schema without advanced property, got %d", len(sections))
 	}
 }
 
-// TestExtractAdvancedSection_EmptyAdvancedProperty tests advanced property with no nested fields
-func TestExtractAdvancedSection_EmptyAdvancedProperty(t *testing.T) {
+// TestExtractAdvancedSections_EmptyAdvancedProperty tests advanced property with no nested fields
+func TestExtractAdvancedSections_EmptyAdvancedProperty(t *testing.T) {
 	schema := &models.FormSchema{
 		Properties: map[string]models.FormProperty{
 			"name": {Type: "string"},
@@ -817,15 +817,15 @@ func TestExtractAdvancedSection_EmptyAdvancedProperty(t *testing.T) {
 		},
 	}
 
-	section := extractAdvancedSection(schema)
+	sections := extractAdvancedSections(schema)
 
-	if section != nil {
-		t.Error("expected nil section for empty advanced property")
+	if len(sections) != 0 {
+		t.Errorf("expected no sections for empty advanced property, got %d", len(sections))
 	}
 }
 
-// TestExtractAdvancedSection_BasicAdvancedFields tests basic advanced field detection
-func TestExtractAdvancedSection_BasicAdvancedFields(t *testing.T) {
+// TestExtractAdvancedSections_BasicAdvancedFields tests basic advanced field detection
+func TestExtractAdvancedSections_BasicAdvancedFields(t *testing.T) {
 	schema := &models.FormSchema{
 		Properties: map[string]models.FormProperty{
 			"name": {Type: "string"},
@@ -839,23 +839,23 @@ func TestExtractAdvancedSection_BasicAdvancedFields(t *testing.T) {
 		},
 	}
 
-	section := extractAdvancedSection(schema)
+	sections := extractAdvancedSections(schema)
 
-	if section == nil {
-		t.Fatal("expected non-nil section")
+	if len(sections) != 1 {
+		t.Fatalf("expected 1 section, got %d", len(sections))
 	}
 
-	if section.Path != "advanced" {
-		t.Errorf("expected path 'advanced', got %q", section.Path)
+	if sections[0].Path != "advanced" {
+		t.Errorf("expected path 'advanced', got %q", sections[0].Path)
 	}
 
-	if len(section.AffectedProperties) != 2 {
-		t.Errorf("expected 2 affected properties, got %d", len(section.AffectedProperties))
+	if len(sections[0].AffectedProperties) != 2 {
+		t.Errorf("expected 2 affected properties, got %d", len(sections[0].AffectedProperties))
 	}
 }
 
-// TestExtractAdvancedSection_NestedAdvancedFields tests nested advanced field detection
-func TestExtractAdvancedSection_NestedAdvancedFields(t *testing.T) {
+// TestExtractAdvancedSections_NestedAdvancedFields tests nested advanced field detection
+func TestExtractAdvancedSections_NestedAdvancedFields(t *testing.T) {
 	schema := &models.FormSchema{
 		Properties: map[string]models.FormProperty{
 			"name": {Type: "string"},
@@ -886,10 +886,10 @@ func TestExtractAdvancedSection_NestedAdvancedFields(t *testing.T) {
 		},
 	}
 
-	section := extractAdvancedSection(schema)
+	sections := extractAdvancedSections(schema)
 
-	if section == nil {
-		t.Fatal("expected non-nil section")
+	if len(sections) != 1 {
+		t.Fatalf("expected 1 section, got %d", len(sections))
 	}
 
 	// Verify nested paths are in affected properties
@@ -905,7 +905,7 @@ func TestExtractAdvancedSection_NestedAdvancedFields(t *testing.T) {
 
 	for _, expected := range expectedPaths {
 		found := false
-		for _, actual := range section.AffectedProperties {
+		for _, actual := range sections[0].AffectedProperties {
 			if actual == expected {
 				found = true
 				break
@@ -917,8 +917,8 @@ func TestExtractAdvancedSection_NestedAdvancedFields(t *testing.T) {
 	}
 }
 
-// TestExtractAdvancedSection_RGDDefaultPreserved tests that RGD defaults are preserved
-func TestExtractAdvancedSection_RGDDefaultPreserved(t *testing.T) {
+// TestExtractAdvancedSections_RGDDefaultPreserved tests that RGD defaults are preserved
+func TestExtractAdvancedSections_RGDDefaultPreserved(t *testing.T) {
 	schema := &models.FormSchema{
 		Properties: map[string]models.FormProperty{
 			"advanced": {
@@ -933,10 +933,10 @@ func TestExtractAdvancedSection_RGDDefaultPreserved(t *testing.T) {
 		},
 	}
 
-	section := extractAdvancedSection(schema)
+	sections := extractAdvancedSections(schema)
 
-	if section == nil {
-		t.Fatal("expected non-nil section")
+	if len(sections) != 1 {
+		t.Fatalf("expected 1 section, got %d", len(sections))
 	}
 
 	// The property should still be marked as advanced
@@ -952,8 +952,8 @@ func TestExtractAdvancedSection_RGDDefaultPreserved(t *testing.T) {
 	}
 }
 
-// TestExtractAdvancedSection_MarksPropertiesAdvanced tests that properties are marked with IsAdvanced
-func TestExtractAdvancedSection_MarksPropertiesAdvanced(t *testing.T) {
+// TestExtractAdvancedSections_MarksPropertiesAdvanced tests that properties are marked with IsAdvanced
+func TestExtractAdvancedSections_MarksPropertiesAdvanced(t *testing.T) {
 	schema := &models.FormSchema{
 		Properties: map[string]models.FormProperty{
 			"name": {Type: "string"},
@@ -966,7 +966,7 @@ func TestExtractAdvancedSection_MarksPropertiesAdvanced(t *testing.T) {
 		},
 	}
 
-	_ = extractAdvancedSection(schema)
+	_ = extractAdvancedSections(schema)
 
 	// Check that advanced property is marked
 	advancedProp := schema.Properties["advanced"]
@@ -984,6 +984,116 @@ func TestExtractAdvancedSection_MarksPropertiesAdvanced(t *testing.T) {
 	nameProp := schema.Properties["name"]
 	if nameProp.IsAdvanced {
 		t.Error("expected 'name' property to NOT be marked as advanced")
+	}
+}
+
+// TestExtractAdvancedSections_PerFeatureBastion tests per-feature bastion.advanced detection
+func TestExtractAdvancedSections_PerFeatureBastion(t *testing.T) {
+	schema := &models.FormSchema{
+		Properties: map[string]models.FormProperty{
+			"name": {Type: "string"},
+			"bastion": {
+				Type: "object",
+				Properties: map[string]models.FormProperty{
+					"enabled":      {Type: "boolean"},
+					"subnetPrefix": {Type: "string"},
+					"advanced": {
+						Type: "object",
+						Properties: map[string]models.FormProperty{
+							"asoCredentialSecretName": {Type: "string"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	sections := extractAdvancedSections(schema)
+
+	if len(sections) != 1 {
+		t.Fatalf("expected 1 section, got %d", len(sections))
+	}
+
+	if sections[0].Path != "bastion.advanced" {
+		t.Errorf("expected path 'bastion.advanced', got %q", sections[0].Path)
+	}
+
+	// Verify the advanced child property path is in affected properties
+	found := false
+	for _, p := range sections[0].AffectedProperties {
+		if p == "bastion.advanced.asoCredentialSecretName" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected 'bastion.advanced.asoCredentialSecretName' in affected properties, got %v", sections[0].AffectedProperties)
+	}
+}
+
+// TestExtractAdvancedSections_TopLevelBackwardCompat tests top-level advanced backward compat
+func TestExtractAdvancedSections_TopLevelBackwardCompat(t *testing.T) {
+	schema := &models.FormSchema{
+		Properties: map[string]models.FormProperty{
+			"name": {Type: "string"},
+			"advanced": {
+				Type: "object",
+				Properties: map[string]models.FormProperty{
+					"replicas": {Type: "integer"},
+				},
+			},
+		},
+	}
+
+	sections := extractAdvancedSections(schema)
+
+	if len(sections) != 1 {
+		t.Fatalf("expected 1 section, got %d", len(sections))
+	}
+
+	if sections[0].Path != "advanced" {
+		t.Errorf("expected path 'advanced', got %q", sections[0].Path)
+	}
+}
+
+// TestExtractAdvancedSections_BothCoexist tests both global and per-feature sections
+func TestExtractAdvancedSections_BothCoexist(t *testing.T) {
+	schema := &models.FormSchema{
+		Properties: map[string]models.FormProperty{
+			"name": {Type: "string"},
+			"advanced": {
+				Type: "object",
+				Properties: map[string]models.FormProperty{
+					"replicas": {Type: "integer"},
+				},
+			},
+			"bastion": {
+				Type: "object",
+				Properties: map[string]models.FormProperty{
+					"enabled": {Type: "boolean"},
+					"advanced": {
+						Type: "object",
+						Properties: map[string]models.FormProperty{
+							"asoCredentialSecretName": {Type: "string"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	sections := extractAdvancedSections(schema)
+
+	if len(sections) != 2 {
+		t.Fatalf("expected 2 sections, got %d", len(sections))
+	}
+
+	// Should be sorted by path
+	if sections[0].Path != "advanced" {
+		t.Errorf("expected first section path 'advanced', got %q", sections[0].Path)
+	}
+	if sections[1].Path != "bastion.advanced" {
+		t.Errorf("expected second section path 'bastion.advanced', got %q", sections[1].Path)
 	}
 }
 
@@ -1402,12 +1512,12 @@ func TestEnrichSchemaFromResources_WithAdvancedSection(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if schema.AdvancedSection == nil {
-		t.Fatal("expected AdvancedSection to be set")
+	if len(schema.AdvancedSections) == 0 {
+		t.Fatal("expected AdvancedSections to be set")
 	}
 
-	if len(schema.AdvancedSection.AffectedProperties) < 3 {
-		t.Errorf("expected at least 3 affected properties, got %d", len(schema.AdvancedSection.AffectedProperties))
+	if len(schema.AdvancedSections[0].AffectedProperties) < 3 {
+		t.Errorf("expected at least 3 affected properties, got %d", len(schema.AdvancedSections[0].AffectedProperties))
 	}
 }
 
@@ -1510,8 +1620,8 @@ func TestAddNestedExternalRefSelectors_BasicNestedRef(t *testing.T) {
 		t.Errorf("expected Kind 'AzureKeyVault', got %q", keyVaultProp.ExternalRefSelector.Kind)
 	}
 
-	if !keyVaultProp.ExternalRefSelector.UseInstanceNamespace {
-		t.Error("expected UseInstanceNamespace to be true")
+	if keyVaultProp.ExternalRefSelector.UseInstanceNamespace {
+		t.Error("expected UseInstanceNamespace to be false (nested externalRefs have explicit namespace fields)")
 	}
 
 	if keyVaultProp.ExternalRefSelector.AutoFillFields["name"] != "name" {
@@ -2503,14 +2613,17 @@ func TestEnrichSchema_DualSourceParity(t *testing.T) {
 	}
 
 	// Verify advanced sections match
-	if (legacySchema.AdvancedSection == nil) != (dualSchema.AdvancedSection == nil) {
-		t.Errorf("advanced section mismatch: legacy=%v, dual=%v",
-			legacySchema.AdvancedSection != nil, dualSchema.AdvancedSection != nil)
+	if len(legacySchema.AdvancedSections) != len(dualSchema.AdvancedSections) {
+		t.Errorf("advanced sections count mismatch: legacy=%d, dual=%d",
+			len(legacySchema.AdvancedSections), len(dualSchema.AdvancedSections))
 	}
-	if legacySchema.AdvancedSection != nil && dualSchema.AdvancedSection != nil {
-		if len(legacySchema.AdvancedSection.AffectedProperties) != len(dualSchema.AdvancedSection.AffectedProperties) {
-			t.Errorf("advanced properties count: legacy=%d, dual=%d",
-				len(legacySchema.AdvancedSection.AffectedProperties), len(dualSchema.AdvancedSection.AffectedProperties))
+	for i := range legacySchema.AdvancedSections {
+		if i >= len(dualSchema.AdvancedSections) {
+			break
+		}
+		if len(legacySchema.AdvancedSections[i].AffectedProperties) != len(dualSchema.AdvancedSections[i].AffectedProperties) {
+			t.Errorf("advanced section[%d] properties count: legacy=%d, dual=%d",
+				i, len(legacySchema.AdvancedSections[i].AffectedProperties), len(dualSchema.AdvancedSections[i].AffectedProperties))
 		}
 	}
 }
@@ -2604,8 +2717,8 @@ func TestEnrichSchema_DualSourceWithIntent(t *testing.T) {
 	}
 
 	// Verify advanced section was extracted
-	if crdSchema.AdvancedSection == nil {
-		t.Error("expected advanced section to be extracted")
+	if len(crdSchema.AdvancedSections) == 0 {
+		t.Error("expected advanced sections to be extracted")
 	}
 }
 
@@ -2635,5 +2748,500 @@ func TestConvertDefault(t *testing.T) {
 					tt.value, tt.propType, got, got, tt.want, tt.want)
 			}
 		})
+	}
+}
+
+// --- Collection Annotation Tests (STORY-332) ---
+
+// TestAddCollectionAnnotations_SchemaSource verifies that a single forEach with schema source
+// annotates the correct property with collection metadata (AC1).
+func TestAddCollectionAnnotations_SchemaSource(t *testing.T) {
+	schema := &models.FormSchema{
+		Properties: map[string]models.FormProperty{
+			"spec": {
+				Type: "object",
+				Properties: map[string]models.FormProperty{
+					"workers": {
+						Type:  "array",
+						Items: &models.FormProperty{Type: "object"},
+					},
+				},
+			},
+		},
+	}
+
+	graph := &parser.ResourceGraph{
+		Resources: []parser.ResourceDefinition{
+			{
+				ID:           "workerPods",
+				Kind:         "Pod",
+				IsCollection: true,
+				ForEach: []parser.Iterator{
+					{
+						Name:           "worker",
+						Expression:     "${schema.spec.workers}",
+						Source:         parser.SchemaSource,
+						SourcePath:     "spec.workers",
+						DimensionIndex: 0,
+					},
+				},
+			},
+		},
+	}
+
+	addCollectionAnnotations(schema, graph)
+
+	workersProp := schema.Properties["spec"].Properties["workers"]
+	if workersProp.CollectionAnnotation == nil {
+		t.Fatal("expected CollectionAnnotation on spec.workers, got nil")
+	}
+
+	ann := workersProp.CollectionAnnotation
+	if ann.ResourceID != "workerPods" {
+		t.Errorf("ResourceID = %q, want %q", ann.ResourceID, "workerPods")
+	}
+	if ann.IteratorVar != "worker" {
+		t.Errorf("IteratorVar = %q, want %q", ann.IteratorVar, "worker")
+	}
+	if ann.Dimensions != 1 {
+		t.Errorf("Dimensions = %d, want 1", ann.Dimensions)
+	}
+	if ann.DimensionIndex != 0 {
+		t.Errorf("DimensionIndex = %d, want 0", ann.DimensionIndex)
+	}
+	if ann.Source != "schema" {
+		t.Errorf("Source = %q, want %q", ann.Source, "schema")
+	}
+}
+
+// TestAddCollectionAnnotations_CartesianProduct verifies that two iterators referencing
+// different schema fields are both annotated with correct dimensions/dimensionIndex (AC2).
+func TestAddCollectionAnnotations_CartesianProduct(t *testing.T) {
+	schema := &models.FormSchema{
+		Properties: map[string]models.FormProperty{
+			"spec": {
+				Type: "object",
+				Properties: map[string]models.FormProperty{
+					"regions": {
+						Type:  "array",
+						Items: &models.FormProperty{Type: "string"},
+					},
+					"tiers": {
+						Type:  "array",
+						Items: &models.FormProperty{Type: "string"},
+					},
+				},
+			},
+		},
+	}
+
+	graph := &parser.ResourceGraph{
+		Resources: []parser.ResourceDefinition{
+			{
+				ID:           "deployments",
+				Kind:         "Deployment",
+				IsCollection: true,
+				ForEach: []parser.Iterator{
+					{
+						Name:           "region",
+						Expression:     "${schema.spec.regions}",
+						Source:         parser.SchemaSource,
+						SourcePath:     "spec.regions",
+						DimensionIndex: 0,
+					},
+					{
+						Name:           "tier",
+						Expression:     "${schema.spec.tiers}",
+						Source:         parser.SchemaSource,
+						SourcePath:     "spec.tiers",
+						DimensionIndex: 1,
+					},
+				},
+			},
+		},
+	}
+
+	addCollectionAnnotations(schema, graph)
+
+	regionsProp := schema.Properties["spec"].Properties["regions"]
+	if regionsProp.CollectionAnnotation == nil {
+		t.Fatal("expected CollectionAnnotation on spec.regions, got nil")
+	}
+	if regionsProp.CollectionAnnotation.Dimensions != 2 {
+		t.Errorf("regions Dimensions = %d, want 2", regionsProp.CollectionAnnotation.Dimensions)
+	}
+	if regionsProp.CollectionAnnotation.DimensionIndex != 0 {
+		t.Errorf("regions DimensionIndex = %d, want 0", regionsProp.CollectionAnnotation.DimensionIndex)
+	}
+	if regionsProp.CollectionAnnotation.IteratorVar != "region" {
+		t.Errorf("regions IteratorVar = %q, want %q", regionsProp.CollectionAnnotation.IteratorVar, "region")
+	}
+
+	tiersProp := schema.Properties["spec"].Properties["tiers"]
+	if tiersProp.CollectionAnnotation == nil {
+		t.Fatal("expected CollectionAnnotation on spec.tiers, got nil")
+	}
+	if tiersProp.CollectionAnnotation.Dimensions != 2 {
+		t.Errorf("tiers Dimensions = %d, want 2", tiersProp.CollectionAnnotation.Dimensions)
+	}
+	if tiersProp.CollectionAnnotation.DimensionIndex != 1 {
+		t.Errorf("tiers DimensionIndex = %d, want 1", tiersProp.CollectionAnnotation.DimensionIndex)
+	}
+	if tiersProp.CollectionAnnotation.IteratorVar != "tier" {
+		t.Errorf("tiers IteratorVar = %q, want %q", tiersProp.CollectionAnnotation.IteratorVar, "tier")
+	}
+}
+
+// TestAddCollectionAnnotations_ResourceSource_NoAnnotation verifies that resource-sourced
+// forEach does NOT annotate any schema field (AC3).
+func TestAddCollectionAnnotations_ResourceSource_NoAnnotation(t *testing.T) {
+	schema := &models.FormSchema{
+		Properties: map[string]models.FormProperty{
+			"spec": {
+				Type: "object",
+				Properties: map[string]models.FormProperty{
+					"name": {Type: "string"},
+				},
+			},
+		},
+	}
+
+	graph := &parser.ResourceGraph{
+		Resources: []parser.ResourceDefinition{
+			{
+				ID:           "brokerPods",
+				Kind:         "Pod",
+				IsCollection: true,
+				ForEach: []parser.Iterator{
+					{
+						Name:           "broker",
+						Expression:     "${cluster.status.brokers}",
+						Source:         parser.ResourceSource,
+						SourcePath:     "status.brokers",
+						DimensionIndex: 0,
+					},
+				},
+			},
+		},
+	}
+
+	addCollectionAnnotations(schema, graph)
+
+	nameProp := schema.Properties["spec"].Properties["name"]
+	if nameProp.CollectionAnnotation != nil {
+		t.Error("expected no CollectionAnnotation on any field for resource-sourced forEach")
+	}
+}
+
+// TestAddCollectionAnnotations_NonCollection_NoAnnotation verifies that no annotations
+// are added when there are no collection resources (AC4).
+func TestAddCollectionAnnotations_NonCollection_NoAnnotation(t *testing.T) {
+	schema := &models.FormSchema{
+		Properties: map[string]models.FormProperty{
+			"spec": {
+				Type: "object",
+				Properties: map[string]models.FormProperty{
+					"replicas": {Type: "integer"},
+					"name":     {Type: "string"},
+				},
+			},
+		},
+	}
+
+	graph := &parser.ResourceGraph{
+		Resources: []parser.ResourceDefinition{
+			{
+				ID:           "deployment",
+				Kind:         "Deployment",
+				IsTemplate:   true,
+				IsCollection: false,
+			},
+		},
+	}
+
+	addCollectionAnnotations(schema, graph)
+
+	for name, prop := range schema.Properties["spec"].Properties {
+		if prop.CollectionAnnotation != nil {
+			t.Errorf("expected no CollectionAnnotation on %q, got %+v", name, prop.CollectionAnnotation)
+		}
+	}
+}
+
+// TestAddCollectionAnnotations_NestedPath verifies that forEach referencing a nested
+// schema field (spec.config.items) correctly navigates the property tree (AC5).
+func TestAddCollectionAnnotations_NestedPath(t *testing.T) {
+	schema := &models.FormSchema{
+		Properties: map[string]models.FormProperty{
+			"spec": {
+				Type: "object",
+				Properties: map[string]models.FormProperty{
+					"config": {
+						Type: "object",
+						Properties: map[string]models.FormProperty{
+							"items": {
+								Type:  "array",
+								Items: &models.FormProperty{Type: "object"},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	graph := &parser.ResourceGraph{
+		Resources: []parser.ResourceDefinition{
+			{
+				ID:           "itemPods",
+				Kind:         "Pod",
+				IsCollection: true,
+				ForEach: []parser.Iterator{
+					{
+						Name:           "item",
+						Expression:     "${schema.spec.config.items}",
+						Source:         parser.SchemaSource,
+						SourcePath:     "spec.config.items",
+						DimensionIndex: 0,
+					},
+				},
+			},
+		},
+	}
+
+	addCollectionAnnotations(schema, graph)
+
+	itemsProp := schema.Properties["spec"].Properties["config"].Properties["items"]
+	if itemsProp.CollectionAnnotation == nil {
+		t.Fatal("expected CollectionAnnotation on spec.config.items, got nil")
+	}
+	if itemsProp.CollectionAnnotation.ResourceID != "itemPods" {
+		t.Errorf("ResourceID = %q, want %q", itemsProp.CollectionAnnotation.ResourceID, "itemPods")
+	}
+	if itemsProp.CollectionAnnotation.IteratorVar != "item" {
+		t.Errorf("IteratorVar = %q, want %q", itemsProp.CollectionAnnotation.IteratorVar, "item")
+	}
+}
+
+// TestAddCollectionAnnotations_InvalidPath_GracefulDegradation verifies that a forEach
+// referencing a nonexistent schema field does not error and adds no annotation (AC6).
+func TestAddCollectionAnnotations_InvalidPath_GracefulDegradation(t *testing.T) {
+	schema := &models.FormSchema{
+		Properties: map[string]models.FormProperty{
+			"spec": {
+				Type: "object",
+				Properties: map[string]models.FormProperty{
+					"name": {Type: "string"},
+				},
+			},
+		},
+	}
+
+	graph := &parser.ResourceGraph{
+		Resources: []parser.ResourceDefinition{
+			{
+				ID:           "workerPods",
+				Kind:         "Pod",
+				IsCollection: true,
+				ForEach: []parser.Iterator{
+					{
+						Name:           "worker",
+						Expression:     "${schema.spec.nonexistent}",
+						Source:         parser.SchemaSource,
+						SourcePath:     "spec.nonexistent",
+						DimensionIndex: 0,
+					},
+				},
+			},
+		},
+	}
+
+	// Should not panic or error
+	addCollectionAnnotations(schema, graph)
+
+	nameProp := schema.Properties["spec"].Properties["name"]
+	if nameProp.CollectionAnnotation != nil {
+		t.Error("expected no CollectionAnnotation when path doesn't exist")
+	}
+}
+
+// TestAddCollectionAnnotations_MultipleCollections verifies that two collection resources
+// each with different schema fields are both annotated independently (AC7).
+func TestAddCollectionAnnotations_MultipleCollections(t *testing.T) {
+	schema := &models.FormSchema{
+		Properties: map[string]models.FormProperty{
+			"spec": {
+				Type: "object",
+				Properties: map[string]models.FormProperty{
+					"workers": {
+						Type:  "array",
+						Items: &models.FormProperty{Type: "object"},
+					},
+					"services": {
+						Type:  "array",
+						Items: &models.FormProperty{Type: "object"},
+					},
+				},
+			},
+		},
+	}
+
+	graph := &parser.ResourceGraph{
+		Resources: []parser.ResourceDefinition{
+			{
+				ID:           "workerPods",
+				Kind:         "Pod",
+				IsCollection: true,
+				ForEach: []parser.Iterator{
+					{
+						Name:           "worker",
+						Expression:     "${schema.spec.workers}",
+						Source:         parser.SchemaSource,
+						SourcePath:     "spec.workers",
+						DimensionIndex: 0,
+					},
+				},
+			},
+			{
+				ID:           "serviceLBs",
+				Kind:         "Service",
+				IsCollection: true,
+				ForEach: []parser.Iterator{
+					{
+						Name:           "svc",
+						Expression:     "${schema.spec.services}",
+						Source:         parser.SchemaSource,
+						SourcePath:     "spec.services",
+						DimensionIndex: 0,
+					},
+				},
+			},
+		},
+	}
+
+	addCollectionAnnotations(schema, graph)
+
+	workersProp := schema.Properties["spec"].Properties["workers"]
+	if workersProp.CollectionAnnotation == nil {
+		t.Fatal("expected CollectionAnnotation on spec.workers, got nil")
+	}
+	if workersProp.CollectionAnnotation.ResourceID != "workerPods" {
+		t.Errorf("workers ResourceID = %q, want %q", workersProp.CollectionAnnotation.ResourceID, "workerPods")
+	}
+
+	servicesProp := schema.Properties["spec"].Properties["services"]
+	if servicesProp.CollectionAnnotation == nil {
+		t.Fatal("expected CollectionAnnotation on spec.services, got nil")
+	}
+	if servicesProp.CollectionAnnotation.ResourceID != "serviceLBs" {
+		t.Errorf("services ResourceID = %q, want %q", servicesProp.CollectionAnnotation.ResourceID, "serviceLBs")
+	}
+}
+
+// TestAddCollectionAnnotations_MixedSources verifies that a resource with both schema-sourced
+// and resource-sourced iterators only annotates the schema-sourced field, while dimensions
+// reflects the total iterator count (both sources).
+func TestAddCollectionAnnotations_MixedSources(t *testing.T) {
+	schema := &models.FormSchema{
+		Properties: map[string]models.FormProperty{
+			"spec": {
+				Type: "object",
+				Properties: map[string]models.FormProperty{
+					"workers": {
+						Type:  "array",
+						Items: &models.FormProperty{Type: "object"},
+					},
+				},
+			},
+		},
+	}
+
+	graph := &parser.ResourceGraph{
+		Resources: []parser.ResourceDefinition{
+			{
+				ID:           "workerPods",
+				Kind:         "Pod",
+				IsCollection: true,
+				ForEach: []parser.Iterator{
+					{
+						Name:           "worker",
+						Expression:     "${schema.spec.workers}",
+						Source:         parser.SchemaSource,
+						SourcePath:     "spec.workers",
+						DimensionIndex: 0,
+					},
+					{
+						Name:           "region",
+						Expression:     "${cluster.status.regions}",
+						Source:         parser.ResourceSource,
+						SourcePath:     "status.regions",
+						DimensionIndex: 1,
+					},
+				},
+			},
+		},
+	}
+
+	addCollectionAnnotations(schema, graph)
+
+	workersProp := schema.Properties["spec"].Properties["workers"]
+	if workersProp.CollectionAnnotation == nil {
+		t.Fatal("expected CollectionAnnotation on spec.workers for schema-sourced iterator")
+	}
+	if workersProp.CollectionAnnotation.Dimensions != 2 {
+		t.Errorf("Dimensions = %d, want 2 (total iterators including resource-sourced)", workersProp.CollectionAnnotation.Dimensions)
+	}
+	if workersProp.CollectionAnnotation.DimensionIndex != 0 {
+		t.Errorf("DimensionIndex = %d, want 0", workersProp.CollectionAnnotation.DimensionIndex)
+	}
+}
+
+// TestEnrichSchemaFromResources_CollectionAnnotations verifies that collection annotations
+// are wired into the EnrichSchemaFromResources pipeline and appear in the output.
+func TestEnrichSchemaFromResources_CollectionAnnotations(t *testing.T) {
+	schema := &models.FormSchema{
+		Properties: map[string]models.FormProperty{
+			"spec": {
+				Type: "object",
+				Properties: map[string]models.FormProperty{
+					"workers": {
+						Type:  "array",
+						Items: &models.FormProperty{Type: "object"},
+					},
+				},
+			},
+		},
+	}
+
+	graph := &parser.ResourceGraph{
+		Resources: []parser.ResourceDefinition{
+			{
+				ID:           "workerPods",
+				Kind:         "Pod",
+				IsCollection: true,
+				ForEach: []parser.Iterator{
+					{
+						Name:           "worker",
+						Expression:     "${schema.spec.workers}",
+						Source:         parser.SchemaSource,
+						SourcePath:     "spec.workers",
+						DimensionIndex: 0,
+					},
+				},
+			},
+		},
+	}
+
+	err := EnrichSchemaFromResources(schema, graph)
+	if err != nil {
+		t.Fatalf("EnrichSchemaFromResources returned error: %v", err)
+	}
+
+	workersProp := schema.Properties["spec"].Properties["workers"]
+	if workersProp.CollectionAnnotation == nil {
+		t.Fatal("expected CollectionAnnotation on spec.workers after full enrichment pipeline, got nil")
+	}
+	if workersProp.CollectionAnnotation.ResourceID != "workerPods" {
+		t.Errorf("ResourceID = %q, want %q", workersProp.CollectionAnnotation.ResourceID, "workerPods")
 	}
 }

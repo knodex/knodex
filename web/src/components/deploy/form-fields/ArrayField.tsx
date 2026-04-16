@@ -1,8 +1,8 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useState } from "react";
-import { ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { ChevronDown, ChevronRight, Plus, Trash2 } from "@/lib/icons";
 import type { ArrayFieldProps } from "./types";
 import { NestedObjectEditor } from "./NestedObjectEditor";
 
@@ -10,7 +10,7 @@ import { NestedObjectEditor } from "./NestedObjectEditor";
  * Array field with add/remove functionality.
  * Supports arrays of simple types (string, number) and objects.
  */
-export function ArrayField({
+export const ArrayField = memo(function ArrayField({
   name,
   label,
   description,
@@ -28,7 +28,13 @@ export function ArrayField({
     items?.type === "number" ||
     items?.type === "integer";
 
-  const addItem = () => {
+  // Use ref so callbacks read current value without recreating on every change
+  const valueRef = useRef(value);
+  useEffect(() => {
+    valueRef.current = value;
+  });
+
+  const addItem = useCallback(() => {
     const newItem = isSimpleType
       ? items?.type === "string"
         ? ""
@@ -36,18 +42,18 @@ export function ArrayField({
       : items?.properties
         ? Object.fromEntries(Object.keys(items.properties).map((k) => [k, ""]))
         : "";
-    onChange([...value, newItem]);
-  };
+    onChange([...valueRef.current, newItem]);
+  }, [isSimpleType, items, onChange]);
 
-  const removeItem = (index: number) => {
-    onChange(value.filter((_, i) => i !== index));
-  };
+  const removeItem = useCallback((index: number) => {
+    onChange(valueRef.current.filter((_, i) => i !== index));
+  }, [onChange]);
 
-  const updateItem = (index: number, newValue: unknown) => {
-    const newArray = [...value];
+  const updateItem = useCallback((index: number, newValue: unknown) => {
+    const newArray = [...valueRef.current];
     newArray[index] = newValue;
     onChange(newArray);
-  };
+  }, [onChange]);
 
   return (
     <div className="space-y-2">
@@ -130,4 +136,4 @@ export function ArrayField({
       {error && <p className="text-xs text-destructive ml-6">{error}</p>}
     </div>
   );
-}
+});

@@ -10,6 +10,10 @@ rules:
   - apiGroups: ["kro.run"]
     resources: ["resourcegraphdefinitions"]
     verbs: ["get", "list", "watch"]
+  # Watch GraphRevisions (KRO internal API for RGD revision history)
+  - apiGroups: ["internal.kro.run"]
+    resources: ["graphrevisions"]
+    verbs: ["get", "list", "watch"]
   # Read CRDs to extract schemas and install RBAC CRDs
   - apiGroups: ["apiextensions.k8s.io"]
     resources: ["customresourcedefinitions"]

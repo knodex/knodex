@@ -3,7 +3,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Boxes } from 'lucide-react';
+import { Boxes } from '@/lib/icons';
 import { useUserStore } from '@/stores/userStore';
 import { exchangeAuthCode } from '@/api/auth';
 import { logger } from '@/lib/logger';

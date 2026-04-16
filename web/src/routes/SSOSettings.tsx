@@ -1,8 +1,8 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useState } from "react";
-import { KeyRound, ArrowLeft, Plus, ShieldAlert, Pencil, Trash2, Loader2, AlertTriangle } from "lucide-react";
+import { useState, useCallback, useMemo } from "react";
+import { KeyRound, ArrowLeft, Plus, ShieldAlert, Pencil, Trash2, Loader2, AlertTriangle } from "@/lib/icons";
 import { Link } from "react-router-dom";
 import { AxiosError } from "axios";
 import { toast } from "sonner";
@@ -86,34 +86,34 @@ export function SSOSettings() {
   const updateMutation = useUpdateSSOProvider();
   const deleteMutation = useDeleteSSOProvider();
 
-  const providerList = providers || [];
+  const providerList = useMemo(() => providers || [], [providers]);
 
   // --- Navigation ---
 
-  const openCreateForm = () => {
+  const openCreateForm = useCallback(() => {
     setEditingProvider(null);
     setFormData(emptyForm());
     setFormErrors({});
     setView("form");
-  };
+  }, []);
 
-  const openEditForm = (provider: SSOProvider) => {
+  const openEditForm = useCallback((provider: SSOProvider) => {
     setEditingProvider(provider);
     setFormData(providerToForm(provider));
     setFormErrors({});
     setView("form");
-  };
+  }, []);
 
-  const closeForm = () => {
+  const closeForm = useCallback(() => {
     setView("list");
     setEditingProvider(null);
     setFormData(emptyForm());
     setFormErrors({});
-  };
+  }, []);
 
   // --- Validation ---
 
-  const validateForm = (isCreate: boolean): Record<string, string> => {
+  const validateForm = useCallback((isCreate: boolean): Record<string, string> => {
     const errors: Record<string, string> = {};
     const nameRegex = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
 
@@ -159,11 +159,11 @@ export function SSOSettings() {
     }
 
     return errors;
-  };
+  }, [formData]);
 
   // --- Submit ---
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
     const isCreate = !editingProvider;
     const errors = validateForm(isCreate);
@@ -221,11 +221,11 @@ export function SSOSettings() {
         }
       );
     }
-  };
+  }, [editingProvider, formData, validateForm, createMutation, updateMutation, closeForm]);
 
   // --- Delete ---
 
-  const handleDeleteConfirm = async () => {
+  const handleDeleteConfirm = useCallback(async () => {
     if (!deletingProvider) return;
     await deleteMutation.mutateAsync(deletingProvider.name, {
       onSuccess: () => {
@@ -240,11 +240,13 @@ export function SSOSettings() {
         toast.error(msg);
       },
     });
-  };
+  }, [deletingProvider, deleteMutation]);
+
+  const handleDeleteCancel = useCallback(() => setDeletingProvider(null), []);
 
   // --- 403 Access Denied ---
 
-  const is403Error = error && (error as AxiosError)?.response?.status === 403;
+  const is403Error = useMemo(() => error && (error as AxiosError)?.response?.status === 403, [error]);
 
   if (is403Error) {
     return (
@@ -584,7 +586,7 @@ export function SSOSettings() {
           provider={deletingProvider}
           isOpen={!!deletingProvider}
           onConfirm={handleDeleteConfirm}
-          onCancel={() => setDeletingProvider(null)}
+          onCancel={handleDeleteCancel}
           isDeleting={deleteMutation.isPending}
           error={deleteMutation.error}
         />

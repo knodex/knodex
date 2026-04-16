@@ -178,9 +178,9 @@ func TestScopeObjectToProject(t *testing.T) {
 			expected: []string{
 				"projects/my-project",
 				"instances/my-project/*",
-				"repositories/my-project/*",
-				"applications/my-project/*",
 				"secrets/my-project/*",
+				"repositories/my-project/*",
+				"compliance/my-project/*",
 				"rgds/*",
 			},
 		},
@@ -191,9 +191,9 @@ func TestScopeObjectToProject(t *testing.T) {
 			expected: []string{
 				"projects/my-project",
 				"instances/my-project/*",
-				"repositories/my-project/*",
-				"applications/my-project/*",
 				"secrets/my-project/*",
+				"repositories/my-project/*",
+				"compliance/my-project/*",
 				"rgds/*",
 			},
 		},
@@ -210,12 +210,6 @@ func TestScopeObjectToProject(t *testing.T) {
 			projectName: "my-project",
 			object:      "repositories/*",
 			expected:    []string{"repositories/my-project/*"},
-		},
-		{
-			name:        "applications wildcard scoped to project",
-			projectName: "my-project",
-			object:      "applications/*",
-			expected:    []string{"applications/my-project/*"},
 		},
 		{
 			name:        "secrets wildcard scoped to project",
@@ -258,9 +252,9 @@ func TestScopeObjectToProject(t *testing.T) {
 			expected: []string{
 				"projects/",
 				"instances//*",
-				"repositories//*",
-				"applications//*",
 				"secrets//*",
+				"repositories//*",
+				"compliance//*",
 				"rgds/*",
 			},
 		},
@@ -356,13 +350,6 @@ func TestPolicyEnforcer_WildcardResourceType_RepositoryAccess(t *testing.T) {
 			fmt.Sprintf("projects/%s", projectName), "update")
 		require.NoError(t, err)
 		assert.True(t, allowed, "platform-admin should have project update access")
-	})
-
-	t.Run("platform-admin application access", func(t *testing.T) {
-		allowed, err := pe.CanAccess(ctx, "user:test-admin",
-			fmt.Sprintf("applications/%s/my-app", projectName), "create")
-		require.NoError(t, err)
-		assert.True(t, allowed, "platform-admin should have application create access")
 	})
 
 	t.Run("platform-admin rgd access", func(t *testing.T) {

@@ -30,7 +30,6 @@ func setupTestServer(t *testing.T) (*httptest.Server, *watcher.RGDCache) {
 			Name:        "postgres-cluster",
 			Namespace:   "default",
 			Description: "PostgreSQL cluster with high availability",
-			Version:     "1.0.0",
 			Tags:        []string{"database", "production"},
 			Category:    "database",
 			Labels:      map[string]string{"tier": "backend"},
@@ -42,7 +41,6 @@ func setupTestServer(t *testing.T) (*httptest.Server, *watcher.RGDCache) {
 			Name:        "redis-cache",
 			Namespace:   "default",
 			Description: "Redis cache for session storage",
-			Version:     "2.0.0",
 			Tags:        []string{"cache", "production"},
 			Category:    "cache",
 			Labels:      map[string]string{"tier": "backend"},
@@ -54,7 +52,6 @@ func setupTestServer(t *testing.T) (*httptest.Server, *watcher.RGDCache) {
 			Name:        "mongodb",
 			Namespace:   "staging",
 			Description: "MongoDB document database",
-			Version:     "1.5.0",
 			Tags:        []string{"database", "staging"},
 			Category:    "database",
 			Labels:      map[string]string{},
@@ -75,10 +72,15 @@ func setupTestServer(t *testing.T) (*httptest.Server, *watcher.RGDCache) {
 	checker := health.NewChecker(nil, nil, w)
 
 	// Create router (nil for instanceTracker, schema extractor, and wsHub in tests)
-	router := api.NewRouterWithConfig(checker, w, nil, nil, api.RouterConfig{})
+	routerResult := api.NewRouterWithConfig(checker, w, nil, nil, api.RouterConfig{})
+	t.Cleanup(func() {
+		for _, rl := range routerResult.UserRateLimiters {
+			rl.Stop()
+		}
+	})
 
 	// Create test server
-	server := httptest.NewServer(router)
+	server := httptest.NewServer(routerResult.Handler)
 
 	return server, cache
 }

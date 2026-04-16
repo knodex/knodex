@@ -28,7 +28,7 @@ test.describe('Global Admin - Repository Configuration', () => {
 
   test('AC-REPO-01: Global Admin can configure GitHub repository', async ({ page }) => {
     // Navigate to repositories settings page
-    await page.goto(`/settings/repositories`);
+    await page.goto(`/repositories`);
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(2000); // Allow data to load
 
@@ -38,7 +38,7 @@ test.describe('Global Admin - Repository Configuration', () => {
     });
 
     // Verify page loaded - should see "Repositories" heading
-    const pageTitle = page.locator('h2:has-text("Repositories")');
+    const pageTitle = page.locator('h1:has-text("Repositories")');
     await expect(pageTitle).toBeVisible({ timeout: 10000 });
 
     // Click Add Repository button (Global Admin should see it)
@@ -109,7 +109,7 @@ test.describe('Global Admin - Repository Configuration', () => {
 
   test('AC-REPO-02: Global Admin can test repository connection (returns success/failure)', async ({ page }) => {
     // Navigate to repositories settings page
-    await page.goto(`/settings/repositories`);
+    await page.goto(`/repositories`);
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(2000); // Allow data to load
 
@@ -181,7 +181,7 @@ test.describe('Global Admin - Repository Configuration', () => {
 
   test('AC-REPO-03: Global Admin can update/delete repository configurations', async ({ page }) => {
     // Navigate to repositories settings page
-    await page.goto(`/settings/repositories`);
+    await page.goto(`/repositories`);
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(2000); // Allow data to load
 

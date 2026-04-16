@@ -11,8 +11,11 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 
+	"github.com/knodex/knodex/server/internal/api/response"
 	"github.com/knodex/knodex/server/internal/rbac"
+	"github.com/knodex/knodex/server/internal/util/sanitize"
 )
 
 // DeploymentValidatorConfig holds configuration for deployment validation middleware
@@ -39,8 +42,8 @@ type DeploymentRequest struct {
 	DeploymentMode string `json:"deploymentMode,omitempty"`
 }
 
-// ValidationError represents a deployment policy validation failure
-type ValidationError struct {
+// validationError represents a deployment policy validation failure
+type validationError struct {
 	Code    string   `json:"code"`
 	Message string   `json:"message"`
 	Details string   `json:"details"`
@@ -94,11 +97,7 @@ func DeploymentValidator(config DeploymentValidatorConfig) func(http.Handler) ht
 			// Read and restore request body for downstream handler
 			bodyBytes, err := io.ReadAll(r.Body)
 			if err != nil {
-				writeValidationError(w, http.StatusBadRequest, &ValidationError{
-					Code:    "INVALID_REQUEST",
-					Message: "Failed to read request body",
-					Details: err.Error(),
-				})
+				response.BadRequest(w, "Failed to read request body", nil)
 				return
 			}
 			// Restore the body for downstream handlers
@@ -107,40 +106,45 @@ func DeploymentValidator(config DeploymentValidatorConfig) func(http.Handler) ht
 			// Parse deployment request
 			var req DeploymentRequest
 			if err := json.Unmarshal(bodyBytes, &req); err != nil {
-				writeValidationError(w, http.StatusBadRequest, &ValidationError{
-					Code:    "INVALID_REQUEST",
-					Message: "Invalid request body",
-					Details: err.Error(),
-				})
+				response.BadRequest(w, "Invalid request body", nil)
 				return
 			}
 
-			// If no projectId provided, skip project policy validation
-			// The handler will use permission checks without project policy constraints
+			// K8s-aligned routes (STORY-327): namespace comes from path parameter.
+			// Path namespace takes precedence over body namespace.
+			// Note: The handler also extracts path namespace independently because
+			// this middleware operates on a local copy of req — the original body
+			// bytes (forwarded via r.Body) are unchanged.
+			if pathNS := r.PathValue("namespace"); pathNS != "" {
+				req.Namespace = pathNS
+			}
+
+			// Security: projectId is required — without it, all project policy
+			// validation (Casbin permission check, destination namespace whitelist)
+			// would be skipped. CasbinAuthz middleware is also bypassed for instance
+			// creation, so this is the sole authorization checkpoint.
+			req.ProjectID = strings.TrimSpace(req.ProjectID)
 			if req.ProjectID == "" {
-				logger.Debug("no projectId in request, skipping project policy validation",
-					slog.String("name", req.Name),
-					slog.String("namespace", req.Namespace),
-				)
-				next.ServeHTTP(w, r)
+				response.BadRequest(w, "projectId is required for instance deployment", nil)
+				return
+			}
+			if !sanitize.IsValidDNS1123Label(req.ProjectID) {
+				response.BadRequest(w, "projectId must be a valid DNS-1123 label", nil)
 				return
 			}
 
 			// Get user context (should be set by Auth middleware)
 			userCtx, ok := GetUserContext(r)
 			if !ok {
-				writeValidationError(w, http.StatusUnauthorized, &ValidationError{
-					Code:    "UNAUTHORIZED",
-					Message: "Authentication required",
-					Details: "User context not found in request",
-				})
+				response.Unauthorized(w, "Authentication required")
 				return
 			}
 
 			// Users with "*, *" permission can bypass project policy validation
+			// Uses CanAccessWithGroups to also detect admin via OIDC group → role mapping
 			hasAdminPermission := false
 			if config.PolicyEnforcer != nil {
-				if canAccess, err := config.PolicyEnforcer.CanAccess(r.Context(), userCtx.UserID, "*", "*"); err == nil {
+				if canAccess, err := config.PolicyEnforcer.CanAccessWithGroups(r.Context(), userCtx.UserID, userCtx.Groups, "*", "*"); err == nil {
 					hasAdminPermission = canAccess
 				}
 			}
@@ -160,11 +164,7 @@ func DeploymentValidator(config DeploymentValidatorConfig) func(http.Handler) ht
 							slog.String("user_id", userCtx.UserID),
 							slog.Any("error", err),
 						)
-						writeValidationError(w, http.StatusNotFound, &ValidationError{
-							Code:    ErrCodeProjectNotFound,
-							Message: fmt.Sprintf("Project '%s' not found", req.ProjectID),
-							Details: "The specified project does not exist or has been deleted.",
-						})
+						response.NotFound(w, "project", req.ProjectID)
 						return
 					}
 					// Store validated project in context for handler
@@ -176,16 +176,19 @@ func DeploymentValidator(config DeploymentValidatorConfig) func(http.Handler) ht
 			}
 
 			// Validate deployment request against project policies
-
-			validationErr := validateDeployment(r.Context(), config, userCtx.UserID, userCtx.Groups, &req, logger)
-			if validationErr != nil {
+			valErr := validateDeployment(r.Context(), config, userCtx.UserID, userCtx.Groups, &req, logger)
+			if valErr != nil {
 				logger.Warn("deployment validation failed",
 					slog.String("user_id", userCtx.UserID),
 					slog.String("project_id", req.ProjectID),
-					slog.String("code", validationErr.Code),
-					slog.String("message", validationErr.Message),
+					slog.String("code", valErr.Code),
+					slog.String("message", valErr.Message),
 				)
-				writeValidationError(w, http.StatusForbidden, validationErr)
+				details := map[string]string{"details": valErr.Details}
+				if len(valErr.Allowed) > 0 {
+					details["allowed"] = strings.Join(valErr.Allowed, ", ")
+				}
+				response.WriteError(w, http.StatusForbidden, response.ErrorCode(valErr.Code), valErr.Message, details)
 				return
 			}
 
@@ -221,11 +224,11 @@ func validateDeployment(
 	groups []string,
 	req *DeploymentRequest,
 	logger *slog.Logger,
-) *ValidationError {
+) *validationError {
 	// 1. Validate Project exists
 	if config.ProjectService == nil {
 		logger.Error("project service not configured")
-		return &ValidationError{
+		return &validationError{
 			Code:    "INTERNAL_ERROR",
 			Message: "Project service not available",
 			Details: "The project service is not configured.",
@@ -239,7 +242,7 @@ func validateDeployment(
 			slog.String("user_id", userID),
 			slog.Any("error", err),
 		)
-		return &ValidationError{
+		return &validationError{
 			Code:    ErrCodeProjectNotFound,
 			Message: fmt.Sprintf("Project '%s' not found", req.ProjectID),
 			Details: "The specified project does not exist or has been deleted.",
@@ -250,12 +253,17 @@ func validateDeployment(
 	// NOTE: Uses CanAccessWithGroups to check both direct user permissions AND OIDC group permissions
 	// This enables project-scoped roles (e.g., proj:proj-azuread-staging:admin) to grant deploy access
 	//
-	// Permission check uses project-scoped object format: "instances/{projectId}/*"
-	// - Built-in roles (platform-admin, developer) have policy "instances/*" which matches via wildcard
-	// - Project roles have policy "instances/{projectId}/*" which matches exactly
-	// This single check handles both role types through Casbin's wildcard matching.
+	// Permission check uses namespace-scoped object format.
+	// For namespace-scoped instances: "instances/{projectId}/{namespace}/*"
+	// For cluster-scoped instances: "instances/{projectId}/*" (no namespace dimension)
+	// This enables namespace-scoped Casbin policies (roles[].destinations) to work correctly.
 	if config.PolicyEnforcer != nil {
-		object := fmt.Sprintf("instances/%s/*", req.ProjectID)
+		var object string
+		if req.Namespace != "" {
+			object = fmt.Sprintf("instances/%s/%s/*", req.ProjectID, req.Namespace)
+		} else {
+			object = fmt.Sprintf("instances/%s/*", req.ProjectID)
+		}
 		action := "create"
 
 		canDeploy, err := config.PolicyEnforcer.CanAccessWithGroups(ctx, userID, groups, object, action)
@@ -266,7 +274,7 @@ func validateDeployment(
 				slog.String("object", object),
 				slog.Any("error", err),
 			)
-			return &ValidationError{
+			return &validationError{
 				Code:    "INTERNAL_ERROR",
 				Message: "Failed to check permissions",
 				Details: err.Error(),
@@ -280,7 +288,7 @@ func validateDeployment(
 				slog.String("object", object),
 				slog.String("action", action),
 			)
-			return &ValidationError{
+			return &validationError{
 				Code:    ErrCodePermissionDenied,
 				Message: "You don't have permission to deploy instances",
 				Details: fmt.Sprintf("Required permission: 'create' on instances for project '%s'", req.ProjectID),
@@ -308,29 +316,17 @@ func validateDeployment(
 				allowedDestStr[i] = fmt.Sprintf("namespace:%s", d.Namespace)
 			}
 
-			return &ValidationError{
+			return &validationError{
 				Code:    ErrCodeDestinationNotAllowed,
 				Message: fmt.Sprintf("Destination namespace '%s' is not allowed by project '%s'", req.Namespace, req.ProjectID),
 				Details: "This destination does not match any allowed destination patterns.",
 				Allowed: allowedDestStr,
 			}
 		}
+		// Note: role-scoped destination enforcement is handled by Casbin namespace-scoped
+		// policies (roles[].destinations). No second authorization layer needed here.
 	}
 
 	// All validations passed
 	return nil
-}
-
-// writeValidationError writes a JSON validation error response
-func writeValidationError(w http.ResponseWriter, statusCode int, validationErr *ValidationError) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusCode)
-
-	response := map[string]interface{}{
-		"error": validationErr,
-	}
-
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		slog.Error("failed to write validation error response", "error", err)
-	}
 }

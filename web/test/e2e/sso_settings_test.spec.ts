@@ -48,7 +48,7 @@ test.describe('Global Admin - SSO Settings Management', () => {
     await page.waitForLoadState('networkidle', { timeout: 15000 });
 
     // Verify SSO Providers page loads
-    const ssoTitle = page.locator('h2:has-text("SSO Providers")');
+    const ssoTitle = page.locator('h1:has-text("SSO"), h2:has-text("SSO Providers")');
     await expect(ssoTitle).toBeVisible({ timeout: 10000 });
 
     await page.screenshot({

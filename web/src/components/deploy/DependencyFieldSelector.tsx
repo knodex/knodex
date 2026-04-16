@@ -3,7 +3,7 @@
 
 import { useMemo } from "react";
 import { useFormContext, Controller } from "react-hook-form";
-import { Loader2, Link, AlertCircle, Database } from "lucide-react";
+import { Loader2, Link, AlertCircle, Database } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 
 /**

@@ -1,9 +1,11 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { ExternalLink, Loader2, AlertCircle, RefreshCw } from "lucide-react";
+import { useMemo } from "react";
+import { ExternalLink, Loader2, AlertCircle, RefreshCw, ArrowRight } from "@/lib/icons";
+import { Link } from "react-router-dom";
 import { useFormContext } from "react-hook-form";
-import { useK8sResources } from "@/hooks/useRGDs";
+import { useK8sResources, useRGDList } from "@/hooks/useRGDs";
 import { cn } from "@/lib/utils";
 import {
   Tooltip,
@@ -17,6 +19,8 @@ interface ExternalRefSelectorProps {
   kind: string;
   /** The deployment namespace selected at the top of the deploy form */
   deploymentNamespace?: string;
+  /** When true, restrict resource listing to the deployment namespace. When false, list across all namespaces. */
+  useInstanceNamespace?: boolean;
   /** Maps resource attributes to sub-field names (e.g., { name: "name", namespace: "namespace" }) */
   autoFillFields: Record<string, string>;
   label: string;
@@ -35,6 +39,7 @@ export function ExternalRefSelector({
   apiVersion,
   kind,
   deploymentNamespace,
+  useInstanceNamespace = true,
   autoFillFields,
   label,
   description,
@@ -43,8 +48,11 @@ export function ExternalRefSelector({
 }: ExternalRefSelectorProps) {
   const { setValue, watch } = useFormContext();
 
-  // Always use the deployment namespace for filtering
-  const effectiveNamespace = deploymentNamespace;
+  // When useInstanceNamespace is true (default), filter to the deployment namespace.
+  // When false, query all namespaces — the resource may live in a shared namespace
+  // different from where the instance is deployed (e.g., kubeconfig in eng-shared).
+  const effectiveNamespace = useInstanceNamespace ? deploymentNamespace : undefined;
+  const isReady = useInstanceNamespace ? !!deploymentNamespace : true;
 
   // Read the current name value from the form
   const currentName = (watch(`${name}.${autoFillFields.name}`) as string) || "";
@@ -56,7 +64,7 @@ export function ExternalRefSelector({
     error: fetchError,
     refetch,
     isFetching,
-  } = useK8sResources(apiVersion, kind, effectiveNamespace, !!effectiveNamespace);
+  } = useK8sResources(apiVersion, kind, effectiveNamespace, isReady);
 
   // Handle selection: auto-fill both name and namespace
   const handleChange = (selectedName: string) => {
@@ -69,12 +77,38 @@ export function ExternalRefSelector({
 
     const resource = resources?.find((r) => r.name === selectedName);
     if (!resource) {
-      console.warn(`ExternalRefSelector: resource "${selectedName}" not found in loaded resources`);
+      if (import.meta.env.DEV) {
+        console.warn(`ExternalRefSelector: resource "${selectedName}" not found in loaded resources`);
+      }
       return;
     }
     setValue(`${name}.${autoFillFields.name}`, resource.name);
     setValue(`${name}.${autoFillFields.namespace}`, resource.namespace);
   };
+
+  // Only resolve the required Kind to an RGD when there are no resources to show the "Deploy one now" link
+  const isEmpty = !isLoading && !isError && isReady && (!resources || resources.length === 0);
+  // Extract API group from apiVersion (e.g., "containerservice.azure.com/v1" → "containerservice.azure.com")
+  const producesGroup = useMemo(() => {
+    if (!apiVersion) return undefined;
+    const parts = apiVersion.split("/");
+    // Core group (e.g., "v1") has no group prefix
+    return parts.length >= 2 ? parts[0] : undefined;
+  }, [apiVersion]);
+  const { data: matchingRgds, isLoading: isResolvingRgd, isError: isRgdError } = useRGDList(
+    isEmpty ? { producesKind: kind, producesGroup, pageSize: 10 } : undefined
+  );
+
+  // Compute the deploy link URL (only relevant when empty)
+  const deployUrl = useMemo(() => {
+    if (!isEmpty) return null;
+    const items = matchingRgds?.items;
+    if (!items || items.length === 0) return null;
+    if (items.length === 1) {
+      return `/catalog/${encodeURIComponent(items[0].name)}`;
+    }
+    return `/catalog?producesKind=${encodeURIComponent(kind)}`;
+  }, [isEmpty, matchingRgds, kind]);
 
   // Check if error is a 403 Forbidden
   const isForbiddenError =
@@ -106,7 +140,7 @@ export function ExternalRefSelector({
           id={name}
           value={currentName}
           onChange={(e) => handleChange(e.target.value)}
-          disabled={isLoading || isError || !effectiveNamespace}
+          disabled={isLoading || isError || !isReady}
           data-testid={`input-${name}`}
           className={cn(
             "w-full px-3 py-2 text-sm rounded-md border bg-background appearance-none",
@@ -115,7 +149,7 @@ export function ExternalRefSelector({
             error ? "border-destructive" : "border-border"
           )}
         >
-          {!effectiveNamespace ? (
+          {!isReady ? (
             <option value="">Select a deployment namespace to view available {kind}s</option>
           ) : isLoading ? (
             <option value="">Loading {kind}s...</option>
@@ -123,7 +157,7 @@ export function ExternalRefSelector({
             <option value="">Failed to load {kind}s</option>
           ) : !resources || resources.length === 0 ? (
             <option value="">
-              No {kind}s found in {effectiveNamespace}
+              No {kind}s found{effectiveNamespace ? ` in ${effectiveNamespace}` : ""}
             </option>
           ) : (
             <>
@@ -179,10 +213,32 @@ export function ExternalRefSelector({
       {error && <p className="text-xs text-destructive">{error}</p>}
 
       {/* Resource count hint */}
-      {!isLoading && !isError && resources && resources.length > 0 && effectiveNamespace && (
+      {!isLoading && !isError && resources && resources.length > 0 && isReady && (
         <p className="text-xs text-muted-foreground">
           {resources.length} {kind}
-          {resources.length !== 1 ? "s" : ""} available in {effectiveNamespace}
+          {resources.length !== 1 ? "s" : ""} available{effectiveNamespace ? ` in ${effectiveNamespace}` : ""}
+        </p>
+      )}
+
+      {/* Deploy one now link — shown when no resources found */}
+      {isEmpty && deployUrl && (
+        <Link
+          to={deployUrl}
+          className="inline-flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors"
+          data-testid={`deploy-link-${name}`}
+        >
+          Deploy one now
+          <ArrowRight className="h-3 w-3" />
+        </Link>
+      )}
+      {isEmpty && isResolvingRgd && (
+        <p className="text-xs text-muted-foreground" data-testid={`resolving-rgd-${name}`}>
+          Checking catalog…
+        </p>
+      )}
+      {isEmpty && !deployUrl && !isResolvingRgd && (matchingRgds || isRgdError) && (
+        <p className="text-xs text-muted-foreground" data-testid={`no-rgd-${name}`}>
+          No RGD produces this resource
         </p>
       )}
     </div>

@@ -3,6 +3,8 @@
 
 export { CatalogPage } from "./CatalogPage";
 export { CatalogFilters, type FilterState } from "./CatalogFilters";
+export { CatalogCard } from "./catalog-card";
+export { CatalogCardSkeleton } from "./catalog-card-skeleton";
 export { RGDCard } from "./RGDCard";
 export { RGDCardSkeleton } from "./RGDCardSkeleton";
 export { EmptyState } from "./EmptyState";

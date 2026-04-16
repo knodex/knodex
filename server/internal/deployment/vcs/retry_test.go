@@ -301,39 +301,50 @@ func TestClassifyError(t *testing.T) {
 	}
 }
 
-func TestWaitBeforeRetry(t *testing.T) {
-	// AC-RETRY-01: exponential backoff (1s, 2s, 4s)
-	client := &GitHubClient{
-		retryConfig: RetryConfig{
-			BaseDelay: 10 * time.Millisecond,
-			MaxDelay:  100 * time.Millisecond,
-		},
+func TestDoWithRetry_BackoffJitter(t *testing.T) {
+	// Verify that retries on 5xx use util/retry.DoWithResult (jitter applied).
+	// The delay between attempts should be non-zero (at least BaseDelay*0.75).
+	var attempts int32
+	var lastAttemptTime time.Time
+	var delayBetweenAttempts time.Duration
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		count := atomic.AddInt32(&attempts, 1)
+		now := time.Now()
+		if count > 1 {
+			delayBetweenAttempts = now.Sub(lastAttemptTime)
+		}
+		lastAttemptTime = now
+		if count < 3 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client, err := NewGitHubClient(context.Background(), "test-token", "owner", "repo")
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
 	}
+	client.setBaseURLForTesting(server.URL)
+	client.retryConfig.BaseDelay = 20 * time.Millisecond
+	client.retryConfig.MaxDelay = 200 * time.Millisecond
 
-	tests := []struct {
-		attempt  int
-		expected time.Duration
-	}{
-		{0, 10 * time.Millisecond},  // 2^0 * 10ms = 10ms
-		{1, 20 * time.Millisecond},  // 2^1 * 10ms = 20ms
-		{2, 40 * time.Millisecond},  // 2^2 * 10ms = 40ms
-		{3, 80 * time.Millisecond},  // 2^3 * 10ms = 80ms
-		{4, 100 * time.Millisecond}, // capped at MaxDelay
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL+"/test", nil)
+	resp, err := client.doWithRetry(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
+	defer resp.Body.Close()
 
-	for _, tt := range tests {
-		t.Run("attempt_"+string(rune('0'+tt.attempt)), func(t *testing.T) {
-			start := time.Now()
-			client.waitBeforeRetry(context.Background(), tt.attempt)
-			elapsed := time.Since(start)
-
-			// Allow 50% tolerance for timing
-			minExpected := tt.expected / 2
-			maxExpected := tt.expected * 2
-			if elapsed < minExpected || elapsed > maxExpected {
-				t.Errorf("expected wait around %v, got %v", tt.expected, elapsed)
-			}
-		})
+	if atomic.LoadInt32(&attempts) != 3 {
+		t.Errorf("expected 3 attempts, got %d", atomic.LoadInt32(&attempts))
+	}
+	// Jitter applies ±25%, so minimum delay is BaseDelay * 0.75
+	minDelay := time.Duration(float64(client.retryConfig.BaseDelay) * 0.5) // 50% tolerance for CI
+	if delayBetweenAttempts < minDelay {
+		t.Errorf("expected delay >= %v between retries (jitter), got %v", minDelay, delayBetweenAttempts)
 	}
 }
 

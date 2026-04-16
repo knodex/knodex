@@ -10,12 +10,6 @@ import (
 	"net"
 )
 
-// IsPrivateIP reports whether ip falls within any private or reserved IP range.
-// This is a public wrapper around isPrivateIP for use in custom dialers and external packages.
-func IsPrivateIP(ip net.IP) bool {
-	return isPrivateIP(ip)
-}
-
 // Resolver abstracts hostname resolution for testability.
 type Resolver interface {
 	LookupHost(ctx context.Context, host string) ([]string, error)

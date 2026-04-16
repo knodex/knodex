@@ -13,7 +13,7 @@ export type DeploymentMode = "direct" | "gitops" | "hybrid";
 /**
  * Git push status for tracking async Git operations
  */
-export type GitPushStatus = "not_applicable" | "pending" | "in_progress" | "completed" | "failed";
+export type GitPushStatus = "not_applicable" | "pending" | "in_progress" | "completed" | "success" | "failed";
 
 /**
  * Git information for an instance deployment

@@ -31,7 +31,7 @@ function EnforcementBar({ label, count, total, actionKey }: EnforcementBarProps)
             className={cn(
               "h-3 w-3 rounded-full",
               actionKey === "deny" && "bg-red-500",
-              actionKey === "warn" && "bg-yellow-500",
+              actionKey === "warn" && "bg-amber-500",
               actionKey === "dryrun" && "bg-blue-500"
             )}
           />
@@ -49,7 +49,7 @@ function EnforcementBar({ label, count, total, actionKey }: EnforcementBarProps)
           className={cn(
             "h-full rounded-full transition-all duration-500",
             actionKey === "deny" && "bg-red-500",
-            actionKey === "warn" && "bg-yellow-500",
+            actionKey === "warn" && "bg-amber-500",
             actionKey === "dryrun" && "bg-blue-500"
           )}
           style={{ width: `${percentage}%` }}

@@ -18,6 +18,7 @@ type rgdConfig struct {
 	labels      map[string]string
 	status      string
 	pluralName  string
+	scope       string
 }
 
 // RGDOption configures NewUnstructuredRGD.
@@ -44,6 +45,12 @@ func WithPluralName(p string) RGDOption {
 	return func(c *rgdConfig) { c.pluralName = p }
 }
 
+// WithScope sets spec.schema.crd.spec.names.scope on the unstructured RGD.
+// Used to test IsClusterScoped extraction in unstructuredToRGD.
+func WithScope(s string) RGDOption {
+	return func(c *rgdConfig) { c.scope = s }
+}
+
 // NewUnstructuredRGD creates an *unstructured.Unstructured RGD for K8s-level tests.
 // Default status state is "Active". Use WithStatus("") to omit status.
 func NewUnstructuredRGD(name, namespace string, opts ...RGDOption) *unstructured.Unstructured {
@@ -68,12 +75,18 @@ func NewUnstructuredRGD(name, namespace string, opts ...RGDOption) *unstructured
 		"apiVersion": "example.com/v1",
 		"kind":       "TestResource",
 	}
+	// Build crd.spec.names block when pluralName or scope is set
+	namesBlock := map[string]interface{}{}
 	if cfg.pluralName != "" {
+		namesBlock["plural"] = cfg.pluralName
+	}
+	if cfg.scope != "" {
+		namesBlock["scope"] = cfg.scope
+	}
+	if len(namesBlock) > 0 {
 		schemaMap["crd"] = map[string]interface{}{
 			"spec": map[string]interface{}{
-				"names": map[string]interface{}{
-					"plural": cfg.pluralName,
-				},
+				"names": namesBlock,
 			},
 		}
 	}
@@ -119,15 +132,20 @@ func WithCategory(c string) CatalogRGDOption {
 	return func(r *models.CatalogRGD) { r.Category = c }
 }
 
+// WithCatalogTier sets the catalog tier on the catalog RGD.
+func WithCatalogTier(tier string) CatalogRGDOption {
+	return func(r *models.CatalogRGD) { r.CatalogTier = tier }
+}
+
 // NewCatalogRGD creates a models.CatalogRGD for service-level tests.
 func NewCatalogRGD(name, namespace string, opts ...CatalogRGDOption) models.CatalogRGD {
 	rgd := models.CatalogRGD{
 		Name:        name,
 		Namespace:   namespace,
 		Description: "Test RGD " + name,
-		Version:     "v1.0.0",
 		Tags:        []string{"test"},
 		Category:    "Testing",
+		CatalogTier: "both",
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 	}

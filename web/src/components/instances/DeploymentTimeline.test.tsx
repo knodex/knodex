@@ -14,6 +14,7 @@ vi.mock("@/hooks/useHistory");
 
 const mockTimelineData: TimelineResponse = {
   namespace: "test-ns",
+  kind: "WebApp",
   name: "test-instance",
   timeline: [
     {
@@ -60,49 +61,46 @@ function createWrapper() {
   };
 }
 
+function setupMocks(
+  timelineOverrides?: Partial<ReturnType<typeof useHistoryHooks.useInstanceTimeline>>,
+  exportOverrides?: Partial<ReturnType<typeof useHistoryHooks.useExportHistory>>,
+) {
+  vi.mocked(useHistoryHooks.useInstanceTimeline).mockReturnValue({
+    data: mockTimelineData,
+    isLoading: false,
+    error: null,
+    refetch: vi.fn(),
+    ...timelineOverrides,
+  } as unknown as ReturnType<typeof useHistoryHooks.useInstanceTimeline>);
+
+  vi.mocked(useHistoryHooks.useExportHistory).mockReturnValue({
+    mutateAsync: vi.fn(),
+    isPending: false,
+    isError: false,
+    ...exportOverrides,
+  } as unknown as ReturnType<typeof useHistoryHooks.useExportHistory>);
+}
+
 describe("DeploymentTimeline", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
   it("renders loading state", () => {
-    vi.mocked(useHistoryHooks.useInstanceTimeline).mockReturnValue({
-      data: undefined,
-      isLoading: true,
-      error: null,
-      refetch: vi.fn(),
-    } as ReturnType<typeof useHistoryHooks.useInstanceTimeline>);
-
-    vi.mocked(useHistoryHooks.useExportHistory).mockReturnValue({
-      mutateAsync: vi.fn(),
-      isPending: false,
-      isError: false,
-    } as unknown as ReturnType<typeof useHistoryHooks.useExportHistory>);
+    setupMocks({ data: undefined, isLoading: true });
 
     render(<DeploymentTimeline namespace="test-ns" kind="WebApp" name="test-instance" />, {
       wrapper: createWrapper(),
     });
 
     expect(screen.getByText("Deployment History")).toBeInTheDocument();
-    // Loading spinner should be present (svg with animate-spin)
     const loadingContainer = screen.getByText("Deployment History").closest("div");
     expect(loadingContainer).toBeInTheDocument();
   });
 
   it("renders error state with retry button", async () => {
     const mockRefetch = vi.fn();
-    vi.mocked(useHistoryHooks.useInstanceTimeline).mockReturnValue({
-      data: undefined,
-      isLoading: false,
-      error: new Error("Network error"),
-      refetch: mockRefetch,
-    } as unknown as ReturnType<typeof useHistoryHooks.useInstanceTimeline>);
-
-    vi.mocked(useHistoryHooks.useExportHistory).mockReturnValue({
-      mutateAsync: vi.fn(),
-      isPending: false,
-      isError: false,
-    } as unknown as ReturnType<typeof useHistoryHooks.useExportHistory>);
+    setupMocks({ data: undefined, isLoading: false, error: new Error("Network error"), refetch: mockRefetch });
 
     render(<DeploymentTimeline namespace="test-ns" kind="WebApp" name="test-instance" />, {
       wrapper: createWrapper(),
@@ -111,66 +109,68 @@ describe("DeploymentTimeline", () => {
     expect(screen.getByText("Failed to load deployment history")).toBeInTheDocument();
     expect(screen.getByText("Network error")).toBeInTheDocument();
 
-    // Click retry button
     const retryButton = screen.getByRole("button", { name: /retry/i });
     fireEvent.click(retryButton);
 
     expect(mockRefetch).toHaveBeenCalled();
   });
 
-  it("renders timeline entries correctly", () => {
-    vi.mocked(useHistoryHooks.useInstanceTimeline).mockReturnValue({
-      data: mockTimelineData,
-      isLoading: false,
-      error: null,
-      refetch: vi.fn(),
-    } as unknown as ReturnType<typeof useHistoryHooks.useInstanceTimeline>);
-
-    vi.mocked(useHistoryHooks.useExportHistory).mockReturnValue({
-      mutateAsync: vi.fn(),
-      isPending: false,
-      isError: false,
-    } as unknown as ReturnType<typeof useHistoryHooks.useExportHistory>);
+  it("renders timeline nodes with labels on the horizontal rail", () => {
+    setupMocks();
 
     render(<DeploymentTimeline namespace="test-ns" kind="WebApp" name="test-instance" />, {
       wrapper: createWrapper(),
     });
 
-    // Check event types are rendered
+    // All event labels should be visible as node labels
     expect(screen.getByText("Created")).toBeInTheDocument();
     expect(screen.getByText("Pushed to Git")).toBeInTheDocument();
-    expect(screen.getByText("Ready")).toBeInTheDocument();
+    // "Ready" appears in both the node label and auto-selected detail card
+    expect(screen.getAllByText("Ready").length).toBeGreaterThanOrEqual(1);
 
-    // Check event count badge
+    // Event count badge
     expect(screen.getByText("3 events")).toBeInTheDocument();
 
-    // Check current badge on the last entry
-    expect(screen.getByText("Current")).toBeInTheDocument();
+    // "Now" marker at the end of the timeline
+    expect(screen.getByText("Now")).toBeInTheDocument();
+  });
 
-    // Check user is displayed
-    expect(screen.getByText("test-user@example.com")).toBeInTheDocument();
+  it("auto-selects the current event and shows its detail card", () => {
+    setupMocks();
 
-    // Check message is displayed
+    render(<DeploymentTimeline namespace="test-ns" kind="WebApp" name="test-instance" />, {
+      wrapper: createWrapper(),
+    });
+
+    // The current event (Ready) detail card should show automatically
     expect(screen.getByText("Instance is ready")).toBeInTheDocument();
   });
 
-  it("renders git commit link", () => {
-    vi.mocked(useHistoryHooks.useInstanceTimeline).mockReturnValue({
-      data: mockTimelineData,
-      isLoading: false,
-      error: null,
-      refetch: vi.fn(),
-    } as unknown as ReturnType<typeof useHistoryHooks.useInstanceTimeline>);
-
-    vi.mocked(useHistoryHooks.useExportHistory).mockReturnValue({
-      mutateAsync: vi.fn(),
-      isPending: false,
-      isError: false,
-    } as unknown as ReturnType<typeof useHistoryHooks.useExportHistory>);
+  it("shows detail for a clicked node", () => {
+    setupMocks();
 
     render(<DeploymentTimeline namespace="test-ns" kind="WebApp" name="test-instance" />, {
       wrapper: createWrapper(),
     });
+
+    // Click the "Created" node to see its detail
+    const createdNode = screen.getByRole("button", { name: /created$/i });
+    fireEvent.click(createdNode);
+
+    // Created event detail should now show user info
+    expect(screen.getByText("test-user@example.com")).toBeInTheDocument();
+  });
+
+  it("renders git commit link when PushedToGit node is selected", () => {
+    setupMocks();
+
+    render(<DeploymentTimeline namespace="test-ns" kind="WebApp" name="test-instance" />, {
+      wrapper: createWrapper(),
+    });
+
+    // Click the PushedToGit node
+    const pushNode = screen.getByRole("button", { name: /pushed to git/i });
+    fireEvent.click(pushNode);
 
     const commitLink = screen.getByRole("link", { name: /view commit/i });
     expect(commitLink).toHaveAttribute(
@@ -182,24 +182,13 @@ describe("DeploymentTimeline", () => {
   });
 
   it("toggles expansion when header is clicked", () => {
-    vi.mocked(useHistoryHooks.useInstanceTimeline).mockReturnValue({
-      data: mockTimelineData,
-      isLoading: false,
-      error: null,
-      refetch: vi.fn(),
-    } as unknown as ReturnType<typeof useHistoryHooks.useInstanceTimeline>);
-
-    vi.mocked(useHistoryHooks.useExportHistory).mockReturnValue({
-      mutateAsync: vi.fn(),
-      isPending: false,
-      isError: false,
-    } as unknown as ReturnType<typeof useHistoryHooks.useExportHistory>);
+    setupMocks();
 
     render(<DeploymentTimeline namespace="test-ns" kind="WebApp" name="test-instance" />, {
       wrapper: createWrapper(),
     });
 
-    // Initially expanded
+    // Initially expanded — node labels visible
     expect(screen.getByText("Created")).toBeInTheDocument();
 
     // Click header to collapse
@@ -215,18 +204,9 @@ describe("DeploymentTimeline", () => {
   });
 
   it("renders empty state when no events", () => {
-    vi.mocked(useHistoryHooks.useInstanceTimeline).mockReturnValue({
-      data: { namespace: "test-ns", name: "test-instance", timeline: [] },
-      isLoading: false,
-      error: null,
-      refetch: vi.fn(),
-    } as unknown as ReturnType<typeof useHistoryHooks.useInstanceTimeline>);
-
-    vi.mocked(useHistoryHooks.useExportHistory).mockReturnValue({
-      mutateAsync: vi.fn(),
-      isPending: false,
-      isError: false,
-    } as unknown as ReturnType<typeof useHistoryHooks.useExportHistory>);
+    setupMocks({
+      data: { namespace: "test-ns", kind: "WebApp", name: "test-instance", timeline: [] },
+    });
 
     render(<DeploymentTimeline namespace="test-ns" kind="WebApp" name="test-instance" />, {
       wrapper: createWrapper(),
@@ -238,25 +218,12 @@ describe("DeploymentTimeline", () => {
 
   it("triggers export when download button is clicked", async () => {
     const mockMutateAsync = vi.fn().mockResolvedValue({ success: true });
-
-    vi.mocked(useHistoryHooks.useInstanceTimeline).mockReturnValue({
-      data: mockTimelineData,
-      isLoading: false,
-      error: null,
-      refetch: vi.fn(),
-    } as unknown as ReturnType<typeof useHistoryHooks.useInstanceTimeline>);
-
-    vi.mocked(useHistoryHooks.useExportHistory).mockReturnValue({
-      mutateAsync: mockMutateAsync,
-      isPending: false,
-      isError: false,
-    } as unknown as ReturnType<typeof useHistoryHooks.useExportHistory>);
+    setupMocks({}, { mutateAsync: mockMutateAsync });
 
     render(<DeploymentTimeline namespace="test-ns" kind="WebApp" name="test-instance" />, {
       wrapper: createWrapper(),
     });
 
-    // Click download button
     const downloadButton = screen.getByRole("button", { name: /download/i });
     fireEvent.click(downloadButton);
 
@@ -272,29 +239,15 @@ describe("DeploymentTimeline", () => {
 
   it("changes export format via select", async () => {
     const mockMutateAsync = vi.fn().mockResolvedValue({ success: true });
-
-    vi.mocked(useHistoryHooks.useInstanceTimeline).mockReturnValue({
-      data: mockTimelineData,
-      isLoading: false,
-      error: null,
-      refetch: vi.fn(),
-    } as unknown as ReturnType<typeof useHistoryHooks.useInstanceTimeline>);
-
-    vi.mocked(useHistoryHooks.useExportHistory).mockReturnValue({
-      mutateAsync: mockMutateAsync,
-      isPending: false,
-      isError: false,
-    } as unknown as ReturnType<typeof useHistoryHooks.useExportHistory>);
+    setupMocks({}, { mutateAsync: mockMutateAsync });
 
     render(<DeploymentTimeline namespace="test-ns" kind="WebApp" name="test-instance" />, {
       wrapper: createWrapper(),
     });
 
-    // Change format to CSV
     const formatSelect = screen.getByRole("combobox");
     fireEvent.change(formatSelect, { target: { value: "csv" } });
 
-    // Click download
     const downloadButton = screen.getByRole("button", { name: /download/i });
     fireEvent.click(downloadButton);
 
@@ -309,18 +262,7 @@ describe("DeploymentTimeline", () => {
   });
 
   it("shows export error message", () => {
-    vi.mocked(useHistoryHooks.useInstanceTimeline).mockReturnValue({
-      data: mockTimelineData,
-      isLoading: false,
-      error: null,
-      refetch: vi.fn(),
-    } as unknown as ReturnType<typeof useHistoryHooks.useInstanceTimeline>);
-
-    vi.mocked(useHistoryHooks.useExportHistory).mockReturnValue({
-      mutateAsync: vi.fn(),
-      isPending: false,
-      isError: true,
-    } as unknown as ReturnType<typeof useHistoryHooks.useExportHistory>);
+    setupMocks({}, { isError: true });
 
     render(<DeploymentTimeline namespace="test-ns" kind="WebApp" name="test-instance" />, {
       wrapper: createWrapper(),
@@ -329,19 +271,162 @@ describe("DeploymentTimeline", () => {
     expect(screen.getByText("Failed to export history")).toBeInTheDocument();
   });
 
-  it("disables download button while exporting", () => {
-    vi.mocked(useHistoryHooks.useInstanceTimeline).mockReturnValue({
-      data: mockTimelineData,
-      isLoading: false,
-      error: null,
-      refetch: vi.fn(),
-    } as unknown as ReturnType<typeof useHistoryHooks.useInstanceTimeline>);
+  // =========================================================================
+  // STORY-402: RevisionChanged rendering tests
+  // =========================================================================
 
-    vi.mocked(useHistoryHooks.useExportHistory).mockReturnValue({
-      mutateAsync: vi.fn(),
-      isPending: true,
-      isError: false,
-    } as unknown as ReturnType<typeof useHistoryHooks.useExportHistory>);
+  it("applies primary color styling to RevisionChanged events", () => {
+    const timelineWithRevision: TimelineResponse = {
+      namespace: "test-ns",
+      kind: "WebApp",
+      name: "test-instance",
+      timeline: [
+        {
+          timestamp: "2024-01-01T00:05:00Z",
+          eventType: "RevisionChanged",
+          status: "",
+          user: "system",
+          message: "RGD Revision 1 (initial)",
+          isCompleted: true,
+          isCurrent: true,
+          revisionNumber: 1,
+          previousRevision: 0,
+        },
+      ],
+    };
+
+    setupMocks({ data: timelineWithRevision });
+
+    const { container } = render(
+      <DeploymentTimeline namespace="test-ns" kind="WebApp" name="test-instance" />,
+      { wrapper: createWrapper() }
+    );
+
+    // The icon container for RevisionChanged must carry primary color classes
+    const iconContainers = container.querySelectorAll(
+      ".text-primary.bg-primary\\/10.border-primary\\/20"
+    );
+    expect(iconContainers.length).toBeGreaterThan(0);
+  });
+
+  it("renders RevisionChanged events with correct label", () => {
+    const timelineWithRevision: TimelineResponse = {
+      namespace: "test-ns",
+      kind: "WebApp",
+      name: "test-instance",
+      timeline: [
+        {
+          timestamp: "2024-01-01T00:00:00Z",
+          eventType: "Created",
+          status: "Pending",
+          user: "admin",
+          isCompleted: true,
+          isCurrent: false,
+        },
+        {
+          timestamp: "2024-01-01T00:05:00Z",
+          eventType: "RevisionChanged",
+          status: "",
+          user: "system",
+          message: "RGD Revision 1 (initial)",
+          isCompleted: true,
+          isCurrent: false,
+          revisionNumber: 1,
+        },
+        {
+          timestamp: "2024-01-01T00:10:00Z",
+          eventType: "RevisionChanged",
+          status: "",
+          user: "system",
+          message: "RGD Revision 1 → 2",
+          isCompleted: true,
+          isCurrent: false,
+          revisionNumber: 2,
+          previousRevision: 1,
+        },
+        {
+          timestamp: "2024-01-01T00:15:00Z",
+          eventType: "Ready",
+          status: "Ready",
+          isCompleted: true,
+          isCurrent: true,
+        },
+      ],
+    };
+
+    setupMocks({ data: timelineWithRevision });
+
+    render(<DeploymentTimeline namespace="test-ns" kind="WebApp" name="test-instance" />, {
+      wrapper: createWrapper(),
+    });
+
+    // RevisionChanged events should render with "Revision Changed" label on the node
+    const revisionLabels = screen.getAllByText("Revision Changed");
+    expect(revisionLabels).toHaveLength(2);
+
+    // Event count should include revision markers
+    expect(screen.getByText("4 events")).toBeInTheDocument();
+
+    // Click on first RevisionChanged node to see its detail
+    const revisionNodes = screen.getAllByRole("button", { name: /revision changed/i });
+    fireEvent.click(revisionNodes[0]);
+    expect(screen.getByText("RGD Revision 1 (initial)")).toBeInTheDocument();
+
+    // Click on second RevisionChanged node to see its detail
+    fireEvent.click(revisionNodes[1]);
+    expect(screen.getByText("RGD Revision 1 → 2")).toBeInTheDocument();
+  });
+
+  it("renders mixed deployment and revision events in correct order", () => {
+    const mixedTimeline: TimelineResponse = {
+      namespace: "test-ns",
+      name: "test-instance",
+      timeline: [
+        {
+          timestamp: "2024-01-01T00:00:00Z",
+          eventType: "Created",
+          status: "Pending",
+          isCompleted: true,
+          isCurrent: false,
+        },
+        {
+          timestamp: "2024-01-01T00:03:00Z",
+          eventType: "RevisionChanged",
+          status: "",
+          user: "system",
+          message: "RGD Revision 1 (initial)",
+          isCompleted: true,
+          isCurrent: false,
+          revisionNumber: 1,
+        },
+        {
+          timestamp: "2024-01-01T00:05:00Z",
+          eventType: "Ready",
+          status: "Ready",
+          isCompleted: true,
+          isCurrent: true,
+        },
+      ],
+    };
+
+    setupMocks({ data: mixedTimeline });
+
+    render(<DeploymentTimeline namespace="test-ns" kind="WebApp" name="test-instance" />, {
+      wrapper: createWrapper(),
+    });
+
+    // All three event types should render
+    expect(screen.getByText("Created")).toBeInTheDocument();
+    expect(screen.getByText("Revision Changed")).toBeInTheDocument();
+    // "Ready" appears in both the node label and auto-selected detail card
+    expect(screen.getAllByText("Ready").length).toBeGreaterThanOrEqual(1);
+
+    // Count should reflect all entries
+    expect(screen.getByText("3 events")).toBeInTheDocument();
+  });
+
+  it("disables download button while exporting", () => {
+    setupMocks({}, { isPending: true });
 
     render(<DeploymentTimeline namespace="test-ns" kind="WebApp" name="test-instance" />, {
       wrapper: createWrapper(),
@@ -349,5 +434,51 @@ describe("DeploymentTimeline", () => {
 
     const downloadButton = screen.getByRole("button", { name: /download/i });
     expect(downloadButton).toBeDisabled();
+  });
+
+  // =========================================================================
+  // Horizontal timeline specific tests
+  // =========================================================================
+
+  it("renders proportional connectors between nodes", () => {
+    const timeline: TimelineResponse = {
+      namespace: "test-ns",
+      kind: "WebApp",
+      name: "test-instance",
+      timeline: [
+        {
+          timestamp: "2024-01-01T00:00:00Z",
+          eventType: "Created",
+          status: "Pending",
+          isCompleted: true,
+          isCurrent: false,
+        },
+        {
+          timestamp: "2024-01-01T00:01:00Z",
+          eventType: "Ready",
+          status: "Ready",
+          isCompleted: true,
+          isCurrent: false,
+        },
+        {
+          timestamp: "2024-01-01T01:00:00Z",
+          eventType: "StatusChanged",
+          status: "Degraded",
+          isCompleted: true,
+          isCurrent: true,
+        },
+      ],
+    };
+
+    setupMocks({ data: timeline });
+
+    const { container } = render(
+      <DeploymentTimeline namespace="test-ns" kind="WebApp" name="test-instance" />,
+      { wrapper: createWrapper() }
+    );
+
+    // There should be connector divs between nodes
+    const connectors = container.querySelectorAll(".bg-border.h-px");
+    expect(connectors.length).toBe(2);
   });
 });

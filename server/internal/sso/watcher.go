@@ -38,6 +38,7 @@ type SSOWatcher struct {
 	mu                 sync.RWMutex
 	lastValidProviders []SSOProvider
 	callbacks          []ProvidersChangedFunc
+	ctx                context.Context // stored from Start() for use in K8s API calls
 
 	stopCh   chan struct{}
 	stopOnce sync.Once
@@ -53,6 +54,7 @@ func NewSSOWatcher(k8sClient kubernetes.Interface, namespace string, logger *slo
 		k8sClient:          k8sClient,
 		namespace:          namespace,
 		logger:             logger,
+		ctx:                context.Background(),
 		lastValidProviders: []SSOProvider{},
 	}
 }
@@ -91,6 +93,7 @@ func (w *SSOWatcher) Start(ctx context.Context) error {
 	w.running = true
 	w.stopCh = make(chan struct{})
 	w.stopOnce = sync.Once{}
+	w.ctx = ctx
 	w.mu.Unlock()
 
 	w.logger.Info("starting SSO watcher",
@@ -231,7 +234,8 @@ func (w *SSOWatcher) onConfigMapDelete() {
 // Returns empty slice if ConfigMap doesn't exist (valid state per AC #2).
 // Returns last valid providers on parse error (AC #10).
 func (w *SSOWatcher) loadProviders() []SSOProvider {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(w.ctx, 10*time.Second)
+	defer cancel()
 
 	// Read ConfigMap
 	cm, err := w.k8sClient.CoreV1().ConfigMaps(w.namespace).Get(ctx, ConfigMapName, metav1.GetOptions{})
