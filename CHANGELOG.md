@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/knodex/knodex/compare/v0.4.0...v0.5.0) (2026-04-16)
+
+
+### Features
+
+* add categories system, RBAC destinations, and catalog improvements ([#55](https://github.com/knodex/knodex/issues/55)) ([7616442](https://github.com/knodex/knodex/commit/76164423a8774f2fb9373f718294561fabb1f93b))
+
 ## [0.4.0](https://github.com/knodex/knodex/compare/v0.3.1...v0.4.0) (2026-03-22)
 
 
