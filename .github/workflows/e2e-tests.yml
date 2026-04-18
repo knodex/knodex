@@ -45,7 +45,7 @@ jobs:
       fail-fast: true
       max-parallel: 1
       matrix:
-        kro_version: ['0.8.4', '0.8.5']
+        kro_version: ['0.9.1']
 
     env:
       KIND_CLUSTER: knodex-e2e
