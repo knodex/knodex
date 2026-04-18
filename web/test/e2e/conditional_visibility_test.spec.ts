@@ -269,8 +269,12 @@ async function toggleFeatureEnabled(
   const featureField = page.getByTestId(`field-${featureName}`)
   await expect(featureField).toBeVisible({ timeout: 5000 })
 
-  // Find the enabled checkbox within the feature section
+  // Expand the section if collapsed (ObjectFields start closed by default)
   const enabledCheckbox = featureField.locator(`input[name="${featureName}.enabled"]`)
+  if (!(await enabledCheckbox.isVisible())) {
+    await featureField.getByRole('button').first().click()
+  }
+
   await expect(enabledCheckbox).toBeVisible({ timeout: 5000 })
 
   const isChecked = await enabledCheckbox.isChecked()
@@ -301,11 +305,14 @@ test.describe('Per-Feature Conditional Field Visibility', () => {
   test('feature containers are always visible (parent of controlling field)', async ({
     page,
   }) => {
-    // database and cache sections are always visible because they contain the controlling field
+    // database and cache section wrappers are always visible
     await expect(page.getByTestId('field-database')).toBeVisible()
     await expect(page.getByTestId('field-cache')).toBeVisible()
 
-    // The enabled checkboxes should be visible inside each feature
+    // Expand sections to access enabled checkboxes (sections start collapsed)
+    await page.getByTestId('field-database').getByRole('button').first().click()
+    await page.getByTestId('field-cache').getByRole('button').first().click()
+
     await expect(page.getByTestId('field-database.enabled')).toBeVisible()
     await expect(page.getByTestId('field-cache.enabled')).toBeVisible()
   })

@@ -217,8 +217,10 @@ test.describe('Conditional Field Visibility', () => {
     const checkbox = page.getByTestId('input-useExistingDatabase')
     await checkbox.check()
 
-    // Wait for the conditional externalRef section to appear in the DOM
-    await expect(page.getByTestId('field-externalRef')).toBeVisible()
+    // Wait for the conditional externalRef section to appear, then expand it
+    const externalRefField = page.getByTestId('field-externalRef')
+    await expect(externalRefField).toBeVisible()
+    await externalRefField.getByRole('button').first().click()
 
     // The resource picker dropdown should be visible
     await expect(page.getByTestId('input-externalRef.externaldb')).toBeVisible()
@@ -271,6 +273,11 @@ test.describe('Conditional Field Visibility', () => {
     // Check the useExistingDatabase checkbox
     const checkbox = page.getByTestId('input-useExistingDatabase')
     await checkbox.check()
+
+    // Expand the externalRef ObjectField
+    const externalRefField = page.getByTestId('field-externalRef')
+    await expect(externalRefField).toBeVisible()
+    await externalRefField.getByRole('button').first().click()
 
     // Wait for resource picker dropdown to appear
     const select = page.getByTestId('input-externalRef.externaldb')
@@ -366,6 +373,11 @@ test.describe('Conditional Field Visibility', () => {
     const checkbox = page.getByTestId('input-useExistingDatabase')
     await checkbox.check()
 
+    // Expand the externalRef ObjectField
+    const externalRefField = page.getByTestId('field-externalRef')
+    await expect(externalRefField).toBeVisible()
+    await externalRefField.getByRole('button').first().click()
+
     // Wait for resource picker to appear and load
     const conditionalSelect = page.getByTestId('input-externalRef.externaldb')
     await expect(conditionalSelect).toBeVisible()
@@ -433,9 +445,11 @@ test.describe('Conditional Field Accessibility', () => {
     const useExistingLabel = page.locator('label[for="useExistingDatabase"]')
     await expect(useExistingLabel).toBeVisible()
 
-    // Enable conditional field
+    // Enable conditional field then expand the ObjectField
     await useExistingCheckbox.check()
-    await expect(page.getByTestId('field-externalRef')).toBeVisible()
+    const externalRefField = page.getByTestId('field-externalRef')
+    await expect(externalRefField).toBeVisible()
+    await externalRefField.getByRole('button').first().click()
 
     // Check that the resource picker has an associated label
     const externalDbLabel = page.locator('label[for="externalRef.externaldb"]')
@@ -688,6 +702,11 @@ async function navigateToCompositeDeployForm(page: Page) {
   // Advance to Configure step
   await page.getByRole('button', { name: /continue/i }).click()
   await expect(page.getByTestId('configure-step')).toBeVisible({ timeout: 15000 })
+
+  // Expand externalRef ObjectField (starts collapsed by default)
+  const externalRefField = page.getByTestId('field-externalRef')
+  await expect(externalRefField).toBeVisible({ timeout: 5000 })
+  await externalRefField.getByRole('button').first().click()
 }
 
 test.describe('Nested ExternalRef Dropdowns (Composite RGDs)', () => {
