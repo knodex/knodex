@@ -396,9 +396,9 @@ export function DeployModal({ rgd, open, onClose }: DeployModalProps) {
 
   const handleInstanceNameChange = useCallback((v: string) => {
     setInstanceName(v);
-    setInstanceNameError("");
+    setInstanceNameError(v ? validateInstanceName(v) : "");
     setHasUnsavedChanges(true);
-  }, []);
+  }, [validateInstanceName]);
 
   const handleProjectChange = useCallback((p: string) => {
     setSelectedProject(p);

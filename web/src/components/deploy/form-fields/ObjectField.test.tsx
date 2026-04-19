@@ -1,7 +1,7 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { FormProvider, useForm } from "react-hook-form";
 import type { FormProperty, AdvancedSection } from "@/types/rgd";
 import { ObjectField } from "./ObjectField";
@@ -70,6 +70,8 @@ describe("ObjectField", () => {
       </Wrapper>
     );
 
+    fireEvent.click(screen.getByRole("button", { name: /Bastion/i }));
+
     // Should render the AdvancedConfigToggle
     expect(screen.getByText(/Advanced Configuration/i)).toBeInTheDocument();
     // Should NOT render "advanced" as a plain collapsible sibling
@@ -112,6 +114,8 @@ describe("ObjectField", () => {
       </Wrapper>
     );
 
+    fireEvent.click(screen.getByRole("button", { name: /Bastion/i }));
+
     // Enabled toggle is always visible
     expect(screen.getByTestId("field-bastion.enabled")).toBeInTheDocument();
     // Peer fields and advanced section are hidden
@@ -139,6 +143,8 @@ describe("ObjectField", () => {
         />
       </Wrapper>
     );
+
+    fireEvent.click(screen.getByRole("button", { name: /Service/i }));
 
     expect(screen.getByTestId("field-service.name")).toBeInTheDocument();
     expect(screen.getByTestId("field-service.port")).toBeInTheDocument();

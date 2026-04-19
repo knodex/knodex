@@ -21,7 +21,7 @@ export const ArrayField = memo(function ArrayField({
   error,
   depth,
 }: ArrayFieldProps) {
-  const [isOpen, setIsOpen] = useState(true);
+  const [isOpen, setIsOpen] = useState(false);
   const items = property.items;
   const isSimpleType =
     items?.type === "string" ||

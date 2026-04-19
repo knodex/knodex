@@ -28,7 +28,7 @@ export function ObjectField({
   deploymentNamespace,
   inlineAdvancedSection,
 }: ObjectFieldProps) {
-  const [isOpen, setIsOpen] = useState(depth < 2);
+  const [isOpen, setIsOpen] = useState(false);
   const { isExpanded: isInlineAdvancedExpanded, toggle: toggleInlineAdvanced } = useAdvancedConfigToggle();
   const { watch } = useFormContext();
 
