@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.1](https://github.com/knodex/knodex/compare/v0.5.0...v0.5.1) (2026-04-19)
+
+
+### Bug Fixes
+
+* **deploy:** show inline name validation error and collapse fields by default ([#61](https://github.com/knodex/knodex/issues/61)) ([261ec7c](https://github.com/knodex/knodex/commit/261ec7ca51c759d9a956e1f6aec1785356c36513))
+* **website:** remove stale redirect to /docs after route base path change ([7d9484a](https://github.com/knodex/knodex/commit/7d9484aa0710a8b849947bd32a51f6590ec87c6e))
+
 ## [0.5.0](https://github.com/knodex/knodex/compare/v0.4.0...v0.5.0) (2026-04-16)
 
 
