@@ -40,5 +40,3 @@ server/ee/license/license_key.pem
 
 # Local dev artifacts
 .DS_Store
-my-vide/
-my-video/
