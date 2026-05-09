@@ -13,12 +13,16 @@ import (
 func ToAuthConfigs(providers []SSOProvider) []auth.OIDCProviderConfig {
 	return collection.Map(providers, func(p SSOProvider) auth.OIDCProviderConfig {
 		return auth.OIDCProviderConfig{
-			Name:         p.Name,
-			IssuerURL:    p.IssuerURL,
-			ClientID:     p.ClientID,
-			ClientSecret: p.ClientSecret,
-			RedirectURL:  p.RedirectURL,
-			Scopes:       p.Scopes,
+			Name:                    p.Name,
+			IssuerURL:               p.IssuerURL,
+			ClientID:                p.ClientID,
+			ClientSecret:            p.ClientSecret,
+			RedirectURL:             p.RedirectURL,
+			Scopes:                  p.Scopes,
+			TokenEndpointAuthMethod: p.TokenEndpointAuthMethod,
+			AuthorizationURL:        p.AuthorizationURL,
+			TokenURL:                p.TokenURL,
+			JWKSURL:                 p.JWKSURL,
 		}
 	})
 }

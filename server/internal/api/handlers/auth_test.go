@@ -22,6 +22,7 @@ type MockAuthService struct {
 	authenticateLocalFunc func(ctx context.Context, username, password, sourceIP string) (*auth.LoginResponse, error)
 	validateTokenFunc     func(token string) (*auth.JWTClaims, error)
 	revokeTokenFunc       func(ctx context.Context, jti string, remainingTTL time.Duration) error
+	localLoginEnabled     bool
 }
 
 func (m *MockAuthService) AuthenticateLocal(ctx context.Context, username, password, sourceIP string) (*auth.LoginResponse, error) {
@@ -52,6 +53,8 @@ func (m *MockAuthService) RevokeToken(ctx context.Context, jti string, remaining
 	}
 	return nil
 }
+
+func (m *MockAuthService) IsLocalLoginEnabled() bool { return m.localLoginEnabled }
 
 // assertNoCacheHeaders verifies all three no-cache headers are set on auth responses.
 func assertNoCacheHeaders(t *testing.T, rec *httptest.ResponseRecorder) {
@@ -245,6 +248,7 @@ func TestLocalLogin(t *testing.T) {
 			// Create mock auth service
 			mockAuthSvc := &MockAuthService{
 				authenticateLocalFunc: tt.mockAuthFunc,
+				localLoginEnabled:     true,
 			}
 
 			// Create handler with mock
@@ -285,6 +289,50 @@ func TestLocalLogin(t *testing.T) {
 	}
 }
 
+// TestLocalLogin_Disabled verifies that when localLoginEnabled is false the
+// handler returns 403 Forbidden with the standardized auth-error body, emits
+// no-cache headers, and never calls AuthenticateLocal.
+func TestLocalLogin_Disabled(t *testing.T) {
+	authCalls := 0
+	mockAuthSvc := &MockAuthService{
+		authenticateLocalFunc: func(ctx context.Context, username, password, sourceIP string) (*auth.LoginResponse, error) {
+			authCalls++
+			return nil, errors.New("should not be called")
+		},
+		localLoginEnabled: false,
+	}
+
+	testHandler := NewAuthHandler(mockAuthSvc, nil)
+
+	reqBody := auth.LocalLoginRequest{Username: "admin", Password: "validpassword"}
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		t.Fatalf("failed to marshal request body: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/local/login", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	testHandler.LocalLogin(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusForbidden)
+	}
+	if authCalls != 0 {
+		t.Errorf("AuthenticateLocal was called %d times, expected 0 (short-circuit)", authCalls)
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte("FORBIDDEN")) {
+		t.Errorf("expected error code FORBIDDEN in body, got: %s", rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte("local login is disabled")) {
+		t.Errorf("expected 'local login is disabled' message, got: %s", rec.Body.String())
+	}
+
+	// Regression guard: no-cache headers MUST be present (WriteAuthError, not Forbidden).
+	assertNoCacheHeaders(t, rec)
+}
+
 func TestLocalLogin_ContentType(t *testing.T) {
 	mockAuthSvc := &MockAuthService{
 		authenticateLocalFunc: func(ctx context.Context, username, password, sourceIP string) (*auth.LoginResponse, error) {
@@ -298,6 +346,7 @@ func TestLocalLogin_ContentType(t *testing.T) {
 				},
 			}, nil
 		},
+		localLoginEnabled: true,
 	}
 
 	testHandler := NewAuthHandler(mockAuthSvc, nil)
@@ -339,6 +388,7 @@ func TestLocalLogin_SourceIPPassedThrough(t *testing.T) {
 				},
 			}, nil
 		},
+		localLoginEnabled: true,
 	}
 
 	testHandler := NewAuthHandler(mockAuthSvc, nil)
@@ -520,4 +570,83 @@ func TestLogout_RevokesToken(t *testing.T) {
 			t.Error("RevokeToken should not be called for token without jti")
 		}
 	})
+}
+
+func TestListOIDCProviders_LocalLoginField(t *testing.T) {
+	withProviders := &MockOIDCService{
+		listProvidersFunc: func() []string { return []string{"knodex-cloud", "google"} },
+	}
+
+	tests := []struct {
+		name                 string
+		oidcService          OIDCServiceInterface
+		localLoginEnabled    bool
+		wantLocalLoginInResp bool
+		wantProviderCount    int
+	}{
+		{
+			name:                 "oidc nil, login disabled",
+			oidcService:          nil,
+			localLoginEnabled:    false,
+			wantLocalLoginInResp: false,
+			wantProviderCount:    0,
+		},
+		{
+			name:                 "oidc nil, login enabled",
+			oidcService:          nil,
+			localLoginEnabled:    true,
+			wantLocalLoginInResp: true,
+			wantProviderCount:    0,
+		},
+		{
+			name:                 "oidc with providers, login enabled",
+			oidcService:          withProviders,
+			localLoginEnabled:    true,
+			wantLocalLoginInResp: true,
+			wantProviderCount:    2,
+		},
+		{
+			name:                 "oidc with providers, login disabled",
+			oidcService:          withProviders,
+			localLoginEnabled:    false,
+			wantLocalLoginInResp: false,
+			wantProviderCount:    2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockSvc := &MockAuthService{localLoginEnabled: tt.localLoginEnabled}
+			handler := NewAuthHandler(mockSvc, tt.oidcService)
+
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/oidc/providers", nil)
+			rec := httptest.NewRecorder()
+			handler.ListOIDCProviders(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", rec.Code)
+			}
+
+			var resp map[string]interface{}
+			if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+				t.Fatalf("failed to decode response: %v", err)
+			}
+
+			got, ok := resp["localLoginEnabled"].(bool)
+			if !ok {
+				t.Fatalf("localLoginEnabled field missing or not bool in response: %v", resp)
+			}
+			if got != tt.wantLocalLoginInResp {
+				t.Errorf("localLoginEnabled = %v, want %v", got, tt.wantLocalLoginInResp)
+			}
+
+			providersField, ok := resp["providers"].([]interface{})
+			if !ok {
+				t.Fatalf("providers field missing or wrong type in response: %v", resp)
+			}
+			if len(providersField) != tt.wantProviderCount {
+				t.Errorf("providers count = %d, want %d", len(providersField), tt.wantProviderCount)
+			}
+		})
+	}
 }

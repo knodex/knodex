@@ -63,4 +63,60 @@ Knodex supports OIDC authentication with providers such as:
 
 See `server.auth.oidc` values for configuration options.
 
+## SSO-Only Deployments (Disabling Local Login)
+
+For deployments where SSO is the sole authentication path, local user login
+can be disabled with `server.auth.localLogin.enabled: false`. This blocks
+login for ALL local accounts (admin and any other). When disabled, the server:
+
+- Skips creating the `knodex-initial-admin-password` Secret on startup.
+- **Skips registering** `POST /api/v1/auth/local/login` — requests return 404.
+  This prevents attackers from draining the login rate-limit budget or
+  flooding the audit log with fabricated login attempts.
+- Reports `localLoginEnabled: false` from `GET /api/v1/auth/oidc/providers`,
+  causing the frontend to hide the local login form.
+
+```yaml
+server:
+  auth:
+    localLogin:
+      enabled: false
+    oidc:
+      enabled: true
+      providers:
+        - name: my-idp
+          issuerURL: https://idp.example.com
+          clientID: knodex
+```
+
+### Disabling on an Existing Deployment
+
+> **IMPORTANT:** if the chart was previously installed with local login
+> enabled, the `knodex-initial-admin-password` Secret already exists in the
+> namespace and will persist after disabling. The login route is removed and
+> the handler refuses authentication, so the Secret is no longer reachable
+> through the API — but a stale credential sitting in `etcd` is still a
+> latent privilege-escalation surface. **Delete it manually:**
+>
+> ```sh
+> kubectl delete secret knodex-initial-admin-password -n <namespace>
+> ```
+
+### Break-glass Procedure
+
+To temporarily restore local login (for example, when SSO is unavailable):
+
+1. Set `server.auth.localLogin.enabled: true` in your values and `helm upgrade`.
+2. Restart the server pod — startup will recreate the Secret if you previously
+   deleted it.
+3. Retrieve the admin password:
+
+   ```sh
+   kubectl get secret knodex-initial-admin-password \
+     -n <namespace> -o jsonpath='{.data.password}' | base64 -d && echo
+   ```
+
+4. After break-glass, set `enabled: false` again, re-deploy, and re-delete the
+   Secret per the section above.
+
 {{ template "helm-docs.versionFooter" . }}

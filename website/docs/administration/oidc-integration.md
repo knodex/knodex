@@ -39,7 +39,8 @@ Navigate to **Settings > SSO** and add a new OIDC provider with the following fi
 | Provider Name | Yes | Display name (e.g., "Azure AD") |
 | Issuer URL | Yes | OIDC discovery endpoint (e.g., `https://login.microsoftonline.com/<tenant>/v2.0`) |
 | Client ID | Yes | Application/client ID from your identity provider |
-| Client Secret | Yes | Client secret for confidential client flow |
+| Token endpoint auth method | No | `client_secret_basic` (default, requires Client Secret) or `none` (public client / PKCE) |
+| Client Secret | Conditional | Required only when token endpoint auth method is `client_secret_basic` |
 | Redirect URL | Yes | Callback URL: `https://knodex.example.com/api/v1/auth/oidc/callback` |
 | Scopes | No | Additional scopes beyond `openid` (see below) |
 
@@ -55,6 +56,29 @@ Navigate to **Settings > SSO** and add a new OIDC provider with the following fi
 :::warning[Groups Scope]
 The `groups` scope is essential for RBAC. Without it, users will authenticate but will not be assigned to any project roles. The exact scope name varies by provider (Azure AD uses `GroupMember.Read.All` as an API permission, not a scope).
 :::
+
+### Public Clients (PKCE)
+
+Some IdPs do not issue a shared client secret (e.g. Supabase Auth, or platforms that provision per-tenant OAuth clients automatically). For those flows, configure the provider as a **public client**:
+
+- Set **Token endpoint auth method** to `none`.
+- Leave **Client Secret** blank.
+
+Knodex always sends a PKCE `code_challenge` (RFC 7636 §4.2, S256 only) on the authorization request and the matching `code_verifier` on the token exchange — regardless of whether the provider is confidential or public. PKCE binds the authorization code to the original client, so the token exchange is protected even without a shared secret.
+
+Public clients are also useful for GitOps pipelines that want to keep their Helm values free of credentials. The chart suppresses the `<provider>.client-secret` key in `knodex-sso-secrets` when `tokenEndpointAuthMethod: "none"` is configured, so no secret material lands in the rendered manifest.
+
+Example provider configuration in the ConfigMap:
+
+```json
+{
+  "name": "supabase",
+  "issuerURL": "https://<project-ref>.supabase.co/auth/v1",
+  "redirectURL": "https://knodex.example.com/api/v1/auth/oidc/callback",
+  "scopes": ["openid", "email", "profile"],
+  "tokenEndpointAuthMethod": "none"
+}
+```
 
 ## Declarative Configuration (Helm / ArgoCD)
 
@@ -78,7 +102,8 @@ data:
         "name": "Azure AD",
         "issuerURL": "https://login.microsoftonline.com/<tenant-id>/v2.0",
         "redirectURL": "https://knodex.example.com/api/v1/auth/oidc/callback",
-        "scopes": ["openid", "email", "profile"]
+        "scopes": ["openid", "email", "profile"],
+        "tokenEndpointAuthMethod": "client_secret_basic"
       }
     ]
 ```

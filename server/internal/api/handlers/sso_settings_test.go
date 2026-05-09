@@ -8,13 +8,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/knodex/knodex/server/internal/api/middleware"
 	"github.com/knodex/knodex/server/internal/sso"
-	"k8s.io/client-go/kubernetes/fake"
 )
 
 const ssoTestNamespace = "test-ns"
@@ -442,7 +447,12 @@ func TestSSOSettingsHandler_Validation_IssuerURL(t *testing.T) {
 	}
 }
 
-func TestSSOSettingsHandler_Validation_MissingClientSecret(t *testing.T) {
+// TestSSOSettingsHandler_MissingSecretInfersPublicClient verifies the inference
+// rule: when both tokenEndpointAuthMethod and clientSecret are omitted, the
+// provider is created as a public (PKCE) client rather than rejected.
+// Operators that explicitly want a confidential client must set the method
+// (covered by TestCreateProvider_Confidential_RequiresSecret).
+func TestSSOSettingsHandler_MissingSecretInfersPublicClient(t *testing.T) {
 	t.Parallel()
 	handler, _ := newSSOTestHandler()
 
@@ -452,7 +462,7 @@ func TestSSOSettingsHandler_Validation_MissingClientSecret(t *testing.T) {
 		ClientID:    "id",
 		RedirectURL: "https://app.example.com/cb",
 		Scopes:      []string{"openid"},
-		// ClientSecret intentionally empty
+		// ClientSecret + tokenEndpointAuthMethod intentionally empty.
 	}
 
 	req := ssoRequest("POST", "/api/v1/settings/sso/providers", createReq)
@@ -460,8 +470,15 @@ func TestSSOSettingsHandler_Validation_MissingClientSecret(t *testing.T) {
 
 	handler.CreateProvider(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected 400 for missing clientSecret on create, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201 (inferred public client), got %d: %s", w.Code, w.Body.String())
+	}
+	var resp SSOProviderResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.TokenEndpointAuthMethod != "none" {
+		t.Errorf("expected inferred method=none, got %q", resp.TokenEndpointAuthMethod)
 	}
 }
 
@@ -577,45 +594,102 @@ func TestSSOSettingsHandler_ResponseExcludesClientSecret(t *testing.T) {
 	// SSOProviderResponse struct has no ClientSecret field — verified by type system
 }
 
-func TestSSOSettingsHandler_Validation_PrivateIPs(t *testing.T) {
+// TestSSOSettingsHandler_Validation_AcceptsPrivateIPs locks in the ArgoCD-aligned
+// posture: private/in-cluster URLs are now accepted by both the issuerURL path
+// and the explicit-endpoint trio (AuthorizationURL/TokenURL/JWKSURL). Replaces
+// the deleted negative test that asserted these were rejected.
+//
+// IPv4-mapped IPv6 (::ffff:169.254.169.254) is included because it was caught
+// by the previous netutil.IsPrivateHost check. After this change it passes
+// validation alongside other private addresses; the admin trust boundary
+// covers it.
+func TestSSOSettingsHandler_Validation_AcceptsPrivateIPs(t *testing.T) {
 	t.Parallel()
-	handler, _ := newSSOTestHandler()
 
-	tests := []struct {
-		name      string
-		issuerURL string
+	urls := []struct {
+		name string
+		url  string
 	}{
 		{"loopback IPv4", "https://127.0.0.1/"},
-		{"loopback IPv4 alt", "https://127.0.0.2/"},
+		{"loopback IPv6", "https://[::1]/"},
 		{"private 10.x", "https://10.0.0.1/"},
 		{"private 172.16.x", "https://172.16.0.1/"},
 		{"private 192.168.x", "https://192.168.1.1/"},
 		{"link-local", "https://169.254.169.254/"},
-		{"IPv6 loopback", "https://[::1]/"},
+		{"CGNAT 100.64.x", "https://100.64.0.1/"},
+		{"benchmark 198.18.x", "https://198.18.0.1/"},
+		{"IPv4-mapped IPv6", "https://[::ffff:169.254.169.254]/"},
 	}
 
-	for _, tt := range tests {
-		tt := tt
-		t.Run(tt.name, func(t *testing.T) {
-			createReq := SSOProviderRequest{
-				Name:         "test-provider",
-				IssuerURL:    tt.issuerURL,
-				ClientID:     "id",
-				ClientSecret: "secret",
-				RedirectURL:  "https://app.example.com/cb",
-				Scopes:       []string{"openid"},
-			}
+	t.Run("issuerURL", func(t *testing.T) {
+		t.Parallel()
+		// Each subtest gets its own handler so parallel inner subtests cannot
+		// collide on provider names in the shared fake k8s store.
+		for i, tt := range urls {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				handler, _ := newSSOTestHandler()
+				name := fmt.Sprintf("test-issuer-%d", i)
+				createReq := SSOProviderRequest{
+					Name:         name,
+					IssuerURL:    tt.url,
+					ClientID:     "id",
+					ClientSecret: "secret",
+					RedirectURL:  "https://app.example.com/cb",
+					Scopes:       []string{"openid"},
+				}
+				req := ssoRequest("POST", "/api/v1/settings/sso/providers", createReq)
+				w := httptest.NewRecorder()
+				handler.CreateProvider(w, req)
+				if w.Code != http.StatusCreated {
+					t.Fatalf("expected 201 for issuerURL %q, got %d: %s", tt.url, w.Code, w.Body.String())
+				}
+				var resp SSOProviderResponse
+				if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+					t.Fatalf("decode response: %v", err)
+				}
+				if resp.IssuerURL != tt.url {
+					t.Errorf("response IssuerURL = %q, want %q (URL must round-trip unchanged)", resp.IssuerURL, tt.url)
+				}
+			})
+		}
+	})
 
-			req := ssoRequest("POST", "/api/v1/settings/sso/providers", createReq)
-			w := httptest.NewRecorder()
-
-			handler.CreateProvider(w, req)
-
-			if w.Code != http.StatusBadRequest {
-				t.Errorf("expected 400 for private IP %q, got %d: %s", tt.issuerURL, w.Code, w.Body.String())
-			}
-		})
-	}
+	t.Run("explicitEndpoints", func(t *testing.T) {
+		t.Parallel()
+		for i, tt := range urls {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				handler, _ := newSSOTestHandler()
+				name := fmt.Sprintf("test-explicit-%d", i)
+				createReq := SSOProviderRequest{
+					Name:             name,
+					IssuerURL:        "https://accounts.google.com",
+					ClientID:         "id",
+					ClientSecret:     "secret",
+					RedirectURL:      "https://app.example.com/cb",
+					Scopes:           []string{"openid"},
+					AuthorizationURL: tt.url,
+					TokenURL:         tt.url,
+					JWKSURL:          tt.url,
+				}
+				req := ssoRequest("POST", "/api/v1/settings/sso/providers", createReq)
+				w := httptest.NewRecorder()
+				handler.CreateProvider(w, req)
+				if w.Code != http.StatusCreated {
+					t.Fatalf("expected 201 for explicit endpoint %q, got %d: %s", tt.url, w.Code, w.Body.String())
+				}
+				var resp SSOProviderResponse
+				if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+					t.Fatalf("decode response: %v", err)
+				}
+				if resp.AuthorizationURL != tt.url || resp.TokenURL != tt.url || resp.JWKSURL != tt.url {
+					t.Errorf("response endpoints did not round-trip: got auth=%q token=%q jwks=%q want all %q",
+						resp.AuthorizationURL, resp.TokenURL, resp.JWKSURL, tt.url)
+				}
+			})
+		}
+	})
 }
 
 func TestSSOSettingsHandler_NotFoundError_TypeChecked(t *testing.T) {
@@ -985,4 +1059,177 @@ func TestSSOSettingsHandler_WriteEndpoint_DeniedWhenAccessCheckerNil(t *testing.
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 when accessChecker is nil, got %d: %s", w.Code, w.Body.String())
 	}
+}
+
+// TestCreateProvider_PublicClient_NoSecret verifies AC10: a public-client SSO
+// provider can be created with no client secret, and the resulting K8s Secret
+// contains only the client-id key (no client-secret).
+func TestCreateProvider_PublicClient_NoSecret(t *testing.T) {
+	t.Parallel()
+	cs := fake.NewSimpleClientset()
+	store := sso.NewProviderStore(cs, ssoTestNamespace)
+	checker := &mockSSOAccessChecker{allowed: true}
+	handler := NewSSOSettingsHandler(store, nil, checker)
+
+	createReq := SSOProviderRequest{
+		Name:                    "supabase",
+		IssuerURL:               "https://accounts.google.com",
+		ClientID:                "supabase-public-id",
+		RedirectURL:             "https://app.example.com/api/v1/auth/oidc/callback",
+		Scopes:                  []string{"openid", "email", "profile"},
+		TokenEndpointAuthMethod: "none",
+	}
+
+	req := ssoRequest("POST", "/api/v1/settings/sso/providers", createReq)
+	w := httptest.NewRecorder()
+	handler.CreateProvider(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var created SSOProviderResponse
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if created.TokenEndpointAuthMethod != "none" {
+		t.Errorf("response method = %q, want %q", created.TokenEndpointAuthMethod, "none")
+	}
+
+	// Verify the K8s Secret contains client-id but NOT client-secret.
+	secret, err := cs.CoreV1().Secrets(ssoTestNamespace).Get(context.Background(), sso.SecretName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get sso secret: %v", err)
+	}
+	if _, ok := secret.Data["supabase.client-id"]; !ok {
+		t.Errorf("expected supabase.client-id key in secret, got keys: %v", keysOf(secret))
+	}
+	if _, ok := secret.Data["supabase.client-secret"]; ok {
+		t.Errorf("expected NO supabase.client-secret key for public client, got keys: %v", keysOf(secret))
+	}
+}
+
+// TestCreateProvider_Confidential_RequiresSecret verifies AC11: an explicit
+// client_secret_basic request without a secret is rejected with a validation error.
+func TestCreateProvider_Confidential_RequiresSecret(t *testing.T) {
+	t.Parallel()
+	handler, _ := newSSOTestHandler()
+
+	createReq := SSOProviderRequest{
+		Name:                    "googletest",
+		IssuerURL:               "https://accounts.google.com",
+		ClientID:                "google-id",
+		RedirectURL:             "https://app.example.com/cb",
+		Scopes:                  []string{"openid"},
+		TokenEndpointAuthMethod: "client_secret_basic",
+		// ClientSecret intentionally empty
+	}
+
+	req := ssoRequest("POST", "/api/v1/settings/sso/providers", createReq)
+	w := httptest.NewRecorder()
+	handler.CreateProvider(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "clientSecret") {
+		t.Errorf("expected validation error to mention clientSecret, got: %s", w.Body.String())
+	}
+}
+
+// TestCreateProvider_InvalidAuthMethod verifies AC12: an unsupported
+// tokenEndpointAuthMethod value is rejected with a validation error.
+func TestCreateProvider_InvalidAuthMethod(t *testing.T) {
+	t.Parallel()
+	handler, _ := newSSOTestHandler()
+
+	createReq := SSOProviderRequest{
+		Name:                    "exotic",
+		IssuerURL:               "https://accounts.google.com",
+		ClientID:                "id",
+		ClientSecret:            "secret",
+		RedirectURL:             "https://app.example.com/cb",
+		Scopes:                  []string{"openid"},
+		TokenEndpointAuthMethod: "client_secret_jwt",
+	}
+
+	req := ssoRequest("POST", "/api/v1/settings/sso/providers", createReq)
+	w := httptest.NewRecorder()
+	handler.CreateProvider(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "tokenEndpointAuthMethod") {
+		t.Errorf("expected validation error to mention tokenEndpointAuthMethod, got: %s", w.Body.String())
+	}
+}
+
+// TestUpdateProvider_FlipToPublic verifies AC13: flipping a confidential
+// provider to public removes the stored client-secret from the K8s Secret.
+func TestUpdateProvider_FlipToPublic(t *testing.T) {
+	t.Parallel()
+	cs := fake.NewSimpleClientset()
+	store := sso.NewProviderStore(cs, ssoTestNamespace)
+	checker := &mockSSOAccessChecker{allowed: true}
+	handler := NewSSOSettingsHandler(store, nil, checker)
+
+	// Seed a confidential provider directly via the store.
+	if err := store.Create(context.Background(), sso.SSOProvider{
+		Name:                    "google",
+		IssuerURL:               "https://accounts.google.com",
+		ClientID:                "google-id",
+		ClientSecret:            "google-secret",
+		RedirectURL:             "https://app.example.com/cb",
+		Scopes:                  []string{"openid"},
+		TokenEndpointAuthMethod: "client_secret_basic",
+	}); err != nil {
+		t.Fatalf("seed provider: %v", err)
+	}
+
+	// Sanity: the secret key is present.
+	secret, err := cs.CoreV1().Secrets(ssoTestNamespace).Get(context.Background(), sso.SecretName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get sso secret pre-update: %v", err)
+	}
+	if _, ok := secret.Data["google.client-secret"]; !ok {
+		t.Fatalf("seed: expected google.client-secret key, got: %v", keysOf(secret))
+	}
+
+	updateReq := SSOProviderRequest{
+		IssuerURL:               "https://accounts.google.com",
+		ClientID:                "google-id",
+		RedirectURL:             "https://app.example.com/cb",
+		Scopes:                  []string{"openid"},
+		TokenEndpointAuthMethod: "none",
+		// no clientSecret — flipping to public should clear it
+	}
+	req := ssoRequest("PUT", "/api/v1/settings/sso/providers/google", updateReq)
+	req.SetPathValue("name", "google")
+	w := httptest.NewRecorder()
+	handler.UpdateProvider(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// The secret should no longer contain the client-secret key.
+	secret, err = cs.CoreV1().Secrets(ssoTestNamespace).Get(context.Background(), sso.SecretName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get sso secret post-update: %v", err)
+	}
+	if _, ok := secret.Data["google.client-secret"]; ok {
+		t.Errorf("expected client-secret to be removed after flip to public, got keys: %v", keysOf(secret))
+	}
+	if _, ok := secret.Data["google.client-id"]; !ok {
+		t.Errorf("expected client-id to remain after flip, got keys: %v", keysOf(secret))
+	}
+}
+
+// keysOf returns the sorted keys of a Secret's Data map for diagnostic logging.
+func keysOf(s *corev1.Secret) []string {
+	out := make([]string, 0, len(s.Data))
+	for k := range s.Data {
+		out = append(out, k)
+	}
+	return out
 }

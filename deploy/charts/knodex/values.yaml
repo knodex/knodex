@@ -211,6 +211,15 @@ server:
     # Admin username (password is auto-generated)
     adminUsername: "admin"
 
+    # -- Local user login pathway
+    # When disabled (false), the server:
+    #   - Skips creating the knodex-initial-admin-password Secret
+    #   - Returns 403 from POST /api/v1/auth/local/login (blocking ALL local accounts)
+    #   - Frontend hides the local login form
+    # Use this for SSO-only deployments. To break-glass, flip back to true and re-deploy.
+    localLogin:
+      enabled: true
+
     # Local users are stored in ConfigMap (definitions) and Secret (credentials)
     localAccounts:
       # Create the ConfigMap for account definitions
@@ -262,9 +271,14 @@ server:
     #   - knodex-sso-providers ConfigMap: non-sensitive config (always created when oidc.enabled + providers)
     #   - knodex-sso-secrets Secret: credentials (only created when clientSecret is provided inline)
     #
+    # Public clients (PKCE): set tokenEndpointAuthMethod=none and omit clientSecret.
+    # PKCE (RFC 7636 / RFC 9449) is always-on regardless of this setting; the field
+    # only controls whether the OAuth2 token request also sends a client_secret.
+    #
     # External Secrets: set oidc.existingSecret to the name of a Secret managed
     # by your external secret operator (ESO, Vault, etc.). The secret must contain
-    # keys: <provider-name>.client-id and <provider-name>.client-secret for each provider.
+    # keys: <provider-name>.client-id and (for confidential clients only)
+    # <provider-name>.client-secret for each provider.
     oidc:
       # -- Enable OIDC authentication
       enabled: false
@@ -290,11 +304,12 @@ server:
       providers: []
       # Example OIDC provider configurations:
       # providers:
-      #   # Microsoft Entra ID (formerly Azure AD)
+      #   # Microsoft Entra ID (formerly Azure AD) — confidential client
       #   - name: azure-ad
       #     issuerURL: "https://login.microsoftonline.com/{tenant-id}/v2.0"
       #     clientID: "your-application-client-id"
       #     clientSecret: "your-client-secret-value"
+      #     # tokenEndpointAuthMethod defaults to "client_secret_basic" when a clientSecret is set.
       #     redirectURL: "https://knodex.example.com/api/v1/auth/oidc/callback"
       #     scopes:
       #       - openid
@@ -328,6 +343,25 @@ server:
       #     clientID: "your-google-client-id.apps.googleusercontent.com"
       #     clientSecret: "your-google-client-secret"
       #     redirectURL: "https://knodex.example.com/api/v1/auth/oidc/callback"
+      #     scopes:
+      #       - openid
+      #       - email
+      #       - profile
+      #
+      #   # Supabase Auth / GoTrue (public client / PKCE + explicit endpoints)
+      #   #
+      #   # GoTrue serves an incomplete /.well-known/openid-configuration that omits
+      #   # authorization_endpoint, so OIDC discovery fails. Set authorizationURL,
+      #   # tokenURL, and jwksURL together to bypass discovery entirely. All three
+      #   # must be provided — partial input falls through to discovery.
+      #   - name: supabase
+      #     issuerURL: "https://<project-ref>.supabase.co/auth/v1"
+      #     clientID: "your-supabase-oauth-client-id"
+      #     redirectURL: "https://knodex.example.com/api/v1/auth/oidc/callback"
+      #     tokenEndpointAuthMethod: "none"
+      #     authorizationURL: "https://<project-ref>.supabase.co/auth/v1/authorize"
+      #     tokenURL: "https://<project-ref>.supabase.co/auth/v1/token"
+      #     jwksURL: "https://<project-ref>.supabase.co/auth/v1/.well-known/jwks.json"
       #     scopes:
       #       - openid
       #       - email

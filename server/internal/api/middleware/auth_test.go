@@ -18,6 +18,7 @@ import (
 // Updated to match new interface (removed rbac.User dependency)
 type mockAuthService struct {
 	validateTokenFunc func(token string) (*auth.JWTClaims, error)
+	localLoginEnabled bool // configurable; default false suits middleware tests
 }
 
 func (m *mockAuthService) ValidateToken(_ context.Context, token string) (*auth.JWTClaims, error) {
@@ -41,6 +42,8 @@ func (m *mockAuthService) AuthenticateLocal(ctx context.Context, username, passw
 func (m *mockAuthService) RevokeToken(_ context.Context, _ string, _ time.Duration) error {
 	return nil
 }
+
+func (m *mockAuthService) IsLocalLoginEnabled() bool { return m.localLoginEnabled }
 
 // mockPermissionChecker removed - Permission and PermissionChecker types no longer exist.
 // All authorization now uses CasbinAuthz middleware with PolicyEnforcer.CanAccessWithGroups().

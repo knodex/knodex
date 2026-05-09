@@ -176,6 +176,64 @@ func TestLoad_RejectsInvalidDefaultRole(t *testing.T) {
 	}
 }
 
+func TestLoad_LocalLoginEnabled_DefaultsTrue(t *testing.T) {
+	// Unset entirely so utilenv.GetBool returns its default.
+	if original, ok := os.LookupEnv("LOCAL_LOGIN_ENABLED"); ok {
+		t.Cleanup(func() { os.Setenv("LOCAL_LOGIN_ENABLED", original) })
+	}
+	os.Unsetenv("LOCAL_LOGIN_ENABLED")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+	if !cfg.Auth.LocalLoginEnabled {
+		t.Error("Expected LocalLoginEnabled to default to true when LOCAL_LOGIN_ENABLED is unset")
+	}
+}
+
+func TestLoad_LocalLoginEnabled_FromEnv(t *testing.T) {
+	cases := []struct {
+		value    string
+		expected bool
+	}{
+		{"true", true},
+		{"false", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.value, func(t *testing.T) {
+			t.Setenv("LOCAL_LOGIN_ENABLED", tc.value)
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load() failed: %v", err)
+			}
+			if cfg.Auth.LocalLoginEnabled != tc.expected {
+				t.Errorf("Expected LocalLoginEnabled=%v with LOCAL_LOGIN_ENABLED=%q, got %v",
+					tc.expected, tc.value, cfg.Auth.LocalLoginEnabled)
+			}
+		})
+	}
+}
+
+// TestLoad_LocalLoginEnabled_FailsClosedOnMalformed verifies that a typo or
+// unparseable value for the security-gating LOCAL_LOGIN_ENABLED flag is treated
+// as DISABLED rather than silently falling back to the default of true.
+func TestLoad_LocalLoginEnabled_FailsClosedOnMalformed(t *testing.T) {
+	cases := []string{"Disabled", "no", "off", "yes", "garbage", " "}
+	for _, value := range cases {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("LOCAL_LOGIN_ENABLED", value)
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load() failed: %v", err)
+			}
+			if cfg.Auth.LocalLoginEnabled {
+				t.Errorf("Expected LocalLoginEnabled=false (fail-closed) for malformed value %q, got true", value)
+			}
+		})
+	}
+}
+
 // =============================================================================
 // OIDC Group Mappings Tests
 // =============================================================================

@@ -160,6 +160,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Local login is disabled on this deployment. The endpoint is not registered when local user login has been turned off by the operator.
         '429':
           description: Rate limit exceeded
           content:
@@ -307,6 +309,9 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/OIDCProvider'
+                  localLoginEnabled:
+                    type: boolean
+                    description: Whether local user login is enabled on this server. When false, the local login endpoint is not registered and the frontend hides the local login form.
 
   # -------------------------------------------------------------------------
   # RGD Catalog

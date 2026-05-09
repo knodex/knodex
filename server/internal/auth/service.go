@@ -29,6 +29,15 @@ type ServiceInterface interface {
 	ValidateToken(ctx context.Context, tokenString string) (*JWTClaims, error)
 	// RevokeToken blacklists a JWT by its jti claim for server-side session revocation
 	RevokeToken(ctx context.Context, jti string, remainingTTL time.Duration) error
+	// IsLocalLoginEnabled reports whether the local user login pathway is active.
+	// Returns true only when BOTH conditions hold:
+	//   1. LOCAL_LOGIN_ENABLED is true (operator did not disable the feature)
+	//   2. A local admin password was successfully bootstrapped at startup
+	// In current operation, condition 2 is a hard precondition: app/app.go
+	// fails fast if bootstrap fails while LocalLoginEnabled is true. The two
+	// terms are kept distinct so the predicate stays correct if that startup
+	// behavior is ever loosened.
+	IsLocalLoginEnabled() bool
 }
 
 const (
@@ -52,6 +61,12 @@ const (
 
 	// NoncePrefix is the Redis key prefix for OIDC nonce tokens (keyed on state)
 	NoncePrefix = "oidc:nonce:"
+
+	// PKCEVerifierTTL is the TTL for OIDC PKCE code_verifier (matches state token TTL)
+	PKCEVerifierTTL = 5 * time.Minute
+
+	// PKCEVerifierPrefix is the Redis key prefix for OIDC PKCE verifiers (keyed on state)
+	PKCEVerifierPrefix = "oidc:pkce:"
 )
 
 // Compile-time interface compliance check
@@ -152,7 +167,10 @@ func NewService(config *Config, accountStore *AccountStore, projectService AuthP
 		slog.Info("loaded JWT secret from knodex-secret")
 	}
 
-	// Bootstrap admin password to AccountStore if provided via config
+	// Bootstrap admin password to AccountStore if provided via config.
+	// Validation runs unconditionally — a malformed password rejected at startup
+	// is better than silently swallowed config. The AccountStore SetPassword call
+	// is gated on LocalLoginEnabled (defense in depth — primary gate is in app.go).
 	adminUsername := config.LocalAdminUsername
 	if adminUsername == "" {
 		adminUsername = "admin"
@@ -165,16 +183,20 @@ func NewService(config *Config, accountStore *AccountStore, projectService AuthP
 			return nil, fmt.Errorf("LocalAdminPassword complexity validation failed: %w", err)
 		}
 
-		// Set admin password in AccountStore (this persists to Secret)
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := accountStore.SetPassword(ctx, adminUsername, config.LocalAdminPassword); err != nil {
-			slog.Warn("failed to bootstrap admin password to AccountStore",
-				"error", err,
-			)
-			// Continue anyway - password may already be set in Secret
+		if config.LocalLoginEnabled {
+			// Set admin password in AccountStore (this persists to Secret)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := accountStore.SetPassword(ctx, adminUsername, config.LocalAdminPassword); err != nil {
+				slog.Warn("failed to bootstrap admin password to AccountStore",
+					"error", err,
+				)
+				// Continue anyway - password may already be set in Secret
+			} else {
+				slog.Info("bootstrapped admin password to AccountStore")
+			}
 		} else {
-			slog.Info("bootstrapped admin password to AccountStore")
+			slog.Info("local login disabled, skipping admin password bootstrap to AccountStore")
 		}
 	}
 
@@ -189,7 +211,9 @@ func NewService(config *Config, accountStore *AccountStore, projectService AuthP
 	// The password hash is stored in knodex-secret, but the account definition
 	// (capabilities, enabled status) must exist in the knodex-accounts ConfigMap.
 	// Without it, login will fail with a misleading "invalid credentials" error.
-	if config.LocalAdminPassword != "" {
+	// Only run when local login is intended to function — when disabled, the
+	// missing/invalid admin account is not a misconfiguration.
+	if config.LocalLoginEnabled && config.LocalAdminPassword != "" {
 		adminAccount, err := accountStore.GetAccount(ctx, adminUsername)
 		if err != nil {
 			slog.Error("admin password was bootstrapped but admin account is not defined in knodex-accounts ConfigMap — local admin login will fail",
@@ -222,6 +246,11 @@ func NewService(config *Config, accountStore *AccountStore, projectService AuthP
 		blacklist:        newRedisJWTBlacklist(redisClient),
 	}
 
+	slog.Info("local login status",
+		"enabled", config.LocalLoginEnabled,
+		"password_provided", config.LocalAdminPassword != "",
+	)
+
 	return service, nil
 }
 
@@ -235,6 +264,12 @@ func (s *Service) SetGroupMapper(mapper *GroupMapper) {
 // AuthenticateLocal authenticates a local user using AccountStore
 // Uses ConfigMap/Secret instead of User CRD
 func (s *Service) AuthenticateLocal(ctx context.Context, username, password, sourceIP string) (*LoginResponse, error) {
+	// Defense in depth: refuse authentication when local login is disabled.
+	// The HTTP handler also short-circuits, but this guards against any future
+	// internal caller (or test) that bypasses the handler.
+	if !s.IsLocalLoginEnabled() {
+		return nil, fmt.Errorf("local login is disabled")
+	}
 	// Validate password using AccountStore (includes IP-based rate limiting)
 	account, err := s.accountStore.ValidatePassword(ctx, username, password, sourceIP)
 	if err != nil {
@@ -1194,6 +1229,12 @@ func (s *Service) RevokeToken(ctx context.Context, jti string, remainingTTL time
 		return nil
 	}
 	return s.blacklist.RevokeToken(ctx, jti, remainingTTL)
+}
+
+// IsLocalLoginEnabled reports whether the local user login pathway is active.
+// See ServiceInterface doc for the two preconditions.
+func (s *Service) IsLocalLoginEnabled() bool {
+	return s.config.LocalLoginEnabled && s.config.LocalAdminPassword != ""
 }
 
 // GetBootstrapService returns the project bootstrap service

@@ -98,6 +98,9 @@ type RouterConfig struct {
 type RouterResult struct {
 	Handler          http.Handler
 	UserRateLimiters []*middleware.UserRateLimiter
+	// CatalogService is exposed so callers (e.g., the WebSocket count push) can reuse
+	// the same instance and get identical Casbin filtering as the HTTP catalog endpoints.
+	CatalogService *services.CatalogService
 }
 
 // Note: permissionServiceAdapter removed - all authorization uses CasbinAuthz exclusively.
@@ -716,13 +719,22 @@ func NewRouterWithConfig(healthChecker *health.Checker, rgdWatcher *watcher.RGDW
 			TrustedProxies:    cfg.RateLimitTrustedProxies,
 		})
 
-		// Local admin login (optionally wrapped with audit login middleware)
-		var loginHandler http.Handler = http.HandlerFunc(authHandler.LocalLogin)
-		if cfg.AuditLoginMiddleware != nil {
-			loginHandler = cfg.AuditLoginMiddleware(loginHandler)
+		// Local login route registration is gated on IsLocalLoginEnabled().
+		// When disabled, the handler itself returns 403 (defense in depth via
+		// AuthHandler.LocalLogin and Service.AuthenticateLocal), AND we skip
+		// route registration entirely so attackers cannot:
+		//   - drain the 5 req/min loginRateLimiter budget
+		//   - flood the audit log with attacker-supplied usernames via the
+		//     AuditLoginMiddleware (which records request body identity verbatim)
+		// A request to a non-registered route returns 404 from the mux router.
+		if cfg.AuthService.IsLocalLoginEnabled() {
+			var loginHandler http.Handler = http.HandlerFunc(authHandler.LocalLogin)
+			if cfg.AuditLoginMiddleware != nil {
+				loginHandler = cfg.AuditLoginMiddleware(loginHandler)
+			}
+			loginHandler = loginRateLimiter(loginHandler)
+			combinedMux.Handle("POST /api/v1/auth/local/login", loginHandler)
 		}
-		loginHandler = loginRateLimiter(loginHandler)
-		combinedMux.Handle("POST /api/v1/auth/local/login", loginHandler)
 
 		// Logout endpoint (authenticated, no authz — any authenticated user can log out)
 		logoutHandler := middleware.Auth(middleware.AuthConfig{
@@ -818,5 +830,6 @@ func NewRouterWithConfig(healthChecker *health.Checker, rgdWatcher *watcher.RGDW
 	return RouterResult{
 		Handler:          handler,
 		UserRateLimiters: userRateLimiters,
+		CatalogService:   catalogService,
 	}
 }

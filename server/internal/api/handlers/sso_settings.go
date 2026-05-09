@@ -13,7 +13,6 @@ import (
 	"github.com/knodex/knodex/server/internal/api/middleware"
 	"github.com/knodex/knodex/server/internal/api/response"
 	"github.com/knodex/knodex/server/internal/audit"
-	"github.com/knodex/knodex/server/internal/netutil"
 	"github.com/knodex/knodex/server/internal/sso"
 	"github.com/knodex/knodex/server/internal/util/collection"
 )
@@ -157,21 +156,32 @@ func (h *SSOSettingsHandler) requireSettingsRead(w http.ResponseWriter, r *http.
 // SSOProviderResponse is the API representation of an SSO provider.
 // ClientSecret is never returned.
 type SSOProviderResponse struct {
-	Name        string   `json:"name"`
-	IssuerURL   string   `json:"issuerURL"`
-	ClientID    string   `json:"clientID"`
-	RedirectURL string   `json:"redirectURL"`
-	Scopes      []string `json:"scopes"`
+	Name                    string   `json:"name"`
+	IssuerURL               string   `json:"issuerURL"`
+	ClientID                string   `json:"clientID"`
+	RedirectURL             string   `json:"redirectURL"`
+	Scopes                  []string `json:"scopes"`
+	TokenEndpointAuthMethod string   `json:"tokenEndpointAuthMethod"`
+	// Optional explicit endpoints (set together to bypass discovery for IdPs that
+	// serve incomplete /.well-known/openid-configuration, e.g. Supabase GoTrue).
+	AuthorizationURL string `json:"authorizationURL,omitempty"`
+	TokenURL         string `json:"tokenURL,omitempty"`
+	JWKSURL          string `json:"jwksURL,omitempty"`
 }
 
 // SSOProviderRequest is the JSON body for create/update.
 type SSOProviderRequest struct {
-	Name         string   `json:"name"`
-	IssuerURL    string   `json:"issuerURL"`
-	ClientID     string   `json:"clientID"`
-	ClientSecret string   `json:"clientSecret"`
-	RedirectURL  string   `json:"redirectURL"`
-	Scopes       []string `json:"scopes"`
+	Name                    string   `json:"name"`
+	IssuerURL               string   `json:"issuerURL"`
+	ClientID                string   `json:"clientID"`
+	ClientSecret            string   `json:"clientSecret"`
+	RedirectURL             string   `json:"redirectURL"`
+	Scopes                  []string `json:"scopes"`
+	TokenEndpointAuthMethod string   `json:"tokenEndpointAuthMethod"`
+	// Optional explicit endpoints — all three required together to take effect.
+	AuthorizationURL string `json:"authorizationURL,omitempty"`
+	TokenURL         string `json:"tokenURL,omitempty"`
+	JWKSURL          string `json:"jwksURL,omitempty"`
 }
 
 // ListProviders handles GET /api/v1/settings/sso/providers
@@ -267,12 +277,16 @@ func (h *SSOSettingsHandler) CreateProvider(w http.ResponseWriter, r *http.Reque
 	}
 
 	provider := sso.SSOProvider{
-		Name:         req.Name,
-		IssuerURL:    req.IssuerURL,
-		ClientID:     req.ClientID,
-		ClientSecret: req.ClientSecret,
-		RedirectURL:  req.RedirectURL,
-		Scopes:       req.Scopes,
+		Name:                    req.Name,
+		IssuerURL:               req.IssuerURL,
+		ClientID:                req.ClientID,
+		ClientSecret:            req.ClientSecret,
+		RedirectURL:             req.RedirectURL,
+		Scopes:                  req.Scopes,
+		TokenEndpointAuthMethod: req.TokenEndpointAuthMethod,
+		AuthorizationURL:        req.AuthorizationURL,
+		TokenURL:                req.TokenURL,
+		JWKSURL:                 req.JWKSURL,
 	}
 
 	if err := h.store.Create(ctx, provider); err != nil {
@@ -345,12 +359,16 @@ func (h *SSOSettingsHandler) UpdateProvider(w http.ResponseWriter, r *http.Reque
 	oldProvider, _ := h.store.Get(ctx, name)
 
 	provider := sso.SSOProvider{
-		Name:         name,
-		IssuerURL:    req.IssuerURL,
-		ClientID:     req.ClientID,
-		ClientSecret: req.ClientSecret,
-		RedirectURL:  req.RedirectURL,
-		Scopes:       req.Scopes,
+		Name:                    name,
+		IssuerURL:               req.IssuerURL,
+		ClientID:                req.ClientID,
+		ClientSecret:            req.ClientSecret,
+		RedirectURL:             req.RedirectURL,
+		Scopes:                  req.Scopes,
+		TokenEndpointAuthMethod: req.TokenEndpointAuthMethod,
+		AuthorizationURL:        req.AuthorizationURL,
+		TokenURL:                req.TokenURL,
+		JWKSURL:                 req.JWKSURL,
 	}
 
 	if err := h.store.Update(ctx, name, provider); err != nil {
@@ -479,12 +497,25 @@ func toProviderResponse(p sso.SSOProvider) SSOProviderResponse {
 	if scopes == nil {
 		scopes = []string{}
 	}
+	method := p.TokenEndpointAuthMethod
+	if method == "" {
+		// Surface the inferred method to the UI so operators see what runs at auth time.
+		if p.ClientSecret == "" {
+			method = "none"
+		} else {
+			method = "client_secret_basic"
+		}
+	}
 	return SSOProviderResponse{
-		Name:        p.Name,
-		IssuerURL:   p.IssuerURL,
-		ClientID:    p.ClientID,
-		RedirectURL: p.RedirectURL,
-		Scopes:      scopes,
+		Name:                    p.Name,
+		IssuerURL:               p.IssuerURL,
+		ClientID:                p.ClientID,
+		RedirectURL:             p.RedirectURL,
+		Scopes:                  scopes,
+		TokenEndpointAuthMethod: method,
+		AuthorizationURL:        p.AuthorizationURL,
+		TokenURL:                p.TokenURL,
+		JWKSURL:                 p.JWKSURL,
 	}
 }
 
@@ -507,8 +538,6 @@ func validateProviderRequest(req *SSOProviderRequest, requireAll bool) helpers.V
 				errs.Add("issuerURL", "issuer URL must be a valid URL")
 			} else if u.Scheme != "https" {
 				errs.Add("issuerURL", "issuer URL must use HTTPS")
-			} else if netutil.IsPrivateHost(u.Hostname()) {
-				errs.Add("issuerURL", "issuer URL must not point to a private or loopback address")
 			}
 		}
 	}
@@ -519,10 +548,25 @@ func validateProviderRequest(req *SSOProviderRequest, requireAll bool) helpers.V
 		}
 	}
 
-	if requireAll {
+	// Resolve the effective auth method. Empty + empty secret => "none" (PKCE);
+	// empty + secret => "client_secret_basic". Explicit value always wins.
+	method := req.TokenEndpointAuthMethod
+	if method == "" {
 		if req.ClientSecret == "" {
-			errs.Add("clientSecret", "client secret is required")
+			method = "none"
+		} else {
+			method = "client_secret_basic"
 		}
+	}
+	switch method {
+	case "client_secret_basic":
+		if requireAll && req.ClientSecret == "" {
+			errs.Add("clientSecret", "client secret is required for token_endpoint_auth_method=client_secret_basic")
+		}
+	case "none":
+		// Public client / PKCE — secret optional.
+	default:
+		errs.Add("tokenEndpointAuthMethod", "must be 'client_secret_basic' or 'none'")
 	}
 
 	if requireAll || req.RedirectURL != "" {
@@ -533,6 +577,42 @@ func validateProviderRequest(req *SSOProviderRequest, requireAll bool) helpers.V
 			if err != nil || u.Scheme == "" || u.Host == "" {
 				errs.Add("redirectURL", "redirect URL must be a valid URL")
 			}
+		}
+	}
+
+	// Explicit-endpoint override: all three must be provided together (or none)
+	// to bypass OIDC discovery. Each must be a valid HTTPS URL. Private/in-cluster
+	// networks are permitted at the application layer; defense-in-depth comes from
+	// Casbin authorization (only role:serveradmin has settings:update) and Helm NetworkPolicy.
+	explicitSet := 0
+	if req.AuthorizationURL != "" {
+		explicitSet++
+	}
+	if req.TokenURL != "" {
+		explicitSet++
+	}
+	if req.JWKSURL != "" {
+		explicitSet++
+	}
+	if explicitSet > 0 && explicitSet < 3 {
+		errs.Add("authorizationURL", "authorizationURL, tokenURL, and jwksURL must be provided together to bypass discovery")
+	}
+	for field, raw := range map[string]string{
+		"authorizationURL": req.AuthorizationURL,
+		"tokenURL":         req.TokenURL,
+		"jwksURL":          req.JWKSURL,
+	} {
+		if raw == "" {
+			continue
+		}
+		u, err := url.Parse(raw)
+		if err != nil || u.Scheme == "" || u.Host == "" {
+			errs.Add(field, "must be a valid URL")
+			continue
+		}
+		if u.Scheme != "https" {
+			errs.Add(field, "must use HTTPS")
+			continue
 		}
 	}
 

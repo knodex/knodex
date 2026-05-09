@@ -109,6 +109,18 @@ describe('OIDCButton', () => {
     expect(authApi.initiateOIDCLogin).not.toHaveBeenCalled();
   });
 
+  it('renders Knodex Cloud provider with Knodex logo image', () => {
+    const { container } = render(<OIDCButton provider="knodex-cloud" displayName="Knodex Cloud" />);
+    const button = screen.getByRole('button');
+    expect(button.textContent).toContain('Sign in with Knodex Cloud');
+    expect(container.querySelector('img[alt="Knodex"]')).toBeInTheDocument();
+  });
+
+  it('renders knodex provider (no dash) with Knodex logo image', () => {
+    const { container } = render(<OIDCButton provider="knodex" displayName="Knodex Cloud" />);
+    expect(container.querySelector('img[alt="Knodex"]')).toBeInTheDocument();
+  });
+
   it('is case-insensitive for provider names', () => {
     const { container } = render(<OIDCButton provider="GOOGLE" displayName="Google" />);
 

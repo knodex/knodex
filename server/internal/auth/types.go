@@ -74,6 +74,11 @@ type Config struct {
 	// LocalAdmin configuration
 	LocalAdminUsername string
 	LocalAdminPassword string // Plaintext password, will be hashed
+	// LocalLoginEnabled controls whether the local user login pathway is active.
+	// Disabling it blocks login for ALL local accounts (admin and any other),
+	// skips bootstrap of the admin password, and causes the LocalLogin handler
+	// to return 403.
+	LocalLoginEnabled bool
 
 	// OIDC configuration
 	OIDCEnabled   bool
@@ -88,6 +93,18 @@ type OIDCProviderConfig struct {
 	ClientSecret string
 	RedirectURL  string
 	Scopes       []string
+	// TokenEndpointAuthMethod selects the OAuth2 token endpoint authentication method.
+	// Empty triggers inference: empty + empty ClientSecret = "none" (public client).
+	// Supported values: "client_secret_basic" (default), "none" (public client / PKCE).
+	TokenEndpointAuthMethod string
+
+	// AuthorizationURL, TokenURL, and JWKSURL bypass OIDC discovery when all three
+	// are set. Use for IdPs that serve an incomplete /.well-known/openid-configuration
+	// (e.g., Supabase GoTrue, which only advertises issuer + jwks_uri). When any of
+	// the three is empty, the standard discovery path runs unchanged.
+	AuthorizationURL string
+	TokenURL         string
+	JWKSURL          string
 }
 
 // OIDCLoginRequest represents the query parameters for OIDC login

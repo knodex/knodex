@@ -20,18 +20,18 @@ import (
 
 // MockOIDCService is a mock OIDC service for testing handlers
 type MockOIDCService struct {
-	generateStateTokenFunc   func(ctx context.Context, providerName, redirectURL string) (string, string, error)
+	generateStateTokenFunc   func(ctx context.Context, providerName, redirectURL string) (string, string, string, error)
 	validateStateTokenFunc   func(ctx context.Context, state string) (providerName, redirectURL string, err error)
-	getAuthCodeURLFunc       func(providerName, state, nonce string) (string, error)
-	exchangeCodeForTokenFunc func(ctx context.Context, providerName, code, nonce string) (*auth.LoginResponse, error)
+	getAuthCodeURLFunc       func(providerName, state, nonce, verifier string) (string, error)
+	exchangeCodeForTokenFunc func(ctx context.Context, providerName, code, nonce, verifier string) (*auth.LoginResponse, error)
 	listProvidersFunc        func() []string
 }
 
-func (m *MockOIDCService) GenerateStateToken(ctx context.Context, providerName, redirectURL string) (string, string, error) {
+func (m *MockOIDCService) GenerateStateToken(ctx context.Context, providerName, redirectURL string) (string, string, string, error) {
 	if m.generateStateTokenFunc != nil {
 		return m.generateStateTokenFunc(ctx, providerName, redirectURL)
 	}
-	return "mock-state-token", "mock-nonce", nil
+	return "mock-state-token", "mock-nonce", "mock-verifier", nil
 }
 
 func (m *MockOIDCService) ValidateStateToken(ctx context.Context, state string) (providerName, redirectURL string, err error) {
@@ -41,16 +41,16 @@ func (m *MockOIDCService) ValidateStateToken(ctx context.Context, state string) 
 	return "azuread", "", nil
 }
 
-func (m *MockOIDCService) GetAuthCodeURL(providerName, state, nonce string) (string, error) {
+func (m *MockOIDCService) GetAuthCodeURL(providerName, state, nonce, verifier string) (string, error) {
 	if m.getAuthCodeURLFunc != nil {
-		return m.getAuthCodeURLFunc(providerName, state, nonce)
+		return m.getAuthCodeURLFunc(providerName, state, nonce, verifier)
 	}
 	return "https://provider.example.com/authorize?state=" + state + "&nonce=" + nonce, nil
 }
 
-func (m *MockOIDCService) ExchangeCodeForToken(ctx context.Context, providerName, code, nonce string) (*auth.LoginResponse, error) {
+func (m *MockOIDCService) ExchangeCodeForToken(ctx context.Context, providerName, code, nonce, verifier string) (*auth.LoginResponse, error) {
 	if m.exchangeCodeForTokenFunc != nil {
-		return m.exchangeCodeForTokenFunc(ctx, providerName, code, nonce)
+		return m.exchangeCodeForTokenFunc(ctx, providerName, code, nonce, verifier)
 	}
 	return &auth.LoginResponse{
 		Token:     "mock-jwt-token",
@@ -115,8 +115,8 @@ func TestOIDCLogin(t *testing.T) {
 				listProvidersFunc: func() []string {
 					return []string{"google", "azure"}
 				},
-				generateStateTokenFunc: func(ctx context.Context, providerName, redirectURL string) (string, string, error) {
-					return "", "", context.DeadlineExceeded
+				generateStateTokenFunc: func(ctx context.Context, providerName, redirectURL string) (string, string, string, error) {
+					return "", "", "", context.DeadlineExceeded
 				},
 			},
 			wantStatusCode: http.StatusInternalServerError,
@@ -129,10 +129,10 @@ func TestOIDCLogin(t *testing.T) {
 				listProvidersFunc: func() []string {
 					return []string{"google", "azure"}
 				},
-				generateStateTokenFunc: func(ctx context.Context, providerName, redirectURL string) (string, string, error) {
-					return "state-token", "test-nonce", nil
+				generateStateTokenFunc: func(ctx context.Context, providerName, redirectURL string) (string, string, string, error) {
+					return "state-token", "test-nonce", "test-verifier", nil
 				},
-				getAuthCodeURLFunc: func(providerName, state, nonce string) (string, error) {
+				getAuthCodeURLFunc: func(providerName, state, nonce, verifier string) (string, error) {
 					return "", context.DeadlineExceeded
 				},
 			},
@@ -146,10 +146,10 @@ func TestOIDCLogin(t *testing.T) {
 				listProvidersFunc: func() []string {
 					return []string{"google", "azure"}
 				},
-				generateStateTokenFunc: func(ctx context.Context, providerName, redirectURL string) (string, string, error) {
-					return "state-token", "test-nonce", nil
+				generateStateTokenFunc: func(ctx context.Context, providerName, redirectURL string) (string, string, string, error) {
+					return "state-token", "test-nonce", "test-verifier", nil
 				},
-				getAuthCodeURLFunc: func(providerName, state, nonce string) (string, error) {
+				getAuthCodeURLFunc: func(providerName, state, nonce, verifier string) (string, error) {
 					return "https://accounts.google.com/authorize?state=" + state + "&nonce=" + nonce, nil
 				},
 			},
@@ -252,12 +252,13 @@ func TestOIDCCallback(t *testing.T) {
 				validateStateTokenFunc: func(ctx context.Context, state string) (providerName, redirectURL string, err error) {
 					return "google", "", nil
 				},
-				exchangeCodeForTokenFunc: func(ctx context.Context, providerName, code, nonce string) (*auth.LoginResponse, error) {
+				exchangeCodeForTokenFunc: func(ctx context.Context, providerName, code, nonce, verifier string) (*auth.LoginResponse, error) {
 					return nil, context.DeadlineExceeded
 				},
 			},
 			setupRedis: func(t *testing.T, handler *AuthHandler) {
 				handler.redisClient.Set(context.Background(), fmt.Sprintf("%s%s", auth.NoncePrefix, "valid-state"), "test-nonce", auth.NonceTTL)
+				handler.redisClient.Set(context.Background(), fmt.Sprintf("%s%s", auth.PKCEVerifierPrefix, "valid-state"), "test-verifier", auth.PKCEVerifierTTL)
 			},
 			wantStatusCode: http.StatusUnauthorized,
 			wantErrMsg:     "authentication failed",
@@ -269,7 +270,7 @@ func TestOIDCCallback(t *testing.T) {
 				validateStateTokenFunc: func(ctx context.Context, state string) (providerName, redirectURL string, err error) {
 					return "google", "", nil
 				},
-				exchangeCodeForTokenFunc: func(ctx context.Context, providerName, code, nonce string) (*auth.LoginResponse, error) {
+				exchangeCodeForTokenFunc: func(ctx context.Context, providerName, code, nonce, verifier string) (*auth.LoginResponse, error) {
 					return &auth.LoginResponse{
 						Token:     "jwt-token-123",
 						ExpiresAt: time.Now().Add(1 * time.Hour),
@@ -284,6 +285,7 @@ func TestOIDCCallback(t *testing.T) {
 			},
 			setupRedis: func(t *testing.T, handler *AuthHandler) {
 				handler.redisClient.Set(context.Background(), fmt.Sprintf("%s%s", auth.NoncePrefix, "valid-state"), "test-nonce", auth.NonceTTL)
+				handler.redisClient.Set(context.Background(), fmt.Sprintf("%s%s", auth.PKCEVerifierPrefix, "valid-state"), "test-verifier", auth.PKCEVerifierTTL)
 			},
 			wantStatusCode: http.StatusOK,
 			wantUserInfo:   true,
@@ -375,11 +377,12 @@ func TestOIDCCallback_RedirectError_NoRawErrorLeakage(t *testing.T) {
 				mockOIDC.validateStateTokenFunc = func(ctx context.Context, state string) (string, string, error) {
 					return "azuread", redirectURL, nil
 				}
-				mockOIDC.exchangeCodeForTokenFunc = func(ctx context.Context, providerName, code, nonce string) (*auth.LoginResponse, error) {
+				mockOIDC.exchangeCodeForTokenFunc = func(ctx context.Context, providerName, code, nonce, verifier string) (*auth.LoginResponse, error) {
 					return nil, errors.New(tc.internalError)
 				}
-				// Pre-populate nonce in Redis for exchange test cases
+				// Pre-populate nonce + PKCE verifier in Redis for exchange test cases
 				redisClient.Set(context.Background(), fmt.Sprintf("%s%s", auth.NoncePrefix, "test-state"), "test-nonce", auth.NonceTTL)
+				redisClient.Set(context.Background(), fmt.Sprintf("%s%s", auth.PKCEVerifierPrefix, "test-state"), "test-verifier", auth.PKCEVerifierTTL)
 			}
 
 			handler := NewAuthHandler(nil, mockOIDC)

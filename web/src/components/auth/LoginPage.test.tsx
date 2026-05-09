@@ -42,7 +42,7 @@ describe('LoginPage', () => {
   });
 
   it('renders the login page header', async () => {
-    vi.mocked(authApi.getOIDCProviders).mockResolvedValue([]);
+    vi.mocked(authApi.getOIDCProviders).mockResolvedValue({ providers: [], localLoginEnabled: true });
 
     render(
       <MemoryRouter>
@@ -59,7 +59,7 @@ describe('LoginPage', () => {
       { name: 'google', display_name: 'Google', enabled: true },
       { name: 'keycloak', display_name: 'Keycloak', enabled: true },
     ];
-    vi.mocked(authApi.getOIDCProviders).mockResolvedValue(mockProviders);
+    vi.mocked(authApi.getOIDCProviders).mockResolvedValue({ providers: mockProviders, localLoginEnabled: true });
 
     render(
       <MemoryRouter>
@@ -78,7 +78,7 @@ describe('LoginPage', () => {
       { name: 'google', display_name: 'Google', enabled: true },
       { name: 'keycloak', display_name: 'Keycloak', enabled: false },
     ];
-    vi.mocked(authApi.getOIDCProviders).mockResolvedValue(mockProviders);
+    vi.mocked(authApi.getOIDCProviders).mockResolvedValue({ providers: mockProviders, localLoginEnabled: true });
 
     render(
       <MemoryRouter>
@@ -93,7 +93,7 @@ describe('LoginPage', () => {
   });
 
   it('displays local admin form', async () => {
-    vi.mocked(authApi.getOIDCProviders).mockResolvedValue([]);
+    vi.mocked(authApi.getOIDCProviders).mockResolvedValue({ providers: [], localLoginEnabled: true });
 
     render(
       <MemoryRouter>
@@ -106,9 +106,9 @@ describe('LoginPage', () => {
     });
   });
 
-  it('shows SSO section heading when OIDC providers exist', async () => {
+  it('renders OIDC provider button when OIDC providers exist', async () => {
     const mockProviders = [{ name: 'google', display_name: 'Google', enabled: true }];
-    vi.mocked(authApi.getOIDCProviders).mockResolvedValue(mockProviders);
+    vi.mocked(authApi.getOIDCProviders).mockResolvedValue({ providers: mockProviders, localLoginEnabled: true });
 
     render(
       <MemoryRouter>
@@ -117,12 +117,12 @@ describe('LoginPage', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('Single Sign-On')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Google/i })).toBeInTheDocument();
     });
   });
 
   it('shows Administrator Login heading when no OIDC providers', async () => {
-    vi.mocked(authApi.getOIDCProviders).mockResolvedValue([]);
+    vi.mocked(authApi.getOIDCProviders).mockResolvedValue({ providers: [], localLoginEnabled: true });
 
     render(
       <MemoryRouter>
@@ -137,7 +137,7 @@ describe('LoginPage', () => {
 
   it('shows divider when both OIDC and local admin are available', async () => {
     const mockProviders = [{ name: 'google', display_name: 'Google', enabled: true }];
-    vi.mocked(authApi.getOIDCProviders).mockResolvedValue(mockProviders);
+    vi.mocked(authApi.getOIDCProviders).mockResolvedValue({ providers: mockProviders, localLoginEnabled: true });
 
     render(
       <MemoryRouter>
@@ -146,13 +146,13 @@ describe('LoginPage', () => {
     );
 
     await waitFor(() => {
-      // The component renders "Or" divider and "Single Sign-On" header when OIDC providers are available
+      // The component renders "Or" divider and the OIDC button when both methods are available
       expect(screen.getByText('Or')).toBeInTheDocument();
-      expect(screen.getByText('Single Sign-On')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Google/i })).toBeInTheDocument();
     });
   });
 
-  it('handles provider fetch errors gracefully', async () => {
+  it('shows an error state and hides login forms when provider fetch fails', async () => {
     vi.mocked(authApi.getOIDCProviders).mockRejectedValue(
       new Error('Failed to fetch providers')
     );
@@ -165,19 +165,27 @@ describe('LoginPage', () => {
       </MemoryRouter>
     );
 
+    // F10 regression guard: previously this rendered the local form on API
+    // error (defaulting to localLoginEnabled=true), which trained users on
+    // SSO-only deployments to ignore the resulting 403/404. Now we render an
+    // explicit error state and suppress the form entirely.
     await waitFor(() => {
-      expect(screen.getByTestId('local-admin-form')).toBeInTheDocument();
-      expect(consoleSpy).toHaveBeenCalledWith(
-        '[LoginPage] Failed to fetch OIDC providers:',
-        expect.any(Error)
-      );
+      expect(screen.getByText(/unable to load login options/i)).toBeInTheDocument();
     });
+    expect(screen.queryByTestId('local-admin-form')).not.toBeInTheDocument();
+    expect(consoleSpy).toHaveBeenCalledWith(
+      '[LoginPage] Failed to fetch OIDC providers:',
+      expect.any(Error)
+    );
 
     consoleSpy.mockRestore();
   });
 
-  it('displays Terms of Service and Privacy Policy text', async () => {
-    vi.mocked(authApi.getOIDCProviders).mockResolvedValue([]);
+  it('shows the no-login-methods sentinel when both local login and OIDC are disabled', async () => {
+    vi.mocked(authApi.getOIDCProviders).mockResolvedValue({
+      providers: [],
+      localLoginEnabled: false,
+    });
 
     render(
       <MemoryRouter>
@@ -185,8 +193,43 @@ describe('LoginPage', () => {
       </MemoryRouter>
     );
 
-    expect(
-      screen.getByText(/by signing in, you agree to our terms of service and privacy policy/i)
-    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText(/no login methods available/i)).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('local-admin-form')).not.toBeInTheDocument();
+  });
+
+  it('hides local login form when localLoginEnabled is false', async () => {
+    vi.mocked(authApi.getOIDCProviders).mockResolvedValue({
+      providers: [{ name: 'knodex-cloud', display_name: 'Knodex Cloud', enabled: true }],
+      localLoginEnabled: false,
+    });
+
+    render(
+      <MemoryRouter>
+        <LoginPage />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('local-admin-form')).not.toBeInTheDocument();
+    });
+  });
+
+  it('shows local login form when localLoginEnabled is true', async () => {
+    vi.mocked(authApi.getOIDCProviders).mockResolvedValue({
+      providers: [],
+      localLoginEnabled: true,
+    });
+
+    render(
+      <MemoryRouter>
+        <LoginPage />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('local-admin-form')).toBeInTheDocument();
+    });
   });
 });

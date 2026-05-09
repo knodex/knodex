@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { initiateOIDCLogin } from '@/api/auth';
 import { EntraIDIcon } from './icons/EntraIDIcon';
 import { GoogleIcon } from './icons/GoogleIcon';
+import { KnodexIcon } from './icons/KnodexIcon';
 import { KeyRound, Shield, Lock } from '@/lib/icons';
 import type { ReactNode } from 'react';
 
@@ -24,6 +25,9 @@ const getProviderIcon = (provider: string): ReactNode => {
       return <EntraIDIcon className="h-5 w-5" />;
     case 'google':
       return <GoogleIcon className="h-5 w-5" />;
+    case 'knodex-cloud':
+    case 'knodex':
+      return <KnodexIcon className="h-5 w-5" />;
     case 'keycloak':
       return <KeyRound className="h-5 w-5 text-primary" />;
     case 'okta':
@@ -41,6 +45,9 @@ export function OIDCButton({ provider, displayName, disabled }: OIDCButtonProps)
   };
 
   const icon = getProviderIcon(provider);
+  const lowerProvider = provider.toLowerCase();
+  const isKnodexCloud = lowerProvider === 'knodex-cloud' || lowerProvider === 'knodex';
+  const verb = isKnodexCloud ? 'Sign in with' : 'Continue with';
 
   return (
     <Button
@@ -50,7 +57,7 @@ export function OIDCButton({ provider, displayName, disabled }: OIDCButtonProps)
       className="w-full justify-start gap-3"
     >
       {icon}
-      <span>Continue with {displayName}</span>
+      <span>{verb} {displayName}</span>
     </Button>
   );
 }

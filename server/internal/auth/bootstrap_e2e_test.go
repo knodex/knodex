@@ -266,6 +266,7 @@ func TestE2E_OIDCUserEvaluation(t *testing.T) {
 		JWTSecret:          "test-jwt-secret-key-for-e2e-testing",
 		LocalAdminUsername: "admin",
 		LocalAdminPassword: "TestPassword123!",
+		LocalLoginEnabled:  true,
 		JWTExpiry:          1 * time.Hour,
 	}
 
@@ -454,6 +455,7 @@ func setupE2EAuthServer(t *testing.T) (*httptest.Server, *auth.Service, *rbac.Pr
 		JWTSecret:          "test-jwt-secret-key-for-e2e-testing",
 		LocalAdminUsername: "admin",
 		LocalAdminPassword: "TestPassword123!",
+		LocalLoginEnabled:  true,
 		JWTExpiry:          1 * time.Hour,
 	}
 

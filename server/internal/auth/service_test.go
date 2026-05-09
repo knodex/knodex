@@ -95,6 +95,7 @@ func TestNewService(t *testing.T) {
 				JWTExpiry:          1 * time.Hour,
 				LocalAdminUsername: "admin",
 				LocalAdminPassword: "Password123!",
+				LocalLoginEnabled:  true,
 			},
 			accountStore: nil,
 			wantErr:      true,
@@ -107,6 +108,7 @@ func TestNewService(t *testing.T) {
 				JWTExpiry:          1 * time.Hour,
 				LocalAdminUsername: "admin",
 				LocalAdminPassword: "Password123!",
+				LocalLoginEnabled:  true,
 			},
 			accountStore: func(t *testing.T) *AccountStore {
 				as, _, _ := setupTestAccountStore(t)
@@ -121,6 +123,7 @@ func TestNewService(t *testing.T) {
 				JWTExpiry:          0,
 				LocalAdminUsername: "admin",
 				LocalAdminPassword: "Password123!",
+				LocalLoginEnabled:  true,
 			},
 			accountStore: func(t *testing.T) *AccountStore {
 				as, _, _ := setupTestAccountStore(t)
@@ -175,6 +178,225 @@ func TestNewService(t *testing.T) {
 			// Verify JWT expiry was set
 			if svc.config.JWTExpiry == 0 {
 				t.Error("NewService() did not set JWT expiry")
+			}
+		})
+	}
+}
+
+// TestNewService_LocalLoginDisabled_SkipsBootstrap verifies that when
+// LocalLoginEnabled is false, NewService does NOT call accountStore.SetPassword
+// even if a valid LocalAdminPassword is supplied. The pre-populated admin
+// account from setupTestAccountStore exists but its PasswordHash remains empty.
+func TestNewService_LocalLoginDisabled_SkipsBootstrap(t *testing.T) {
+	accountStore, projectSvc, k8sClient := setupTestAccountStore(t)
+	redisClient := NewMockRedisClientAdapter()
+
+	cfg := &Config{
+		JWTSecret:          "test-jwt-secret",
+		JWTExpiry:          1 * time.Hour,
+		LocalAdminUsername: "admin",
+		LocalAdminPassword: "ValidPass123!",
+		LocalLoginEnabled:  false,
+	}
+
+	_, err := NewService(cfg, accountStore, projectSvc, k8sClient, redisClient, nil)
+	if err != nil {
+		t.Fatalf("NewService() should not fail when local login disabled, got: %v", err)
+	}
+
+	// setupTestAccountStore pre-populates accounts.admin in the ConfigMap, so the
+	// account exists. We assert the password was NOT bootstrapped into the Secret.
+	account, err := accountStore.GetAccount(context.Background(), "admin")
+	if err != nil {
+		t.Fatalf("GetAccount() failed: %v", err)
+	}
+	if account == nil {
+		t.Fatal("admin account should exist (pre-populated by setupTestAccountStore)")
+	}
+	if account.PasswordHash != "" {
+		t.Errorf("password hash should be empty when LocalLoginEnabled=false, got non-empty hash")
+	}
+}
+
+// TestNewService_LocalLoginDisabled_StillValidatesPassword verifies that
+// password validation runs unconditionally when LocalAdminPassword is set,
+// regardless of the LocalLoginEnabled flag. A malformed password rejected at
+// startup is better than silently swallowed config.
+func TestNewService_LocalLoginDisabled_StillValidatesPassword(t *testing.T) {
+	tests := []struct {
+		name        string
+		password    string
+		errContains string
+	}{
+		{
+			name:        "too short",
+			password:    "short",
+			errContains: "at least 12 characters",
+		},
+		{
+			name:        "fails complexity",
+			password:    "lowercaseonly!!!", // lowercase + special only = 2 classes, < 3 required
+			errContains: "complexity",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			accountStore, projectSvc, k8sClient := setupTestAccountStore(t)
+			redisClient := NewMockRedisClientAdapter()
+
+			cfg := &Config{
+				JWTSecret:          "test-jwt-secret",
+				JWTExpiry:          1 * time.Hour,
+				LocalAdminUsername: "admin",
+				LocalAdminPassword: tt.password,
+				LocalLoginEnabled:  false, // flag does NOT exempt validation
+			}
+
+			_, err := NewService(cfg, accountStore, projectSvc, k8sClient, redisClient, nil)
+			if err == nil {
+				t.Fatalf("NewService() should fail validation, got nil error")
+			}
+			if !contains(err.Error(), tt.errContains) {
+				t.Errorf("expected error containing %q, got: %v", tt.errContains, err)
+			}
+
+			// Tightened coverage: confirm the account store was not mutated
+			// by the failed-validation path. The pre-populated admin account
+			// from setupTestAccountStore should still have an empty hash.
+			account, getErr := accountStore.GetAccount(context.Background(), "admin")
+			if getErr != nil {
+				t.Fatalf("GetAccount() failed: %v", getErr)
+			}
+			if account != nil && account.PasswordHash != "" {
+				t.Errorf("account store was mutated despite validation failure (PasswordHash should be empty)")
+			}
+		})
+	}
+}
+
+// TestAuthenticateLocal_DisableUpgradePath_RejectsLoginWithExistingPassword
+// guards the upgrade scenario where:
+//  1. Operator first installs with local login enabled — bootstrap creates
+//     the knodex-initial-admin-password Secret and provisions a password hash
+//     on the admin account.
+//  2. Operator later sets server.auth.localLogin.enabled=false.
+//
+// The Secret and the hashed credential survive the disable (we intentionally
+// do NOT auto-delete cluster state in case the operator re-enables). The flag
+// must therefore short-circuit AuthenticateLocal even when the AccountStore
+// still has a working password hash from the prior install.
+func TestAuthenticateLocal_DisableUpgradePath_RejectsLoginWithExistingPassword(t *testing.T) {
+	accountStore, projectSvc, k8sClient := setupTestAccountStore(t)
+	redisClient := NewMockRedisClientAdapter()
+
+	// Simulate prior install: a password hash is already on the admin account.
+	const priorPassword = "PriorBootstrapPassword!1"
+	if err := accountStore.SetPassword(context.Background(), "admin", priorPassword); err != nil {
+		t.Fatalf("failed to seed prior admin password: %v", err)
+	}
+
+	// Operator now disables local login.
+	svc, err := NewService(&Config{
+		JWTSecret:          "test-jwt-secret",
+		JWTExpiry:          1 * time.Hour,
+		LocalAdminUsername: "admin",
+		LocalAdminPassword: "", // disabled installs typically pass empty
+		LocalLoginEnabled:  false,
+	}, accountStore, projectSvc, k8sClient, redisClient, nil)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	// The hash from the prior install is still on the account — the gate must
+	// reject anyway, otherwise disable would not actually disable.
+	_, err = svc.AuthenticateLocal(context.Background(), "admin", priorPassword, "127.0.0.1")
+	if err == nil {
+		t.Fatal("AuthenticateLocal() must reject when LocalLoginEnabled=false even if AccountStore has a valid hash from a prior install")
+	}
+	if !contains(err.Error(), "disabled") {
+		t.Errorf("expected disabled-flag error, got: %v", err)
+	}
+
+	// And the disable must not have wiped the existing hash — re-enable must
+	// still be able to use it (covered separately by the bootstrap reuse test).
+	account, err := accountStore.GetAccount(context.Background(), "admin")
+	if err != nil {
+		t.Fatalf("GetAccount() failed: %v", err)
+	}
+	if account == nil || account.PasswordHash == "" {
+		t.Error("disable path must NOT erase the existing admin password hash (operator may re-enable)")
+	}
+}
+
+// TestAuthenticateLocal_ReEnableUpgradePath_AcceptsExistingPassword guards the
+// other half of the upgrade cycle: after a disable→re-enable, the operator's
+// previously captured password must still authenticate. NewService with
+// LocalLoginEnabled=true validates the supplied LocalAdminPassword and (under
+// app.go) writes it back via SetPassword — but if the AccountStore already
+// holds a hash that matches, the supplied password authenticates as before.
+func TestAuthenticateLocal_ReEnableUpgradePath_AcceptsExistingPassword(t *testing.T) {
+	accountStore, projectSvc, k8sClient := setupTestAccountStore(t)
+
+	casbinEnforcer, err := rbac.NewCasbinEnforcer()
+	if err != nil {
+		t.Fatalf("NewCasbinEnforcer() error = %v", err)
+	}
+	redisClient := NewMockRedisClientAdapter()
+
+	// Prior install: admin password is provisioned.
+	const priorPassword = "PriorBootstrapPassword!1"
+	if err := accountStore.SetPassword(context.Background(), "admin", priorPassword); err != nil {
+		t.Fatalf("failed to seed prior admin password: %v", err)
+	}
+
+	// Operator re-enables. In production app.go would re-read the Secret and
+	// pass the same password through; we model that by passing priorPassword.
+	svc, err := NewService(&Config{
+		JWTSecret:          "test-jwt-secret",
+		JWTExpiry:          1 * time.Hour,
+		LocalAdminUsername: "admin",
+		LocalAdminPassword: priorPassword,
+		LocalLoginEnabled:  true,
+	}, accountStore, projectSvc, k8sClient, redisClient, casbinEnforcer)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	resp, err := svc.AuthenticateLocal(context.Background(), "admin", priorPassword, "127.0.0.1")
+	if err != nil {
+		t.Fatalf("AuthenticateLocal() with prior password after re-enable should succeed, got: %v", err)
+	}
+	if resp == nil || resp.Token == "" {
+		t.Error("AuthenticateLocal() after re-enable returned no token")
+	}
+}
+
+// TestService_IsLocalLoginEnabled_HonorsFlag verifies that IsLocalLoginEnabled
+// returns true only when both LocalLoginEnabled is true AND a password was set.
+func TestService_IsLocalLoginEnabled_HonorsFlag(t *testing.T) {
+	tests := []struct {
+		name              string
+		localLoginEnabled bool
+		password          string
+		want              bool
+	}{
+		{"enabled with password", true, "ValidPass123!", true},
+		{"enabled without password", true, "", false},
+		{"disabled with password", false, "ValidPass123!", false},
+		{"disabled without password", false, "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := &Service{
+				config: &Config{
+					LocalLoginEnabled:  tt.localLoginEnabled,
+					LocalAdminPassword: tt.password,
+				},
+			}
+			if got := svc.IsLocalLoginEnabled(); got != tt.want {
+				t.Errorf("IsLocalLoginEnabled() = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -235,6 +457,7 @@ func TestNewService_MissingAdminAccountLogsWarning(t *testing.T) {
 		JWTExpiry:          1 * time.Hour,
 		LocalAdminUsername: "admin",
 		LocalAdminPassword: "Password123!",
+		LocalLoginEnabled:  true,
 	}, accountStore, projectSvc, k8sClient, redisClient, nil)
 	if err != nil {
 		t.Fatalf("NewService() should not fail, got: %v", err)
@@ -295,6 +518,7 @@ func TestNewService_DisabledAdminAccountLogsWarning(t *testing.T) {
 		JWTExpiry:          1 * time.Hour,
 		LocalAdminUsername: "admin",
 		LocalAdminPassword: "Password123!",
+		LocalLoginEnabled:  true,
 	}, accountStore, projectSvc, k8sClient, redisClient, nil)
 	if err != nil {
 		t.Fatalf("NewService() should not fail, got: %v", err)
@@ -322,6 +546,7 @@ func TestAuthenticateLocal(t *testing.T) {
 		JWTExpiry:          1 * time.Hour,
 		LocalAdminUsername: "admin",
 		LocalAdminPassword: "Password123!",
+		LocalLoginEnabled:  true,
 	}, accountStore, projectSvc, k8sClient, redisClient, casbinEnforcer)
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)
@@ -440,6 +665,7 @@ func TestGenerateTokenWithGroups(t *testing.T) {
 		JWTExpiry:          1 * time.Hour,
 		LocalAdminUsername: "admin",
 		LocalAdminPassword: "Password123!",
+		LocalLoginEnabled:  true,
 	}, accountStore, projectSvc, k8sClient, redisClient, casbinEnforcer)
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)
@@ -539,6 +765,7 @@ func TestGenerateTokenForAccount(t *testing.T) {
 		JWTExpiry:          1 * time.Hour,
 		LocalAdminUsername: "admin",
 		LocalAdminPassword: "Password123!",
+		LocalLoginEnabled:  true,
 	}, accountStore, projectSvc, k8sClient, redisClient, casbinEnforcer)
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)
@@ -615,6 +842,7 @@ func TestValidateToken(t *testing.T) {
 		JWTExpiry:          1 * time.Hour,
 		LocalAdminUsername: "admin",
 		LocalAdminPassword: "Password123!",
+		LocalLoginEnabled:  true,
 	}, accountStore, projectSvc, k8sClient, redisClient, casbinEnforcer)
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)
@@ -758,6 +986,7 @@ func TestValidateToken_PasswordChangeInvalidation(t *testing.T) {
 		JWTExpiry:          1 * time.Hour,
 		LocalAdminUsername: "admin",
 		LocalAdminPassword: "Password123!",
+		LocalLoginEnabled:  true,
 	}, accountStore, projectSvc, k8sClient, redisClient, casbinEnforcer)
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)
@@ -861,6 +1090,7 @@ func TestValidateToken_NonLocalUserSkipsPasswordCheck(t *testing.T) {
 		JWTExpiry:          1 * time.Hour,
 		LocalAdminUsername: "admin",
 		LocalAdminPassword: "Password123!",
+		LocalLoginEnabled:  true,
 	}, accountStore, projectSvc, k8sClient, redisClient, casbinEnforcer)
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)
@@ -905,6 +1135,7 @@ func TestValidateToken_DeletedAccountRejectsToken(t *testing.T) {
 		JWTExpiry:          1 * time.Hour,
 		LocalAdminUsername: "admin",
 		LocalAdminPassword: "Password123!",
+		LocalLoginEnabled:  true,
 	}, accountStore, projectSvc, k8sClient, redisClient, casbinEnforcer)
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)
@@ -968,6 +1199,7 @@ func TestBcryptCost(t *testing.T) {
 		JWTExpiry:          1 * time.Hour,
 		LocalAdminUsername: "admin",
 		LocalAdminPassword: password,
+		LocalLoginEnabled:  true,
 	}, accountStore, projectSvc, k8sClient, redisClient, nil)
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)
@@ -1031,6 +1263,7 @@ func TestComputePermissions(t *testing.T) {
 		JWTExpiry:          1 * time.Hour,
 		LocalAdminUsername: "admin",
 		LocalAdminPassword: "Password123!",
+		LocalLoginEnabled:  true,
 	}, accountStore, projectSvc, k8sClient, redisClient, casbinEnforcer)
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)
@@ -1180,6 +1413,7 @@ func TestCanI(t *testing.T) {
 		JWTExpiry:          1 * time.Hour,
 		LocalAdminUsername: "admin",
 		LocalAdminPassword: "Password123!",
+		LocalLoginEnabled:  true,
 	}, accountStore, projectSvc, k8sClient, redisClient, casbinEnforcer)
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)
@@ -1352,6 +1586,7 @@ func TestCanI_OIDCGroups(t *testing.T) {
 		JWTExpiry:          1 * time.Hour,
 		LocalAdminUsername: "admin",
 		LocalAdminPassword: "Password123!",
+		LocalLoginEnabled:  true,
 	}, accountStore, projectSvc, k8sClient, redisClient, casbinEnforcer)
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)
@@ -1455,6 +1690,7 @@ func TestCanI_WildcardFallback(t *testing.T) {
 		JWTExpiry:          1 * time.Hour,
 		LocalAdminUsername: "admin",
 		LocalAdminPassword: "Password123!",
+		LocalLoginEnabled:  true,
 	}, accountStore, projectSvc, k8sClient, redisClient, casbinEnforcer)
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)
@@ -1549,6 +1785,7 @@ func TestCanI_NilEnforcer(t *testing.T) {
 		JWTExpiry:          1 * time.Hour,
 		LocalAdminUsername: "admin",
 		LocalAdminPassword: "Password123!",
+		LocalLoginEnabled:  true,
 	}, accountStore, projectSvc, k8sClient, redisClient, nil)
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)
@@ -1584,6 +1821,7 @@ func TestCanI_GenericProjectScopedPermission(t *testing.T) {
 		JWTExpiry:          1 * time.Hour,
 		LocalAdminUsername: "admin",
 		LocalAdminPassword: "Password123!",
+		LocalLoginEnabled:  true,
 	}, accountStore, projectSvc, k8sClient, redisClient, casbinEnforcer)
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)
@@ -1699,6 +1937,7 @@ func TestComputePermissions_NilEnforcer(t *testing.T) {
 		JWTExpiry:          1 * time.Hour,
 		LocalAdminUsername: "admin",
 		LocalAdminPassword: "Password123!",
+		LocalLoginEnabled:  true,
 	}, accountStore, projectSvc, k8sClient, redisClient, nil)
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)

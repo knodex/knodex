@@ -27,7 +27,12 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import type { SSOProvider, CreateSSOProviderRequest, UpdateSSOProviderRequest } from "@/types/sso";
+import type {
+  SSOProvider,
+  CreateSSOProviderRequest,
+  UpdateSSOProviderRequest,
+  TokenEndpointAuthMethod,
+} from "@/types/sso";
 
 /** Form state for create/edit */
 interface ProviderFormData {
@@ -37,12 +42,27 @@ interface ProviderFormData {
   clientSecret: string;
   redirectURL: string;
   scopes: string;
+  tokenEndpointAuthMethod: TokenEndpointAuthMethod;
+  authorizationURL: string;
+  tokenURL: string;
+  jwksURL: string;
 }
 
 const DEFAULT_SCOPES = "openid,profile,email";
 
 function emptyForm(): ProviderFormData {
-  return { name: "", issuerURL: "", clientID: "", clientSecret: "", redirectURL: "", scopes: DEFAULT_SCOPES };
+  return {
+    name: "",
+    issuerURL: "",
+    clientID: "",
+    clientSecret: "",
+    redirectURL: "",
+    scopes: DEFAULT_SCOPES,
+    tokenEndpointAuthMethod: "client_secret_basic",
+    authorizationURL: "",
+    tokenURL: "",
+    jwksURL: "",
+  };
 }
 
 function providerToForm(p: SSOProvider): ProviderFormData {
@@ -53,6 +73,10 @@ function providerToForm(p: SSOProvider): ProviderFormData {
     clientSecret: "", // secret is write-only — never returned from API
     redirectURL: p.redirectURL,
     scopes: p.scopes.join(","),
+    tokenEndpointAuthMethod: p.tokenEndpointAuthMethod ?? "client_secret_basic",
+    authorizationURL: p.authorizationURL ?? "",
+    tokenURL: p.tokenURL ?? "",
+    jwksURL: p.jwksURL ?? "",
   };
 }
 
@@ -144,7 +168,7 @@ export function SSOSettings() {
       errors.clientID = "Client ID is required";
     }
 
-    if (isCreate && !formData.clientSecret) {
+    if (isCreate && formData.tokenEndpointAuthMethod === "client_secret_basic" && !formData.clientSecret) {
       errors.clientSecret = "Client secret is required";
     }
 
@@ -155,6 +179,28 @@ export function SSOSettings() {
         new URL(formData.redirectURL);
       } catch {
         errors.redirectURL = "Must be a valid URL";
+      }
+    }
+
+    // Explicit endpoint override — all three required together (or all blank).
+    const explicit: Array<["authorizationURL" | "tokenURL" | "jwksURL", string]> = [
+      ["authorizationURL", formData.authorizationURL.trim()],
+      ["tokenURL", formData.tokenURL.trim()],
+      ["jwksURL", formData.jwksURL.trim()],
+    ];
+    const explicitSet = explicit.filter(([, v]) => v !== "").length;
+    if (explicitSet > 0 && explicitSet < 3) {
+      errors.authorizationURL = "All three endpoint URLs must be provided together (or leave all blank to use discovery)";
+    } else if (explicitSet === 3) {
+      for (const [field, value] of explicit) {
+        try {
+          const u = new URL(value);
+          if (u.protocol !== "https:") {
+            errors[field] = "Must use HTTPS";
+          }
+        } catch {
+          errors[field] = "Must be a valid URL";
+        }
       }
     }
 
@@ -172,14 +218,25 @@ export function SSOSettings() {
 
     const scopes = parseScopes(formData.scopes);
 
+    const authzURL = formData.authorizationURL.trim();
+    const tokenURL = formData.tokenURL.trim();
+    const jwksURL = formData.jwksURL.trim();
+    const explicitEndpointsSet = authzURL !== "" && tokenURL !== "" && jwksURL !== "";
+
     if (isCreate) {
       const req: CreateSSOProviderRequest = {
         name: formData.name,
         issuerURL: formData.issuerURL,
         clientID: formData.clientID,
-        clientSecret: formData.clientSecret,
+        clientSecret: formData.tokenEndpointAuthMethod === "none" ? "" : formData.clientSecret,
         redirectURL: formData.redirectURL,
         scopes,
+        tokenEndpointAuthMethod: formData.tokenEndpointAuthMethod,
+        ...(explicitEndpointsSet && {
+          authorizationURL: authzURL,
+          tokenURL,
+          jwksURL,
+        }),
       };
       await createMutation.mutateAsync(req, {
         onSuccess: () => {
@@ -200,8 +257,14 @@ export function SSOSettings() {
         clientID: formData.clientID,
         redirectURL: formData.redirectURL,
         scopes,
+        tokenEndpointAuthMethod: formData.tokenEndpointAuthMethod,
+        // Always send so clearing the fields actually unsets them server-side.
+        // Empty strings are treated as "use discovery" by the validator (all-three-or-none).
+        authorizationURL: authzURL,
+        tokenURL,
+        jwksURL,
       };
-      if (formData.clientSecret) {
+      if (formData.tokenEndpointAuthMethod === "client_secret_basic" && formData.clientSecret) {
         req.clientSecret = formData.clientSecret;
       }
       await updateMutation.mutateAsync(
@@ -377,24 +440,58 @@ export function SSOSettings() {
                 )}
               </div>
 
-              {/* Client Secret */}
+              {/* Token endpoint auth method */}
               <div className="space-y-2">
-                <Label htmlFor="clientSecret">
-                  Client Secret{!isCreate && " (leave blank to keep existing)"}
-                </Label>
-                <Input
-                  id="clientSecret"
-                  type="password"
-                  value={formData.clientSecret}
-                  onChange={(e) => setFormData({ ...formData, clientSecret: e.target.value })}
-                  placeholder={isCreate ? "your-client-secret" : "••••••••"}
-                  disabled={isPending}
-                  autoComplete="new-password"
-                />
-                {formErrors.clientSecret && (
-                  <p className="text-xs text-destructive">{formErrors.clientSecret}</p>
-                )}
+                <Label>Token endpoint authentication</Label>
+                <div role="radiogroup" aria-label="Token endpoint authentication" className="flex flex-col gap-2 sm:flex-row">
+                  <Button
+                    type="button"
+                    role="radio"
+                    aria-checked={formData.tokenEndpointAuthMethod === "client_secret_basic"}
+                    variant={formData.tokenEndpointAuthMethod === "client_secret_basic" ? "default" : "outline"}
+                    onClick={() => setFormData({ ...formData, tokenEndpointAuthMethod: "client_secret_basic" })}
+                    disabled={isPending}
+                    data-testid="auth-method-confidential"
+                  >
+                    Confidential client (with secret)
+                  </Button>
+                  <Button
+                    type="button"
+                    role="radio"
+                    aria-checked={formData.tokenEndpointAuthMethod === "none"}
+                    variant={formData.tokenEndpointAuthMethod === "none" ? "default" : "outline"}
+                    onClick={() => setFormData({ ...formData, tokenEndpointAuthMethod: "none", clientSecret: "" })}
+                    disabled={isPending}
+                    data-testid="auth-method-public"
+                  >
+                    Public client (PKCE)
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Public clients (PKCE) skip the client secret entirely — recommended when the IdP issues no shared secret (e.g. Supabase Auth).
+                </p>
               </div>
+
+              {/* Client Secret — confidential clients only */}
+              {formData.tokenEndpointAuthMethod === "client_secret_basic" && (
+                <div className="space-y-2">
+                  <Label htmlFor="clientSecret">
+                    Client Secret{!isCreate && " (leave blank to keep existing)"}
+                  </Label>
+                  <Input
+                    id="clientSecret"
+                    type="password"
+                    value={formData.clientSecret}
+                    onChange={(e) => setFormData({ ...formData, clientSecret: e.target.value })}
+                    placeholder={isCreate ? "your-client-secret" : "••••••••"}
+                    disabled={isPending}
+                    autoComplete="new-password"
+                  />
+                  {formErrors.clientSecret && (
+                    <p className="text-xs text-destructive">{formErrors.clientSecret}</p>
+                  )}
+                </div>
+              )}
 
               {/* Redirect URL */}
               <div className="space-y-2">
@@ -430,6 +527,62 @@ export function SSOSettings() {
                   <p className="text-xs text-destructive">{formErrors.scopes}</p>
                 )}
               </div>
+
+              {/* Advanced: explicit OIDC endpoints (bypass discovery) */}
+              <details className="rounded-md border p-3" data-testid="advanced-endpoints">
+                <summary className="text-sm font-medium cursor-pointer select-none">
+                  Advanced: override OIDC endpoints
+                </summary>
+                <div className="mt-3 space-y-3">
+                  <p className="text-xs text-muted-foreground">
+                    Leave blank to use <code className="text-xs">/.well-known/openid-configuration</code> discovery (default).
+                    Fill in <strong>all three</strong> to bypass discovery — required for IdPs with incomplete discovery
+                    documents (e.g., Supabase GoTrue, which omits <code className="text-xs">authorization_endpoint</code>).
+                  </p>
+                  <div className="space-y-2">
+                    <Label htmlFor="authorizationURL">Authorization endpoint</Label>
+                    <Input
+                      id="authorizationURL"
+                      value={formData.authorizationURL}
+                      onChange={(e) => setFormData({ ...formData, authorizationURL: e.target.value })}
+                      placeholder="https://idp.example.com/auth/v1/authorize"
+                      disabled={isPending}
+                      autoComplete="off"
+                    />
+                    {formErrors.authorizationURL && (
+                      <p className="text-xs text-destructive">{formErrors.authorizationURL}</p>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="tokenURL">Token endpoint</Label>
+                    <Input
+                      id="tokenURL"
+                      value={formData.tokenURL}
+                      onChange={(e) => setFormData({ ...formData, tokenURL: e.target.value })}
+                      placeholder="https://idp.example.com/auth/v1/token"
+                      disabled={isPending}
+                      autoComplete="off"
+                    />
+                    {formErrors.tokenURL && (
+                      <p className="text-xs text-destructive">{formErrors.tokenURL}</p>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="jwksURL">JWKS endpoint</Label>
+                    <Input
+                      id="jwksURL"
+                      value={formData.jwksURL}
+                      onChange={(e) => setFormData({ ...formData, jwksURL: e.target.value })}
+                      placeholder="https://idp.example.com/auth/v1/.well-known/jwks.json"
+                      disabled={isPending}
+                      autoComplete="off"
+                    />
+                    {formErrors.jwksURL && (
+                      <p className="text-xs text-destructive">{formErrors.jwksURL}</p>
+                    )}
+                  </div>
+                </div>
+              </details>
 
               {/* Actions */}
               <div className="flex items-center gap-3 pt-2">
@@ -536,7 +689,14 @@ export function SSOSettings() {
                     <KeyRound className="h-5 w-5" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="font-medium text-foreground">{provider.name}</p>
+                    <div className="flex items-center gap-2">
+                      <p className="font-medium text-foreground">{provider.name}</p>
+                      {provider.tokenEndpointAuthMethod === "none" && (
+                        <Badge variant="outline" className="text-xs" data-testid={`badge-public-${provider.name}`}>
+                          Public (PKCE)
+                        </Badge>
+                      )}
+                    </div>
                     <p className="text-sm text-muted-foreground truncate">
                       {provider.issuerURL}
                     </p>

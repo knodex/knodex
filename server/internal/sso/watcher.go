@@ -17,6 +17,8 @@ import (
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
+
+	"github.com/knodex/knodex/server/internal/util/hash"
 )
 
 const (
@@ -37,6 +39,7 @@ type SSOWatcher struct {
 
 	mu                 sync.RWMutex
 	lastValidProviders []SSOProvider
+	lastProvidersHash  string // SHA-256 of last merged providers, used to suppress no-op reloads
 	callbacks          []ProvidersChangedFunc
 	ctx                context.Context // stored from Start() for use in K8s API calls
 
@@ -106,6 +109,7 @@ func (w *SSOWatcher) Start(ctx context.Context) error {
 	providers := w.loadProviders()
 	w.mu.Lock()
 	w.lastValidProviders = providers
+	w.lastProvidersHash = providersHash(providers)
 	w.mu.Unlock()
 
 	if len(providers) > 0 {
@@ -207,6 +211,9 @@ func (w *SSOWatcher) Stop() {
 }
 
 // onConfigChange handles ConfigMap or Secret changes by reloading providers.
+// Skips notifyCallbacks when the merged provider set is byte-identical to the
+// last seen state. Suppresses redundant reloads from informer cache warm-up
+// (initial AddFunc events) and periodic resyncs that don't change content.
 func (w *SSOWatcher) onConfigChange(resource, action string) {
 	w.logger.Info("SSO config change detected",
 		"resource", resource,
@@ -214,12 +221,33 @@ func (w *SSOWatcher) onConfigChange(resource, action string) {
 	)
 
 	providers := w.loadProviders()
+	newHash := providersHash(providers)
 
 	w.mu.Lock()
+	unchanged := newHash != "" && newHash == w.lastProvidersHash
 	w.lastValidProviders = providers
+	w.lastProvidersHash = newHash
 	w.mu.Unlock()
 
+	if unchanged {
+		w.logger.Debug("SSO providers unchanged, skipping reload",
+			"resource", resource,
+			"action", action,
+		)
+		return
+	}
+
 	w.notifyCallbacks(providers)
+}
+
+// providersHash returns a deterministic SHA-256 of the merged provider set.
+// Empty string is returned on marshal failure so callers fall through to reload.
+func providersHash(providers []SSOProvider) string {
+	data, err := json.Marshal(providers)
+	if err != nil {
+		return ""
+	}
+	return hash.SHA256(data)
 }
 
 // onConfigMapDelete handles ConfigMap deletion — keeps last valid providers.
@@ -278,10 +306,17 @@ func (w *SSOWatcher) loadProviders() []SSOProvider {
 			continue
 		}
 		p := SSOProvider{
-			Name:        cfg.Name,
-			IssuerURL:   cfg.IssuerURL,
-			RedirectURL: cfg.RedirectURL,
-			Scopes:      cfg.Scopes,
+			Name:                    cfg.Name,
+			IssuerURL:               cfg.IssuerURL,
+			RedirectURL:             cfg.RedirectURL,
+			Scopes:                  cfg.Scopes,
+			TokenEndpointAuthMethod: cfg.TokenEndpointAuthMethod,
+			// Explicit endpoints must round-trip through hot-reload; otherwise the
+			// discovery-skip path in OIDC initialization is bypassed and reload
+			// fails for IdPs with incomplete /.well-known/openid-configuration.
+			AuthorizationURL: cfg.AuthorizationURL,
+			TokenURL:         cfg.TokenURL,
+			JWKSURL:          cfg.JWKSURL,
 		}
 		if secret != nil {
 			if clientID, ok := secret.Data[cfg.Name+".client-id"]; ok {

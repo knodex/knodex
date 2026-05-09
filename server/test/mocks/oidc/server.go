@@ -7,6 +7,8 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -44,11 +46,13 @@ type Server struct {
 
 // authCode represents a pending authorization code.
 type authCode struct {
-	user        *TestUser
-	redirectURI string
-	state       string
-	nonce       string
-	expiresAt   time.Time
+	user                *TestUser
+	redirectURI         string
+	state               string
+	nonce               string
+	codeChallenge       string
+	codeChallengeMethod string
+	expiresAt           time.Time
 }
 
 // NewServer creates a new mock OIDC server with the given options.
@@ -109,7 +113,9 @@ func (s *Server) GetUser(email string) *TestUser {
 
 // GenerateAuthCode generates an authorization code for the given user.
 // The code can be exchanged for tokens via the token endpoint.
-func (s *Server) GenerateAuthCode(email, redirectURI, state, nonce string) (string, error) {
+// When codeChallenge is non-empty, the matching code_verifier must be supplied
+// at the token endpoint (PKCE / RFC 7636).
+func (s *Server) GenerateAuthCode(email, redirectURI, state, nonce, codeChallenge, codeChallengeMethod string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -120,11 +126,13 @@ func (s *Server) GenerateAuthCode(email, redirectURI, state, nonce string) (stri
 
 	code := generateRandomString(32)
 	s.codes[code] = &authCode{
-		user:        user,
-		redirectURI: redirectURI,
-		state:       state,
-		nonce:       nonce,
-		expiresAt:   time.Now().Add(10 * time.Minute),
+		user:                user,
+		redirectURI:         redirectURI,
+		state:               state,
+		nonce:               nonce,
+		codeChallenge:       codeChallenge,
+		codeChallengeMethod: codeChallengeMethod,
+		expiresAt:           time.Now().Add(10 * time.Minute),
 	}
 
 	return code, nil
@@ -222,7 +230,8 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request) {
 		"subject_types_supported":               []string{"public"},
 		"id_token_signing_alg_values_supported": []string{"RS256"},
 		"scopes_supported":                      []string{"openid", "email", "profile", "groups"},
-		"token_endpoint_auth_methods_supported": []string{"client_secret_post", "client_secret_basic"},
+		"token_endpoint_auth_methods_supported": []string{"client_secret_post", "client_secret_basic", "none"},
+		"code_challenge_methods_supported":      []string{"S256"},
 		"claims_supported": []string{
 			"sub", "iss", "aud", "exp", "iat", "email", "email_verified",
 			"name", "groups",
@@ -242,10 +251,18 @@ func (s *Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 	state := r.URL.Query().Get("state")
 	nonce := r.URL.Query().Get("nonce")
 	email := r.URL.Query().Get("login_hint") // Use login_hint to specify user
+	codeChallenge := r.URL.Query().Get("code_challenge")
+	codeChallengeMethod := r.URL.Query().Get("code_challenge_method")
 
 	// Validate client_id
 	if clientID != s.config.ClientID {
 		http.Error(w, "invalid_client", http.StatusUnauthorized)
+		return
+	}
+
+	// Only S256 PKCE is supported (plain is deprecated by RFC 7636 §4.2).
+	if codeChallenge != "" && codeChallengeMethod != "" && codeChallengeMethod != "S256" {
+		http.Error(w, "invalid_request: only S256 code_challenge_method supported", http.StatusBadRequest)
 		return
 	}
 
@@ -268,7 +285,7 @@ func (s *Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Generate authorization code
-	code, err := s.GenerateAuthCode(email, redirectURI, state, nonce)
+	code, err := s.GenerateAuthCode(email, redirectURI, state, nonce, codeChallenge, codeChallengeMethod)
 	if err != nil {
 		s.logger.Error("Failed to generate auth code", "error", err)
 		http.Error(w, "server_error", http.StatusInternalServerError)
@@ -319,9 +336,10 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 	code := r.FormValue("code")
 	clientID := r.FormValue("client_id")
 	clientSecret := r.FormValue("client_secret")
+	codeVerifier := r.FormValue("code_verifier")
 
-	// Validate client credentials
-	if clientID != s.config.ClientID || clientSecret != s.config.ClientSecret {
+	// client_id must always match
+	if clientID != s.config.ClientID {
 		http.Error(w, `{"error":"invalid_client"}`, http.StatusUnauthorized)
 		return
 	}
@@ -341,6 +359,45 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 		s.mu.Unlock()
 		http.Error(w, `{"error":"invalid_grant","error_description":"Authorization code expired"}`, http.StatusBadRequest)
 		return
+	}
+
+	// Branch on PKCE: when /authorize captured a challenge, /token requires the
+	// matching verifier and the secret becomes optional (public-client flow).
+	// When no challenge was captured, fall through to the legacy secret check.
+	if authCode.codeChallenge != "" {
+		if codeVerifier == "" {
+			delete(s.codes, code)
+			s.mu.Unlock()
+			http.Error(w, `{"error":"invalid_grant","error_description":"code_verifier required"}`, http.StatusBadRequest)
+			return
+		}
+		sum := sha256.Sum256([]byte(codeVerifier))
+		computed := base64.RawURLEncoding.EncodeToString(sum[:])
+		if subtle.ConstantTimeCompare([]byte(computed), []byte(authCode.codeChallenge)) != 1 {
+			delete(s.codes, code)
+			s.mu.Unlock()
+			http.Error(w, `{"error":"invalid_grant","error_description":"PKCE verification failed"}`, http.StatusBadRequest)
+			return
+		}
+		// Public clients send no secret. If a secret is sent, it must match.
+		if !s.config.AllowPublicClient && clientSecret != s.config.ClientSecret {
+			delete(s.codes, code)
+			s.mu.Unlock()
+			http.Error(w, `{"error":"invalid_client"}`, http.StatusUnauthorized)
+			return
+		}
+		if clientSecret != "" && clientSecret != s.config.ClientSecret {
+			delete(s.codes, code)
+			s.mu.Unlock()
+			http.Error(w, `{"error":"invalid_client"}`, http.StatusUnauthorized)
+			return
+		}
+	} else {
+		if clientSecret != s.config.ClientSecret {
+			s.mu.Unlock()
+			http.Error(w, `{"error":"invalid_client"}`, http.StatusUnauthorized)
+			return
+		}
 	}
 
 	// Delete used code (one-time use)

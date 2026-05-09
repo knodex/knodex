@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -157,6 +158,11 @@ type Auth struct {
 	AdminPassword          string
 	AdminPasswordGenerated bool // True if password was auto-generated
 
+	// LocalLoginEnabled controls whether the local user login pathway is active.
+	// Disabling it blocks login for ALL local accounts (admin and any other).
+	// Default: true. Env: LOCAL_LOGIN_ENABLED.
+	LocalLoginEnabled bool
+
 	// OIDC configuration
 	OIDCEnabled bool
 
@@ -239,6 +245,7 @@ func Load() (*Config, error) {
 			AdminUsername:          utilenv.GetString("ADMIN_USERNAME", "admin"),
 			AdminPassword:          "", // Will be set by main.go from Kubernetes secret
 			AdminPasswordGenerated: false,
+			LocalLoginEnabled:      parseLocalLoginEnabled(),
 			OIDCEnabled:            utilenv.GetBool("OIDC_ENABLED", false),
 			OIDCGroupMappings:      nil, // Will be loaded below
 			GroupsClaim:            utilenv.GetString("OIDC_GROUPS_CLAIM", "groups"),
@@ -423,6 +430,34 @@ func ValidateDefaultRole(role string) error {
 		)
 	}
 	return nil
+}
+
+// parseLocalLoginEnabled parses LOCAL_LOGIN_ENABLED with fail-closed semantics.
+// Unlike utilenv.GetBool (which falls back to default on parse error), a malformed
+// value for this security-gating flag is treated as DISABLED (false). A typo in
+// a Helm overlay must not silently re-enable local login.
+//
+// Returns:
+//   - unset → true (default, preserves existing behavior)
+//   - "true"/"1"/"t" etc. (strconv.ParseBool) → true
+//   - "false"/"0"/"f" etc. → false
+//   - any other value → false (fail-closed) with a loud error log
+func parseLocalLoginEnabled() bool {
+	const key = "LOCAL_LOGIN_ENABLED"
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		return true
+	}
+	b, err := strconv.ParseBool(value)
+	if err != nil {
+		slog.Error("invalid boolean value for security-gating env var, treating as disabled (fail-closed)",
+			"key", key,
+			"value", value,
+			"error", err,
+		)
+		return false
+	}
+	return b
 }
 
 // MaxOrganizationLength is the maximum length for the Organization value.

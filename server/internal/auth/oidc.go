@@ -8,6 +8,7 @@ import (
 	"crypto/subtle"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -19,7 +20,6 @@ import (
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/oauth2"
 
-	"github.com/knodex/knodex/server/internal/netutil"
 	"github.com/knodex/knodex/server/internal/rbac"
 	utilrand "github.com/knodex/knodex/server/internal/util/rand"
 )
@@ -37,6 +37,8 @@ const (
 
 	// OIDCClientTimeout is the overall HTTP request timeout for OIDC provider calls
 	OIDCClientTimeout = 10 * time.Second
+	// OIDCDialTimeout is the TCP dial timeout — half of OIDCClientTimeout to leave headroom for TLS + request.
+	OIDCDialTimeout = 5 * time.Second
 	// OIDCTLSHandshakeTimeout is the TLS handshake timeout for OIDC provider connections
 	OIDCTLSHandshakeTimeout = 5 * time.Second
 	// OIDCIdleConnTimeout is how long idle connections to OIDC providers stay open
@@ -55,7 +57,14 @@ type RedisClient interface {
 
 // OIDCService provides OIDC authentication operations
 // No longer uses UserService - OIDC users are not persisted to CRD
+//
+// OIDCService MUST NOT be copied: it embeds sync primitives (sync.RWMutex,
+// sync.Once) that cannot be safely copied after first use. Pass *OIDCService.
+// The unexported _ noCopy field below trips `go vet`'s copylocks check on
+// accidental copies.
 type OIDCService struct {
+	_ noCopy
+
 	config              *Config
 	redisClient         RedisClient
 	authService         ServiceInterface
@@ -66,10 +75,27 @@ type OIDCService struct {
 	mu        sync.RWMutex // protects providers map — readers (auth flows) take RLock, reload takes Lock
 	providers map[string]*oidcProvider
 
-	// httpClient overrides the default SSRF-safe HTTP client for OIDC discovery.
-	// Used in tests to allow connections to loopback addresses.
+	// httpClient overrides the default OIDC HTTP client. Used in tests to inject
+	// custom transports (e.g., recording RoundTripper). Production callers must
+	// not mutate this after construction; use defaultClient() to get the shared
+	// production client.
 	httpClient *http.Client
+
+	// defaultClientOnce guards lazy construction of defaultClient. One
+	// *http.Client is shared across discovery, JWKS, and token exchange so the
+	// underlying *http.Transport's idle-connection pool is reused.
+	defaultClientOnce sync.Once
+	defaultClient     *http.Client
 }
+
+// noCopy is an empty marker type whose Lock/Unlock methods cause `go vet`'s
+// copylocks check to flag any value-copy of a struct that embeds it. It carries
+// no runtime cost and is the same idiom used in the standard library
+// (sync.Cond, sync.WaitGroup) for the same purpose.
+type noCopy struct{}
+
+func (*noCopy) Lock()   {}
+func (*noCopy) Unlock() {}
 
 // oidcProvider holds the OIDC provider configuration and clients
 type oidcProvider struct {
@@ -165,19 +191,22 @@ func (s *OIDCService) initializeProvider(ctx context.Context, config OIDCProvide
 	return s.initializeProviderInto(ctx, config, s.providers)
 }
 
-// GenerateStateToken generates a cryptographically secure random state token
-// and a nonce for OIDC ID token replay prevention.
-// Both are stored in Redis with a 5-minute TTL. The nonce is keyed on the state
-// token so they share the same lifecycle.
-// Returns (state, nonce, error).
-func (s *OIDCService) GenerateStateToken(ctx context.Context, providerName, redirectURL string) (string, string, error) {
+// GenerateStateToken generates a cryptographically secure random state token,
+// a nonce for ID token replay prevention, and a PKCE code_verifier for
+// authorization code interception protection (RFC 7636 / RFC 9449).
+// All three are stored in Redis with the same 5-minute TTL, keyed on the state
+// token so they share lifecycle and can be retrieved on the callback by any replica.
+// Returns (state, nonce, verifier, error).
+func (s *OIDCService) GenerateStateToken(ctx context.Context, providerName, redirectURL string) (string, string, string, error) {
 	if providerName == "" {
-		return "", "", fmt.Errorf("provider name cannot be empty")
+		return "", "", "", fmt.Errorf("provider name cannot be empty")
 	}
 
 	// Generate random state and nonce tokens
 	state := utilrand.GenerateRandomString(StateTokenLength)
 	nonce := utilrand.GenerateRandomString(NonceLength)
+	// PKCE code_verifier — RFC 7636 §4.1: 43-128 chars, unreserved ASCII.
+	verifier := oauth2.GenerateVerifier()
 
 	// Store provider name and redirect URL (format: "provider|redirectURL")
 	value := providerName
@@ -187,23 +216,29 @@ func (s *OIDCService) GenerateStateToken(ctx context.Context, providerName, redi
 
 	stateKey := fmt.Sprintf("oidc:state:%s", state)
 	if err := s.redisClient.Set(ctx, stateKey, value, StateTokenTTL).Err(); err != nil {
-		return "", "", fmt.Errorf("failed to store state token in Redis: %w", err)
+		return "", "", "", fmt.Errorf("failed to store state token in Redis: %w", err)
 	}
 
 	// Store nonce keyed on state token (shares lifecycle with state)
 	nonceKey := fmt.Sprintf("%s%s", NoncePrefix, state)
 	if err := s.redisClient.Set(ctx, nonceKey, nonce, NonceTTL).Err(); err != nil {
-		return "", "", fmt.Errorf("failed to store nonce in Redis: %w", err)
+		return "", "", "", fmt.Errorf("failed to store nonce in Redis: %w", err)
 	}
 
-	slog.Debug("generated OIDC state token and nonce",
+	// Store PKCE verifier keyed on state token (shares lifecycle with state)
+	verifierKey := fmt.Sprintf("%s%s", PKCEVerifierPrefix, state)
+	if err := s.redisClient.Set(ctx, verifierKey, verifier, PKCEVerifierTTL).Err(); err != nil {
+		return "", "", "", fmt.Errorf("failed to store PKCE verifier in Redis: %w", err)
+	}
+
+	slog.Debug("generated OIDC state token, nonce, and PKCE verifier",
 		"provider", providerName,
 		"redirect_url", redirectURL,
 		"state_prefix", state[:min(8, len(state))],
 		"ttl_seconds", int(StateTokenTTL.Seconds()),
 	)
 
-	return state, nonce, nil
+	return state, nonce, verifier, nil
 }
 
 // ValidateStateToken validates a state token by checking if it exists in Redis
@@ -243,7 +278,9 @@ func (s *OIDCService) ValidateStateToken(ctx context.Context, state string) (pro
 // GetAuthCodeURL returns the authorization URL for the specified provider.
 // The nonce parameter is included in the authorization URL to bind the ID token
 // to this specific authentication request, preventing token replay attacks.
-func (s *OIDCService) GetAuthCodeURL(providerName, state, nonce string) (string, error) {
+// The verifier is the PKCE code_verifier (RFC 7636); its S256 challenge is
+// added to the URL so the IdP can later verify possession on the token exchange.
+func (s *OIDCService) GetAuthCodeURL(providerName, state, nonce, verifier string) (string, error) {
 	s.mu.RLock()
 	provider, ok := s.providers[providerName]
 	s.mu.RUnlock()
@@ -252,9 +289,11 @@ func (s *OIDCService) GetAuthCodeURL(providerName, state, nonce string) (string,
 		return "", fmt.Errorf("unknown OIDC provider: %s", providerName)
 	}
 
+	// S256ChallengeOption appends both code_challenge and code_challenge_method=S256.
 	url := provider.oauth2Config.AuthCodeURL(state,
 		oauth2.AccessTypeOnline,
 		oauth2.SetAuthURLParam("nonce", nonce),
+		oauth2.S256ChallengeOption(verifier),
 	)
 
 	slog.Info("generated OIDC authorization URL",
@@ -268,7 +307,9 @@ func (s *OIDCService) GetAuthCodeURL(providerName, state, nonce string) (string,
 // ExchangeCodeForToken exchanges an authorization code for tokens and user info.
 // The nonce parameter is the stored nonce that was sent in the authorization request;
 // it is validated against the nonce claim in the returned ID token to prevent replay attacks.
-func (s *OIDCService) ExchangeCodeForToken(ctx context.Context, providerName, code, nonce string) (*LoginResponse, error) {
+// The verifier is the PKCE code_verifier matching the challenge sent on the authorization
+// request; the IdP recomputes S256(verifier) and compares to the stored challenge.
+func (s *OIDCService) ExchangeCodeForToken(ctx context.Context, providerName, code, nonce, verifier string) (*LoginResponse, error) {
 	s.mu.RLock()
 	provider, ok := s.providers[providerName]
 	s.mu.RUnlock()
@@ -277,8 +318,16 @@ func (s *OIDCService) ExchangeCodeForToken(ctx context.Context, providerName, co
 		return nil, fmt.Errorf("unknown OIDC provider: %s", providerName)
 	}
 
-	// Exchange authorization code for OAuth2 token
-	oauth2Token, err := provider.oauth2Config.Exchange(ctx, code)
+	// Bind the configured OIDC HTTP client into ctx so token exchange uses the
+	// same transport as discovery/JWKS rather than falling through to http.DefaultClient.
+	client := s.httpClient
+	if client == nil {
+		client = s.defaultHTTPClient()
+	}
+	ctx = oidc.ClientContext(ctx, client)
+
+	// Exchange authorization code for OAuth2 token (with PKCE verifier).
+	oauth2Token, err := provider.oauth2Config.Exchange(ctx, code, oauth2.VerifierOption(verifier))
 	if err != nil {
 		return nil, fmt.Errorf("failed to exchange authorization code: %w", err)
 	}
@@ -574,11 +623,32 @@ func (s *OIDCService) initializeProviderInto(ctx context.Context, config OIDCPro
 	if config.ClientID == "" {
 		return fmt.Errorf("client ID cannot be empty for provider %s", config.Name)
 	}
-	if config.ClientSecret == "" {
-		return fmt.Errorf("client secret cannot be empty for provider %s", config.Name)
-	}
 	if config.RedirectURL == "" {
 		return fmt.Errorf("redirect URL cannot be empty for provider %s", config.Name)
+	}
+
+	// Resolve token endpoint auth method. Empty + empty secret infers "none"
+	// (public client, PKCE-only); empty + secret defaults to client_secret_basic.
+	authMethod := config.TokenEndpointAuthMethod
+	inferred := false
+	if authMethod == "" {
+		if config.ClientSecret == "" {
+			authMethod = "none"
+			inferred = true
+		} else {
+			authMethod = "client_secret_basic"
+		}
+	}
+
+	switch authMethod {
+	case "client_secret_basic":
+		if config.ClientSecret == "" {
+			return fmt.Errorf("client secret cannot be empty for provider %s with token_endpoint_auth_method=%s", config.Name, authMethod)
+		}
+	case "none":
+		// Public client — no secret expected. Any provided value is ignored.
+	default:
+		return fmt.Errorf("unsupported token_endpoint_auth_method %q for provider %s (supported: client_secret_basic, none)", authMethod, config.Name)
 	}
 
 	scopes := config.Scopes
@@ -586,26 +656,66 @@ func (s *OIDCService) initializeProviderInto(ctx context.Context, config OIDCPro
 		scopes = []string{oidc.ScopeOpenID, "profile", "email"}
 	}
 
-	// Use SSRF-safe transport for OIDC discovery to prevent redirect-based
-	// SSRF attacks (TOCTOU bypass of the pre-flight IsPrivateHost check).
-	// The dialer blocks connections to private/reserved IPs at TCP connect time.
-	// Tests may inject s.httpClient to allow loopback connections.
-	client := s.httpClient
-	if client == nil {
-		client = s.defaultHTTPClient()
+	// Explicit-endpoint bypass: when all three endpoint URLs are supplied, skip
+	// HTTP discovery entirely and construct the provider from the supplied values.
+	// This supports IdPs that serve an incomplete /.well-known/openid-configuration
+	// (e.g., Supabase GoTrue advertises only issuer + jwks_uri; go-oidc requires
+	// authorization_endpoint and rejects the document). All three are required
+	// together — partial input falls through to discovery.
+	var provider *oidc.Provider
+	if config.AuthorizationURL != "" && config.TokenURL != "" && config.JWKSURL != "" {
+		pc := oidc.ProviderConfig{
+			IssuerURL: config.IssuerURL,
+			AuthURL:   config.AuthorizationURL,
+			TokenURL:  config.TokenURL,
+			JWKSURL:   config.JWKSURL,
+		}
+		// Bind the OIDC HTTP client into ctx so JWKS fetches at verify time
+		// share the same transport as the rest of the OIDC operations.
+		client := s.httpClient
+		if client == nil {
+			client = s.defaultHTTPClient()
+		}
+		provider = pc.NewProvider(oidc.ClientContext(ctx, client))
+		slog.Info("OIDC provider initialized with explicit endpoints (discovery skipped)",
+			"provider", config.Name,
+			"issuer", config.IssuerURL,
+		)
+	} else {
+		// Use the configured OIDC HTTP client (s.httpClient or defaultHTTPClient()).
+		// Tests may inject s.httpClient to instrument the transport (e.g., recording RoundTripper).
+		client := s.httpClient
+		if client == nil {
+			client = s.defaultHTTPClient()
+		}
+		safeCtx := oidc.ClientContext(ctx, client)
+		var err error
+		provider, err = oidc.NewProvider(safeCtx, config.IssuerURL)
+		if err != nil {
+			return fmt.Errorf("failed to create OIDC provider: %w", err)
+		}
 	}
-	safeCtx := oidc.ClientContext(ctx, client)
-	provider, err := oidc.NewProvider(safeCtx, config.IssuerURL)
-	if err != nil {
-		return fmt.Errorf("failed to create OIDC provider: %w", err)
+
+	// For public clients, leave ClientSecret empty so oauth2 omits the basic-auth header.
+	oauthClientSecret := ""
+	if authMethod == "client_secret_basic" {
+		oauthClientSecret = config.ClientSecret
 	}
 
 	oauth2Config := &oauth2.Config{
 		ClientID:     config.ClientID,
-		ClientSecret: config.ClientSecret,
+		ClientSecret: oauthClientSecret,
 		RedirectURL:  config.RedirectURL,
 		Endpoint:     provider.Endpoint(),
 		Scopes:       scopes,
+	}
+
+	if authMethod == "none" {
+		slog.Info("OIDC provider configured as public client (PKCE)",
+			"provider", config.Name,
+			"method", "none",
+			"inferred", inferred,
+		)
 	}
 
 	verifier := provider.Verifier(&oidc.Config{
@@ -623,19 +733,41 @@ func (s *OIDCService) initializeProviderInto(ctx context.Context, config OIDCPro
 	return nil
 }
 
-// defaultHTTPClient returns the production HTTP client for OIDC provider discovery.
-// It includes timeouts to prevent indefinite blocking and an SSRF-safe dialer
-// that blocks connections to private/reserved IP addresses.
+// defaultHTTPClient returns the production HTTP client for OIDC operations
+// (discovery, JWKS, token exchange). The client is constructed once per
+// OIDCService and shared across all calls so the transport's idle-connection
+// pool is reused. Honors HTTPS_PROXY/NO_PROXY env vars.
 func (s *OIDCService) defaultHTTPClient() *http.Client {
+	s.defaultClientOnce.Do(func() {
+		s.defaultClient = newDefaultOIDCClient()
+	})
+	return s.defaultClient
+}
+
+// newDefaultOIDCClient builds the shared production *http.Client. Extracted so
+// tests can construct it without exercising the OIDCService cache.
+func newDefaultOIDCClient() *http.Client {
 	return &http.Client{
 		Timeout: OIDCClientTimeout,
 		Transport: &http.Transport{
-			DialContext:         netutil.NewSSRFSafeDialer(),
+			Proxy:               http.ProxyFromEnvironment,
+			DialContext:         defaultOIDCDialer().DialContext,
+			ForceAttemptHTTP2:   true,
 			TLSHandshakeTimeout: OIDCTLSHandshakeTimeout,
 			IdleConnTimeout:     OIDCIdleConnTimeout,
 			MaxIdleConns:        OIDCMaxIdleConns,
 			MaxIdleConnsPerHost: OIDCMaxIdleConnsPerHost,
 		},
+	}
+}
+
+// defaultOIDCDialer builds the production net.Dialer used by the OIDC HTTP
+// client. Exposed so tests can assert OIDCDialTimeout is wired correctly,
+// since the timeout is otherwise unreachable through Transport.DialContext.
+func defaultOIDCDialer() *net.Dialer {
+	return &net.Dialer{
+		Timeout:   OIDCDialTimeout,
+		KeepAlive: 30 * time.Second,
 	}
 }
 

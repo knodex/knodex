@@ -78,6 +78,7 @@ func setupServiceWithMiniredis(t *testing.T) (*Service, *miniredis.Miniredis) {
 		JWTExpiry:          1 * time.Hour,
 		LocalAdminUsername: "admin",
 		LocalAdminPassword: "Password123!",
+		LocalLoginEnabled:  true,
 	}, accountStore, projectSvc, k8sClient, redisClient, casbinEnforcer)
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)

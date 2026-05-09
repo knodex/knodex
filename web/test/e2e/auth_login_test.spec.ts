@@ -4,8 +4,8 @@
 import { test, expect } from '@playwright/test';
 
 // Backend returns provider names array, frontend transforms them
-const MOCK_PROVIDERS_RESPONSE = { providers: ['google', 'keycloak'] };
-const MOCK_PROVIDERS_EMPTY = { providers: [] };
+const MOCK_PROVIDERS_RESPONSE = { providers: ['google', 'keycloak'], localLoginEnabled: true };
+const MOCK_PROVIDERS_EMPTY = { providers: [], localLoginEnabled: true };
 
 // JWT payload with casbin_roles instead of is_global_admin
 // JWT payload: {"sub":"admin","email":"admin@example.com","name":"Administrator","projects":["project-alpha","project-beta"],"default_project":"project-alpha","casbin_roles":["role:serveradmin"],"exp":9999999999,"iat":1700000000,"iss":"knodex","aud":"kro"}
@@ -65,10 +65,30 @@ test.describe('Authentication Flow', () => {
 
       await page.goto('/login');
 
-      await expect(page.getByText('Single Sign-On')).toBeVisible();
       await expect(page.getByRole('button', { name: /continue with google/i })).toBeVisible();
       await expect(page.getByRole('button', { name: /continue with keycloak/i })).toBeVisible();
       await expect(page.getByText('Or', { exact: true })).toBeVisible();
+    });
+
+    test('hides local login form when localLoginEnabled is false', async ({ page }) => {
+      // SSO-only deployment: providers endpoint reports local login disabled.
+      await page.route('**/api/v1/auth/oidc/providers', async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ providers: ['google'], localLoginEnabled: false }),
+        });
+      });
+
+      await page.goto('/login', { waitUntil: 'domcontentloaded' });
+
+      // SSO provider button is rendered.
+      await expect(page.getByRole('button', { name: /continue with google/i })).toBeVisible();
+
+      // Local-admin username/password fields are NOT in the DOM.
+      await expect(page.getByText('Administrator Login')).toHaveCount(0);
+      await expect(page.getByLabel(/username/i)).toHaveCount(0);
+      await expect(page.getByLabel(/password/i)).toHaveCount(0);
     });
 
     test('shows validation errors for empty form', async ({ page }) => {

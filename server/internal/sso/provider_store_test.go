@@ -429,3 +429,127 @@ func TestNotFoundError_Unwrap(t *testing.T) {
 		t.Error("NotFoundError.Unwrap() should return nil when Err is not set")
 	}
 }
+
+// TestProviderStore_PublicClient_NoSecret verifies that creating a public-client provider
+// (tokenEndpointAuthMethod="none") suppresses client-secret from the Secret but still
+// stores client-id.
+func TestProviderStore_PublicClient_NoSecret(t *testing.T) {
+	store, cs := newTestStore()
+	ctx := context.Background()
+
+	provider := SSOProvider{
+		Name:                    "supabase",
+		IssuerURL:               "https://example.supabase.co/auth/v1",
+		ClientID:                "supabase-client-id",
+		ClientSecret:            "",
+		RedirectURL:             "https://app.example.com/callback",
+		Scopes:                  []string{"openid", "email"},
+		TokenEndpointAuthMethod: "none",
+	}
+
+	if err := store.Create(ctx, provider); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	secret, err := cs.CoreV1().Secrets(testNamespace).Get(ctx, SecretName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("Get Secret error = %v", err)
+	}
+
+	if _, ok := secret.Data["supabase.client-id"]; !ok {
+		t.Error("supabase.client-id should be present in Secret for public client")
+	}
+	if _, ok := secret.Data["supabase.client-secret"]; ok {
+		t.Error("supabase.client-secret should NOT be present in Secret for public client (method=none)")
+	}
+}
+
+// TestProviderStore_TokenEndpointAuthMethod_RoundTrip verifies that tokenEndpointAuthMethod
+// is preserved through Create → List.
+func TestProviderStore_TokenEndpointAuthMethod_RoundTrip(t *testing.T) {
+	store, _ := newTestStore()
+	ctx := context.Background()
+
+	provider := SSOProvider{
+		Name:                    "pkce-provider",
+		IssuerURL:               "https://pkce.example.com",
+		ClientID:                "client-id-abc",
+		ClientSecret:            "",
+		RedirectURL:             "https://app.example.com/callback",
+		Scopes:                  []string{"openid"},
+		TokenEndpointAuthMethod: "none",
+	}
+
+	if err := store.Create(ctx, provider); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	providers, err := store.List(ctx)
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+
+	if len(providers) != 1 {
+		t.Fatalf("expected 1 provider, got %d", len(providers))
+	}
+	if providers[0].TokenEndpointAuthMethod != "none" {
+		t.Errorf("TokenEndpointAuthMethod = %q, want %q", providers[0].TokenEndpointAuthMethod, "none")
+	}
+}
+
+// TestProviderStore_ExplicitEndpoints_RoundTrip verifies that AuthorizationURL,
+// TokenURL, and JWKSURL survive ConfigMap persistence through Create → List → Update → List.
+// These fields support IdPs that serve incomplete discovery documents (e.g., Supabase GoTrue).
+func TestProviderStore_ExplicitEndpoints_RoundTrip(t *testing.T) {
+	store, _ := newTestStore()
+	ctx := context.Background()
+
+	provider := SSOProvider{
+		Name:             "supabase-gotrue",
+		IssuerURL:        "https://example.supabase.co/auth/v1",
+		ClientID:         "client-id",
+		ClientSecret:     "client-secret",
+		RedirectURL:      "https://app.example.com/callback",
+		Scopes:           []string{"openid", "email"},
+		AuthorizationURL: "https://example.supabase.co/auth/v1/authorize",
+		TokenURL:         "https://example.supabase.co/auth/v1/token",
+		JWKSURL:          "https://example.supabase.co/auth/v1/.well-known/jwks.json",
+	}
+
+	if err := store.Create(ctx, provider); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	got, err := store.List(ctx)
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 provider, got %d", len(got))
+	}
+	if got[0].AuthorizationURL != provider.AuthorizationURL {
+		t.Errorf("AuthorizationURL = %q, want %q", got[0].AuthorizationURL, provider.AuthorizationURL)
+	}
+	if got[0].TokenURL != provider.TokenURL {
+		t.Errorf("TokenURL = %q, want %q", got[0].TokenURL, provider.TokenURL)
+	}
+	if got[0].JWKSURL != provider.JWKSURL {
+		t.Errorf("JWKSURL = %q, want %q", got[0].JWKSURL, provider.JWKSURL)
+	}
+
+	// Update and re-verify persistence.
+	provider.AuthorizationURL = "https://example.supabase.co/auth/v1/authorize-v2"
+	if err := store.Update(ctx, provider.Name, provider); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	got, err = store.List(ctx)
+	if err != nil {
+		t.Fatalf("List() after Update error = %v", err)
+	}
+	if got[0].AuthorizationURL != "https://example.supabase.co/auth/v1/authorize-v2" {
+		t.Errorf("after Update, AuthorizationURL = %q", got[0].AuthorizationURL)
+	}
+	if got[0].TokenURL != provider.TokenURL || got[0].JWKSURL != provider.JWKSURL {
+		t.Errorf("after Update, TokenURL/JWKSURL not preserved: %+v", got[0])
+	}
+}

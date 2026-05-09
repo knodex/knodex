@@ -46,14 +46,29 @@ type SSOProvider struct {
 	ClientSecret string   `json:"clientSecret,omitempty"`
 	RedirectURL  string   `json:"redirectURL"`
 	Scopes       []string `json:"scopes"`
+	// TokenEndpointAuthMethod selects the OAuth2 token endpoint authentication method.
+	// Empty (legacy default) is treated as "client_secret_basic" downstream when a
+	// secret is present, or "none" (public client / PKCE) when no secret is present.
+	TokenEndpointAuthMethod string `json:"tokenEndpointAuthMethod,omitempty"`
+
+	// AuthorizationURL, TokenURL, and JWKSURL bypass OIDC discovery when all three
+	// are set. Use for IdPs that serve an incomplete /.well-known/openid-configuration
+	// (e.g., Supabase GoTrue). When any is empty, standard discovery runs.
+	AuthorizationURL string `json:"authorizationURL,omitempty"`
+	TokenURL         string `json:"tokenURL,omitempty"`
+	JWKSURL          string `json:"jwksURL,omitempty"`
 }
 
 // providerConfig is the non-sensitive portion stored in the ConfigMap
 type providerConfig struct {
-	Name        string   `json:"name"`
-	IssuerURL   string   `json:"issuerURL"`
-	RedirectURL string   `json:"redirectURL"`
-	Scopes      []string `json:"scopes"`
+	Name                    string   `json:"name"`
+	IssuerURL               string   `json:"issuerURL"`
+	RedirectURL             string   `json:"redirectURL"`
+	Scopes                  []string `json:"scopes"`
+	TokenEndpointAuthMethod string   `json:"tokenEndpointAuthMethod,omitempty"`
+	AuthorizationURL        string   `json:"authorizationURL,omitempty"`
+	TokenURL                string   `json:"tokenURL,omitempty"`
+	JWKSURL                 string   `json:"jwksURL,omitempty"`
 }
 
 // ProviderStore manages SSO provider configuration in Kubernetes ConfigMaps and Secrets
@@ -99,10 +114,14 @@ func (s *ProviderStore) List(ctx context.Context) ([]SSOProvider, error) {
 	providers := make([]SSOProvider, 0, len(configs))
 	for _, cfg := range configs {
 		p := SSOProvider{
-			Name:        cfg.Name,
-			IssuerURL:   cfg.IssuerURL,
-			RedirectURL: cfg.RedirectURL,
-			Scopes:      cfg.Scopes,
+			Name:                    cfg.Name,
+			IssuerURL:               cfg.IssuerURL,
+			RedirectURL:             cfg.RedirectURL,
+			Scopes:                  cfg.Scopes,
+			TokenEndpointAuthMethod: cfg.TokenEndpointAuthMethod,
+			AuthorizationURL:        cfg.AuthorizationURL,
+			TokenURL:                cfg.TokenURL,
+			JWKSURL:                 cfg.JWKSURL,
 		}
 		if secret != nil {
 			if clientID, ok := secret.Data[cfg.Name+".client-id"]; ok {
@@ -153,10 +172,14 @@ func (s *ProviderStore) Create(ctx context.Context, provider SSOProvider) error 
 
 	// Append new config
 	newConfig := providerConfig{
-		Name:        provider.Name,
-		IssuerURL:   provider.IssuerURL,
-		RedirectURL: provider.RedirectURL,
-		Scopes:      provider.Scopes,
+		Name:                    provider.Name,
+		IssuerURL:               provider.IssuerURL,
+		RedirectURL:             provider.RedirectURL,
+		Scopes:                  provider.Scopes,
+		TokenEndpointAuthMethod: provider.TokenEndpointAuthMethod,
+		AuthorizationURL:        provider.AuthorizationURL,
+		TokenURL:                provider.TokenURL,
+		JWKSURL:                 provider.JWKSURL,
 	}
 	configs = append(configs, newConfig)
 
@@ -165,8 +188,13 @@ func (s *ProviderStore) Create(ctx context.Context, provider SSOProvider) error 
 		return fmt.Errorf("creating SSO provider %q: %w", provider.Name, err)
 	}
 
-	// Write Secret
-	if err := s.writeSecretKeys(ctx, provider.Name, provider.ClientID, provider.ClientSecret); err != nil {
+	// Write Secret. For public clients (tokenEndpointAuthMethod=none), suppress
+	// the client-secret entirely so it never lands in the Secret.
+	clientSecret := provider.ClientSecret
+	if provider.TokenEndpointAuthMethod == "none" {
+		clientSecret = ""
+	}
+	if err := s.writeSecretKeys(ctx, provider.Name, provider.ClientID, clientSecret); err != nil {
 		// Rollback ConfigMap
 		rollbackConfigs := configs[:len(configs)-1]
 		if rbErr := s.writeConfigs(ctx, rollbackConfigs); rbErr != nil {
@@ -196,10 +224,14 @@ func (s *ProviderStore) Update(ctx context.Context, name string, provider SSOPro
 		if c.Name == name {
 			previousConfig = c
 			configs[i] = providerConfig{
-				Name:        name,
-				IssuerURL:   provider.IssuerURL,
-				RedirectURL: provider.RedirectURL,
-				Scopes:      provider.Scopes,
+				Name:                    name,
+				IssuerURL:               provider.IssuerURL,
+				RedirectURL:             provider.RedirectURL,
+				Scopes:                  provider.Scopes,
+				TokenEndpointAuthMethod: provider.TokenEndpointAuthMethod,
+				AuthorizationURL:        provider.AuthorizationURL,
+				TokenURL:                provider.TokenURL,
+				JWKSURL:                 provider.JWKSURL,
 			}
 			found = true
 			break
@@ -214,23 +246,39 @@ func (s *ProviderStore) Update(ctx context.Context, name string, provider SSOPro
 		return fmt.Errorf("updating SSO provider %q: %w", name, err)
 	}
 
-	// Write Secret (only if credentials provided)
-	if provider.ClientID != "" || provider.ClientSecret != "" {
-		if err := s.writeSecretKeys(ctx, name, provider.ClientID, provider.ClientSecret); err != nil {
-			// Rollback ConfigMap
-			for i, c := range configs {
-				if c.Name == name {
-					configs[i] = previousConfig
-					break
-				}
+	rollback := func() {
+		for i, c := range configs {
+			if c.Name == name {
+				configs[i] = previousConfig
+				break
 			}
-			if rbErr := s.writeConfigs(ctx, configs); rbErr != nil {
-				slog.Error("failed to rollback SSO ConfigMap after Secret update failure",
-					"original_error", err,
-					"rollback_error", rbErr,
-					"provider", name,
-				)
-			}
+		}
+		if rbErr := s.writeConfigs(ctx, configs); rbErr != nil {
+			slog.Error("failed to rollback SSO ConfigMap after Secret update failure",
+				"rollback_error", rbErr,
+				"provider", name,
+			)
+		}
+	}
+
+	// When flipping to a public client, remove any stored client-secret key so
+	// downstream consumers (auth service, GitOps reconcilers) do not see a stale value.
+	if provider.TokenEndpointAuthMethod == "none" {
+		if err := s.deleteSecretKey(ctx, name+".client-secret"); err != nil {
+			rollback()
+			return fmt.Errorf("updating SSO provider %q: %w", name, err)
+		}
+	}
+
+	// Write Secret (only if credentials provided). For public clients, suppress
+	// the client-secret regardless of whether one was passed in.
+	clientSecret := provider.ClientSecret
+	if provider.TokenEndpointAuthMethod == "none" {
+		clientSecret = ""
+	}
+	if provider.ClientID != "" || clientSecret != "" {
+		if err := s.writeSecretKeys(ctx, name, provider.ClientID, clientSecret); err != nil {
+			rollback()
 			return fmt.Errorf("updating SSO provider %q: %w", name, err)
 		}
 	}
@@ -355,7 +403,15 @@ func (s *ProviderStore) writeSecretKeys(ctx context.Context, name, clientID, cli
 	secret, err := s.k8sClient.CoreV1().Secrets(s.namespace).Get(ctx, SecretName, metav1.GetOptions{})
 	if err != nil {
 		if errors.IsNotFound(err) {
-			// Create new secret
+			// Create new secret. Skip empty values so public clients (no secret)
+			// don't get a blank client-secret key emitted.
+			data := map[string][]byte{}
+			if clientID != "" {
+				data[name+".client-id"] = []byte(clientID)
+			}
+			if clientSecret != "" {
+				data[name+".client-secret"] = []byte(clientSecret)
+			}
 			secret = &corev1.Secret{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      SecretName,
@@ -366,10 +422,7 @@ func (s *ProviderStore) writeSecretKeys(ctx context.Context, name, clientID, cli
 					},
 				},
 				Type: corev1.SecretTypeOpaque,
-				Data: map[string][]byte{
-					name + ".client-id":     []byte(clientID),
-					name + ".client-secret": []byte(clientSecret),
-				},
+				Data: data,
 			}
 			_, createErr := s.k8sClient.CoreV1().Secrets(s.namespace).Create(ctx, secret, metav1.CreateOptions{})
 			if createErr != nil {
@@ -394,6 +447,26 @@ func (s *ProviderStore) writeSecretKeys(ctx context.Context, name, clientID, cli
 
 	if _, err = s.k8sClient.CoreV1().Secrets(s.namespace).Update(ctx, secret, metav1.UpdateOptions{}); err != nil {
 		return fmt.Errorf("updating SSO Secret: %w", err)
+	}
+	return nil
+}
+
+// deleteSecretKey removes a single keyed entry from the SSO Secret.
+// No-op when the Secret or key does not exist.
+func (s *ProviderStore) deleteSecretKey(ctx context.Context, key string) error {
+	secret, err := s.k8sClient.CoreV1().Secrets(s.namespace).Get(ctx, SecretName, metav1.GetOptions{})
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("reading SSO Secret for key removal: %w", err)
+	}
+	if _, exists := secret.Data[key]; !exists {
+		return nil
+	}
+	delete(secret.Data, key)
+	if _, err = s.k8sClient.CoreV1().Secrets(s.namespace).Update(ctx, secret, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("removing SSO Secret key %q: %w", key, err)
 	}
 	return nil
 }

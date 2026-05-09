@@ -75,10 +75,10 @@ func isAllowedRedirectURL(redirectURL string, allowedOrigins []string) bool {
 
 // OIDCServiceInterface defines the interface for OIDC authentication operations
 type OIDCServiceInterface interface {
-	GenerateStateToken(ctx context.Context, providerName, redirectURL string) (state, nonce string, err error)
+	GenerateStateToken(ctx context.Context, providerName, redirectURL string) (state, nonce, verifier string, err error)
 	ValidateStateToken(ctx context.Context, state string) (providerName, redirectURL string, err error)
-	GetAuthCodeURL(providerName, state, nonce string) (string, error)
-	ExchangeCodeForToken(ctx context.Context, providerName, code, nonce string) (*auth.LoginResponse, error)
+	GetAuthCodeURL(providerName, state, nonce, verifier string) (string, error)
+	ExchangeCodeForToken(ctx context.Context, providerName, code, nonce, verifier string) (*auth.LoginResponse, error)
 	ListProviders() []string
 	ReloadProviders(ctx context.Context, providers []auth.OIDCProviderConfig) error
 }
@@ -123,6 +123,23 @@ func NewAuthHandler(authService auth.ServiceInterface, oidcService OIDCServiceIn
 
 // LocalLogin handles POST /api/v1/auth/local/login
 func (h *AuthHandler) LocalLogin(w http.ResponseWriter, r *http.Request) {
+	// Defense-in-depth guard: block login when local login is disabled.
+	//
+	// NOTE: in normal operation this branch is UNREACHABLE via HTTP. When
+	// IsLocalLoginEnabled() returns false at startup, router.go omits route
+	// registration entirely, so the mux returns 404 before the handler is
+	// invoked. This guard exists for two reasons:
+	//   1. Direct unit-test calls that invoke the handler without a mux.
+	//   2. Future-proofing if the flag ever becomes dynamic at runtime.
+	//
+	// External observable behavior: 404 (route not registered).
+	// Handler observable behavior: 403 (this guard, if ever reached).
+	if !h.authService.IsLocalLoginEnabled() {
+		response.WriteAuthError(w, http.StatusForbidden, response.ErrCodeForbidden,
+			"local login is disabled", nil)
+		return
+	}
+
 	// Parse request body
 	var req auth.LocalLoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -226,8 +243,8 @@ func (h *AuthHandler) OIDCLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate CSRF state token and nonce (stores provider name, redirect URL, and nonce in Redis)
-	state, nonce, err := h.oidcService.GenerateStateToken(r.Context(), provider, redirectURL)
+	// Generate CSRF state token, nonce, and PKCE verifier (all stored in Redis keyed on state).
+	state, nonce, verifier, err := h.oidcService.GenerateStateToken(r.Context(), provider, redirectURL)
 	if err != nil {
 		slog.Error("failed to generate state token",
 			"provider", provider,
@@ -237,8 +254,8 @@ func (h *AuthHandler) OIDCLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get authorization URL (includes nonce parameter for ID token replay prevention)
-	authURL, err := h.oidcService.GetAuthCodeURL(provider, state, nonce)
+	// Get authorization URL (includes nonce + S256 PKCE challenge derived from verifier).
+	authURL, err := h.oidcService.GetAuthCodeURL(provider, state, nonce, verifier)
 	if err != nil {
 		slog.Error("failed to get authorization URL",
 			"provider", provider,
@@ -320,8 +337,33 @@ func (h *AuthHandler) OIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Exchange authorization code for tokens (nonce is validated against ID token claim)
-	loginResp, err := h.oidcService.ExchangeCodeForToken(r.Context(), provider, code, storedNonce)
+	// Retrieve PKCE verifier from Redis (keyed on state, consumed atomically via GetDel).
+	verifierKey := fmt.Sprintf("%s%s", auth.PKCEVerifierPrefix, state)
+	storedVerifier, err := h.redisClient.GetDel(r.Context(), verifierKey).Result()
+	if err != nil {
+		if err == redis.Nil {
+			slog.Warn("OIDC PKCE verifier not found or already consumed",
+				"provider", provider,
+			)
+		} else {
+			slog.Error("failed to retrieve OIDC PKCE verifier from Redis",
+				"provider", provider,
+				"error", err,
+			)
+		}
+		audit.SetLoginResult(r, "denied")
+		if redirectURL != "" {
+			errorURL := fmt.Sprintf("%s?error=%s", redirectURL, url.QueryEscape("authentication_failed"))
+			http.Redirect(w, r, errorURL, http.StatusFound)
+		} else {
+			response.WriteAuthError(w, http.StatusUnauthorized, response.ErrCodeUnauthorized, "authentication failed", nil)
+		}
+		return
+	}
+
+	// Exchange authorization code for tokens (nonce is validated against ID token claim;
+	// verifier is sent as code_verifier for PKCE).
+	loginResp, err := h.oidcService.ExchangeCodeForToken(r.Context(), provider, code, storedNonce, storedVerifier)
 	if err != nil {
 		slog.Error("failed to exchange authorization code",
 			"provider", provider,
@@ -444,19 +486,24 @@ func (h *AuthHandler) revokeCurrentToken(r *http.Request, userCtx *middleware.Us
 }
 
 // ListOIDCProviders handles GET /api/v1/auth/oidc/providers
-// Returns the list of available OIDC providers
+// Returns the list of available OIDC providers and whether local login is enabled.
 func (h *AuthHandler) ListOIDCProviders(w http.ResponseWriter, r *http.Request) {
-	// If OIDC is disabled, return empty list
-	// Check both for nil interface and typed nil (Go interface gotcha)
+	// localLoginEnabled is always returned so the frontend can decide whether
+	// to render the local login form. Check both for nil interface and typed
+	// nil (Go interface gotcha) when OIDC is not configured.
+	localLoginEnabled := h.authService != nil && h.authService.IsLocalLoginEnabled()
+
 	if h.oidcService == nil || reflect.ValueOf(h.oidcService).IsNil() {
 		response.WriteJSON(w, http.StatusOK, map[string]interface{}{
-			"providers": []interface{}{},
+			"providers":         []interface{}{},
+			"localLoginEnabled": localLoginEnabled,
 		})
 		return
 	}
 
 	providers := h.oidcService.ListProviders()
 	response.WriteJSON(w, http.StatusOK, map[string]interface{}{
-		"providers": providers,
+		"providers":         providers,
+		"localLoginEnabled": localLoginEnabled,
 	})
 }

@@ -38,7 +38,17 @@ OIDC authentication is enabled with the following providers:
 Local authentication is enabled.
 {{- end }}
 
-{{- if .Values.server.auth.localAccounts.secret.create }}
+{{- /* Suppress admin password retrieval when local login is disabled.
+       Mirrors the kindIs/dig pattern in server-deployment.yaml — see comment
+       there for the Helm boolean-coercion rationale. */}}
+{{- $localLoginEnabled := true }}
+{{- $localLogin := dig "localLogin" (dict) (.Values.server.auth | default dict) }}
+{{- if and (kindIs "map" $localLogin) (hasKey $localLogin "enabled") }}
+{{-   if kindIs "bool" $localLogin.enabled }}
+{{-     $localLoginEnabled = $localLogin.enabled }}
+{{-   end }}
+{{- end }}
+{{- if and .Values.server.auth.localAccounts.secret.create $localLoginEnabled }}
 
 To get the admin password:
 
@@ -46,6 +56,17 @@ To get the admin password:
     -o jsonpath='{.data.password}' | base64 -d && echo
 
 Default admin username: {{ .Values.server.auth.adminUsername | default "admin" }}
+{{- else if not $localLoginEnabled }}
+
+Local login is DISABLED (server.auth.localLogin.enabled=false).
+  - POST /api/v1/auth/local/login is not registered and returns 404.
+  - The frontend hides the local login form.
+
+If this chart was previously installed with local login enabled, the
+knodex-initial-admin-password Secret may still exist in the namespace.
+Delete it to remove the residual credential:
+
+  kubectl delete secret --namespace {{ .Release.Namespace }} knodex-initial-admin-password --ignore-not-found
 {{- end }}
 
 {{- if or .Values.enterprise.organization .Values.enterprise.license.existingSecret .Values.enterprise.license.text .Values.enterprise.gatekeeper.enabled }}
