@@ -130,10 +130,10 @@ func TestOIDCLogin_AllowsRelativeRedirect(t *testing.T) {
 		listProvidersFunc: func() []string {
 			return []string{"azuread"}
 		},
-		generateStateTokenFunc: func(ctx context.Context, providerName, redirectURL string) (string, string, error) {
-			return "mock-state", "mock-nonce", nil
+		generateStateTokenFunc: func(ctx context.Context, providerName, redirectURL string) (string, string, string, error) {
+			return "mock-state", "mock-nonce", "mock-verifier", nil
 		},
-		getAuthCodeURLFunc: func(providerName, state, nonce string) (string, error) {
+		getAuthCodeURLFunc: func(providerName, state, nonce, verifier string) (string, error) {
 			return "https://provider.example.com/authorize?state=" + state + "&nonce=" + nonce, nil
 		},
 	}
@@ -160,10 +160,10 @@ func TestOIDCLogin_AllowsConfiguredOriginRedirect(t *testing.T) {
 		listProvidersFunc: func() []string {
 			return []string{"azuread"}
 		},
-		generateStateTokenFunc: func(ctx context.Context, providerName, redirectURL string) (string, string, error) {
-			return "mock-state", "mock-nonce", nil
+		generateStateTokenFunc: func(ctx context.Context, providerName, redirectURL string) (string, string, string, error) {
+			return "mock-state", "mock-nonce", "mock-verifier", nil
 		},
-		getAuthCodeURLFunc: func(providerName, state, nonce string) (string, error) {
+		getAuthCodeURLFunc: func(providerName, state, nonce, verifier string) (string, error) {
 			return "https://provider.example.com/authorize?state=" + state + "&nonce=" + nonce, nil
 		},
 	}
@@ -201,7 +201,7 @@ func TestOIDCCallback_OpaqueCodeRedirect(t *testing.T) {
 		validateStateTokenFunc: func(ctx context.Context, state string) (providerName, redirectURL string, err error) {
 			return "azuread", "http://localhost:3000/auth/callback", nil
 		},
-		exchangeCodeForTokenFunc: func(ctx context.Context, providerName, code, nonce string) (*auth.LoginResponse, error) {
+		exchangeCodeForTokenFunc: func(ctx context.Context, providerName, code, nonce, verifier string) (*auth.LoginResponse, error) {
 			return &auth.LoginResponse{
 				Token:     jwtToken,
 				ExpiresAt: time.Now().Add(1 * time.Hour),
@@ -218,8 +218,9 @@ func TestOIDCCallback_OpaqueCodeRedirect(t *testing.T) {
 	handler := NewAuthHandler(nil, oidcService)
 	handler.SetRedisClient(redisClient)
 
-	// Pre-populate nonce in Redis (simulating GenerateStateToken)
+	// Pre-populate nonce + PKCE verifier in Redis (simulating GenerateStateToken)
 	redisClient.Set(context.Background(), fmt.Sprintf("%s%s", auth.NoncePrefix, "valid-state"), "test-nonce", auth.NonceTTL)
+	redisClient.Set(context.Background(), fmt.Sprintf("%s%s", auth.PKCEVerifierPrefix, "valid-state"), "test-verifier", auth.PKCEVerifierTTL)
 
 	req := httptest.NewRequest("GET", "/api/v1/auth/oidc/callback?code=oidc-auth-code&state=valid-state", nil)
 	w := httptest.NewRecorder()
@@ -283,7 +284,7 @@ func TestOIDCCallback_SetsAuditIdentity(t *testing.T) {
 		validateStateTokenFunc: func(ctx context.Context, state string) (providerName, redirectURL string, err error) {
 			return "azuread", "http://localhost:3000/auth/callback", nil
 		},
-		exchangeCodeForTokenFunc: func(ctx context.Context, providerName, code, nonce string) (*auth.LoginResponse, error) {
+		exchangeCodeForTokenFunc: func(ctx context.Context, providerName, code, nonce, verifier string) (*auth.LoginResponse, error) {
 			return &auth.LoginResponse{
 				Token:     "jwt-token-for-audit-test",
 				ExpiresAt: time.Now().Add(1 * time.Hour),
@@ -298,8 +299,9 @@ func TestOIDCCallback_SetsAuditIdentity(t *testing.T) {
 	handler := NewAuthHandler(nil, oidcService)
 	handler.SetRedisClient(redisClient)
 
-	// Pre-populate nonce in Redis (simulating GenerateStateToken)
+	// Pre-populate nonce + PKCE verifier in Redis (simulating GenerateStateToken)
 	redisClient.Set(context.Background(), fmt.Sprintf("%s%s", auth.NoncePrefix, "valid-state"), "test-nonce", auth.NonceTTL)
+	redisClient.Set(context.Background(), fmt.Sprintf("%s%s", auth.PKCEVerifierPrefix, "valid-state"), "test-verifier", auth.PKCEVerifierTTL)
 
 	req := httptest.NewRequest("GET", "/api/v1/auth/oidc/callback?code=test-code&state=valid-state", nil)
 
@@ -340,6 +342,7 @@ func TestLocalLogin_SetsAuditIdentity(t *testing.T) {
 				},
 			}, nil
 		},
+		localLoginEnabled: true,
 	}
 
 	handler := NewAuthHandler(mockAuth, nil)

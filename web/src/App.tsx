@@ -39,7 +39,6 @@ import {
 } from "@/lib/route-preloads";
 import { MobileDeployGuard } from "@/components/layout/MobileDeployGuard";
 
-// Loading fallback for lazy-loaded routes
 function RouteLoader() {
   return <PageSkeleton />;
 }

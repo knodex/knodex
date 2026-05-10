@@ -138,6 +138,46 @@ func TestSSOWatcher_LoadProviders_WithProviders(t *testing.T) {
 	}
 }
 
+func TestSSOWatcher_LoadProviders_PreservesExplicitEndpoints(t *testing.T) {
+	// Regression: hot-reload must preserve AuthorizationURL/TokenURL/JWKSURL
+	// so the OIDC discovery-skip path remains available on reload. Dropping
+	// these wipes providers for IdPs with incomplete /.well-known docs.
+	configs := []providerConfig{
+		{
+			Name:             "supabase",
+			IssuerURL:        "https://abc.supabase.co/auth/v1",
+			RedirectURL:      "https://app/callback",
+			Scopes:           []string{"openid"},
+			AuthorizationURL: "https://abc.supabase.co/auth/v1/authorize",
+			TokenURL:         "https://abc.supabase.co/auth/v1/token",
+			JWKSURL:          "https://abc.supabase.co/auth/v1/.well-known/jwks.json",
+		},
+	}
+
+	w, _ := newTestWatcherWithObjects(
+		&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: ConfigMapName, Namespace: testNamespace},
+			Data:       map[string]string{ConfigMapKey: makeProviderConfigJSON(configs...)},
+		},
+		nil,
+	)
+
+	providers := w.loadProviders()
+	if len(providers) != 1 {
+		t.Fatalf("expected 1 provider, got %d", len(providers))
+	}
+	p := providers[0]
+	if p.AuthorizationURL != configs[0].AuthorizationURL {
+		t.Errorf("AuthorizationURL not preserved: got %q want %q", p.AuthorizationURL, configs[0].AuthorizationURL)
+	}
+	if p.TokenURL != configs[0].TokenURL {
+		t.Errorf("TokenURL not preserved: got %q want %q", p.TokenURL, configs[0].TokenURL)
+	}
+	if p.JWKSURL != configs[0].JWKSURL {
+		t.Errorf("JWKSURL not preserved: got %q want %q", p.JWKSURL, configs[0].JWKSURL)
+	}
+}
+
 func TestSSOWatcher_LoadProviders_NoSecret(t *testing.T) {
 	configs := []providerConfig{
 		{Name: "google", IssuerURL: "https://accounts.google.com", RedirectURL: "https://app/callback", Scopes: []string{"openid"}},
@@ -255,6 +295,55 @@ func TestSSOWatcher_OnConfigChange_InvokesCallbacks(t *testing.T) {
 	}
 	if receivedProviders[0].ClientID != "g-id" {
 		t.Errorf("expected clientID 'g-id', got %q", receivedProviders[0].ClientID)
+	}
+}
+
+func TestSSOWatcher_OnConfigChange_SkipsWhenUnchanged(t *testing.T) {
+	// Initial-sync AddFunc events fire on informer cache warm-up even when no
+	// real change happened. The hash-based guard must suppress the redundant
+	// reload so a healthy startup state isn't churned (and isn't wiped if a
+	// subsequent reload transiently fails).
+	configs := []providerConfig{
+		{Name: "google", IssuerURL: "https://accounts.google.com", RedirectURL: "https://app/callback", Scopes: []string{"openid"}},
+	}
+
+	w, _ := newTestWatcherWithObjects(
+		&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: ConfigMapName, Namespace: testNamespace},
+			Data:       map[string]string{ConfigMapKey: makeProviderConfigJSON(configs...)},
+		},
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: SecretName, Namespace: testNamespace},
+			Data: map[string][]byte{
+				"google.client-id":     []byte("g-id"),
+				"google.client-secret": []byte("g-secret"),
+			},
+		},
+	)
+
+	var callbackCount atomic.Int32
+	w.OnProvidersChanged(func(_ []SSOProvider) {
+		callbackCount.Add(1)
+	})
+
+	// First call seeds the hash and fires (no prior state).
+	w.onConfigChange("ConfigMap", "add")
+	if got := callbackCount.Load(); got != 1 {
+		t.Fatalf("expected 1 callback after first change, got %d", got)
+	}
+
+	// Second call with identical backing state must be suppressed.
+	w.onConfigChange("Secret", "add")
+	if got := callbackCount.Load(); got != 1 {
+		t.Errorf("expected callback suppressed on no-op reload, got %d invocations", got)
+	}
+
+	// A genuine change should still fire.
+	w.lastValidProviders[0].ClientID = "force-mismatch-state"
+	w.lastProvidersHash = "stale"
+	w.onConfigChange("ConfigMap", "update")
+	if got := callbackCount.Load(); got != 2 {
+		t.Errorf("expected callback to fire on genuine change, got %d invocations", got)
 	}
 }
 
@@ -476,4 +565,87 @@ func TestSSOWatcher_LoadProviders_UsesContextWithTimeout(t *testing.T) {
 	}
 
 	_ = cs // keep reference
+}
+
+// TestSSOWatcher_LoadProviders_TokenEndpointAuthMethod verifies that
+// tokenEndpointAuthMethod is correctly loaded from the ConfigMap into
+// the SSOProvider returned by loadProviders.
+func TestSSOWatcher_LoadProviders_TokenEndpointAuthMethod(t *testing.T) {
+	configs := []providerConfig{
+		{
+			Name:                    "supabase",
+			IssuerURL:               "https://example.supabase.co/auth/v1",
+			RedirectURL:             "https://app/callback",
+			Scopes:                  []string{"openid", "email"},
+			TokenEndpointAuthMethod: "none",
+		},
+	}
+
+	w, _ := newTestWatcherWithObjects(
+		&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: ConfigMapName, Namespace: testNamespace},
+			Data:       map[string]string{ConfigMapKey: makeProviderConfigJSON(configs...)},
+		},
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: SecretName, Namespace: testNamespace},
+			Data: map[string][]byte{
+				"supabase.client-id": []byte("supabase-client-id"),
+			},
+		},
+	)
+
+	providers := w.loadProviders()
+	if len(providers) != 1 {
+		t.Fatalf("expected 1 provider, got %d", len(providers))
+	}
+
+	p := providers[0]
+	if p.TokenEndpointAuthMethod != "none" {
+		t.Errorf("TokenEndpointAuthMethod = %q, want %q", p.TokenEndpointAuthMethod, "none")
+	}
+	if p.ClientID != "supabase-client-id" {
+		t.Errorf("ClientID = %q, want supabase-client-id", p.ClientID)
+	}
+	if p.ClientSecret != "" {
+		t.Errorf("ClientSecret = %q, want empty (public client)", p.ClientSecret)
+	}
+}
+
+// TestSSOWatcher_LoadProviders_MissingTokenEndpointAuthMethod verifies backwards
+// compatibility: a ConfigMap entry without tokenEndpointAuthMethod loads correctly
+// with an empty string (not an error).
+func TestSSOWatcher_LoadProviders_MissingTokenEndpointAuthMethod(t *testing.T) {
+	configs := []providerConfig{
+		{
+			Name:        "legacy",
+			IssuerURL:   "https://legacy.example.com",
+			RedirectURL: "https://app/callback",
+			Scopes:      []string{"openid"},
+			// TokenEndpointAuthMethod intentionally omitted
+		},
+	}
+
+	w, _ := newTestWatcherWithObjects(
+		&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: ConfigMapName, Namespace: testNamespace},
+			Data:       map[string]string{ConfigMapKey: makeProviderConfigJSON(configs...)},
+		},
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: SecretName, Namespace: testNamespace},
+			Data: map[string][]byte{
+				"legacy.client-id":     []byte("legacy-id"),
+				"legacy.client-secret": []byte("legacy-secret"),
+			},
+		},
+	)
+
+	providers := w.loadProviders()
+	if len(providers) != 1 {
+		t.Fatalf("expected 1 provider, got %d", len(providers))
+	}
+
+	p := providers[0]
+	if p.TokenEndpointAuthMethod != "" {
+		t.Errorf("TokenEndpointAuthMethod = %q, want empty string (backwards compat)", p.TokenEndpointAuthMethod)
+	}
 }

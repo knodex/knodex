@@ -56,6 +56,26 @@ jobs:
           helm dependency build deploy/charts/knodex
           helm template knodex deploy/charts/knodex --values deploy/charts/knodex/values.yaml > /dev/null
 
+      - name: Verify LOCAL_LOGIN_ENABLED env injection (default + disabled fixture)
+        run: |
+          set -euo pipefail
+          # Default values: LOCAL_LOGIN_ENABLED must render as "true"
+          rendered_default=$(helm template knodex deploy/charts/knodex)
+          if ! echo "$rendered_default" | grep -A1 "LOCAL_LOGIN_ENABLED" | grep -q '"true"'; then
+            echo "::error::default render did not emit LOCAL_LOGIN_ENABLED=\"true\""
+            echo "$rendered_default" | grep -A1 "LOCAL_LOGIN_ENABLED" || true
+            exit 1
+          fi
+          # Disabled fixture: must render as "false" and the deployment must NOT
+          # reference the local login route handler.
+          rendered_disabled=$(helm template knodex deploy/charts/knodex \
+            -f deploy/charts/knodex/ci/values-local-login-disabled.yaml)
+          if ! echo "$rendered_disabled" | grep -A1 "LOCAL_LOGIN_ENABLED" | grep -q '"false"'; then
+            echo "::error::disabled fixture did not emit LOCAL_LOGIN_ENABLED=\"false\""
+            echo "$rendered_disabled" | grep -A1 "LOCAL_LOGIN_ENABLED" || true
+            exit 1
+          fi
+
       # Install testing is skipped on PRs because the Docker image for the
       # chart version doesn't exist yet in the registry. The E2E workflow
       # provides full deployment validation with locally-built images.

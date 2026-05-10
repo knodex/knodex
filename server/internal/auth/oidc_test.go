@@ -10,7 +10,11 @@ package auth
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -64,6 +68,7 @@ func (m *MockRedisClient) Close() error {
 type mockAuthServiceForOIDC struct {
 	generateTokenForAccountFunc func(account *Account, userID string) (string, time.Time, error)
 	generateTokenWithGroupsFunc func(userID, email, displayName string, groups []string) (string, time.Time, error)
+	localLoginEnabled           bool // configurable; default false suits OIDC unit tests
 }
 
 func (m *mockAuthServiceForOIDC) AuthenticateLocal(ctx context.Context, username, password, sourceIP string) (*LoginResponse, error) {
@@ -91,6 +96,8 @@ func (m *mockAuthServiceForOIDC) ValidateToken(_ context.Context, tokenString st
 func (m *mockAuthServiceForOIDC) RevokeToken(_ context.Context, _ string, _ time.Duration) error {
 	return nil
 }
+
+func (m *mockAuthServiceForOIDC) IsLocalLoginEnabled() bool { return m.localLoginEnabled }
 
 // createTestOIDCProvisioningService creates a test provisioning service
 // Replaces createTestProvisioningService that used UserProvisioningService
@@ -302,7 +309,7 @@ func TestGenerateStateToken(t *testing.T) {
 	// Test state token generation
 	providerName := "azuread"
 	redirectURL := ""
-	state, nonce, err := svc.GenerateStateToken(ctx, providerName, redirectURL)
+	state, nonce, verifier, err := svc.GenerateStateToken(ctx, providerName, redirectURL)
 	if err != nil {
 		t.Fatalf("GenerateStateToken() error = %v", err)
 	}
@@ -315,6 +322,14 @@ func TestGenerateStateToken(t *testing.T) {
 	// Verify nonce is not empty
 	if nonce == "" {
 		t.Error("GenerateStateToken() returned empty nonce")
+	}
+
+	// Verify PKCE verifier is not empty and within RFC 7636 §4.1 length bounds
+	if verifier == "" {
+		t.Error("GenerateStateToken() returned empty PKCE verifier")
+	}
+	if len(verifier) < 43 || len(verifier) > 128 {
+		t.Errorf("GenerateStateToken() verifier length = %d, want 43-128 (RFC 7636 §4.1)", len(verifier))
 	}
 
 	// Verify state token is base64 encoded
@@ -360,6 +375,15 @@ func TestGenerateStateToken(t *testing.T) {
 	if redisClient.storage[nonceKey] != nonce {
 		t.Errorf("GenerateStateToken() stored nonce = %v, want %v", redisClient.storage[nonceKey], nonce)
 	}
+
+	// Verify PKCE verifier is stored in Redis
+	verifierKey := PKCEVerifierPrefix + state
+	if _, ok := redisClient.storage[verifierKey]; !ok {
+		t.Error("GenerateStateToken() did not store PKCE verifier in Redis")
+	}
+	if redisClient.storage[verifierKey] != verifier {
+		t.Errorf("GenerateStateToken() stored verifier = %v, want %v", redisClient.storage[verifierKey], verifier)
+	}
 }
 
 // TestValidateStateToken tests state token validation
@@ -390,7 +414,7 @@ func TestValidateStateToken(t *testing.T) {
 		{
 			name: "valid state token",
 			setupFunc: func() string {
-				state, _, _ := svc.GenerateStateToken(ctx, "azuread", "")
+				state, _, _, _ := svc.GenerateStateToken(ctx, "azuread", "")
 				return state
 			},
 			wantErr:         false,
@@ -416,7 +440,7 @@ func TestValidateStateToken(t *testing.T) {
 		{
 			name: "already used state token (double validation)",
 			setupFunc: func() string {
-				state, _, _ := svc.GenerateStateToken(ctx, "google", "")
+				state, _, _, _ := svc.GenerateStateToken(ctx, "google", "")
 				// Validate once (should succeed)
 				svc.ValidateStateToken(ctx, state)
 				// Return same token for second validation (should fail)
@@ -515,7 +539,7 @@ func TestGetAuthCodeURL(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			url, err := svc.GetAuthCodeURL(tt.providerName, tt.state, "test-nonce")
+			url, err := svc.GetAuthCodeURL(tt.providerName, tt.state, "test-nonce", "test-verifier-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 			if tt.wantErr {
 				if err == nil {
 					t.Errorf("GetAuthCodeURL() expected error, got nil")
@@ -559,7 +583,7 @@ func TestStateTokenRandomness(t *testing.T) {
 	numTokens := 100
 
 	for i := 0; i < numTokens; i++ {
-		state, _, err := svc.GenerateStateToken(ctx, "azuread", "")
+		state, _, _, err := svc.GenerateStateToken(ctx, "azuread", "")
 		if err != nil {
 			t.Fatalf("GenerateStateToken() error = %v", err)
 		}
@@ -1104,7 +1128,7 @@ func TestReloadProviders_ConcurrentSafety(t *testing.T) {
 			defer wg.Done()
 			for j := 0; j < 20; j++ {
 				// Will return error (no provider named "test"), but tests lock safety
-				_, _ = svc.GetAuthCodeURL("test-provider", "fake-state", "fake-nonce")
+				_, _ = svc.GetAuthCodeURL("test-provider", "fake-state", "fake-nonce", "fake-verifier")
 			}
 		}()
 	}
@@ -1123,52 +1147,21 @@ func TestReloadProviders_ConcurrentSafety(t *testing.T) {
 	}
 }
 
-// TestInitializeProviderInto_UsesSSRFSafeDialer verifies that OIDC provider
-// initialization uses the SSRF-safe dialer by attempting to connect to a
-// loopback address, which the SSRF dialer should block.
-func TestInitializeProviderInto_UsesSSRFSafeDialer(t *testing.T) {
-	svc := &OIDCService{}
-
-	target := make(map[string]*oidcProvider)
-	config := OIDCProviderConfig{
-		Name:         "test-ssrf",
-		IssuerURL:    "http://127.0.0.1:1/.well-known/openid-configuration",
-		ClientID:     "test-client",
-		ClientSecret: "test-secret",
-		RedirectURL:  "http://localhost/callback",
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	err := svc.initializeProviderInto(ctx, config, target)
-	if err == nil {
-		t.Fatal("expected error when connecting to loopback with SSRF-safe dialer")
-	}
-
-	// The error should mention SSRF protection (private/reserved IP blocked).
-	// Note: This assertion depends on netutil.NewSSRFSafeDialer() producing error messages
-	// containing "private", "reserved", or "ssrf". If the dialer message wording changes,
-	// update these expected substrings accordingly.
-	errMsg := strings.ToLower(err.Error())
-	ssrfIndicators := []string{"private", "reserved", "ssrf", "blocked", "loopback"}
-	found := false
-	for _, indicator := range ssrfIndicators {
-		if strings.Contains(errMsg, indicator) {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("expected error to mention SSRF protection (one of %v), got: %s", ssrfIndicators, err.Error())
-	}
-}
-
-// TestDefaultHTTPClient_TimeoutsAndSSRFDialer verifies that the production HTTP client
-// has correct timeout values and preserves the SSRF-safe dialer (STORY-361 AC #1, #3).
-func TestDefaultHTTPClient_TimeoutsAndSSRFDialer(t *testing.T) {
+// TestDefaultHTTPClient_TransportConfig verifies that the production HTTP client
+// has correct timeout values and wires http.ProxyFromEnvironment (STORY-361 AC #1).
+// SSRF dialer removed per ArgoCD-aligned posture; see tech-spec
+// oidc-http-client-argocd-alignment.
+func TestDefaultHTTPClient_TransportConfig(t *testing.T) {
+	t.Parallel()
 	svc := &OIDCService{} // nil httpClient → defaultHTTPClient() will be used
 	client := svc.defaultHTTPClient()
+
+	// Same OIDCService must return the same *http.Client across calls so the
+	// transport's idle-connection pool is reused across discovery / JWKS /
+	// token exchange.
+	if client2 := svc.defaultHTTPClient(); client2 != client {
+		t.Errorf("defaultHTTPClient() returned different *http.Client across calls (%p vs %p) — connection pool not reused", client, client2)
+	}
 
 	// Verify overall request timeout (AC #1)
 	if client.Timeout != OIDCClientTimeout {
@@ -1180,7 +1173,7 @@ func TestDefaultHTTPClient_TimeoutsAndSSRFDialer(t *testing.T) {
 		t.Fatal("client.Transport is not *http.Transport")
 	}
 
-	// Verify transport timeouts (AC #1)
+	// Verify transport timeouts and pool sizes (AC #1)
 	if transport.TLSHandshakeTimeout != OIDCTLSHandshakeTimeout {
 		t.Errorf("TLSHandshakeTimeout = %v, want %v", transport.TLSHandshakeTimeout, OIDCTLSHandshakeTimeout)
 	}
@@ -1193,10 +1186,182 @@ func TestDefaultHTTPClient_TimeoutsAndSSRFDialer(t *testing.T) {
 	if transport.MaxIdleConnsPerHost != OIDCMaxIdleConnsPerHost {
 		t.Errorf("MaxIdleConnsPerHost = %d, want %d", transport.MaxIdleConnsPerHost, OIDCMaxIdleConnsPerHost)
 	}
+	if !transport.ForceAttemptHTTP2 {
+		t.Errorf("ForceAttemptHTTP2 = false, want true (matches http.DefaultTransport and other custom transports in this codebase)")
+	}
 
-	// Verify SSRF-safe dialer is preserved (AC #3)
-	if transport.DialContext == nil {
-		t.Fatal("transport.DialContext is nil — SSRF-safe dialer not set")
+	// Verify the transport.Proxy is wired to http.ProxyFromEnvironment via
+	// function-pointer equality. Pointer equality is order-independent and does
+	// not invoke the proxy func, so it is unaffected by net/http's process-wide
+	// caching of HTTPS_PROXY (which makes t.Setenv-based behavioral assertions
+	// silently ineffective).
+	if transport.Proxy == nil {
+		t.Fatal("transport.Proxy is nil — http.ProxyFromEnvironment not wired")
+	}
+	want := reflect.ValueOf(http.ProxyFromEnvironment).Pointer()
+	got := reflect.ValueOf(transport.Proxy).Pointer()
+	if got != want {
+		t.Errorf("transport.Proxy is not http.ProxyFromEnvironment (got=%x want=%x)", got, want)
+	}
+
+	// Dial timeout is captured inside the dialer.DialContext closure and is
+	// unreachable through *http.Transport. Assert directly against the package
+	// helper that builds the dialer.
+	if d := defaultOIDCDialer(); d.Timeout != OIDCDialTimeout {
+		t.Errorf("defaultOIDCDialer().Timeout = %v, want %v", d.Timeout, OIDCDialTimeout)
+	}
+}
+
+// TestInitializeProviderInto_AllowsPrivateNetwork verifies that OIDC provider
+// initialization succeeds against a loopback issuer URL with the production
+// HTTP client (no s.httpClient override). Locks in the ArgoCD-aligned posture
+// where private/in-cluster IdPs are reachable. Inverse of the deleted
+// TestInitializeProviderInto_UsesSSRFSafeDialer.
+//
+// HTTPS-vs-HTTP asymmetry: the mock issuer uses http://, and initializeProviderInto
+// accepts any scheme — HTTPS-only enforcement lives at the API layer
+// (validateProviderRequest in sso_settings.go), not at the OIDC service layer.
+func TestInitializeProviderInto_AllowsPrivateNetwork(t *testing.T) {
+	t.Parallel()
+	discovery := minimalOIDCDiscovery(t)
+
+	svc := &OIDCService{} // nil httpClient → production defaultHTTPClient() exercised
+	target := make(map[string]*oidcProvider)
+	cfg := OIDCProviderConfig{
+		Name:         "loopback",
+		IssuerURL:    discovery.URL, // http://127.0.0.1:NNNN
+		ClientID:     "test-client",
+		ClientSecret: "test-secret",
+		RedirectURL:  "http://localhost/callback",
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := svc.initializeProviderInto(ctx, cfg, target); err != nil {
+		t.Fatalf("initializeProviderInto() unexpected error: %v", err)
+	}
+	if target["loopback"] == nil {
+		t.Fatal("provider not stored after loopback discovery")
+	}
+}
+
+// recordingRT records every URL passed through it, then delegates to inner.
+// Used by TestExchangeCodeForToken_UsesConfiguredClient to prove that token
+// exchange routes through s.httpClient (and not http.DefaultClient).
+type recordingRT struct {
+	inner http.RoundTripper
+	mu    sync.Mutex
+	urls  []string
+}
+
+func (r *recordingRT) RoundTrip(req *http.Request) (*http.Response, error) {
+	r.mu.Lock()
+	r.urls = append(r.urls, req.URL.String())
+	r.mu.Unlock()
+	return r.inner.RoundTrip(req)
+}
+
+func (r *recordingRT) snapshot() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.urls...)
+}
+
+// newOIDCServiceForExchangeTest constructs an OIDCService wired for the token-
+// exchange unit test below. Built around the OIDCEnabled: false short-circuit
+// (which skips the constructor's seed validation) plus direct assignment of the
+// runtime fields ExchangeCodeForToken actually reads. Centralized so that if
+// OIDCService gains a new required field, the change shows up here as a single
+// edit rather than getting silently spread across an inline test setup.
+func newOIDCServiceForExchangeTest(t *testing.T, transport http.RoundTripper) *OIDCService {
+	t.Helper()
+	cfg := &Config{OIDCEnabled: false}
+	svc, err := NewOIDCService(cfg, nil, &mockAuthServiceForIntegration{}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("NewOIDCService: %v", err)
+	}
+	provisioningService, _ := createTestOIDCProvisioningService()
+	svc.redisClient = NewMockRedisClient()
+	svc.provisioningService = provisioningService
+	svc.httpClient = &http.Client{Transport: transport}
+	return svc
+}
+
+// TestExchangeCodeForToken_UsesConfiguredClient proves that ExchangeCodeForToken
+// routes the OAuth2 token-exchange HTTP call through s.httpClient (the configured
+// client) rather than falling through to http.DefaultClient. The recorder is set
+// during initialization; we snapshot the recorded URLs before Exchange runs and
+// then assert that NEW entries are added post-Exchange and at least one of those
+// new entries is the mock issuer's /token endpoint.
+//
+// The load-bearing assertion is the pre/post snapshot. A naive `len(rt.urls) > 0`
+// would false-pass because initializeProviderInto already records discovery
+// URLs against the same recording client.
+//
+// Out of scope: this test does not validate PKCE semantics. The mock /token
+// handler in MockOIDCProvider does not check `code_verifier`, so the verifier
+// passed here is dummy text. PKCE behavior is covered by the dedicated tests
+// in oidc_integration_test.go.
+func TestExchangeCodeForToken_UsesConfiguredClient(t *testing.T) {
+	t.Parallel()
+
+	mockProvider, err := NewMockOIDCProvider()
+	if err != nil {
+		t.Fatalf("NewMockOIDCProvider: %v", err)
+	}
+	defer mockProvider.Close()
+
+	rt := &recordingRT{inner: http.DefaultTransport}
+	svc := newOIDCServiceForExchangeTest(t, rt)
+
+	// Register the mock provider — discovery runs through the recording client
+	// and fills rt.urls with discovery-time URLs.
+	providerCfg := OIDCProviderConfig{
+		Name:         "mock",
+		IssuerURL:    mockProvider.issuerURL,
+		ClientID:     mockProvider.clientID,
+		ClientSecret: "test-secret",
+		RedirectURL:  mockProvider.redirectURI,
+		Scopes:       []string{"openid", "email", "profile"},
+	}
+	if err := svc.initializeProviderInto(context.Background(), providerCfg, svc.providers); err != nil {
+		t.Fatalf("initializeProviderInto: %v", err)
+	}
+
+	// Seed an authorization code with a matching nonce so the mock /token
+	// handler returns a valid ID token.
+	const (
+		authCode = "test-auth-code"
+		nonce    = "test-nonce"
+	)
+	mockProvider.AddAuthCodeWithNonce(authCode, "user@example.com", "user-sub", "User", true, nonce)
+
+	// Snapshot pre-exchange — discovery has already added entries.
+	preCount := len(rt.snapshot())
+	if preCount == 0 {
+		t.Fatalf("expected discovery to have recorded at least one URL, got 0")
+	}
+
+	if _, err := svc.ExchangeCodeForToken(context.Background(), "mock", authCode, nonce, "test-verifier"); err != nil {
+		t.Fatalf("ExchangeCodeForToken: %v", err)
+	}
+
+	post := rt.snapshot()
+	if len(post) <= preCount {
+		t.Fatalf("recorder did not grow after ExchangeCodeForToken (pre=%d, post=%d) — token exchange likely fell through to http.DefaultClient", preCount, len(post))
+	}
+
+	tokenURL := mockProvider.issuerURL + "/token"
+	foundToken := false
+	for _, u := range post[preCount:] {
+		if u == tokenURL {
+			foundToken = true
+			break
+		}
+	}
+	if !foundToken {
+		t.Errorf("expected token endpoint %q in post-exchange URLs, got %v", tokenURL, post[preCount:])
 	}
 }
 
@@ -1208,4 +1373,204 @@ func containsString(slice []string, item string) bool {
 		}
 	}
 	return false
+}
+
+// minimalOIDCDiscovery starts a test OIDC discovery server on a random port and
+// returns it. The server is automatically stopped via t.Cleanup.
+func minimalOIDCDiscovery(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewUnstartedServer(nil)
+	issuer := "http://" + srv.Listener.Addr().String()
+	srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		doc := map[string]interface{}{
+			"issuer":                                issuer,
+			"authorization_endpoint":                issuer + "/authorize",
+			"token_endpoint":                        issuer + "/token",
+			"jwks_uri":                              issuer + "/jwks",
+			"response_types_supported":              []string{"code"},
+			"subject_types_supported":               []string{"public"},
+			"id_token_signing_alg_values_supported": []string{"RS256"},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(doc) //nolint:errcheck
+	})
+	srv.Start()
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// failingRoundTripper fails any HTTP attempt. Used to prove that the explicit-endpoint
+// bypass path makes zero HTTP calls during provider initialization.
+type failingRoundTripper struct {
+	t *testing.T
+}
+
+func (f *failingRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	f.t.Errorf("unexpected HTTP request during explicit-endpoint bypass: %s %s", req.Method, req.URL.String())
+	return nil, fmt.Errorf("HTTP forbidden in this test")
+}
+
+// TestInitializeProviderInto_ExplicitEndpoints_SkipsDiscovery verifies that when
+// AuthorizationURL, TokenURL, and JWKSURL are all set, OIDC discovery is bypassed
+// entirely (no HTTP request is issued). The IssuerURL is set to a host that would
+// fail discovery, so a successful initialization proves the bypass path is taken.
+func TestInitializeProviderInto_ExplicitEndpoints_SkipsDiscovery(t *testing.T) {
+	svc := &OIDCService{
+		httpClient: &http.Client{Transport: &failingRoundTripper{t: t}},
+	}
+	target := make(map[string]*oidcProvider)
+
+	cfg := OIDCProviderConfig{
+		Name:             "supabase-gotrue",
+		IssuerURL:        "https://discovery-would-fail.invalid",
+		ClientID:         "test-client",
+		ClientSecret:     "test-secret",
+		RedirectURL:      "http://localhost/callback",
+		AuthorizationURL: "https://example.supabase.co/auth/v1/authorize",
+		TokenURL:         "https://example.supabase.co/auth/v1/token",
+		JWKSURL:          "https://example.supabase.co/auth/v1/.well-known/jwks.json",
+	}
+
+	if err := svc.initializeProviderInto(context.Background(), cfg, target); err != nil {
+		t.Fatalf("initializeProviderInto() unexpected error: %v", err)
+	}
+
+	p, ok := target["supabase-gotrue"]
+	if !ok {
+		t.Fatal("provider not stored after explicit-endpoint initialization")
+	}
+	if p.oauth2Config.Endpoint.AuthURL != cfg.AuthorizationURL {
+		t.Errorf("oauth2Config.Endpoint.AuthURL = %q, want %q", p.oauth2Config.Endpoint.AuthURL, cfg.AuthorizationURL)
+	}
+	if p.oauth2Config.Endpoint.TokenURL != cfg.TokenURL {
+		t.Errorf("oauth2Config.Endpoint.TokenURL = %q, want %q", p.oauth2Config.Endpoint.TokenURL, cfg.TokenURL)
+	}
+}
+
+// TestInitializeProviderInto_PartialExplicitEndpoints_FallsBackToDiscovery verifies
+// that when fewer than all three explicit URLs are set, the discovery path runs
+// unchanged (all-or-nothing semantic). Two of three fields populated → discovery
+// is invoked and the discovered authorization endpoint is used, not the partial input.
+func TestInitializeProviderInto_PartialExplicitEndpoints_FallsBackToDiscovery(t *testing.T) {
+	discovery := minimalOIDCDiscovery(t)
+
+	svc := &OIDCService{httpClient: http.DefaultClient}
+	target := make(map[string]*oidcProvider)
+
+	cfg := OIDCProviderConfig{
+		Name:         "partial",
+		IssuerURL:    discovery.URL,
+		ClientID:     "test-client",
+		ClientSecret: "test-secret",
+		RedirectURL:  "http://localhost/callback",
+		// Only two of three set — bypass must NOT activate.
+		AuthorizationURL: "https://ignored.example/authorize",
+		TokenURL:         "https://ignored.example/token",
+	}
+
+	if err := svc.initializeProviderInto(context.Background(), cfg, target); err != nil {
+		t.Fatalf("initializeProviderInto() unexpected error: %v", err)
+	}
+
+	p, ok := target["partial"]
+	if !ok {
+		t.Fatal("provider not stored after fallback initialization")
+	}
+	// Discovery ran: the resulting auth URL must come from the discovery doc, not
+	// from the partial-input ignored.example value.
+	wantAuthURL := discovery.URL + "/authorize"
+	if p.oauth2Config.Endpoint.AuthURL != wantAuthURL {
+		t.Errorf("oauth2Config.Endpoint.AuthURL = %q, want discovered %q (partial input must not be used)",
+			p.oauth2Config.Endpoint.AuthURL, wantAuthURL)
+	}
+}
+
+// TestInitializeProviderInto_AuthMethod verifies auth method inference and validation
+// across the five canonical cases for tokenEndpointAuthMethod.
+func TestInitializeProviderInto_AuthMethod(t *testing.T) {
+	discovery := minimalOIDCDiscovery(t)
+
+	tests := []struct {
+		name        string
+		method      string
+		secret      string
+		wantErr     bool
+		errContains string
+		wantSecret  string
+	}{
+		{
+			name:       "explicit_none_no_secret",
+			method:     "none",
+			secret:     "",
+			wantErr:    false,
+			wantSecret: "",
+		},
+		{
+			name:       "explicit_basic_with_secret",
+			method:     "client_secret_basic",
+			secret:     "my-secret",
+			wantErr:    false,
+			wantSecret: "my-secret",
+		},
+		{
+			name:        "explicit_basic_empty_secret",
+			method:      "client_secret_basic",
+			secret:      "",
+			wantErr:     true,
+			errContains: "client secret cannot be empty",
+		},
+		{
+			name:       "infer_none_from_empty_method_and_secret",
+			method:     "",
+			secret:     "",
+			wantErr:    false,
+			wantSecret: "",
+		},
+		{
+			name:        "unsupported_method",
+			method:      "private_key_jwt",
+			secret:      "",
+			wantErr:     true,
+			errContains: "unsupported token_endpoint_auth_method",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := &OIDCService{httpClient: http.DefaultClient}
+			target := make(map[string]*oidcProvider)
+			cfg := OIDCProviderConfig{
+				Name:                    "test-provider",
+				IssuerURL:               discovery.URL,
+				ClientID:                "test-client-id",
+				ClientSecret:            tt.secret,
+				RedirectURL:             "http://localhost/callback",
+				TokenEndpointAuthMethod: tt.method,
+			}
+
+			err := svc.initializeProviderInto(context.Background(), cfg, target)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("initializeProviderInto() expected error, got nil")
+				}
+				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
+					t.Errorf("error %q does not contain %q", err.Error(), tt.errContains)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("initializeProviderInto() unexpected error: %v", err)
+			}
+
+			p, ok := target["test-provider"]
+			if !ok {
+				t.Fatal("provider not stored in target map after successful initialization")
+			}
+			if p.oauth2Config.ClientSecret != tt.wantSecret {
+				t.Errorf("oauth2Config.ClientSecret = %q, want %q", p.oauth2Config.ClientSecret, tt.wantSecret)
+			}
+		})
+	}
 }

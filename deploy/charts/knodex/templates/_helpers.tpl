@@ -107,7 +107,7 @@ Returns the user-provided existingSecret or the chart-generated secret name
 {{- if .Values.server.auth.oidc.existingSecret }}
 {{- .Values.server.auth.oidc.existingSecret }}
 {{- else }}
-{{- printf "%s-sso-secrets" (include "knodex.fullname" .) }}
+{{- print "knodex-sso-secrets" }}
 {{- end }}
 {{- end }}
 

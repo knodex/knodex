@@ -388,17 +388,28 @@ func (a *App) Run(ctx context.Context) error { //nolint:gocyclo // orchestration
 			"secret", "knodex-secret",
 		)
 
-		// Auto-generate or retrieve admin password from Kubernetes secret
-		bootstrapCtx, bootstrapCancel := context.WithTimeout(context.Background(), adminPasswordBootstrapTimeout)
-		adminPassword, wasGenerated, err := bootstrap.GetOrCreateAdminPassword(bootstrapCtx, k8sClient, namespace)
-		bootstrapCancel()
-		if err != nil {
-			slog.Error("failed to get or create admin password - local authentication may not work",
-				"error", err,
-				"namespace", namespace,
-			)
-			adminPassword = ""
-		} else {
+		// Auto-generate or retrieve admin password from Kubernetes secret.
+		// When LOCAL_LOGIN_ENABLED=false, skip bootstrap entirely so no
+		// knodex-initial-admin-password Secret is created.
+		//
+		// When local login is enabled, a bootstrap failure is FATAL — silently
+		// proceeding with an empty password would make the auth service
+		// indistinguishable from "operator disabled local login", masking the
+		// real problem (e.g., RBAC permission missing on the Secret).
+		var adminPassword string
+		if cfg.Auth.LocalLoginEnabled {
+			bootstrapCtx, bootstrapCancel := context.WithTimeout(context.Background(), adminPasswordBootstrapTimeout)
+			pw, wasGenerated, err := bootstrap.GetOrCreateAdminPassword(bootstrapCtx, k8sClient, namespace)
+			bootstrapCancel()
+			if err != nil {
+				slog.Error("failed to get or create admin password — refusing to start with degraded local auth",
+					"error", err,
+					"namespace", namespace,
+					"hint", "either fix the underlying error (often a missing Secret RBAC permission) or set server.auth.localLogin.enabled=false",
+				)
+				os.Exit(1)
+			}
+			adminPassword = pw
 			if wasGenerated {
 				slog.Info("auto-generated admin password stored in Kubernetes secret",
 					"secret", bootstrap.SecretName,
@@ -411,6 +422,8 @@ func (a *App) Run(ctx context.Context) error { //nolint:gocyclo // orchestration
 					"namespace", namespace,
 				)
 			}
+		} else {
+			slog.Info("local login disabled via LOCAL_LOGIN_ENABLED=false; skipping admin password bootstrap")
 		}
 
 		// Use ConfigMap-sourced SSO providers (no env var fallback)
@@ -420,6 +433,7 @@ func (a *App) Run(ctx context.Context) error { //nolint:gocyclo // orchestration
 			JWTExpiry:          cfg.Auth.JWTExpiry,
 			LocalAdminUsername: cfg.Auth.AdminUsername,
 			LocalAdminPassword: adminPassword,
+			LocalLoginEnabled:  cfg.Auth.LocalLoginEnabled,
 			OIDCEnabled:        cfg.Auth.OIDCEnabled,
 			OIDCProviders:      oidcProviders,
 		}
@@ -900,22 +914,40 @@ func (a *App) Run(ctx context.Context) error { //nolint:gocyclo // orchestration
 	// Wire WebSocket count push for sidebar badge updates (AC: #2, #3, #4)
 	// Uses in-memory caches only - no Redis/HTTP/K8s API calls
 	if rgdWatcher != nil && instanceTracker != nil {
-		countPushFn := func(ctx context.Context, _ string, projects []string, _ []string) (int, int) {
-			// RGD count via watcher cache (in-memory)
-			rgdOpts := models.ListOptions{Page: 1, PageSize: 1, IncludePublic: true}
-			rgdOpts.Organization = a.organizationFilter // Enterprise org filter for consistent counts
-			if projects != nil {
-				rgdOpts.Projects = projects
+		catalogService := routerResult.CatalogService
+		countPushFn := func(ctx context.Context, userID string, projects []string, groups []string) (int, int) {
+			// RGD count: delegate to CatalogService.GetCount so the same per-RGD Casbin
+			// filter that runs on /api/v1/rgds and /api/v1/rgds/count is applied here.
+			// Without this, the WebSocket-pushed sidebar badge could exceed the catalog
+			// list count for users who pass the project/org cache filter but lack
+			// rgds/{category}/{name} get policies.
+			var rgdCount int
+			if catalogService != nil {
+				authCtx := &services.UserAuthContext{
+					UserID:             userID,
+					Groups:             groups,
+					AccessibleProjects: projects,
+				}
+				// Hub passes projects=nil for global admins (CachedHasGlobalAccess).
+				// Mark AccessibleNamespaces=["*"] so any future tier-resolver path treats
+				// this as global admin instead of "no projects → universal-only" tiers.
+				if projects == nil {
+					authCtx.AccessibleNamespaces = []string{"*"}
+				}
+				count, err := catalogService.GetCount(ctx, authCtx)
+				if err != nil {
+					slog.Warn("WebSocket RGD count failed; reporting 0", "userID", userID, "error", err)
+				} else {
+					rgdCount = count
+				}
 			}
-			rgdResult := rgdWatcher.ListRGDs(rgdOpts)
 
 			// Instance count via tracker cache (in-memory).
 			// Resolve project names to their destination namespaces — instances live in
 			// destination namespaces, not namespaces named after the project.
-			var instanceCount int
 			namespaces := resolveProjectDestinationNamespaces(ctx, projectService, projects)
-			instanceCount = instanceTracker.CountInstancesByNamespaces(namespaces, rbac.MatchNamespaceInList)
-			return rgdResult.TotalCount, instanceCount
+			instanceCount := instanceTracker.CountInstancesByNamespaces(namespaces, rbac.MatchNamespaceInList)
+			return rgdCount, instanceCount
 		}
 
 		// Register on RGD changes for count push

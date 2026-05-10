@@ -28,6 +28,11 @@ type Config struct {
 	// RedirectURL is the expected redirect_uri for authorization
 	RedirectURL string
 
+	// AllowPublicClient permits token requests with empty client_secret when the
+	// auth code was registered with a PKCE code_challenge. When false (default),
+	// the secret check applies whether or not PKCE is in use.
+	AllowPublicClient bool
+
 	// PrivateKey is the RSA private key for signing tokens.
 	// If nil, a new key will be generated on Start().
 	PrivateKey *rsa.PrivateKey
@@ -101,6 +106,15 @@ func WithClientCredentials(clientID, clientSecret string) Option {
 func WithRedirectURL(url string) Option {
 	return func(c *Config) {
 		c.RedirectURL = url
+	}
+}
+
+// WithPublicClient permits token requests with empty client_secret when a PKCE
+// code_challenge was registered on /authorize. Use this for testing the
+// public-client / PKCE flow.
+func WithPublicClient() Option {
+	return func(c *Config) {
+		c.AllowPublicClient = true
 	}
 }
 

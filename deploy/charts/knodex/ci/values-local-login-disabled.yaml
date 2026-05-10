@@ -1,0 +1,15 @@
+# CI test values: local login disabled (SSO-only deployment).
+# Validates LOCAL_LOGIN_ENABLED env injection and NOTES.txt suppression of
+# the admin password retrieval message.
+
+server:
+  auth:
+    localLogin:
+      enabled: false
+    oidc:
+      enabled: true
+      providers:
+        - name: azure-ad
+          issuerURL: https://login.microsoftonline.com/test-tenant/v2.0
+          clientID: test-client
+          clientSecret: test-secret

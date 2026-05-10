@@ -6,6 +6,7 @@ package bootstrap
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -234,6 +235,81 @@ func TestEnsureAdminPasswordSecret_ContextTimeout(t *testing.T) {
 	}
 }
 
+// TestGetOrCreateAdminPassword_ReusesExistingSecret is the regression guard for
+// the upgrade path where an operator disables local login (LOCAL_LOGIN_ENABLED=false),
+// then later re-enables it. After re-enable, bootstrap MUST return the existing
+// password from the Secret rather than regenerating one — otherwise operators who
+// captured the auto-generated password during the first install would silently lose
+// access on every disable→re-enable cycle.
+func TestGetOrCreateAdminPassword_ReusesExistingSecret(t *testing.T) {
+	ctx := context.Background()
+	namespace := "test-namespace"
+	originalPassword := "OperatorCapturedPassword!1"
+
+	// Simulate a prior install: Secret already present in the cluster
+	// (created by an earlier server run before disable).
+	client := fake.NewSimpleClientset(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      SecretName,
+			Namespace: namespace,
+		},
+		Data: map[string][]byte{
+			SecretKey: []byte(originalPassword),
+		},
+	})
+
+	got, wasGenerated, err := GetOrCreateAdminPassword(ctx, client, namespace)
+	if err != nil {
+		t.Fatalf("GetOrCreateAdminPassword() unexpected error = %v", err)
+	}
+	if wasGenerated {
+		t.Error("wasGenerated = true, want false (existing Secret should be reused, not regenerated)")
+	}
+	if got != originalPassword {
+		t.Errorf("password = %q, want %q (operator's original password must be preserved across re-enable)", got, originalPassword)
+	}
+
+	// Also verify the Secret on the cluster was not mutated.
+	secret, err := client.CoreV1().Secrets(namespace).Get(ctx, SecretName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("failed to re-read Secret after bootstrap: %v", err)
+	}
+	if string(secret.Data[SecretKey]) != originalPassword {
+		t.Errorf("Secret password mutated to %q, want %q (bootstrap must not overwrite)", string(secret.Data[SecretKey]), originalPassword)
+	}
+}
+
+// TestGetOrCreateAdminPassword_Idempotent_PreservesPassword verifies that
+// invoking bootstrap twice (e.g., pod restart loop) returns the same password
+// both times and does not rotate it.
+func TestGetOrCreateAdminPassword_Idempotent_PreservesPassword(t *testing.T) {
+	ctx := context.Background()
+	namespace := "test-namespace"
+	client := fake.NewSimpleClientset()
+
+	first, firstGenerated, err := GetOrCreateAdminPassword(ctx, client, namespace)
+	if err != nil {
+		t.Fatalf("first GetOrCreateAdminPassword() error = %v", err)
+	}
+	if !firstGenerated {
+		t.Error("first call wasGenerated = false, want true (no Secret existed)")
+	}
+	if first == "" {
+		t.Fatal("first call returned empty password")
+	}
+
+	second, secondGenerated, err := GetOrCreateAdminPassword(ctx, client, namespace)
+	if err != nil {
+		t.Fatalf("second GetOrCreateAdminPassword() error = %v", err)
+	}
+	if secondGenerated {
+		t.Error("second call wasGenerated = true, want false (Secret already exists from first call)")
+	}
+	if second != first {
+		t.Errorf("password rotated across calls: first=%q second=%q (bootstrap must be stable across pod restarts)", first, second)
+	}
+}
+
 func TestGenerateSecurePassword_AlwaysMeetsComplexity(t *testing.T) {
 	// Generate many passwords and verify ALL pass complexity requirements.
 	// Before the fix, ~0.7% of base64 passwords lacked digits or special chars.
@@ -278,7 +354,6 @@ func TestMeetsComplexityRequirements(t *testing.T) {
 	}
 }
 
-// Helper function to check if string contains substring
 func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(substr) == 0 || (len(s) > 0 && len(substr) > 0 && s[:len(substr)] == substr) || (len(s) > len(substr) && s[len(s)-len(substr):] == substr) || (len(s) > len(substr) && s[1:len(s)-1] != "" && contains(s[1:], substr)))
+	return strings.Contains(s, substr)
 }

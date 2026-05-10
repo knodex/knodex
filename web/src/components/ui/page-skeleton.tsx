@@ -13,10 +13,14 @@ interface PageSkeletonProps {
 export function PageSkeleton({ variant = "grid", cardCount = 8, className }: PageSkeletonProps) {
   return (
     <div data-testid="page-skeleton" className={cn("animate-token-fade-in", className)}>
-      {/* Header skeleton */}
-      <div className="mb-6 space-y-2">
-        <Skeleton className="h-8 w-48" />
-        <Skeleton className="h-4 w-32" />
+      {/* Filter bar skeleton — matches the search/filter row present on most pages */}
+      <div className="mb-6 flex items-center gap-2">
+        <Skeleton className="h-9 flex-1 max-w-xs" />
+        <Skeleton className="h-9 w-28" />
+        <Skeleton className="h-9 w-28" />
+        <div className="ml-auto">
+          <Skeleton className="h-9 w-16 rounded-md" />
+        </div>
       </div>
 
       {/* Content skeleton based on variant */}

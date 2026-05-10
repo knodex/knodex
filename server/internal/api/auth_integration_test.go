@@ -166,6 +166,7 @@ func setupAuthTestServer(t *testing.T) (*httptest.Server, *auth.Service) {
 		JWTSecret:          "test-jwt-secret-key-for-integration-testing",
 		LocalAdminUsername: "admin",
 		LocalAdminPassword: "TestPassword123!", // SECURITY: Meets complexity requirements (upper, lower, digit, special)
+		LocalLoginEnabled:  true,
 		JWTExpiry:          1 * time.Hour,
 	}
 

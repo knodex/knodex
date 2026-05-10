@@ -165,6 +165,87 @@ test.describe('Global Admin - SSO Settings Management', () => {
     console.log('✓ AC4: Admin can create a new SSO provider');
   });
 
+  test('AC: Create a public-client SSO provider (PKCE)', async ({ page }) => {
+    // Mock SSO API endpoints for public-client create flow.
+    const mockProviders: any[] = [];
+    let postedBody: any = null;
+
+    await page.route('**/api/v1/settings/sso/providers', async (route) => {
+      if (route.request().method() === 'GET') {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(mockProviders),
+        });
+      } else if (route.request().method() === 'POST') {
+        postedBody = route.request().postDataJSON();
+        const created = {
+          name: postedBody.name,
+          issuerURL: postedBody.issuerURL,
+          clientID: postedBody.clientID,
+          redirectURL: postedBody.redirectURL,
+          scopes: postedBody.scopes || [],
+          tokenEndpointAuthMethod: postedBody.tokenEndpointAuthMethod,
+        };
+        mockProviders.push(created);
+        await route.fulfill({
+          status: 201,
+          contentType: 'application/json',
+          body: JSON.stringify(created),
+        });
+      }
+    });
+
+    await page.route('**/api/v1/account/can-i/**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ value: 'yes' }),
+      });
+    });
+
+    await page.goto('/settings/sso');
+    await page.waitForLoadState('networkidle', { timeout: 15000 });
+
+    // Open create form.
+    const addButton = page.locator('button:has-text("Add Provider")').first();
+    await addButton.click();
+    await page.waitForTimeout(500);
+
+    // Fill in provider details (no client secret).
+    await page.locator('#name').fill('supabase');
+    await page.locator('#issuerURL').fill('https://example.supabase.co/auth/v1');
+    await page.locator('#clientID').fill('public-client-id');
+    await page.locator('#redirectURL').fill('https://app.example.com/api/v1/auth/oidc/callback');
+
+    // Switch to Public client (PKCE). The Client Secret field should disappear.
+    const publicToggle = page.locator('[data-testid="auth-method-public"]');
+    await publicToggle.click();
+    await expect(page.locator('#clientSecret')).toHaveCount(0);
+
+    await page.screenshot({
+      path: '../test-results/e2e/screenshots/sso-pkce-form-public.png',
+      fullPage: true,
+    });
+
+    // Submit.
+    const submitButton = page.locator('button:has-text("Create Provider")');
+    await submitButton.click();
+    await page.waitForTimeout(2000);
+
+    // Verify the captured POST body advertised method=none and no clientSecret.
+    expect(postedBody).not.toBeNull();
+    expect(postedBody.tokenEndpointAuthMethod).toBe('none');
+    expect(postedBody.clientSecret ?? '').toBe('');
+
+    // Verify the new provider appears in the list with the public badge.
+    const badge = page.locator('[data-testid="badge-public-supabase"]');
+    await expect(badge).toBeVisible({ timeout: 5000 });
+    await expect(badge).toHaveText('Public (PKCE)');
+
+    console.log('✓ AC: Admin can create a public-client SSO provider (PKCE)');
+  });
+
   test('AC5: Client secret is not displayed in provider list', async ({ page }) => {
     // Mock SSO API with a provider that has a secret
     await page.route('**/api/v1/settings/sso/providers', async (route) => {

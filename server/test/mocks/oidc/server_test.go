@@ -6,6 +6,8 @@ package oidc
 import (
 	"context"
 	"crypto/rsa"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -110,7 +112,7 @@ func TestGenerateAuthCode(t *testing.T) {
 	require.NoError(t, err)
 
 	// Generate auth code for existing user
-	code, err := server.GenerateAuthCode(AdminEmail, "http://localhost:8080/callback", "test-state", "test-nonce")
+	code, err := server.GenerateAuthCode(AdminEmail, "http://localhost:8080/callback", "test-state", "test-nonce", "", "")
 	require.NoError(t, err)
 	require.NotEmpty(t, code)
 
@@ -131,7 +133,7 @@ func TestGenerateAuthCodeNonexistentUser(t *testing.T) {
 	require.NoError(t, err)
 
 	// Try to generate auth code for non-existent user
-	_, err = server.GenerateAuthCode("nonexistent@test.local", "http://localhost:8080/callback", "", "")
+	_, err = server.GenerateAuthCode("nonexistent@test.local", "http://localhost:8080/callback", "", "", "", "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "user not found")
 }
@@ -229,7 +231,7 @@ func TestConcurrentAuthCodeGeneration(t *testing.T) {
 
 	for i := 0; i < 10; i++ {
 		go func(idx int) {
-			code, err := server.GenerateAuthCode(AdminEmail, "http://localhost:8080/callback", fmt.Sprintf("state-%d", idx), "")
+			code, err := server.GenerateAuthCode(AdminEmail, "http://localhost:8080/callback", fmt.Sprintf("state-%d", idx), "", "", "")
 			assert.NoError(t, err)
 			assert.NotEmpty(t, code)
 			codes <- code
@@ -476,7 +478,7 @@ func TestTokenEndpointIntegration(t *testing.T) {
 	waitForServerReady(t, "http://localhost:18086")
 
 	// Generate auth code
-	code, err := server.GenerateAuthCode(AdminEmail, "http://localhost:8080/callback", "", "test-nonce")
+	code, err := server.GenerateAuthCode(AdminEmail, "http://localhost:8080/callback", "", "test-nonce", "", "")
 	require.NoError(t, err)
 
 	// Exchange code for tokens
@@ -559,7 +561,7 @@ func TestTokenEndpointRejectAllTokensScenario(t *testing.T) {
 	waitForServerReady(t, "http://localhost:18088")
 
 	// Generate auth code
-	code, err := server.GenerateAuthCode(AdminEmail, "http://localhost:8080/callback", "", "")
+	code, err := server.GenerateAuthCode(AdminEmail, "http://localhost:8080/callback", "", "", "", "")
 	require.NoError(t, err)
 
 	data := url.Values{
@@ -592,7 +594,7 @@ func TestUserInfoEndpointIntegration(t *testing.T) {
 	waitForServerReady(t, "http://localhost:18089")
 
 	// Get access token
-	code, err := server.GenerateAuthCode(AdminEmail, "http://localhost:8080/callback", "", "")
+	code, err := server.GenerateAuthCode(AdminEmail, "http://localhost:8080/callback", "", "", "", "")
 	require.NoError(t, err)
 
 	data := url.Values{
@@ -692,4 +694,110 @@ func TestIssuerURL(t *testing.T) {
 	defer server.Stop(ctx)
 
 	assert.Equal(t, "http://custom-issuer:8081", server.IssuerURL())
+}
+
+// pkceChallenge derives the S256 code_challenge for the given verifier.
+func pkceChallenge(verifier string) string {
+	sum := sha256.Sum256([]byte(verifier))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+// TestPKCE_HappyPath registers an auth code with a code_challenge, then redeems
+// it with the matching verifier. The token endpoint must accept the request
+// and issue tokens (public client: no secret sent).
+func TestPKCE_HappyPath(t *testing.T) {
+	server, err := NewServer(WithPort(18093), WithIssuerURL("http://localhost:18093"), WithPublicClient())
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	require.NoError(t, server.Start(ctx))
+	defer server.Stop(ctx)
+	waitForServerReady(t, "http://localhost:18093")
+
+	verifier := "test-verifier-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	challenge := pkceChallenge(verifier)
+
+	code, err := server.GenerateAuthCode(AdminEmail, "http://localhost:8080/callback", "", "test-nonce", challenge, "S256")
+	require.NoError(t, err)
+
+	data := url.Values{
+		"grant_type":    {"authorization_code"},
+		"code":          {code},
+		"redirect_uri":  {"http://localhost:8080/callback"},
+		"client_id":     {"test-client-id"},
+		"code_verifier": {verifier},
+	}
+	resp, err := http.Post("http://localhost:18093/token", "application/x-www-form-urlencoded", strings.NewReader(data.Encode()))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "unexpected status: %s", string(body))
+
+	var tokenResp map[string]interface{}
+	require.NoError(t, json.Unmarshal(body, &tokenResp))
+	assert.NotEmpty(t, tokenResp["id_token"])
+	assert.NotEmpty(t, tokenResp["access_token"])
+}
+
+// TestPKCE_VerifierMismatch confirms that a wrong verifier on /token returns
+// invalid_grant — fail-closed PKCE verification.
+func TestPKCE_VerifierMismatch(t *testing.T) {
+	server, err := NewServer(WithPort(18094), WithIssuerURL("http://localhost:18094"), WithPublicClient())
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	require.NoError(t, server.Start(ctx))
+	defer server.Stop(ctx)
+	waitForServerReady(t, "http://localhost:18094")
+
+	verifier := "test-verifier-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	wrongVerifier := "test-verifier-zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+	challenge := pkceChallenge(verifier)
+
+	code, err := server.GenerateAuthCode(AdminEmail, "http://localhost:8080/callback", "", "test-nonce", challenge, "S256")
+	require.NoError(t, err)
+
+	data := url.Values{
+		"grant_type":    {"authorization_code"},
+		"code":          {code},
+		"redirect_uri":  {"http://localhost:8080/callback"},
+		"client_id":     {"test-client-id"},
+		"code_verifier": {wrongVerifier},
+	}
+	resp, err := http.Post("http://localhost:18094/token", "application/x-www-form-urlencoded", strings.NewReader(data.Encode()))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	assert.Contains(t, string(body), "invalid_grant")
+}
+
+// TestDiscovery_AdvertisesPKCE asserts the discovery doc lists S256 challenge
+// support and `none` token endpoint auth method (for public clients).
+func TestDiscovery_AdvertisesPKCE(t *testing.T) {
+	server, err := NewServer(WithPort(18095), WithIssuerURL("http://localhost:18095"))
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	require.NoError(t, server.Start(ctx))
+	defer server.Stop(ctx)
+	waitForServerReady(t, "http://localhost:18095")
+
+	resp, err := http.Get("http://localhost:18095/.well-known/openid-configuration")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var disc map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&disc))
+
+	challengeMethods, ok := disc["code_challenge_methods_supported"].([]interface{})
+	require.True(t, ok, "discovery missing code_challenge_methods_supported")
+	assert.Contains(t, challengeMethods, "S256")
+
+	authMethods, ok := disc["token_endpoint_auth_methods_supported"].([]interface{})
+	require.True(t, ok, "discovery missing token_endpoint_auth_methods_supported")
+	assert.Contains(t, authMethods, "none")
 }

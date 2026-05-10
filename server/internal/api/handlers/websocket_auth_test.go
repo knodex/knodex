@@ -37,6 +37,7 @@ func (m *mockWSPolicyEnforcer) CanAccessWithGroups(ctx context.Context, user str
 // Updated to match new interface (removed rbac.User dependency)
 type mockAuthService struct {
 	validateTokenFunc func(token string) (*auth.JWTClaims, error)
+	localLoginEnabled bool // configurable; default false suits WebSocket auth tests
 }
 
 func (m *mockAuthService) AuthenticateLocal(ctx context.Context, username, password, sourceIP string) (*auth.LoginResponse, error) {
@@ -63,6 +64,8 @@ func (m *mockAuthService) ValidateToken(_ context.Context, token string) (*auth.
 func (m *mockAuthService) RevokeToken(_ context.Context, _ string, _ time.Duration) error {
 	return nil
 }
+
+func (m *mockAuthService) IsLocalLoginEnabled() bool { return m.localLoginEnabled }
 
 // storeWSTicket creates a test WebSocket ticket in Redis and returns the ticket string.
 func storeWSTicket(t *testing.T, redisClient *redis.Client, userID, email string, groups, casbinRoles, projects []string) string {

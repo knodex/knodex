@@ -87,19 +87,35 @@ export interface OIDCProvider {
   enabled: boolean;
 }
 
-export async function getOIDCProviders(): Promise<OIDCProvider[]> {
+interface LoginOptionsResponse {
+  providers: string[];
+  localLoginEnabled?: boolean;
+}
+
+export async function getOIDCProviders(): Promise<{ providers: OIDCProvider[]; localLoginEnabled: boolean }> {
   try {
-    const response = await apiClient.get<{ providers: string[] }>('/v1/auth/oidc/providers');
-    // Transform backend response (just provider names) to frontend format
+    const response = await apiClient.get<LoginOptionsResponse>('/v1/auth/oidc/providers');
     const providerNames = response.data.providers || [];
-    return providerNames.map(name => ({
-      name,
-      display_name: formatProviderName(name),
-      enabled: true
-    }));
+    return {
+      providers: providerNames.map(name => ({
+        name,
+        display_name: formatProviderName(name),
+        enabled: true,
+      })),
+      // Backward-compat default: pre-feature backends omit localLoginEnabled.
+      // Defaulting to true preserves existing local-login deployments on version
+      // skew (frontend newer than backend). Failure mode on SSO-only + old backend:
+      // the local form is shown, user submits credentials, and gets 404. Operators
+      // should keep frontend and backend versions in sync to avoid this transient state.
+      localLoginEnabled: response.data.localLoginEnabled ?? true,
+    };
   } catch (error) {
+    // Re-throw so the caller can render an error state. Returning a fabricated
+    // success payload (e.g., localLoginEnabled: true) on a network error
+    // would flash a non-functional login form on SSO-only deployments and
+    // train users to ignore the resulting 403/404 responses.
     logger.error('[Auth] Failed to fetch OIDC providers:', error);
-    return [];
+    throw error;
   }
 }
 
@@ -114,7 +130,9 @@ function formatProviderName(name: string): string {
     'google': 'Google',
     'keycloak': 'Keycloak',
     'auth0': 'Auth0',
-    'okta': 'Okta'
+    'okta': 'Okta',
+    'knodex-cloud': 'Knodex Cloud',
+    'knodex': 'Knodex Cloud',
   };
   return nameMap[name.toLowerCase()] || name.charAt(0).toUpperCase() + name.slice(1);
 }

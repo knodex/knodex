@@ -13,7 +13,7 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "knodex.dex.selectorLabels" . | nindent 8 }}
+        {{- include "knodex.dex.labels" . | nindent 8 }}
         {{- with .Values.dex.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

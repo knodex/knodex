@@ -7,9 +7,11 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -20,12 +22,14 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/knodex/knodex/server/internal/config"
+	mockoidc "github.com/knodex/knodex/server/test/mocks/oidc"
 )
 
 // mockAuthServiceForIntegration implements ServiceInterface for integration testing
 // Updated to match new interface (uses GenerateTokenWithGroups)
 type mockAuthServiceForIntegration struct {
 	generateTokenWithGroupsFunc func(userID, email, displayName string, groups []string) (string, time.Time, error)
+	localLoginEnabled           bool // configurable; default false suits OIDC integration tests
 }
 
 func (m *mockAuthServiceForIntegration) AuthenticateLocal(ctx context.Context, username, password, sourceIP string) (*LoginResponse, error) {
@@ -50,6 +54,8 @@ func (m *mockAuthServiceForIntegration) ValidateToken(_ context.Context, tokenSt
 func (m *mockAuthServiceForIntegration) RevokeToken(_ context.Context, _ string, _ time.Duration) error {
 	return nil
 }
+
+func (m *mockAuthServiceForIntegration) IsLocalLoginEnabled() bool { return m.localLoginEnabled }
 
 // MockOIDCProvider is a mock OIDC provider for integration testing
 type MockOIDCProvider struct {
@@ -249,8 +255,8 @@ func bigIntToBytes(n int64) []byte {
 	return bytes
 }
 
-// newTestOIDCService creates an OIDCService that uses the default HTTP client
-// (bypassing the SSRF-safe dialer) so tests can connect to loopback mock servers.
+// newTestOIDCService creates an OIDCService for tests. The production HTTP client
+// now allows loopback, so no override is required.
 func newTestOIDCService(
 	cfg *Config,
 	redisClient RedisClient,
@@ -259,16 +265,7 @@ func newTestOIDCService(
 	roleManager AuthRoleManager,
 	rolePersister RolePersister,
 ) (*OIDCService, error) {
-	svc, err := NewOIDCService(cfg, redisClient, authService, provisioningService, roleManager, rolePersister)
-	if err != nil {
-		return nil, err
-	}
-	svc.httpClient = http.DefaultClient
-	// Re-initialize providers now that the loopback-safe client is set.
-	for _, pc := range cfg.OIDCProviders {
-		_ = svc.initializeProvider(context.Background(), pc)
-	}
-	return svc, nil
+	return NewOIDCService(cfg, redisClient, authService, provisioningService, roleManager, rolePersister)
 }
 
 // TestOIDCIntegration_FullFlow tests the complete OIDC flow with a mock provider
@@ -322,14 +319,14 @@ func TestOIDCIntegration_FullFlow(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Step 1: Generate state token and nonce
-	state, nonce, err := svc.GenerateStateToken(ctx, "mock", "http://localhost:3000/auth/callback")
+	// Step 1: Generate state token, nonce, and PKCE verifier
+	state, nonce, verifier, err := svc.GenerateStateToken(ctx, "mock", "http://localhost:3000/auth/callback")
 	if err != nil {
 		t.Fatalf("GenerateStateToken() failed: %v", err)
 	}
 
-	// Step 2: Get authorization URL (includes nonce parameter)
-	authURL, err := svc.GetAuthCodeURL("mock", state, nonce)
+	// Step 2: Get authorization URL (includes nonce parameter + S256 PKCE challenge)
+	authURL, err := svc.GetAuthCodeURL("mock", state, nonce, verifier)
 	if err != nil {
 		t.Fatalf("GetAuthCodeURL() failed: %v", err)
 	}
@@ -360,8 +357,14 @@ func TestOIDCIntegration_FullFlow(t *testing.T) {
 		t.Fatalf("Failed to retrieve nonce from Redis: %v", err)
 	}
 
-	// Step 6: Exchange code for token (with nonce validation)
-	loginResp, err := svc.ExchangeCodeForToken(ctx, "mock", authCode, storedNonce)
+	// Step 6: Retrieve PKCE verifier from Redis (as callback handler would do)
+	storedVerifier, err := redisClient.GetDel(ctx, PKCEVerifierPrefix+state).Result()
+	if err != nil {
+		t.Fatalf("Failed to retrieve PKCE verifier from Redis: %v", err)
+	}
+
+	// Step 7: Exchange code for token (with nonce + PKCE validation)
+	loginResp, err := svc.ExchangeCodeForToken(ctx, "mock", authCode, storedNonce, storedVerifier)
 	if err != nil {
 		t.Fatalf("ExchangeCodeForToken() failed: %v", err)
 	}
@@ -431,14 +434,14 @@ func TestOIDCIntegration_AuthURLContainsNonce(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Generate state and nonce
-	state, nonce, err := svc.GenerateStateToken(ctx, "mock", "")
+	// Generate state, nonce, and PKCE verifier
+	state, nonce, verifier, err := svc.GenerateStateToken(ctx, "mock", "")
 	if err != nil {
 		t.Fatalf("GenerateStateToken() failed: %v", err)
 	}
 
 	// Get authorization URL
-	authURL, err := svc.GetAuthCodeURL("mock", state, nonce)
+	authURL, err := svc.GetAuthCodeURL("mock", state, nonce, verifier)
 	if err != nil {
 		t.Fatalf("GetAuthCodeURL() failed: %v", err)
 	}
@@ -461,6 +464,19 @@ func TestOIDCIntegration_AuthURLContainsNonce(t *testing.T) {
 	// Verify state parameter is also present
 	if !strings.Contains(authURL, "state=") {
 		t.Errorf("authorization URL does not contain state parameter: %s", authURL)
+	}
+
+	// Verify PKCE code_challenge is present (AC-2: S256 always sent)
+	challenge := parsedURL.Query().Get("code_challenge")
+	if challenge == "" {
+		t.Errorf("authorization URL is missing code_challenge parameter: %s", authURL)
+	}
+	// S256 of a 32-byte verifier base64url-encodes to 43 chars (no padding)
+	if len(challenge) < 43 {
+		t.Errorf("code_challenge too short (got %d chars, want ≥43): %s", len(challenge), challenge)
+	}
+	if got := parsedURL.Query().Get("code_challenge_method"); got != "S256" {
+		t.Errorf("code_challenge_method = %q, want S256", got)
 	}
 }
 
@@ -502,7 +518,7 @@ func TestOIDCIntegration_InvalidCode(t *testing.T) {
 	ctx := context.Background()
 
 	// Try to exchange invalid code
-	_, err = svc.ExchangeCodeForToken(ctx, "mock", "invalid-code", "some-nonce")
+	_, err = svc.ExchangeCodeForToken(ctx, "mock", "invalid-code", "some-nonce", "")
 	if err == nil {
 		t.Error("ExchangeCodeForToken() with invalid code should fail")
 	}
@@ -550,7 +566,7 @@ func TestOIDCIntegration_EmailNotVerified(t *testing.T) {
 	mockProvider.AddAuthCodeWithNonce(authCode, "unverified@example.com", "unverified-sub", "Unverified User", false, testNonce)
 
 	// Exchange should fail because email is not verified
-	_, err = svc.ExchangeCodeForToken(ctx, "mock", authCode, testNonce)
+	_, err = svc.ExchangeCodeForToken(ctx, "mock", authCode, testNonce, "")
 	if err == nil {
 		t.Error("ExchangeCodeForToken() with unverified email should fail")
 	} else if !strings.Contains(err.Error(), "email address has not been verified by the identity provider") {
@@ -613,7 +629,7 @@ func TestOIDCIntegration_EmailVerifiedOmitted(t *testing.T) {
 	}
 
 	// Exchange should succeed — absent email_verified is NOT the same as false
-	resp, err := svc.ExchangeCodeForToken(ctx, "mock", authCode, testNonce)
+	resp, err := svc.ExchangeCodeForToken(ctx, "mock", authCode, testNonce, "")
 	if err != nil {
 		t.Fatalf("ExchangeCodeForToken() with omitted email_verified should succeed, got error: %v", err)
 	}
@@ -667,7 +683,7 @@ func TestOIDCIntegration_UserProvisioning(t *testing.T) {
 	mockProvider.AddAuthCodeWithNonce(authCode, "newuser@example.com", "new-subject", "New User", true, testNonce)
 
 	// Exchange code - should succeed and provision new user WITHOUT personal project
-	loginResp, err := svc.ExchangeCodeForToken(ctx, "mock", authCode, testNonce)
+	loginResp, err := svc.ExchangeCodeForToken(ctx, "mock", authCode, testNonce, "")
 	if err != nil {
 		t.Fatalf("ExchangeCodeForToken() failed: %v (user provisioning should have created the user)", err)
 	}
@@ -833,7 +849,7 @@ func TestOIDCIntegration_GlobalAdmin(t *testing.T) {
 	)
 
 	// Exchange code for token - should provision user as Global Admin
-	loginResp, err := svc.ExchangeCodeForToken(ctx, "mock", authCode, testNonce)
+	loginResp, err := svc.ExchangeCodeForToken(ctx, "mock", authCode, testNonce, "")
 	if err != nil {
 		t.Fatalf("ExchangeCodeForToken() failed: %v", err)
 	}
@@ -1010,7 +1026,7 @@ func TestOIDCIntegration_NonceValidation(t *testing.T) {
 			mockProvider.AddAuthCodeWithNonce(authCode, "nonce-test@example.com", "nonce-sub", "Nonce Test User", true, tt.tokenNonce)
 
 			// Call ExchangeCodeForToken with the stored nonce (what the server had in Redis)
-			_, err = svc.ExchangeCodeForToken(ctx, "mock", authCode, tt.storedNonce)
+			_, err = svc.ExchangeCodeForToken(ctx, "mock", authCode, tt.storedNonce, "")
 
 			if tt.wantErr {
 				if err == nil {
@@ -1094,7 +1110,7 @@ func TestOIDCIntegration_RolePersistence(t *testing.T) {
 		"platform-admins",
 	)
 
-	loginResp, err := svc.ExchangeCodeForToken(ctx, "mock", authCode, testNonce)
+	loginResp, err := svc.ExchangeCodeForToken(ctx, "mock", authCode, testNonce, "")
 	if err != nil {
 		t.Fatalf("ExchangeCodeForToken() failed: %v", err)
 	}
@@ -1195,7 +1211,7 @@ func TestOIDCIntegration_RolePersistenceFailure(t *testing.T) {
 	)
 
 	// Login should SUCCEED even though persistence failed (non-fatal)
-	loginResp, err := svc.ExchangeCodeForToken(ctx, "mock", authCode, testNonce)
+	loginResp, err := svc.ExchangeCodeForToken(ctx, "mock", authCode, testNonce, "")
 	if err != nil {
 		t.Fatalf("ExchangeCodeForToken() should succeed even when role persistence fails, got error: %v", err)
 	}
@@ -1279,7 +1295,7 @@ func TestOIDCIntegration_ProjectRolePersistence(t *testing.T) {
 		"alpha-developers", // Only project group, no global admin
 	)
 
-	loginResp, err := svc.ExchangeCodeForToken(ctx, "mock", authCode, testNonce)
+	loginResp, err := svc.ExchangeCodeForToken(ctx, "mock", authCode, testNonce, "")
 	if err != nil {
 		t.Fatalf("ExchangeCodeForToken() failed: %v", err)
 	}
@@ -1315,5 +1331,210 @@ func TestOIDCIntegration_ProjectRolePersistence(t *testing.T) {
 		if role == "role:serveradmin" {
 			t.Error("role:serveradmin should NOT be present — user is not in platform-admins group")
 		}
+	}
+}
+
+// getFreePort finds a free TCP port on localhost by opening a listener on :0
+// and immediately closing it. There is a small race window between Close and
+// the test server starting, but it is acceptable for unit tests.
+func getFreePort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", ":0")
+	if err != nil {
+		t.Fatalf("getFreePort: %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	ln.Close()
+	return port
+}
+
+// startPublicClientMock starts a mock OIDC server configured for the public-client
+// (PKCE-only) flow and registers testUser. It returns the server and its issuer URL.
+func startPublicClientMock(t *testing.T, clientID string) (*mockoidc.Server, string) {
+	t.Helper()
+	port := getFreePort(t)
+	issuerURL := fmt.Sprintf("http://localhost:%d", port)
+
+	srv, err := mockoidc.NewServer(
+		mockoidc.WithPort(port),
+		mockoidc.WithIssuerURL(issuerURL),
+		mockoidc.WithClientCredentials(clientID, ""),
+		mockoidc.WithRedirectURL("http://localhost:8080/api/v1/auth/oidc/callback"),
+		mockoidc.WithPublicClient(),
+	)
+	if err != nil {
+		t.Fatalf("mockoidc.NewServer: %v", err)
+	}
+
+	ctx := context.Background()
+	if err := srv.Start(ctx); err != nil {
+		t.Fatalf("mock OIDC Start: %v", err)
+	}
+	t.Cleanup(func() { srv.Stop(ctx) }) //nolint:errcheck
+
+	srv.AddUser(&mockoidc.TestUser{
+		Email:         "pkce-user@example.com",
+		Subject:       "pkce-user-id",
+		Name:          "PKCE User",
+		EmailVerified: true,
+		Groups:        []string{"testers"},
+	})
+
+	return srv, issuerURL
+}
+
+// pkceS256Challenge computes the RFC 7636 §4.2 S256 code_challenge from a verifier.
+func pkceS256Challenge(verifier string) string {
+	sum := sha256.Sum256([]byte(verifier))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+// TestOIDCIntegration_PublicClient_PKCE verifies the complete public-client (PKCE-only)
+// flow: no client secret, S256 code_challenge bound to the authorization code, verifier
+// validated at token exchange. Uses the proper mock OIDC server that validates PKCE.
+func TestOIDCIntegration_PublicClient_PKCE(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	const clientID = "pkce-test-client"
+	srv, issuerURL := startPublicClientMock(t, clientID)
+
+	redisClient := NewMockRedisClient()
+	authService := &mockAuthServiceForIntegration{
+		generateTokenWithGroupsFunc: func(userID, email, displayName string, groups []string) (string, time.Time, error) {
+			return "test-jwt-token", time.Now().Add(1 * time.Hour), nil
+		},
+	}
+	provisioningService, _ := createTestOIDCProvisioningService()
+
+	cfg := &Config{
+		OIDCEnabled: true,
+		OIDCProviders: []OIDCProviderConfig{
+			{
+				Name:                    "pkce-provider",
+				IssuerURL:               issuerURL,
+				ClientID:                clientID,
+				ClientSecret:            "",
+				RedirectURL:             "http://localhost:8080/api/v1/auth/oidc/callback",
+				Scopes:                  []string{"openid", "email", "profile"},
+				TokenEndpointAuthMethod: "none",
+			},
+		},
+	}
+
+	svc, err := newTestOIDCService(cfg, redisClient, authService, provisioningService, nil, nil)
+	if err != nil {
+		t.Fatalf("newTestOIDCService: %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Step 1: Generate state/nonce/verifier (service stores verifier in Redis)
+	state, nonce, verifier, err := svc.GenerateStateToken(ctx, "pkce-provider", "http://localhost:3000/callback")
+	if err != nil {
+		t.Fatalf("GenerateStateToken: %v", err)
+	}
+
+	// Step 2: Compute S256 challenge (as the client browser would for the auth request)
+	challenge := pkceS256Challenge(verifier)
+
+	// Step 3: Register auth code on mock with the real challenge
+	code, err := srv.GenerateAuthCode(
+		"pkce-user@example.com",
+		"http://localhost:8080/api/v1/auth/oidc/callback",
+		state, nonce, challenge, "S256",
+	)
+	if err != nil {
+		t.Fatalf("GenerateAuthCode: %v", err)
+	}
+
+	// Step 4: Retrieve verifier from Redis (as the callback handler does)
+	storedNonce, err := redisClient.GetDel(ctx, NoncePrefix+state).Result()
+	if err != nil {
+		t.Fatalf("GetDel nonce: %v", err)
+	}
+	storedVerifier, err := redisClient.GetDel(ctx, PKCEVerifierPrefix+state).Result()
+	if err != nil {
+		t.Fatalf("GetDel verifier: %v", err)
+	}
+
+	// Step 5: Exchange code — mock validates that sha256(storedVerifier) == challenge
+	loginResp, err := svc.ExchangeCodeForToken(ctx, "pkce-provider", code, storedNonce, storedVerifier)
+	if err != nil {
+		t.Fatalf("ExchangeCodeForToken: %v", err)
+	}
+
+	if loginResp.Token == "" {
+		t.Error("Token is empty — public-client PKCE flow did not produce a JWT")
+	}
+	if loginResp.User.Email != "pkce-user@example.com" {
+		t.Errorf("User.Email = %q, want pkce-user@example.com", loginResp.User.Email)
+	}
+}
+
+// TestOIDCIntegration_PKCEMismatch_FailsClosed verifies that token exchange fails
+// when the code_verifier does not match the registered code_challenge (tampered flow).
+func TestOIDCIntegration_PKCEMismatch_FailsClosed(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	const clientID = "pkce-mismatch-client"
+	srv, issuerURL := startPublicClientMock(t, clientID)
+
+	redisClient := NewMockRedisClient()
+	authService := &mockAuthServiceForIntegration{}
+	provisioningService, _ := createTestOIDCProvisioningService()
+
+	cfg := &Config{
+		OIDCEnabled: true,
+		OIDCProviders: []OIDCProviderConfig{
+			{
+				Name:                    "pkce-provider",
+				IssuerURL:               issuerURL,
+				ClientID:                clientID,
+				ClientSecret:            "",
+				RedirectURL:             "http://localhost:8080/api/v1/auth/oidc/callback",
+				Scopes:                  []string{"openid", "email", "profile"},
+				TokenEndpointAuthMethod: "none",
+			},
+		},
+	}
+
+	svc, err := newTestOIDCService(cfg, redisClient, authService, provisioningService, nil, nil)
+	if err != nil {
+		t.Fatalf("newTestOIDCService: %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Generate state/nonce/real verifier
+	_, nonce, realVerifier, err := svc.GenerateStateToken(ctx, "pkce-provider", "")
+	if err != nil {
+		t.Fatalf("GenerateStateToken: %v", err)
+	}
+
+	// Register auth code with the challenge for the REAL verifier
+	challenge := pkceS256Challenge(realVerifier)
+	code, err := srv.GenerateAuthCode(
+		"pkce-user@example.com",
+		"http://localhost:8080/api/v1/auth/oidc/callback",
+		"any-state", nonce, challenge, "S256",
+	)
+	if err != nil {
+		t.Fatalf("GenerateAuthCode: %v", err)
+	}
+
+	// Exchange with a WRONG verifier — mock must reject with PKCE mismatch error
+	wrongVerifier := "wrongverifier-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	_, err = svc.ExchangeCodeForToken(ctx, "pkce-provider", code, nonce, wrongVerifier)
+	if err == nil {
+		t.Fatal("ExchangeCodeForToken with mismatched PKCE verifier should fail, got nil")
+	}
+
+	errMsg := err.Error()
+	if !strings.Contains(errMsg, "invalid_grant") && !strings.Contains(strings.ToLower(errMsg), "pkce") {
+		t.Errorf("expected PKCE mismatch error (invalid_grant or pkce), got: %v", err)
 	}
 }

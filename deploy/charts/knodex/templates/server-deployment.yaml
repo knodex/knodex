@@ -18,7 +18,7 @@ spec:
   template:
     metadata:
       labels:
-        {{- include "knodex.server.selectorLabels" . | nindent 8 }}
+        {{- include "knodex.server.labels" . | nindent 8 }}
         {{- with .Values.server.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -235,6 +235,20 @@ spec:
             # NOTE: ADMIN_PASSWORD is NEVER set via environment variables
             # The server ALWAYS auto-generates a secure password and stores it
             # in the Kubernetes secret: knodex-initial-admin-password
+            {{- /* Always emit LOCAL_LOGIN_ENABLED so operator intent survives
+                   GitOps merges that may set `localLogin: null`.
+                   Use kindIs/explicit-bool checks rather than `default true`
+                   because Helm's `default` treats false as empty (false →
+                   true coercion bug). */}}
+            {{- $localLoginEnabled := true }}
+            {{- $localLogin := dig "localLogin" (dict) (.Values.server.auth | default dict) }}
+            {{- if and (kindIs "map" $localLogin) (hasKey $localLogin "enabled") }}
+            {{-   if kindIs "bool" $localLogin.enabled }}
+            {{-     $localLoginEnabled = $localLogin.enabled }}
+            {{-   end }}
+            {{- end }}
+            - name: LOCAL_LOGIN_ENABLED
+              value: {{ ternary "true" "false" $localLoginEnabled | quote }}
             {{- if .Values.server.auth.jwt.expiry }}
             - name: JWT_EXPIRY
               value: {{ .Values.server.auth.jwt.expiry | quote }}

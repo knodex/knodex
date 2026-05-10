@@ -2,7 +2,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "knodex.fullname" . }}-sso-providers
+  name: knodex-sso-providers
   labels:
     {{- include "knodex.labels" . | nindent 4 }}
     app.kubernetes.io/component: sso
@@ -17,6 +17,18 @@ data:
         "issuerURL": {{ $provider.issuerURL | quote }},
         "redirectURL": {{ $provider.redirectURL | quote }},
         "scopes": {{ $provider.scopes | default (list "openid" "email" "profile") | toJson }}
+        {{- if $provider.tokenEndpointAuthMethod }},
+        "tokenEndpointAuthMethod": {{ $provider.tokenEndpointAuthMethod | quote }}
+        {{- end }}
+        {{- if $provider.authorizationURL }},
+        "authorizationURL": {{ $provider.authorizationURL | quote }}
+        {{- end }}
+        {{- if $provider.tokenURL }},
+        "tokenURL": {{ $provider.tokenURL | quote }}
+        {{- end }}
+        {{- if $provider.jwksURL }},
+        "jwksURL": {{ $provider.jwksURL | quote }}
+        {{- end }}
       }
       {{- end }}
     ]

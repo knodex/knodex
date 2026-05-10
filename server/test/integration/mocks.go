@@ -374,6 +374,11 @@ type MockAuthService struct {
 
 	// jwtSecret for generating test tokens
 	jwtSecret string
+
+	// LocalLoginEnabled controls the value returned by IsLocalLoginEnabled.
+	// Defaults to false to preserve historical behavior — set explicitly when
+	// a test needs to exercise the local-login pathway.
+	LocalLoginEnabled bool
 }
 
 // NewMockAuthService creates a new MockAuthService
@@ -438,6 +443,14 @@ func (m *MockAuthService) ValidateToken(_ context.Context, tokenString string) (
 // RevokeToken implements auth.ServiceInterface
 func (m *MockAuthService) RevokeToken(_ context.Context, _ string, _ time.Duration) error {
 	return nil
+}
+
+// IsLocalLoginEnabled implements auth.ServiceInterface. Returns the
+// configurable LocalLoginEnabled field (default false).
+func (m *MockAuthService) IsLocalLoginEnabled() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.LocalLoginEnabled
 }
 
 // CreateTestClaims creates JWT claims for testing.
