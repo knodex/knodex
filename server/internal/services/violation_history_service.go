@@ -32,6 +32,7 @@ type ViolationHistoryService interface {
 // ViolationHistoryRecord represents a violation history entry for API responses.
 type ViolationHistoryRecord struct {
 	Key               string     `json:"key"`
+	Organization      string     `json:"organization,omitempty"`
 	ConstraintKind    string     `json:"constraintKind"`
 	ConstraintName    string     `json:"constraintName"`
 	ResourceKind      string     `json:"resourceKind"`

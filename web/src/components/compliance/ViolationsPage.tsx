@@ -21,7 +21,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useViolations, useConstraints } from "@/hooks/useCompliance";
+import { useViolations, useConstraints, isEnterprise } from "@/hooks/useCompliance";
+import { isEnterpriseRequired } from "@/api/compliance";
 import { useCurrentProject } from "@/hooks/useAuth";
 import { useProjects } from "@/hooks/useProjects";
 import { filterByProjectNamespaces } from "@/lib/project-utils";
@@ -30,6 +31,7 @@ import { CompliancePagination } from "./CompliancePagination";
 import { TableLoadingSkeleton } from "./TableLoadingSkeleton";
 import { EmptyState } from "./EmptyState";
 import { ErrorState } from "./ErrorState";
+import { EnterpriseRequired } from "./EnterpriseRequired";
 import { EnforcementBadge } from "./EnforcementBadge";
 import { ExportViolationHistoryDialog } from "./ExportViolationHistoryDialog";
 import {
@@ -135,6 +137,15 @@ export function ViolationsPage() {
     { header: "Enforcement", width: "10%" },
     { header: "Message", width: "35%", hideOnMobile: true },
   ];
+
+  if (!isEnterprise() || (isError && isEnterpriseRequired(error))) {
+    return (
+      <EnterpriseRequired
+        feature="Policy Violations"
+        description="Track OPA Gatekeeper policy violations across your clusters with an Enterprise license."
+      />
+    );
+  }
 
   return (
     <section className="space-y-6">

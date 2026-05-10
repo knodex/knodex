@@ -15,6 +15,7 @@ vi.mock("@/hooks/useCompliance", () => ({
   useConstraints: vi.fn(),
   useViolationHistoryCount: vi.fn().mockReturnValue({ data: undefined, isLoading: false }),
   useExportViolationHistory: vi.fn().mockReturnValue({ mutate: vi.fn(), isPending: false }),
+  isEnterprise: () => true,
 }));
 
 // Mock the WebSocket hook

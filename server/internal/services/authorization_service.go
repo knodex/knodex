@@ -8,64 +8,7 @@ import (
 	"log/slog"
 
 	"github.com/knodex/knodex/server/internal/api/middleware"
-	"github.com/knodex/knodex/server/internal/rbac"
 )
-
-// ProjectTypeResolver resolves project names to their types (app or platform).
-// Used by CatalogService to compute which catalog tiers are visible to a user.
-type ProjectTypeResolver interface {
-	// GetProjectTypes returns a mapping of project name → type ("app" or "platform").
-	// Projects without a type default to "app" (backward compatible).
-	GetProjectTypes(ctx context.Context, projectNames []string) (map[string]string, error)
-}
-
-// projectTypeResolverImpl implements ProjectTypeResolver using ProjectServiceInterface.
-// Note: This makes N K8s API calls for N projects (one GetProject per project).
-// This is acceptable for typical project counts (<50). If project counts grow
-// significantly, consider a batch ListProjects + filter approach.
-type projectTypeResolverImpl struct {
-	projectService rbac.ProjectServiceInterface
-	logger         *slog.Logger
-}
-
-// NewProjectTypeResolver creates a ProjectTypeResolver from a ProjectServiceInterface.
-// Returns nil if projectService is nil (nil-safe for backward compatibility).
-func NewProjectTypeResolver(projectService rbac.ProjectServiceInterface, logger *slog.Logger) ProjectTypeResolver {
-	if projectService == nil {
-		return nil
-	}
-	if logger == nil {
-		logger = slog.Default()
-	}
-	return &projectTypeResolverImpl{
-		projectService: projectService,
-		logger:         logger.With("component", "project-type-resolver"),
-	}
-}
-
-// GetProjectTypes implements ProjectTypeResolver.
-// Design: individual project lookup errors are swallowed and default to "app" (backward
-// compatible). This means the returned error is always nil for this implementation.
-// The error return exists on the interface for alternative implementations (e.g., batch
-// resolvers) that may encounter non-recoverable failures.
-func (r *projectTypeResolverImpl) GetProjectTypes(ctx context.Context, projectNames []string) (map[string]string, error) {
-	result := make(map[string]string, len(projectNames))
-	for _, name := range projectNames {
-		project, err := r.projectService.GetProject(ctx, name)
-		if err != nil {
-			r.logger.Warn("failed to get project for type resolution, defaulting to app",
-				"project", name, "error", err)
-			result[name] = string(rbac.ProjectTypeApp)
-			continue
-		}
-		projectType := string(project.Spec.Type)
-		if projectType == "" {
-			projectType = string(rbac.ProjectTypeApp)
-		}
-		result[name] = projectType
-	}
-	return result, nil
-}
 
 // PolicyEnforcer defines the interface for Casbin policy enforcement.
 // This matches the existing rbac.PolicyEnforcer interface to allow dependency injection.

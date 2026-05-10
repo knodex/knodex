@@ -20,6 +20,7 @@ vi.mock("@/hooks/useCompliance", () => ({
     isError: false,
     error: null,
   }),
+  isEnterprise: () => true,
 }));
 
 function createWrapper(initialEntries: string[]) {

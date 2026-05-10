@@ -45,6 +45,7 @@ func main() {
 	a.SetAuditLoginMiddlewareInitFunc(InitAuditLoginMiddleware)
 	a.SetAuditMiddlewareInitFunc(InitAuditMiddleware)
 	a.SetAuditAPIServiceInitFunc(InitAuditAPIService)
+	a.SetDatabaseManagerInitFunc(InitDatabaseManager)
 
 	if err := a.Run(context.Background()); err != nil {
 		slog.Error("server failed", "error", err)

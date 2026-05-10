@@ -512,21 +512,6 @@ func (c *RGDCache) matchesFilter(rgd *models.CatalogRGD, opts models.ListOptions
 		}
 	}
 
-	// Catalog tier filter: restrict RGDs by project type visibility.
-	// nil CatalogTiers = no filtering (admin/backward compat); non-nil = RGD's tier must be in the set.
-	if opts.CatalogTiers != nil {
-		found := false
-		for _, tier := range opts.CatalogTiers {
-			if rgd.CatalogTier == tier {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-
 	// For user views (IncludePublic or specific Projects), apply visibility rules
 	if opts.IncludePublic || len(opts.Projects) > 0 {
 		// Get project label from the RGD

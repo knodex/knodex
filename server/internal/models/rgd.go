@@ -63,10 +63,6 @@ type CatalogRGD struct {
 	Icon string `json:"icon"`
 	// DocsURL is the documentation URL from the knodex.io/docs-url annotation
 	DocsURL string `json:"docsUrl,omitempty"`
-	// CatalogTier indicates which project types can see this RGD.
-	// Valid values: "app", "infrastructure", "both" (default).
-	// Parsed from the knodex.io/catalog-tier annotation.
-	CatalogTier string `json:"catalogTier"`
 	// Organization is the org scope from labels (empty = shared/public RGD)
 	Organization string `json:"organization,omitempty"`
 	// Package is the package name from the knodex.io/package label.
@@ -159,10 +155,6 @@ type ListOptions struct {
 	Search string
 	// Status filters by RGD status (e.g., "Active", "Inactive"). Empty = all statuses.
 	Status string
-	// CatalogTiers filters RGDs by catalog tier (e.g., ["app", "both"]).
-	// nil means no filtering (all tiers visible — admin or backward compat).
-	// Non-nil filters RGDs where CatalogTier is in the allowed set.
-	CatalogTiers []string
 	// DependsOnKind filters RGDs that have this Kind in their DependsOnKinds
 	DependsOnKind string
 	// ProducesKind filters RGDs that produce this Kind as a non-external resource

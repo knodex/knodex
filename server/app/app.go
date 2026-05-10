@@ -24,6 +24,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -83,7 +84,8 @@ const (
 
 // ComplianceInitFunc is the signature for enterprise compliance service initialization.
 // Used during the monorepo period to bridge build-tag dispatch files with the app package.
-type ComplianceInitFunc func(ctx context.Context, k8sCfg *config.Kubernetes, wsHub *websocket.Hub, redisClient *redis.Client, complianceCfg *config.Compliance) services.ComplianceService
+// defaultOrg scopes persisted violation history to a single tenant in Phase 1.
+type ComplianceInitFunc func(ctx context.Context, k8sCfg *config.Kubernetes, wsHub *websocket.Hub, defaultOrg string, complianceCfg *config.Compliance) services.ComplianceService
 
 // ViolationHistoryInitFunc is the signature for enterprise violation history service initialization.
 type ViolationHistoryInitFunc func() services.ViolationHistoryService
@@ -93,24 +95,29 @@ type ViolationHistoryInitFunc func() services.ViolationHistoryService
 type CategoryInitFunc func(rgdWatcher *watcher.RGDWatcher) services.CategoryService
 
 // AuditRecorderInitFunc is the signature for enterprise audit recorder initialization.
-// Used during the monorepo period to bridge build-tag dispatch files with the app package.
-type AuditRecorderInitFunc func(ctx context.Context, redisClient *redis.Client, k8sClient kubernetes.Interface, namespace string) audit.Recorder
+// defaultOrg is the tenant scope applied to events that arrive without an explicit
+// Organization field (Phase 1: every event uses cfg.Organization).
+type AuditRecorderInitFunc func(ctx context.Context, k8sClient kubernetes.Interface, namespace string, defaultOrg string) audit.Recorder
 
 // AuditLoginMiddlewareInitFunc is the signature for enterprise audit login middleware initialization.
 // In EE builds, this creates an AuditService + AuditConfigWatcher and returns the login middleware.
 // Returns nil in OSS builds (login routes are not wrapped with audit middleware).
-type AuditLoginMiddlewareInitFunc func(ctx context.Context, redisClient *redis.Client, k8sClient kubernetes.Interface, namespace string) func(http.Handler) http.Handler
+type AuditLoginMiddlewareInitFunc func(ctx context.Context, k8sClient kubernetes.Interface, namespace string, defaultOrg string) func(http.Handler) http.Handler
 
 // AuditMiddlewareInitFunc is the signature for enterprise audit middleware initialization.
 // This middleware captures 401/403 responses and records audit events for authentication
 // failures and authorization denials.
-type AuditMiddlewareInitFunc func(ctx context.Context, redisClient *redis.Client, k8sClient kubernetes.Interface, namespace string) func(http.Handler) http.Handler
+type AuditMiddlewareInitFunc func(ctx context.Context, k8sClient kubernetes.Interface, namespace string, defaultOrg string) func(http.Handler) http.Handler
 
 // AuditAPIServiceInitFunc is the signature for enterprise audit API service initialization.
-// Used during the monorepo period to bridge build-tag dispatch files with the app package.
 // The ctx parameter controls the config watcher lifecycle — cancel it to stop the watcher.
 // The recorder parameter enables audit event recording for config changes (FR-AT6).
-type AuditAPIServiceInitFunc func(ctx context.Context, redisClient *redis.Client, k8sClient kubernetes.Interface, namespace string, enforcer rbac.PolicyEnforcer, recorder audit.Recorder) services.AuditAPIService
+type AuditAPIServiceInitFunc func(ctx context.Context, k8sClient kubernetes.Interface, namespace string, defaultOrg string, enforcer rbac.PolicyEnforcer, recorder audit.Recorder) services.AuditAPIService
+
+// DatabaseManagerInitFunc is the signature for enterprise database manager initialization.
+// In EE builds, creates pgx connection pools and runs schema migrations.
+// In OSS builds, returns nil, nil (no-op — zero database dependency).
+type DatabaseManagerInitFunc func(ctx context.Context, cfg *config.Config) (io.Closer, error)
 
 // App is the composable application container for the Knodex server.
 // Create with New(), configure enterprise services via setters, then call Run().
@@ -134,6 +141,7 @@ type App struct {
 	auditLoginMiddlewareInitFunc AuditLoginMiddlewareInitFunc
 	auditMiddlewareInitFunc      AuditMiddlewareInitFunc
 	auditAPIServiceInitFunc      AuditAPIServiceInitFunc
+	databaseManagerInitFunc      DatabaseManagerInitFunc
 }
 
 // New creates a new App with the given configuration.
@@ -197,6 +205,13 @@ func (a *App) SetAuditAPIServiceInitFunc(fn AuditAPIServiceInitFunc) {
 	a.auditAPIServiceInitFunc = fn
 }
 
+// SetDatabaseManagerInitFunc registers a factory function for initializing the EE database manager.
+// In EE builds, creates pgx connection pools and runs schema migrations.
+// In OSS builds, the factory returns nil, nil (no-op).
+func (a *App) SetDatabaseManagerInitFunc(fn DatabaseManagerInitFunc) {
+	a.databaseManagerInitFunc = fn
+}
+
 // SetOrganizationFilter sets the organization filter for enterprise catalog filtering.
 // In EE builds, this is set to cfg.Organization. In OSS builds, this is empty (no filtering).
 func (a *App) SetOrganizationFilter(org string) {
@@ -214,6 +229,24 @@ func (a *App) Run(ctx context.Context) error { //nolint:gocyclo // orchestration
 	}
 	slog.Info("organization identity configured", "organization", cfg.Organization, "source", orgSource)
 	slog.Info("organization catalog filter", "active", a.organizationFilter != "", "organization", a.organizationFilter)
+
+	// Database manager init (EE: pgx pool + migrations; OSS: no-op).
+	// Must run before any service that needs the DB (STORY-444, STORY-445).
+	// The defer fires last among Run()'s deferred statements, so all writers
+	// (audit recorder, watchers) drain before the pools close.
+	if a.databaseManagerInitFunc != nil {
+		dbCloser, err := a.databaseManagerInitFunc(ctx, cfg)
+		if err != nil {
+			return fmt.Errorf("database initialization failed: %w", err)
+		}
+		if dbCloser != nil {
+			defer func() {
+				if closeErr := dbCloser.Close(); closeErr != nil {
+					slog.Warn("failed to close database manager", "error", closeErr)
+				}
+			}()
+		}
+	}
 
 	// Initialize clients
 	logger := slog.Default()
@@ -620,7 +653,7 @@ func (a *App) Run(ctx context.Context) error { //nolint:gocyclo // orchestration
 		if namespace == "" {
 			namespace = "default"
 		}
-		auditLoginMiddleware = a.auditLoginMiddlewareInitFunc(runCtx, redisClient, k8sClient, namespace)
+		auditLoginMiddleware = a.auditLoginMiddlewareInitFunc(runCtx, k8sClient, namespace, a.cfg.Organization)
 	}
 	if auditLoginMiddleware != nil {
 		slog.Info("audit login middleware initialized (enterprise feature)")
@@ -634,7 +667,7 @@ func (a *App) Run(ctx context.Context) error { //nolint:gocyclo // orchestration
 		if namespace == "" {
 			namespace = "default"
 		}
-		auditMiddleware = a.auditMiddlewareInitFunc(runCtx, redisClient, k8sClient, namespace)
+		auditMiddleware = a.auditMiddlewareInitFunc(runCtx, k8sClient, namespace, a.cfg.Organization)
 	}
 	if auditMiddleware != nil {
 		slog.Info("audit middleware initialized (enterprise feature)")
@@ -648,7 +681,7 @@ func (a *App) Run(ctx context.Context) error { //nolint:gocyclo // orchestration
 		if namespace == "" {
 			namespace = "default"
 		}
-		auditAPIService = a.auditAPIServiceInitFunc(runCtx, redisClient, k8sClient, namespace, policyEnforcer, auditRecorder)
+		auditAPIService = a.auditAPIServiceInitFunc(runCtx, k8sClient, namespace, a.cfg.Organization, policyEnforcer, auditRecorder)
 	}
 	if auditAPIService != nil {
 		slog.Info("audit API service initialized (enterprise feature)")
@@ -1102,7 +1135,7 @@ func (a *App) initEnterpriseServices(
 
 	// Compliance service: use direct setter if set, else call init func
 	if a.complianceService == nil && a.complianceInitFunc != nil {
-		a.complianceService = a.complianceInitFunc(initCtx, &cfg.Kubernetes, wsHub, redisClient, &cfg.Compliance)
+		a.complianceService = a.complianceInitFunc(initCtx, &cfg.Kubernetes, wsHub, cfg.Organization, &cfg.Compliance)
 	}
 	if a.complianceService != nil {
 		slog.Info("compliance service initialized (enterprise feature)")
@@ -1128,7 +1161,7 @@ func (a *App) initEnterpriseServices(
 		if namespace == "" {
 			namespace = "default"
 		}
-		auditRecorder = a.auditRecorderInitFunc(initCtx, redisClient, k8sClient, namespace)
+		auditRecorder = a.auditRecorderInitFunc(initCtx, k8sClient, namespace, a.cfg.Organization)
 	}
 	if auditRecorder != nil {
 		slog.Info("audit recorder initialized (enterprise feature)")

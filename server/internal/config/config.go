@@ -30,6 +30,7 @@ type Config struct {
 	CasbinRoles          CasbinRoles
 	License              License
 	Compliance           Compliance
+	Database             Database // PostgreSQL configuration for enterprise features. Empty URL = OSS safe.
 	Organization         string   // Organization identity for multi-tenant deployments. Default: "default".
 	KnodexNamespace      string   // Namespace where Knodex CRDs (Projects) live. Default: POD_NAMESPACE or "knodex-system".
 	SwaggerEnabled       bool     // Enable Swagger UI at /swagger/. Default: false. Env: SWAGGER_UI_ENABLED.
@@ -54,6 +55,16 @@ type Compliance struct {
 	// HistoryRetentionDays is how long violation history records are retained in Redis.
 	// Default: 90 days.
 	HistoryRetentionDays int
+}
+
+// Database holds PostgreSQL connection configuration for enterprise features.
+// OSS builds load this struct but the URL field will be empty — validation is
+// deferred to the EE init function so OSS compiles cleanly with no DB deps.
+type Database struct {
+	// URL is the PostgreSQL connection string. Required for EE builds.
+	// Default: "" (empty — EE init fails fast if missing).
+	// Env: DATABASE_URL.
+	URL string
 }
 
 // License holds enterprise license configuration
@@ -274,6 +285,9 @@ func Load() (*Config, error) {
 		},
 		Compliance: Compliance{
 			HistoryRetentionDays: utilenv.GetInt("COMPLIANCE_HISTORY_RETENTION_DAYS", 90),
+		},
+		Database: Database{
+			URL: utilenv.GetString("DATABASE_URL", ""),
 		},
 		Organization:    utilenv.GetString("KNODEX_ORGANIZATION", "default"),
 		KnodexNamespace: utilenv.GetString("KNODEX_NAMESPACE", utilenv.GetString("POD_NAMESPACE", "knodex-system")),

@@ -58,7 +58,6 @@ const (
 	DeploymentModesAnnotation = "knodex.io/deployment-modes"
 	ExtendsKindAnnotation     = "knodex.io/extends-kind"
 	DocsURLAnnotation         = "knodex.io/docs-url"
-	CatalogTierAnnotation     = "knodex.io/catalog-tier"
 	PropertyOrderAnnotation   = "knodex.io/property-order"
 )
 

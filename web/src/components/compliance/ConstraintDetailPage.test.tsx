@@ -16,6 +16,7 @@ vi.mock("@/hooks/useCompliance", () => ({
     mutateAsync: vi.fn(),
     isPending: false,
   })),
+  isEnterprise: () => true,
 }));
 
 function createWrapper(initialEntries: string[]) {

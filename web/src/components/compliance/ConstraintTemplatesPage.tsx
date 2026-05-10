@@ -12,12 +12,14 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { SortableHead } from "@/components/ui/sortable-table";
-import { useConstraintTemplates } from "@/hooks/useCompliance";
+import { useConstraintTemplates, isEnterprise } from "@/hooks/useCompliance";
+import { isEnterpriseRequired } from "@/api/compliance";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { CompliancePagination } from "./CompliancePagination";
 import { TableLoadingSkeleton } from "./TableLoadingSkeleton";
 import { EmptyState } from "./EmptyState";
 import { ErrorState } from "./ErrorState";
+import { EnterpriseRequired } from "./EnterpriseRequired";
 import { formatDistanceToNow } from "@/lib/date";
 
 type SortField = "name" | "kind" | "createdAt";
@@ -31,6 +33,15 @@ export function ConstraintTemplatesPage() {
 
   const { data, isLoading, isError, error, refetch, isRefetching } =
     useConstraintTemplates({ page, pageSize });
+
+  if (!isEnterprise() || (isError && isEnterpriseRequired(error))) {
+    return (
+      <EnterpriseRequired
+        feature="Constraint Templates"
+        description="View and manage OPA Gatekeeper ConstraintTemplates with an Enterprise license."
+      />
+    );
+  }
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {

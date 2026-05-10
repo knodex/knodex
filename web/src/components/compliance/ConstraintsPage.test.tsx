@@ -13,6 +13,7 @@ import type { Constraint, ConstraintTemplate, ComplianceListResponse } from "@/t
 vi.mock("@/hooks/useCompliance", () => ({
   useConstraints: vi.fn(),
   useConstraintTemplates: vi.fn(),
+  isEnterprise: () => true,
 }));
 
 function createWrapper(initialEntries?: string[]) {

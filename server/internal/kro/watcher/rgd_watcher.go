@@ -580,9 +580,6 @@ func (w *RGDWatcher) unstructuredToRGD(u *unstructured.Unstructured) *models.Cat
 		}
 	}
 
-	// Parse catalog tier from annotation (defaults to "both" for backward compatibility)
-	catalogTier := parseCatalogTier(parser.GetAnnotationOrDefault(u, kro.CatalogTierAnnotation, ""))
-
 	// Extract organization label (empty = shared RGD, not scoped to any org)
 	organization := strings.TrimSpace(parser.GetLabelOrDefault(u, kro.RGDOrganizationLabel, ""))
 
@@ -601,7 +598,6 @@ func (w *RGDWatcher) unstructuredToRGD(u *unstructured.Unstructured) *models.Cat
 	return &models.CatalogRGD{
 		Name:                   parser.GetName(u),
 		Title:                  title,
-		CatalogTier:            catalogTier,
 		Namespace:              parser.GetNamespace(u),
 		Description:            parser.GetAnnotationOrDefault(u, kro.DescriptionAnnotation, ""),
 		Tags:                   tags,
@@ -625,22 +621,6 @@ func (w *RGDWatcher) unstructuredToRGD(u *unstructured.Unstructured) *models.Cat
 		UpdatedAt:              updatedAt,
 		ResourceVersion:        parser.GetResourceVersion(u),
 		RawSpec:                rawSpec,
-	}
-}
-
-// parseCatalogTier normalizes the knodex.io/catalog-tier annotation value.
-// Valid values: "app", "infrastructure", "both".
-// Empty or unrecognized values default to "both" (backward compatible: all project types see this RGD).
-func parseCatalogTier(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "app":
-		return "app"
-	case "infrastructure":
-		return "infrastructure"
-	case "both":
-		return "both"
-	default:
-		return "both"
 	}
 }
 
