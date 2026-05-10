@@ -11,19 +11,20 @@ import (
 
 // AuditEvent is the API representation of an audit event.
 type AuditEvent struct {
-	ID        string         `json:"id"`
-	Timestamp time.Time      `json:"timestamp"`
-	UserID    string         `json:"userId"`
-	UserEmail string         `json:"userEmail"`
-	SourceIP  string         `json:"sourceIP"`
-	Action    string         `json:"action"`
-	Resource  string         `json:"resource"`
-	Name      string         `json:"name"`
-	Project   string         `json:"project,omitempty"`
-	Namespace string         `json:"namespace,omitempty"`
-	RequestID string         `json:"requestId"`
-	Result    string         `json:"result"`
-	Details   map[string]any `json:"details,omitempty"`
+	ID           string         `json:"id"`
+	Timestamp    time.Time      `json:"timestamp"`
+	UserID       string         `json:"userId"`
+	UserEmail    string         `json:"userEmail"`
+	SourceIP     string         `json:"sourceIP"`
+	Action       string         `json:"action"`
+	Resource     string         `json:"resource"`
+	Name         string         `json:"name"`
+	Project      string         `json:"project,omitempty"`
+	Namespace    string         `json:"namespace,omitempty"`
+	Organization string         `json:"organization,omitempty"`
+	RequestID    string         `json:"requestId"`
+	Result       string         `json:"result"`
+	Details      map[string]any `json:"details,omitempty"`
 }
 
 // AuditEventList is the paginated response for listing audit events.
@@ -36,15 +37,16 @@ type AuditEventList struct {
 
 // AuditEventFilter defines query parameters for listing audit events.
 type AuditEventFilter struct {
-	UserID   string
-	Action   string
-	Resource string
-	Project  string
-	Result   string
-	From     time.Time
-	To       time.Time
-	Page     int
-	PageSize int
+	UserID       string
+	Action       string
+	Resource     string
+	Project      string
+	Result       string
+	Organization string
+	From         time.Time
+	To           time.Time
+	Page         int
+	PageSize     int
 }
 
 // UserActivity represents a user's event count for top-users aggregation.

@@ -8,10 +8,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useConstraintTemplate, useConstraints } from "@/hooks/useCompliance";
+import { useConstraintTemplate, useConstraints, isEnterprise } from "@/hooks/useCompliance";
+import { isEnterpriseRequired } from "@/api/compliance";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { RegoCodeViewer } from "./RegoCodeViewer";
 import { ErrorState } from "./ErrorState";
+import { EnterpriseRequired } from "./EnterpriseRequired";
 import { CreateConstraintDialog } from "./CreateConstraintDialog";
 import { formatDate } from "@/lib/date";
 import { getEnforcementClassName } from "@/types/compliance";
@@ -74,6 +76,15 @@ export function ConstraintTemplateDetailPage() {
       <ErrorState
         message="Invalid Template"
         details="No template name provided in the URL"
+      />
+    );
+  }
+
+  if (!isEnterprise() || (isError && isEnterpriseRequired(error))) {
+    return (
+      <EnterpriseRequired
+        feature="Constraint Template Details"
+        description="View OPA Gatekeeper ConstraintTemplate definitions and Rego policies with an Enterprise license."
       />
     );
   }

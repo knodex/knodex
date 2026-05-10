@@ -23,12 +23,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { useConstraint, useUpdateConstraintEnforcement } from "@/hooks/useCompliance";
+import { useConstraint, useUpdateConstraintEnforcement, isEnterprise } from "@/hooks/useCompliance";
+import { isEnterpriseRequired } from "@/api/compliance";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { EnforcementBadge } from "./EnforcementBadge";
 import { EnforcementSelector } from "./EnforcementSelector";
 import { MatchRulesDisplay } from "./MatchRulesDisplay";
 import { ErrorState } from "./ErrorState";
+import { EnterpriseRequired } from "./EnterpriseRequired";
 import { formatDate } from "@/lib/date";
 import type { EnforcementAction } from "@/types/compliance";
 
@@ -88,6 +90,15 @@ export function ConstraintDetailPage() {
       <ErrorState
         message="Invalid Constraint"
         details="Kind and name are required in the URL"
+      />
+    );
+  }
+
+  if (!isEnterprise() || (isError && isEnterpriseRequired(error))) {
+    return (
+      <EnterpriseRequired
+        feature="Constraint Details"
+        description="View detailed OPA Gatekeeper constraint information and violations with an Enterprise license."
       />
     );
   }

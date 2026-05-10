@@ -24,12 +24,15 @@ import {
 import {
   useConstraints,
   useConstraintTemplates,
+  isEnterprise,
 } from "@/hooks/useCompliance";
+import { isEnterpriseRequired } from "@/api/compliance";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { CompliancePagination } from "./CompliancePagination";
 import { TableLoadingSkeleton } from "./TableLoadingSkeleton";
 import { EmptyState } from "./EmptyState";
 import { ErrorState } from "./ErrorState";
+import { EnterpriseRequired } from "./EnterpriseRequired";
 import { EnforcementBadge } from "./EnforcementBadge";
 import { MatchRulesDisplay } from "./MatchRulesDisplay";
 import { formatDistanceToNow } from "@/lib/date";
@@ -90,6 +93,15 @@ export function ConstraintsPage() {
 
   const { data: templatesData } = useConstraintTemplates({ pageSize: 100 });
   const constraintKinds = templatesData?.items.map((t) => t.kind) || [];
+
+  if (!isEnterprise() || (isError && isEnterpriseRequired(error))) {
+    return (
+      <EnterpriseRequired
+        feature="Constraints"
+        description="View and manage OPA Gatekeeper Constraints with an Enterprise license."
+      />
+    );
+  }
 
   const columns = [
     { header: "Name", width: "25%" },

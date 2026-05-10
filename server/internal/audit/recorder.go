@@ -113,6 +113,11 @@ type Event struct {
 	// Context
 	RequestID string
 
+	// Organization is the org_id scope for the event. Used by EE Postgres store
+	// to enforce per-org RLS isolation. When empty, the RecorderBridge fills
+	// it from the configured defaultOrg before forwarding to AuditService.
+	Organization string
+
 	// Result
 	Result string // "success", "denied", "error"
 

@@ -147,7 +147,6 @@ type RGDResponse struct {
 	Category               string                `json:"category"`
 	Icon                   string                `json:"icon,omitempty"`
 	DocsURL                string                `json:"docsUrl,omitempty"`
-	CatalogTier            string                `json:"catalogTier"`
 	Labels                 map[string]string     `json:"labels"`
 	Instances              int                   `json:"instances"`
 	APIVersion             string                `json:"apiVersion,omitempty"`
@@ -222,7 +221,6 @@ func ToRGDResponse(rgd *models.CatalogRGD, instanceCount int) RGDResponse {
 		Category:               rgd.Category,
 		Icon:                   rgd.Icon,
 		DocsURL:                rgd.DocsURL,
-		CatalogTier:            rgd.CatalogTier,
 		Labels:                 labels,
 		Instances:              instanceCount,
 		APIVersion:             rgd.APIVersion,

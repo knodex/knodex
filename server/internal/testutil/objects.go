@@ -132,11 +132,6 @@ func WithCategory(c string) CatalogRGDOption {
 	return func(r *models.CatalogRGD) { r.Category = c }
 }
 
-// WithCatalogTier sets the catalog tier on the catalog RGD.
-func WithCatalogTier(tier string) CatalogRGDOption {
-	return func(r *models.CatalogRGD) { r.CatalogTier = tier }
-}
-
 // NewCatalogRGD creates a models.CatalogRGD for service-level tests.
 func NewCatalogRGD(name, namespace string, opts ...CatalogRGDOption) models.CatalogRGD {
 	rgd := models.CatalogRGD{
@@ -145,7 +140,6 @@ func NewCatalogRGD(name, namespace string, opts ...CatalogRGDOption) models.Cata
 		Description: "Test RGD " + name,
 		Tags:        []string{"test"},
 		Category:    "Testing",
-		CatalogTier: "both",
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 	}
