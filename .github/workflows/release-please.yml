@@ -137,6 +137,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      pull-requests: write
 
     steps:
       - name: Checkout repository
@@ -165,13 +166,23 @@ jobs:
           sed -i "s/lastVersion: 'current'/lastVersion: '${VERSION}'/" docusaurus.config.ts
           sed -i "s/lastVersion: '[0-9]*\.[0-9]*\.[0-9]*'/lastVersion: '${VERSION}'/" docusaurus.config.ts
 
-      - name: Commit versioned docs
+      - name: Create PR with versioned docs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          VERSION="${{ needs.release-please.outputs.version }}"
+          BRANCH="docs/version-${VERSION}"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "${BRANCH}"
           git add website/versioned_docs website/versioned_sidebars website/versions.json website/docusaurus.config.ts
-          git commit -m "docs: release ${{ needs.release-please.outputs.version }} documentation"
-          git push
+          git commit -m "docs: release ${VERSION} documentation"
+          git push origin "${BRANCH}"
+          gh pr create \
+            --base main \
+            --head "${BRANCH}" \
+            --title "docs: release ${VERSION} documentation" \
+            --body "Automated documentation version cut for release v${VERSION}. Freezes current docs as version ${VERSION} and sets it as the default in the docs site."
 
   # ============================================
   # Release Summary
