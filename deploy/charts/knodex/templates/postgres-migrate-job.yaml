@@ -1,0 +1,100 @@
+{{- /*
+Postgres migration Job — Helm pre-install/pre-upgrade hook that runs all
+pending schema migrations before the server Deployment rolls out.
+
+Validation fires unconditionally (outside `if` guards) so an operator who
+typos deploymentMode or forgets credentials gets a fail-at-template error,
+not a runtime crash loop.
+
+The Job runs the same EE image as the server Deployment (just with
+`--migrate-only`), so there is no second image to build, scan, or pull.
+*/ -}}
+
+{{- /* Validation: deploymentMode must be one of "", "shared", "per-org". */ -}}
+{{- if .Values.enterprise.postgres.deploymentMode -}}
+{{-   if and (ne .Values.enterprise.postgres.deploymentMode "shared") (ne .Values.enterprise.postgres.deploymentMode "per-org") -}}
+{{-     fail "enterprise.postgres.deploymentMode must be one of: shared, per-org, or empty" -}}
+{{-   end -}}
+{{-   if not .Values.enterprise.enabled -}}
+{{-     fail "enterprise.postgres.deploymentMode requires enterprise.enabled: true — Postgres is an enterprise-only feature" -}}
+{{-   end -}}
+{{-   if and (not .Values.postgresql.enabled) (not .Values.enterprise.postgres.connectionString) (not .Values.enterprise.postgres.connectionStringSecret.name) -}}
+{{-     fail "enterprise.postgres requires either enterprise.postgres.connectionStringSecret.name (referencing an existing Secret with key `DATABASE_URL`), an inline enterprise.postgres.connectionString, or postgresql.enabled: true for the embedded subchart" -}}
+{{-   end -}}
+{{- end -}}
+
+{{- if and (include "knodex.postgresEnabled" .) .Values.enterprise.postgres.migrations.runJob }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "knodex.fullname" . }}-postgres-migrate
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "knodex.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "knodex.fullname" . }}-postgres-migrate
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "knodex.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres-migrate
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  activeDeadlineSeconds: {{ .Values.enterprise.postgres.migrations.activeDeadlineSeconds | default 600 }}
+  ttlSecondsAfterFinished: {{ .Values.enterprise.postgres.migrations.ttlSecondsAfterFinished | default 300 }}
+  backoffLimit: {{ .Values.enterprise.postgres.migrations.backoffLimit | default 3 }}
+  template:
+    metadata:
+      labels:
+        {{- include "knodex.labels" . | nindent 8 }}
+        app.kubernetes.io/component: postgres-migrate
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "knodex.fullname" . }}-postgres-migrate
+      restartPolicy: OnFailure
+      securityContext:
+        {{- toYaml .Values.server.podSecurityContext | nindent 8 }}
+      containers:
+        - name: postgres-migrate
+          image: "{{ include "knodex.server.image" . }}:{{ .Values.server.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.server.image.pullPolicy }}
+          args:
+            - "--migrate-only"
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "knodex.postgresSecretRef" . }}
+                  key: {{ include "knodex.postgresSecretKey" . }}
+            {{- if .Values.enterprise.postgres.iamAuth.enabled }}
+            - name: POSTGRES_IAM_AUTH_ENABLED
+              value: "true"
+            {{- end }}
+            - name: LOG_LEVEL
+              value: {{ .Values.server.config.logLevel | quote }}
+            - name: LOG_FORMAT
+              value: {{ .Values.server.config.logFormat | quote }}
+          securityContext:
+            {{- toYaml .Values.server.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.enterprise.postgres.migrations.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+{{- end }}

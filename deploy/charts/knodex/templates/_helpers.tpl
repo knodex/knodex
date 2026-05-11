@@ -202,6 +202,75 @@ Returns existingSecretPasswordKey if set, otherwise the Bitnami default key.
 {{- end }}
 
 {{/*
+Postgres chart-managed Secret name — used when an inline
+`postgres.connectionString` is supplied. Mirrors the redisSecretName pattern.
+*/}}
+{{- define "knodex.postgresSecretName" -}}
+{{- printf "%s-postgres" (include "knodex.fullname" .) }}
+{{- end }}
+
+{{/*
+Postgres Secret reference — resolves the correct Secret name for DATABASE_URL
+across all three Postgres supply modes (precedence matches values.yaml comments):
+  1. postgresql.enabled: true  — embedded subchart; chart-built DSN Secret
+  2. enterprise.postgres.connectionStringSecret.name  — pre-existing external Secret
+  3. enterprise.postgres.connectionString  — inline DSN; chart-managed Secret
+Both the migration Job and the server Deployment resolve to the same
+secret/key pair via this helper (mirrors knodex.redisSecretRef).
+*/}}
+{{- define "knodex.postgresSecretRef" -}}
+{{- if .Values.postgresql.enabled }}
+{{- printf "%s-knodex-postgres-url" .Release.Name }}
+{{- else if .Values.enterprise.postgres.connectionStringSecret.name }}
+{{- .Values.enterprise.postgres.connectionStringSecret.name }}
+{{- else }}
+{{- include "knodex.postgresSecretName" . }}
+{{- end }}
+{{- end }}
+
+{{/*
+PostgreSQL subchart fullname — mirrors knodex.redis.fullname for the postgresql subchart
+so that DSN hostnames resolve correctly when fullnameOverride / nameOverride are set.
+Logic: fullnameOverride > nameOverride > default ("postgresql").
+*/}}
+{{- define "knodex.postgresql.fullname" -}}
+{{- if .Values.postgresql.fullnameOverride }}
+{{- .Values.postgresql.fullnameOverride | trunc 63 | trimSuffix "-" }}
+{{- else }}
+{{- $name := default "postgresql" .Values.postgresql.nameOverride }}
+{{- if contains $name .Release.Name }}
+{{- .Release.Name | trunc 63 | trimSuffix "-" }}
+{{- else }}
+{{- printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffix "-" }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
+Postgres Secret key holding the DSN. Defaults to `DATABASE_URL`.
+When the embedded subchart is active, the DSN Secret always uses key `DATABASE_URL`
+regardless of any postgres.connectionStringSecret.key override.
+*/}}
+{{- define "knodex.postgresSecretKey" -}}
+{{- if .Values.postgresql.enabled }}
+{{- "DATABASE_URL" }}
+{{- else }}
+{{- default "DATABASE_URL" .Values.enterprise.postgres.connectionStringSecret.key }}
+{{- end }}
+{{- end }}
+
+{{/*
+Whether Postgres-related resources should render. Postgres is enterprise-only,
+so this is true iff `enterprise.enabled` AND `enterprise.postgres.deploymentMode` is set.
+Returns "true" or empty string (Helm-truthy convention).
+*/}}
+{{- define "knodex.postgresEnabled" -}}
+{{- if and .Values.enterprise.enabled .Values.enterprise.postgres.deploymentMode -}}
+true
+{{- end -}}
+{{- end }}
+
+{{/*
 Dex labels
 */}}
 {{- define "knodex.dex.labels" -}}

@@ -1,0 +1,21 @@
+# Helm chart-test fixture for the embedded PostgreSQL subchart happy path.
+# Verifies that `helm template` succeeds when the Bitnami postgresql subchart
+# is enabled alongside the enterprise edition and the migration Job.
+#
+# This fixture represents the demos / dev / CI topology where Knodex and its
+# Postgres dependency are deployed as a single self-contained Helm release.
+# It is NOT a recommended production configuration.
+#
+# Used in CI via:
+#   helm template knodex ./deploy/charts/knodex \
+#     --values ./deploy/charts/knodex/ci/values-postgresql-embedded.yaml
+
+postgresql:
+  enabled: true
+
+enterprise:
+  enabled: true
+  postgres:
+    deploymentMode: shared
+    migrations:
+      runJob: true

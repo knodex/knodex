@@ -192,6 +192,18 @@ spec:
             - name: REDIS_DB
               value: {{ .Values.server.config.redisDB | quote }}
             {{- end }}
+            {{- if include "knodex.postgresEnabled" . }}
+            # PostgreSQL configuration (Enterprise: durable audit + compliance store)
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "knodex.postgresSecretRef" . }}
+                  key: {{ include "knodex.postgresSecretKey" . }}
+            {{- if .Values.enterprise.postgres.iamAuth.enabled }}
+            - name: POSTGRES_IAM_AUTH_ENABLED
+              value: "true"
+            {{- end }}
+            {{- end }}
             # Rate limiting configuration
             {{- if .Values.server.config.rateLimit }}
             - name: RATE_LIMIT_USER_REQUESTS_PER_MINUTE

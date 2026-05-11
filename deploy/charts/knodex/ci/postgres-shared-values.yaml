@@ -1,0 +1,15 @@
+# Helm chart-test fixture for the AC #17 happy path: shared-DB Postgres
+# referencing an externally-managed Secret. Verifies that `helm template`
+# (and chart-testing CI gates) succeed for the most common production shape.
+#
+# Used in CI via:
+#   helm template knodex ./deploy/charts/knodex \
+#     --values ./deploy/charts/knodex/ci/postgres-shared-values.yaml
+
+enterprise:
+  enabled: true
+  postgres:
+    deploymentMode: "shared"
+    connectionStringSecret:
+      name: "test-db-secret"
+      key: "DATABASE_URL"
