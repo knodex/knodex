@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.6.0](https://github.com/knodex/knodex/compare/v0.5.0...v0.6.0) (2026-05-11)
+
+
+### Features
+
+* add PostgreSQL data store support and compliance page gating ([#72](https://github.com/knodex/knodex/issues/72)) ([48ef638](https://github.com/knodex/knodex/commit/48ef63833c38dd4192e61e15f1f92655460e4315))
+* **deploy:** add PostgreSQL local dev and Helm chart support ([274df70](https://github.com/knodex/knodex/commit/274df7070b20a7ec23ac4cbb7af083528ddfdb6c))
+* PostgreSQL support (Helm chart) and Enterprise docs ([#73](https://github.com/knodex/knodex/issues/73)) ([cbe8bd3](https://github.com/knodex/knodex/commit/cbe8bd3f9875dc71fa801fae2f50528840080de4))
+* SSO/OIDC improvements and Helm/RBAC fixes ([#69](https://github.com/knodex/knodex/issues/69)) ([8254e27](https://github.com/knodex/knodex/commit/8254e27b99baef4530a42c752185e7dce82ea482))
+
+
+### Bug Fixes
+
+* **deploy:** show inline name validation error and collapse fields by default ([#61](https://github.com/knodex/knodex/issues/61)) ([261ec7c](https://github.com/knodex/knodex/commit/261ec7ca51c759d9a956e1f6aec1785356c36513))
+* **website:** remove stale redirect to /docs after route base path change ([7d9484a](https://github.com/knodex/knodex/commit/7d9484aa0710a8b849947bd32a51f6590ec87c6e))
+
 ## [0.5.0](https://github.com/knodex/knodex/compare/v0.4.0...v0.5.0) (2026-04-16)
 
 
