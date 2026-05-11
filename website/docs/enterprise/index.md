@@ -34,6 +34,25 @@ Scope RGD visibility to specific organizations using the `knodex.io/organization
 
 Enterprise-scoped secret management with authorization controls, ensuring secrets are only accessible within the correct project and namespace boundaries.
 
+## Infrastructure Requirements
+
+Enterprise builds require **PostgreSQL 16+** in addition to the Redis dependency shared with OSS.
+
+| Dependency | OSS | Enterprise | Purpose |
+|------------|-----|-----------|---------|
+| Redis | Required | Required | Session cache, rate limiting |
+| PostgreSQL | Not used | Required | Audit events, compliance violations, organization isolation |
+
+PostgreSQL stores durable, queryable data that Redis is not suited for — audit trails, compliance violation history, and per-organization Row-Level Security (RLS). The Helm chart supports three deployment modes:
+
+| Mode | When to use | How to configure |
+|------|------------|-----------------|
+| Embedded subchart | Development and single-cluster deployments | `postgresql.enabled: true` |
+| External managed (e.g., RDS, CloudSQL) | Production, shared databases | `postgresql.enabled: false` + `DATABASE_URL` secret |
+| CloudNativePG (CNPG) | Kubernetes-native HA PostgreSQL | CNPG operator + `postgres.connectionStringSecret` |
+
+See [PostgreSQL Configuration](../administration/configuration#postgresql-configuration) for the full setup reference.
+
 ## How to Enable
 
 Enterprise features are activated by providing a license key. See [License Activation](license-activation) for configuration steps.

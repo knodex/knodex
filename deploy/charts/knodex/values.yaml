@@ -522,6 +522,80 @@ enterprise:
       #         kubernetes.io/metadata.name: ingress-nginx
       ingressFrom: []
 
+  # -- PostgreSQL database configuration (Enterprise feature).
+  # Provides the durable store for audit events, compliance violations,
+  # and per-organization data isolation via Row-Level Security.
+  #
+  # Connection string precedence:
+  #   1. postgresql.enabled: true  — embedded subchart wins; chart assembles the
+  #      full DSN from postgresql.auth.* and stores it in a managed Secret.
+  #   2. enterprise.postgres.connectionStringSecret.name  — reference a pre-existing
+  #      external Secret (recommended for production, CNPG, ESO, etc.).
+  #   3. enterprise.postgres.connectionString  — inline DSN; chart creates a managed
+  #      Secret named `<release>-postgres` annotated `helm.sh/resource-policy: keep`.
+  #
+  # Migration Job:
+  #   When `enterprise.postgres.deploymentMode != ""` AND `enterprise.enabled: true`,
+  #   the chart renders a pre-install/pre-upgrade Job that runs all pending schema
+  #   migrations under an advisory lock. Disable with `migrations.runJob: false` to
+  #   manage migrations via your own pipeline (server still migrates on startup).
+  postgres:
+    # -- Postgres deployment topology. Empty disables Postgres entirely
+    # (chart is OSS-compatible). `shared` = single DB hosting many orgs.
+    # `per-org` = one DB per Knodex tenant. Any other value fails chart
+    # rendering with a clear error.
+    # @default -- `""` (Postgres disabled)
+    deploymentMode: ""
+
+    # -- Inline DATABASE_URL DSN. When set, the chart creates a managed Secret
+    # named `<release>-postgres` annotated `helm.sh/resource-policy: keep`.
+    # Suitable for dev/test only; production should use connectionStringSecret.
+    # Format: `postgres://user:pass@host:5432/dbname?sslmode=require`
+    # @default -- `""`
+    connectionString: ""
+
+    # -- Reference to an externally-managed Secret containing DATABASE_URL.
+    # Recommended for production. The chart does not create this Secret —
+    # provision it via External Secrets Operator, AKS Secret Provider, CNPG, etc.
+    connectionStringSecret:
+      # -- Name of the existing Secret holding the DSN.
+      # @default -- `""`
+      name: ""
+      # -- Key within the Secret that contains the DSN.
+      # @default -- `"DATABASE_URL"`
+      key: "DATABASE_URL"
+
+    # -- IAM-auth toggle (RDS IAM / Cloud SQL IAM / Azure AD).
+    # Plumbs `POSTGRES_IAM_AUTH_ENABLED=true` into the migration Job and server
+    # Deployment. Concrete provider implementations are operator-supplied.
+    iamAuth:
+      enabled: false
+
+    # -- Migration Job control.
+    migrations:
+      # -- Render the migration Job. Disable to manage migrations via your own
+      # pipeline — the server still migrates on startup.
+      # @default -- `true`
+      runJob: true
+      # -- Job pod resources.
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: 500m
+          memory: 256Mi
+      # -- Hard deadline for the entire Job (seconds). Protects against
+      # indefinite advisory-lock waits. Default 10 minutes.
+      # @default -- `600`
+      activeDeadlineSeconds: 600
+      # -- Seconds the Job pod is retained after success.
+      # @default -- `300`
+      ttlSecondsAfterFinished: 300
+      # -- Maximum retries before Helm marks the release failed.
+      # @default -- `3`
+      backoffLimit: 3
+
 # ------------------------------------------------------------------------------
 # Dex OIDC Federation Proxy (Cloud feature)
 # https://dexidp.io/
@@ -663,6 +737,50 @@ redis:
       requests:
         cpu: 50m
         memory: 64Mi
+
+# ------------------------------------------------------------------------------
+# Embedded PostgreSQL subchart (for demos, dev, and CI ONLY — not production)
+# ------------------------------------------------------------------------------
+# This subchart provides a self-contained PostgreSQL instance for environments
+# where provisioning external Postgres infrastructure is impractical. Enable it
+# for demos, local development, and CI pipelines. For production, keep
+# postgresql.enabled: false and configure the postgres: section below.
+#
+# Connection string precedence when postgres.deploymentMode is set:
+#   1. postgresql.enabled: true  — embedded subchart wins; the chart assembles
+#      the full DATABASE_URL DSN from the subchart auth values and stores it in
+#      a Secret named <release>-knodex-postgres-url.
+#   2. postgres.connectionStringSecret.name != ""  — reference a pre-existing
+#      external Secret (recommended for production).
+#   3. postgres.connectionString != ""  — inline DSN, chart creates a managed
+#      Secret named <release>-postgres.
+#
+# ⚠️  PRODUCTION WARNING: The embedded subchart uses ephemeral storage by
+# default (primary.persistence.enabled: false) — ALL DATA IS LOST on pod
+# restart. For production, provision an external Postgres instance and use
+# postgres.connectionString or postgres.connectionStringSecret instead.
+postgresql:
+  # -- Enable the embedded Bitnami PostgreSQL subchart.
+  # FOR DEMOS, DEV, AND CI ONLY — do NOT use in production.
+  # @default -- false
+  enabled: false
+  auth:
+    username: knodex
+    password: knodex
+    database: knodex
+  primary:
+    persistence:
+      # -- Persist data across pod restarts. Disabled by default so the embedded
+      # instance is ephemeral (data is lost on restart). For stable dev
+      # environments, set to true and configure a StorageClass.
+      enabled: false
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
 
 # External Redis (when redis.enabled=false)
 # Use this section when connecting to a managed Redis service (Azure Cache, ElastiCache, etc.)

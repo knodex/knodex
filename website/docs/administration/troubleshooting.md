@@ -76,6 +76,37 @@ Resolution:
 3. If `redis.auth.enabled`, verify `REDIS_PASSWORD` is set correctly
 4. Check the `wait-for-redis` init container logs: `kubectl logs <pod> -n knodex -c wait-for-redis`
 
+**PostgreSQL connection failure (Enterprise)**:
+```
+ERROR  failed to connect to database  error="dial tcp: connection refused"
+```
+or
+```
+ERROR  migrations failed  error="pq: password authentication failed for user"
+```
+
+Resolution:
+1. Check PostgreSQL is running:
+   ```bash
+   # Embedded subchart
+   kubectl get pods -n knodex -l app.kubernetes.io/name=postgresql
+   # CloudNativePG
+   kubectl get pods -n knodex -l cnpg.io/cluster=knodex-cluster
+   ```
+2. Verify `DATABASE_URL` is set in the server Secret or ConfigMap:
+   ```bash
+   kubectl get secret knodex-secret -n knodex -o jsonpath='{.data.DATABASE_URL}' | base64 -d
+   ```
+3. Confirm the database is reachable from within the cluster:
+   ```bash
+   kubectl run pg-test --rm -it --image=postgres:16-alpine --restart=Never -- \
+     psql "$DATABASE_URL" -c "SELECT version();"
+   ```
+4. For CloudNativePG, verify the application secret exists:
+   ```bash
+   kubectl get secret knodex-cluster-app -n knodex -o jsonpath='{.data.uri}' | base64 -d
+   ```
+
 **Kubernetes permissions**:
 ```
 ERROR  failed to list resourcegraphdefinitions  error="forbidden"
@@ -243,6 +274,53 @@ If Redis auth is enabled, verify the password matches between Redis and the Knod
 ```bash
 kubectl get secret knodex-redis -n knodex -o jsonpath='{.data.redis-password}' | base64 -d
 ```
+
+### PostgreSQL Connection Issues (Enterprise)
+
+**Symptoms**: Server crashes at startup or audit/compliance data is not persisting.
+
+**Check PostgreSQL connectivity**:
+
+```bash
+# Embedded subchart
+kubectl exec -it knodex-postgresql-0 -n knodex -- psql -U knodex -c "SELECT version();"
+
+# CloudNativePG
+kubectl exec -it knodex-cluster-1 -n knodex -- psql -U knodex -c "SELECT version();"
+```
+
+**Verify migration state**:
+
+```bash
+kubectl exec -it knodex-postgresql-0 -n knodex -- \
+  psql -U knodex -c "SELECT version, dirty FROM schema_migrations;"
+```
+
+If `dirty=true`, a previous migration run was interrupted. This requires manual intervention — contact support.
+
+**Check data is persisting**:
+
+```bash
+# Connect to verify enterprise data
+kubectl exec -it knodex-postgresql-0 -n knodex -- psql -U knodex -c "\dn"
+# Expected: audit, compliance, public schemas listed
+
+kubectl exec -it knodex-postgresql-0 -n knodex -- \
+  psql -U knodex -c "SELECT count(*) FROM compliance.violations;"
+
+kubectl exec -it knodex-postgresql-0 -n knodex -- \
+  psql -U knodex -c "SELECT count(*) FROM audit.events;"
+```
+
+**Verify DATABASE_URL is injected**:
+
+```bash
+kubectl get configmap knodex-config -n knodex -o jsonpath='{.data.DATABASE_URL}'
+# or from secret (if using external credential):
+kubectl get secret knodex-secret -n knodex -o jsonpath='{.data.DATABASE_URL}' | base64 -d
+```
+
+If `DATABASE_URL` is empty, check the Helm values. With the embedded subchart (`postgresql.enabled: true`), the chart assembles the DSN automatically from `postgresql.auth.*`. With an external database, `postgres.connectionStringSecret` must reference a valid Secret.
 
 ## Diagnostic Commands
 
