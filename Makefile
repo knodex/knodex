@@ -1,4 +1,5 @@
-.PHONY: help dev dev-web dev-server build build-web build-server \
+.PHONY: help dev dev-web dev-server dev-up dev-down db-reset \
+        build build-web build-server \
         clean lint lint-fix lint-server lint-web \
         cluster-up cluster-down \
         test test-server test-web e2e qa qa-stop \
@@ -17,10 +18,13 @@ help:
 	@echo "  make tilt-down      - Stop Tilt and cleanup"
 	@echo "  make tilt-status    - Show Tilt resource status"
 	@echo ""
-	@echo "Development (Native - requires external Redis):"
-	@echo "  make dev            - Start server + web (needs Redis running)"
+	@echo "Development (Native - requires external Redis + Postgres):"
+	@echo "  make dev-up         - Start Postgres + Redis via docker-compose (for EE builds)"
+	@echo "  make dev-down       - Stop docker-compose dependencies"
+	@echo "  make dev            - Start server + web (needs Redis; EE also needs Postgres)"
 	@echo "  make dev-server     - Start server only"
 	@echo "  make dev-web        - Start web only"
+	@echo "  make db-reset       - Wipe local Postgres data (Tilt or docker-compose)"
 	@echo ""
 	@echo "Build:"
 	@echo "  make build            - Build all services"
@@ -64,6 +68,8 @@ dev:
 	@echo "============================================"
 	@echo "  Native Development Mode"
 	@echo "  Requires Redis running externally."
+	@echo "  For EE builds with Postgres: run 'make dev-up' first"
+	@echo "  to start docker-compose dependencies."
 	@echo ""
 	@echo "  Recommended: Use 'make tilt-up' instead"
 	@echo "  for fully managed local development."
@@ -76,11 +82,49 @@ dev:
 
 dev-server:
 	@echo "Starting server (requires Redis at localhost:6379)..."
+	@echo "For EE builds with Postgres: run 'make dev-up' first to start docker-compose dependencies."
 	cd server && go run .
 
 dev-web:
 	@echo "Starting web..."
 	cd web && npm run dev
+
+# Bring up local Postgres + Redis via docker-compose. Used by the native dev path
+# (`make dev`). The Tilt path (`make tilt-up`) provisions both inside Kind via the
+# kustomize overlay, so this target is not needed when using Tilt.
+dev-up:
+	@echo "Starting dev dependencies (Postgres + Redis) via docker-compose..."
+	docker compose up -d postgres redis
+	@echo ""
+	@echo "  Postgres: localhost:5432  (user=knodex db=knodex)"
+	@echo "  Redis:    localhost:6379"
+	@echo ""
+	@echo "  Run 'make dev' to start the server."
+
+dev-down:
+	@echo "Stopping dev dependencies..."
+	docker compose down
+	@echo "Dev dependencies stopped."
+
+# Reset local Postgres state. Detects whether the active environment is Tilt
+# (in-cluster Pod backed by emptyDir) or docker-compose (named volume) and
+# resets it idempotently. Migrations re-apply on next server connection.
+db-reset:
+	@echo "Detecting active Postgres environment..."
+	@if kubectl get deployment knodex-postgres -n knodex-tilt >/dev/null 2>&1; then \
+		echo "  Tilt-managed Postgres detected — restarting Pod (emptyDir wipe)..."; \
+		kubectl rollout restart deployment/knodex-postgres -n knodex-tilt; \
+		kubectl rollout status deployment/knodex-postgres -n knodex-tilt --timeout=60s; \
+		echo "  Postgres restarted. Migrations re-apply on next server connection."; \
+	elif docker ps --filter "name=knodex-dev-postgres" --filter "status=running" -q 2>/dev/null | grep -q .; then \
+		echo "  docker-compose Postgres detected — recreating service + volume..."; \
+		docker compose rm -fsv postgres; \
+		docker volume rm "$$(docker compose config 2>/dev/null | sed -n 's/^name: //p')_knodex_pgdata" 2>/dev/null || true; \
+		docker compose up -d postgres; \
+		echo "  Postgres recreated. Migrations re-apply on next server connection."; \
+	else \
+		echo "  No local Postgres detected — start one with 'make tilt-up' or 'make dev-up'."; \
+	fi
 
 # ===== Build =====
 # Build web first, embed into Go binary

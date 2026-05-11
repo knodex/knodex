@@ -40,6 +40,120 @@ kubectl get secret knodex-initial-admin-password -n knodex -o jsonpath='{.data.p
 
 {{ template "chart.valuesSection" . }}
 
+## PostgreSQL (Enterprise)
+
+Knodex Enterprise requires PostgreSQL as the durable store for audit events
+and compliance violation history. Operators bring their own production
+Postgres (managed RDS, Cloud SQL, Azure Database, etc.) — this chart does
+not package Postgres as a subchart. Local-dev provisioning is covered
+separately (Tilt + docker-compose).
+
+The chart supports two deployment modes via `postgres.deploymentMode`:
+
+| Mode        | Use case                                              |
+|-------------|-------------------------------------------------------|
+| `""`        | Postgres disabled (default; OSS-compatible).          |
+| `"shared"`  | Single DB hosting many orgs (Cloud free / team tier). |
+| `"per-org"` | One DB per Knodex tenant (Cloud enterprise tier).     |
+
+Any other value fails chart rendering with a clear error.
+
+### Shared-DB mode (single Postgres for many orgs)
+
+```yaml
+enterprise:
+  enabled: true
+
+postgres:
+  deploymentMode: "shared"
+  connectionStringSecret:
+    name: knodex-shared-db
+    key: DATABASE_URL
+```
+
+Provision the `knodex-shared-db` Secret out-of-band — typically via the
+External Secrets Operator backed by a vault (Azure Key Vault, AWS Secrets
+Manager, GCP Secret Manager, etc.). The chart references the Secret but
+does not create or mutate it.
+
+### Per-org DB mode (one DB per tenant)
+
+Onboard a new tenant by installing the chart in a per-tenant namespace with
+a per-tenant DSN. Tenant offboarding / GDPR deletion is handled by the
+Knodex Cloud control plane — **not** by this chart.
+
+```yaml
+# values-org-acme.yaml
+enterprise:
+  enabled: true
+  organization: "acme-corp"
+
+postgres:
+  deploymentMode: "per-org"
+  connectionStringSecret:
+    name: org-acme-db
+    key: DATABASE_URL
+```
+
+```bash
+helm install knodex knodex/knodex \
+  --namespace org-acme \
+  --create-namespace \
+  --values values-org-acme.yaml
+```
+
+### Inline DSN (dev/test only)
+
+For dev and test, the chart can manage the credential itself when an inline
+DSN is supplied. The chart-managed Secret is annotated
+`helm.sh/resource-policy: keep` so a chart uninstall does not destroy the
+operator-supplied credential by accident.
+
+```yaml
+postgres:
+  deploymentMode: "shared"
+  connectionString: "postgres://knodex:secret@postgres.acme.local:5432/knodex?sslmode=require"
+```
+
+When both `connectionString` and `connectionStringSecret.name` are set, the
+external Secret wins.
+
+### IAM authentication
+
+`postgres.iamAuth.enabled: true` plumbs the `POSTGRES_IAM_AUTH_ENABLED`
+env var into the migration Job and the server Deployment. The binary's
+`TokenProvider` interface is the contract for handling this. Concrete
+provider implementations (RDS IAM, Cloud SQL IAM, Azure AD) are operator-
+supplied and **demand-driven** — they do **not** ship with this release.
+
+### Migration Job
+
+When `postgres.deploymentMode != ""`, a Helm pre-install/pre-upgrade Job
+runs all pending schema migrations under an advisory lock (the same lock
+the server uses on startup, so stale Pods cannot race the Job). The server
+Deployment rolls out only after the Job exits 0.
+
+If the Job fails, `helm install` / `helm upgrade` exits non-zero with the
+Job's failure message. To inspect the failure:
+
+```bash
+kubectl describe job/<release>-postgres-migrate -n <namespace>
+kubectl logs job/<release>-postgres-migrate -n <namespace>
+```
+
+To delegate migrations to your own pipeline, set `postgres.migrations.runJob: false`.
+The server still runs migrations on startup, so there is no "neither path
+migrates" footgun.
+
+### Out of scope
+
+- **Org offboarding / GDPR deletion**: handled by the Knodex Cloud control
+  plane, not this chart.
+- **IAM token providers**: interface ships in the server binary;
+  implementations are operator-supplied.
+- **Bundled Postgres**: operators bring their own production Postgres.
+  Local-dev provisioning is a separate concern (Tilt + docker-compose).
+
 ## Organization (Enterprise)
 
 Knodex Enterprise supports multi-tenant organization isolation. Each deployment can belong to one organization, and RGDs are filtered by the `knodex.io/organization` label:

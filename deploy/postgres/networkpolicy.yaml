@@ -1,0 +1,40 @@
+# Postgres NetworkPolicy
+# - Ingress: Allow from server pods only
+# - Egress: Allow DNS only (Postgres doesn't need external connectivity in dev)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: knodex-postgres
+  labels:
+    app.kubernetes.io/name: knodex
+    app.kubernetes.io/component: postgres
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: knodex
+      app.kubernetes.io/component: postgres
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow traffic from server pods only
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: knodex
+              app.kubernetes.io/component: server
+      ports:
+        - protocol: TCP
+          port: 5432
+  egress:
+    # Allow DNS resolution (needed for startup)
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53

@@ -1,0 +1,100 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: knodex-postgres
+  labels:
+    app.kubernetes.io/name: knodex
+    app.kubernetes.io/component: postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: knodex
+      app.kubernetes.io/component: postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: knodex
+        app.kubernetes.io/component: postgres
+    spec:
+      # Postgres official image runs as UID 999 ("postgres" user).
+      # Verified via: docker run --rm postgres:14-alpine id postgres
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgres
+          # Official Postgres image, matched to .github/workflows/ci.yml service container.
+          # Tag (not digest) is acceptable for dev infra in a Kind cluster — the chart's
+          # production install path is owned by STORY-449 and uses external Postgres.
+          image: postgres:14-alpine
+          env:
+            - name: POSTGRES_USER
+              value: knodex
+            - name: POSTGRES_PASSWORD
+              value: knodex
+            - name: POSTGRES_DB
+              value: knodex
+            # PGDATA must be a sub-directory of the volume mount; the postgres image
+            # refuses to initdb if the data directory contains other entries (which an
+            # emptyDir mount may pick up across some Kubelet/CRI versions).
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - containerPort: 5432
+              name: postgres
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            # Postgres requires writes outside its data dir (e.g., /var/run/postgresql,
+            # lockfiles in /run, /tmp). Adding the requisite emptyDir mounts for a
+            # read-only root filesystem is more complexity than the security benefit
+            # warrants for dev-only infrastructure inside a Kind cluster.
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: pg-data
+              mountPath: /var/lib/postgresql/data
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - knodex
+                - -d
+                - knodex
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - knodex
+                - -d
+                - knodex
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+      volumes:
+        # emptyDir mirrors deploy/redis/redis-deployment.yaml — dev data is throwaway.
+        # `make db-reset` restarts the Pod to wipe state. For persistent local dev,
+        # use the docker-compose path which uses named volumes.
+        - name: pg-data
+          emptyDir: {}

@@ -6,6 +6,7 @@ namespace: knodex
 resources:
   - ../../../deploy/server
   - ../../../deploy/redis
+  - ../../../deploy/postgres
 
 # Use local images for Kind cluster
 images:
@@ -36,7 +37,7 @@ patches:
         path: /spec/ports/0/nodePort
         value: 30080
 
-  # Enable Redis for auth service and secret creation testing
+  # Enable Redis and Postgres for EE services
   - target:
       kind: ConfigMap
       name: knodex-config
@@ -44,6 +45,9 @@ patches:
       - op: add
         path: /data/REDIS_ADDRESS
         value: "knodex-redis:6379"
+      - op: add
+        path: /data/DATABASE_URL
+        value: "postgres://knodex:knodex@knodex-postgres:5432/knodex?sslmode=disable"
 
   # Add auth configuration for local admin
   # NOTE: ADMIN_PASSWORD is intentionally omitted to trigger auto-generation

@@ -54,3 +54,12 @@ spec:
       ports:
         - protocol: TCP
           port: 6379
+    # Allow PostgreSQL communication (Enterprise: audit + compliance store)
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: knodex
+              app.kubernetes.io/component: postgres
+      ports:
+        - protocol: TCP
+          port: 5432

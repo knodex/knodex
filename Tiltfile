@@ -63,7 +63,7 @@ k8s_resource(
         port_forward(8088, 8080, name='Application'),
     ],
     labels=['server'],
-    resource_deps=['cluster-check'],
+    resource_deps=['cluster-check', 'knodex-postgres'],
 )
 
 # ============================================================================
@@ -75,6 +75,21 @@ k8s_resource(
     'knodex-redis',
     port_forwards=[
         port_forward(6379, 6379, name='Redis'),
+    ],
+    labels=['infrastructure'],
+)
+
+# ============================================================================
+# Postgres
+# ============================================================================
+
+# Postgres uses the standard image, no build needed.
+# Deployed unconditionally (OSS + Enterprise) — OSS server ignores DATABASE_URL.
+# EE server runs migrations on startup under advisory lock (per STORY-443).
+k8s_resource(
+    'knodex-postgres',
+    port_forwards=[
+        port_forward(5432, 5432, name='Postgres'),
     ],
     labels=['infrastructure'],
 )
@@ -350,6 +365,7 @@ print("""
 ║    Application:    http://localhost:8088  (API + embedded UI)    ║
 ║    Web Dev:        http://localhost:3000  (Vite HMR)            ║
 ║    Redis:          localhost:6379                                ║
+║    Postgres:       localhost:5432  (knodex/knodex/knodex)        ║
 ║    Tilt UI:        http://localhost:10350                        ║
 {enterprise}║                                                                  ║
 ║  Tips:                                                           ║

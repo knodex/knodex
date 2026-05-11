@@ -1,0 +1,47 @@
+# Local-dev dependencies for `make dev` / `make dev-server`.
+#
+# Usage:
+#   make dev-up         # bring Postgres + Redis up
+#   make dev            # start the server (consumes these via DATABASE_URL / REDIS_ADDRESS)
+#   make dev-down       # stop both
+#   make db-reset       # wipe Postgres data
+#
+# This file is for the *native* dev path. The Tilt path (`make tilt-up`) provisions
+# Postgres and Redis inside the Kind cluster via deploy/postgres/ and deploy/redis/.
+#
+# No top-level `version:` key — deprecated in modern Docker Compose v2 (`docker compose`).
+
+services:
+  postgres:
+    image: postgres:14-alpine
+    container_name: knodex-dev-postgres
+    environment:
+      POSTGRES_USER: knodex
+      POSTGRES_PASSWORD: knodex
+      POSTGRES_DB: knodex
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U knodex -d knodex"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - knodex_pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    container_name: knodex-dev-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - knodex_redisdata:/data
+
+volumes:
+  knodex_pgdata:
+  knodex_redisdata:

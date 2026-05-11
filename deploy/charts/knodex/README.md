@@ -105,6 +105,18 @@ kubectl get secret knodex-initial-admin-password -n knodex -o jsonpath='{.data.p
 | ingress.tls | list | `[]` |  |
 | kro | object | `{"enabled":false}` | ---------------------------------------------------------------------------- |
 | nameOverride | string | `""` |  |
+| postgres | object | `{"connectionString":"","connectionStringSecret":{"key":"DATABASE_URL","name":""},"deploymentMode":"","iamAuth":{"enabled":false},"migrations":{"backoffLimit":3,"resources":{"limits":{"cpu":"500m","memory":"256Mi"},"requests":{"cpu":"50m","memory":"64Mi"}},"runJob":true,"ttlSecondsAfterFinished":300}}` | ---------------------------------------------------------------------------- Operators bring their own PostgreSQL (managed RDS, Cloud SQL, Azure DB, etc.). This chart does not package Postgres as a subchart in production. Local-dev provisioning is covered separately (Tilt + docker-compose, STORY-450).  Connection string supply (choose one):    1. ExternalSecret / pre-existing Secret (recommended for production):      Set `postgres.connectionStringSecret.name` to a Secret containing the      DSN under key `DATABASE_URL` (override via `connectionStringSecret.key`).      The chart references that secret directly — it does NOT create or      mutate the secret. Pair with External Secrets Operator, AKS Secret      Provider, etc.    2. Inline `postgres.connectionString` (dev/test only): the chart creates      a managed Secret named `<release>-postgres` with `DATABASE_URL`      populated from this value. Annotated `helm.sh/resource-policy: keep`      so a chart uninstall does not destroy the credential by accident.  Migration Job:    When `postgres.deploymentMode != ""` AND `enterprise.enabled: true`, the   chart renders a Helm pre-install/pre-upgrade Job that runs all pending   schema migrations under an advisory lock (same lock as the server   startup path — stale Pods cannot race the Job). The server Deployment   rolls out only after the Job exits 0. To delegate migrations to your own   pipeline, set `postgres.migrations.runJob: false`; the server will still   run migrations on startup.  IAM auth:    `postgres.iamAuth.enabled: true` plumbs the `POSTGRES_IAM_AUTH_ENABLED`   env var into both the migration Job and the server Deployment. The   binary's TokenProvider interface (STORY-443) is the contract for handling   this; concrete provider implementations (RDS IAM, Cloud SQL IAM, Azure   AD) are demand-driven and do NOT ship in this release. |
+| postgres.connectionString | string | `""` | Inline DATABASE_URL DSN. When set, the chart creates a managed Secret named `<release>-postgres` annotated `helm.sh/resource-policy: keep`. Suitable for dev/test only; production should use connectionStringSecret. Format: `postgres://user:pass@host:5432/dbname?sslmode=require` |
+| postgres.connectionStringSecret | object | `{"key":"DATABASE_URL","name":""}` | Reference to an externally-managed Secret containing DATABASE_URL. Recommended for production. The chart does not create this Secret — provision it via External Secrets Operator, AKS Secret Provider, etc. |
+| postgres.connectionStringSecret.key | string | `"DATABASE_URL"` | Key within the Secret that contains the DSN. |
+| postgres.connectionStringSecret.name | string | `""` | Name of the existing Secret holding DATABASE_URL. |
+| postgres.deploymentMode | string | `""` (Postgres disabled) | Postgres deployment topology. Empty disables Postgres entirely (chart is OSS-compatible). `shared` = single DB hosting many orgs (free / team Cloud tier). `per-org` = one DB per Knodex tenant (Cloud enterprise). Any other value fails chart rendering with a clear error. |
+| postgres.iamAuth | object | `{"enabled":false}` | IAM-auth toggle (RDS IAM / Cloud SQL IAM / Azure AD). Plumbs `POSTGRES_IAM_AUTH_ENABLED=true` into the migration Job and server Deployment. NOTE: provider implementations are operator-supplied and do NOT ship with this release — STORY-449 ships only the env-var plumbing. |
+| postgres.migrations | object | `{"backoffLimit":3,"resources":{"limits":{"cpu":"500m","memory":"256Mi"},"requests":{"cpu":"50m","memory":"64Mi"}},"runJob":true,"ttlSecondsAfterFinished":300}` | Migration Job control. The Job runs as a Helm pre-install/pre-upgrade hook and applies all pending schema migrations under an advisory lock. |
+| postgres.migrations.backoffLimit | int | `3` | Maximum retries before Helm marks the release failed. |
+| postgres.migrations.resources | object | `{"limits":{"cpu":"500m","memory":"256Mi"},"requests":{"cpu":"50m","memory":"64Mi"}}` | Job pod resources. Defaults are sized for typical migrations; raise the limits for very large databases (e.g., 90M-row audit tables). |
+| postgres.migrations.runJob | bool | `true` | Render the migration Job. Disable to manage migrations via your own pipeline — the server still runs migrations on startup, so there is no "neither path migrates" footgun. |
+| postgres.migrations.ttlSecondsAfterFinished | int | `300` | Seconds the Job pod is retained after success (useful for log inspection). Default 5 minutes. |
 | rbac.create | bool | `true` |  |
 | redis.architecture | string | `"standalone"` |  |
 | redis.auth.enabled | bool | `true` |  |
@@ -188,6 +200,120 @@ kubectl get secret knodex-initial-admin-password -n knodex -o jsonpath='{.data.p
 | serviceAccount.annotations | object | `{}` |  |
 | serviceAccount.create | bool | `true` |  |
 | serviceAccount.name | string | `""` |  |
+
+## PostgreSQL (Enterprise)
+
+Knodex Enterprise requires PostgreSQL as the durable store for audit events
+and compliance violation history. Operators bring their own production
+Postgres (managed RDS, Cloud SQL, Azure Database, etc.) — this chart does
+not package Postgres as a subchart. Local-dev provisioning is covered
+separately (Tilt + docker-compose).
+
+The chart supports two deployment modes via `postgres.deploymentMode`:
+
+| Mode        | Use case                                              |
+|-------------|-------------------------------------------------------|
+| `""`        | Postgres disabled (default; OSS-compatible).          |
+| `"shared"`  | Single DB hosting many orgs (Cloud free / team tier). |
+| `"per-org"` | One DB per Knodex tenant (Cloud enterprise tier).     |
+
+Any other value fails chart rendering with a clear error.
+
+### Shared-DB mode (single Postgres for many orgs)
+
+```yaml
+enterprise:
+  enabled: true
+
+postgres:
+  deploymentMode: "shared"
+  connectionStringSecret:
+    name: knodex-shared-db
+    key: DATABASE_URL
+```
+
+Provision the `knodex-shared-db` Secret out-of-band — typically via the
+External Secrets Operator backed by a vault (Azure Key Vault, AWS Secrets
+Manager, GCP Secret Manager, etc.). The chart references the Secret but
+does not create or mutate it.
+
+### Per-org DB mode (one DB per tenant)
+
+Onboard a new tenant by installing the chart in a per-tenant namespace with
+a per-tenant DSN. Tenant offboarding / GDPR deletion is handled by the
+Knodex Cloud control plane — **not** by this chart.
+
+```yaml
+# values-org-acme.yaml
+enterprise:
+  enabled: true
+  organization: "acme-corp"
+
+postgres:
+  deploymentMode: "per-org"
+  connectionStringSecret:
+    name: org-acme-db
+    key: DATABASE_URL
+```
+
+```bash
+helm install knodex knodex/knodex \
+  --namespace org-acme \
+  --create-namespace \
+  --values values-org-acme.yaml
+```
+
+### Inline DSN (dev/test only)
+
+For dev and test, the chart can manage the credential itself when an inline
+DSN is supplied. The chart-managed Secret is annotated
+`helm.sh/resource-policy: keep` so a chart uninstall does not destroy the
+operator-supplied credential by accident.
+
+```yaml
+postgres:
+  deploymentMode: "shared"
+  connectionString: "postgres://knodex:secret@postgres.acme.local:5432/knodex?sslmode=require"
+```
+
+When both `connectionString` and `connectionStringSecret.name` are set, the
+external Secret wins.
+
+### IAM authentication
+
+`postgres.iamAuth.enabled: true` plumbs the `POSTGRES_IAM_AUTH_ENABLED`
+env var into the migration Job and the server Deployment. The binary's
+`TokenProvider` interface is the contract for handling this. Concrete
+provider implementations (RDS IAM, Cloud SQL IAM, Azure AD) are operator-
+supplied and **demand-driven** — they do **not** ship with this release.
+
+### Migration Job
+
+When `postgres.deploymentMode != ""`, a Helm pre-install/pre-upgrade Job
+runs all pending schema migrations under an advisory lock (the same lock
+the server uses on startup, so stale Pods cannot race the Job). The server
+Deployment rolls out only after the Job exits 0.
+
+If the Job fails, `helm install` / `helm upgrade` exits non-zero with the
+Job's failure message. To inspect the failure:
+
+```bash
+kubectl describe job/<release>-postgres-migrate -n <namespace>
+kubectl logs job/<release>-postgres-migrate -n <namespace>
+```
+
+To delegate migrations to your own pipeline, set `postgres.migrations.runJob: false`.
+The server still runs migrations on startup, so there is no "neither path
+migrates" footgun.
+
+### Out of scope
+
+- **Org offboarding / GDPR deletion**: handled by the Knodex Cloud control
+  plane, not this chart.
+- **IAM token providers**: interface ships in the server binary;
+  implementations are operator-supplied.
+- **Bundled Postgres**: operators bring their own production Postgres.
+  Local-dev provisioning is a separate concern (Tilt + docker-compose).
 
 ## Organization (Enterprise)
 

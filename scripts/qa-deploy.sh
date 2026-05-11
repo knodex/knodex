@@ -199,6 +199,18 @@ deploy_app() {
     kubectl wait --for=condition=ready --timeout=60s pod -l app.kubernetes.io/component=redis -n "${NAMESPACE}"
     log_success "Redis ready"
 
+    # Wait for Postgres (EE builds require DATABASE_URL)
+    if [ "${ENTERPRISE_BUILD}" = "true" ]; then
+        log_info "Waiting for Postgres..."
+        kubectl wait --for=condition=available --timeout=120s deployment/knodex-postgres -n "${NAMESPACE}" || {
+            log_error "Postgres deployment failed"
+            kubectl describe deployment knodex-postgres -n "${NAMESPACE}"
+            exit 1
+        }
+        kubectl wait --for=condition=ready --timeout=60s pod -l app.kubernetes.io/component=postgres -n "${NAMESPACE}"
+        log_success "Postgres ready"
+    fi
+
     # Force restart deployment to pick up new image
     log_info "Restarting deployment..."
     kubectl rollout restart deployment/knodex-server -n "${NAMESPACE}"
