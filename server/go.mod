@@ -13,7 +13,7 @@ require (
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	// KRO upstream dependency — bumped via Dependabot (dedicated PR).
 	// Review compat_test.go results and KRO changelog before merging version bumps.
-	github.com/kubernetes-sigs/kro v0.9.0
+	github.com/kubernetes-sigs/kro v0.9.1
 	github.com/prometheus/client_golang v1.23.2
 	github.com/redis/go-redis/v9 v9.18.0
 	github.com/sony/gobreaker/v2 v2.4.0
