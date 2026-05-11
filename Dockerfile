@@ -30,7 +30,7 @@ RUN if [ "$BUILD_MODE" = "enterprise" ]; then \
     fi
 
 # Stage 2: Build server (Go) with embedded web
-FROM golang:1.25-alpine AS server-builder
+FROM golang:1.26-alpine AS server-builder
 
 WORKDIR /build
 
