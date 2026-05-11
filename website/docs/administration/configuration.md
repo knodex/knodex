@@ -19,6 +19,7 @@ Knodex is configured primarily through environment variables, which can be set d
 | `SERVER_ADDRESS` | `:8080` | Server bind address (host:port) |
 | `REDIS_ADDRESS` | `localhost:6379` | Redis connection address |
 | `REDIS_PASSWORD` | `""` | Redis authentication password |
+| `DATABASE_URL` | `""` | PostgreSQL connection string (required for Enterprise). Format: `postgres://user:pass@host:5432/db?sslmode=disable` |
 | `KUBERNETES_IN_CLUSTER` | `false` | Use in-cluster Kubernetes config. Set to `true` when running inside a pod |
 | `OIDC_ISSUER_URL` | | OIDC provider issuer URL (e.g., `https://login.microsoftonline.com/<tenant>/v2.0`) |
 | `OIDC_CLIENT_ID` | | OIDC client/application ID |
@@ -89,6 +90,79 @@ server:
   secrets:
     REDIS_PASSWORD: "external-redis-password"
 ```
+
+### PostgreSQL Configuration (Enterprise)
+
+PostgreSQL is required for Enterprise builds. The Helm chart supports three deployment modes controlled by `postgres.deploymentMode`.
+
+```yaml
+# Option A: Embedded Bitnami PostgreSQL subchart (development / small deployments)
+enterprise:
+  enabled: true
+  postgres:
+    deploymentMode: shared
+
+postgresql:
+  enabled: true
+  auth:
+    username: knodex
+    password: "change-me-in-production"
+    database: knodex
+  primary:
+    persistence:
+      enabled: true
+      size: 10Gi
+```
+
+```yaml
+# Option B: External managed PostgreSQL (RDS, CloudSQL, Azure Database, etc.)
+enterprise:
+  enabled: true
+  postgres:
+    deploymentMode: shared
+    connectionStringSecret:
+      name: my-postgres-secret   # Secret must have key DATABASE_URL
+      key: DATABASE_URL
+
+postgresql:
+  enabled: false
+```
+
+```yaml
+# Option C: CloudNativePG operator (Kubernetes-native HA)
+enterprise:
+  enabled: true
+  postgres:
+    deploymentMode: shared
+    connectionStringSecret:
+      name: knodex-cluster-app   # CNPG-managed secret (type: kubernetes.io/basic-auth)
+      key: uri                   # CNPG stores the full DSN under the "uri" key
+
+postgresql:
+  enabled: false
+```
+
+#### Credential Precedence
+
+The chart resolves the database credential in this order:
+
+1. **Embedded subchart** (`postgresql.enabled: true`) — DSN is assembled from `postgresql.auth.*` values and injected automatically
+2. **External secret** (`enterprise.postgres.connectionStringSecret.name`) — the referenced Secret key is mounted as `DATABASE_URL`
+3. **Inline DSN** (`enterprise.postgres.connectionString`) — provided directly in Helm values (not recommended for production)
+
+#### Schema Migrations
+
+Knodex automatically applies schema migrations at startup using `golang-migrate`. No manual migration steps are required. Migrations are idempotent and use advisory locks, so running multiple replicas simultaneously is safe.
+
+The migration state is tracked in the `schema_migrations` table. The current version is visible in logs at startup:
+
+```
+INFO  migrations applied  version=3 dirty=false
+```
+
+#### Row-Level Security
+
+Enterprise data is isolated at the database level using PostgreSQL Row-Level Security (RLS). Every write acquires a connection, begins a transaction, and sets `app.org_id` before executing queries — ensuring data from different organizations cannot bleed across requests even when sharing a single database.
 
 ### KRO
 

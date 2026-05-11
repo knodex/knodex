@@ -21,10 +21,10 @@ Knodex is a Kubernetes Resource Orchestrator (KRO) visualization and management 
 │   Web (React)   │────▶│    Server (Go)           │────▶│  Redis       │
 │   Vite :3000    │     │    stdlib router :8080    │     │  :6379       │
 │                 │◀────│                           │     └──────────────┘
-└─────────────────┘     │  ┌─────────┐ ┌─────────┐ │
-                        │  │ JWT/OIDC│ │ Casbin  │ │
-                        │  │  Auth   │ │  RBAC   │ │
-                        │  └─────────┘ └─────────┘ │
+└─────────────────┘     │  ┌─────────┐ ┌─────────┐ │     ┌──────────────┐
+                        │  │ JWT/OIDC│ │ Casbin  │ │────▶│  PostgreSQL  │
+                        │  │  Auth   │ │  RBAC   │ │     │  :5432 (EE)  │
+                        │  └─────────┘ └─────────┘ │     └──────────────┘
                         └────────────┬──────────────┘
                                      │
                                      ▼
@@ -33,6 +33,8 @@ Knodex is a Kubernetes Resource Orchestrator (KRO) visualization and management 
                         │   (KRO CRDs, Projects)   │
                         └─────────────────────────┘
 ```
+
+PostgreSQL is required for Enterprise builds only. OSS builds do not connect to a database.
 
 ### Server Technology
 
@@ -84,11 +86,17 @@ make cluster-up
 # Option A: Start with Tilt (recommended for iterative development)
 make tilt-up
 
-# Option B: Start natively (requires Redis running at localhost:6379)
-make dev            # Server + web
+# Option B: Start natively
+make dev-up         # Start Redis + PostgreSQL via docker-compose
+make dev            # Server + web (uses docker-compose deps)
 make dev-server     # Server only
 make dev-web        # Web only
+make dev-down       # Stop docker-compose deps
 ```
+
+:::note[Enterprise Dependencies]
+`make dev-up` starts both Redis (`:6379`) and PostgreSQL (`:5432`) via docker-compose. The OSS server only needs Redis. Enterprise builds also read `DATABASE_URL` — this is set automatically when using `make dev` or Tilt.
+:::
 
 ## Verify
 
@@ -190,6 +198,7 @@ go run .
 |----------|---------|---------|
 | `SERVER_ADDRESS` | `:8080` | Bind address |
 | `REDIS_ADDRESS` | `localhost:6379` | Redis connection |
+| `DATABASE_URL` | `""` | PostgreSQL DSN (Enterprise only; e.g., `postgres://knodex:knodex@localhost:5432/knodex?sslmode=disable`) |
 | `LOG_LEVEL` | `info` | Log verbosity (`debug`, `info`, `warn`, `error`) |
 | `KUBERNETES_IN_CLUSTER` | `false` | Use in-cluster Kubernetes config |
 | `SWAGGER_UI_ENABLED` | `false` | Enable Swagger UI at `/swagger/` |
@@ -563,11 +572,23 @@ make build-web
 # Build OSS edition
 make build-oss
 
-# Build Enterprise edition
+# Build Enterprise edition (includes ee/ packages; requires PostgreSQL at runtime)
 make build-enterprise
 ```
 
 The production binary is a single Go executable with the web UI embedded via `go:embed`.
+
+:::note[Enterprise vs OSS binaries]
+The enterprise binary is compiled with `-tags=enterprise`, which includes all `server/ee/` packages. The OSS binary excludes enterprise code entirely — no enterprise symbols, no database imports. This means `DATABASE_URL` is silently ignored by OSS builds; only Enterprise builds connect to PostgreSQL.
+
+Run both to catch build-tag regressions:
+```bash
+go build ./...                    # OSS
+go build -tags=enterprise ./...   # Enterprise
+go test ./...                     # OSS tests
+go test -tags=enterprise ./...    # Enterprise tests (requires PostgreSQL)
+```
+:::
 
 ## Resources
 

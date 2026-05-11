@@ -19,12 +19,17 @@ This guide walks you through installing Knodex, verifying the deployment, and de
 - kubectl configured
 - Helm 3.x
 
+:::note[Enterprise Edition]
+Enterprise builds additionally require a **PostgreSQL 16+** database for audit trails, compliance violation storage, and organization isolation. The Helm chart can provision an embedded PostgreSQL instance automatically. See [PostgreSQL Configuration](../administration/configuration#postgresql-configuration) for details.
+:::
+
 ## Version Compatibility
 
 Each Knodex release is tested against a specific KRO version. Using a different KRO version may work but is not guaranteed.
 
 | Knodex | KRO | Kubernetes | Helm |
 |--------|-----|------------|------|
+| 0.6.x  | 0.9.1 | 1.32+ | 3.x |
 | 0.5.0  | 0.9.1 | 1.32+ | 3.x |
 
 The Helm chart bundles the matching KRO version as an optional dependency. Setting `kro.enabled=true` installs the correct version automatically.
@@ -48,12 +53,21 @@ Check that all pods are running:
 kubectl get pods -n knodex
 ```
 
-Expected output:
+Expected output (OSS):
 
 ```
 NAME                              READY   STATUS    RESTARTS   AGE
 knodex-server-6f8b9c7d4-x2k9m    1/1     Running   0          2m
 knodex-redis-59ddd568d9-xxxxx     1/1     Running   0          2m
+```
+
+For Enterprise with the embedded PostgreSQL subchart enabled:
+
+```
+NAME                              READY   STATUS    RESTARTS   AGE
+knodex-server-6f8b9c7d4-x2k9m    1/1     Running   0          2m
+knodex-redis-59ddd568d9-xxxxx     1/1     Running   0          2m
+knodex-postgresql-0               1/1     Running   0          2m
 ```
 
 Verify the server is healthy:
@@ -133,7 +147,7 @@ kubectl delete namespace knodex
 ```
 
 :::warning[Data Loss]
-Deleting the namespace removes all data, including Redis state. Ensure you have backups if needed.
+Deleting the namespace removes all data, including Redis state and any PostgreSQL data (audit events, compliance violations) for Enterprise deployments. Ensure you have backups if needed.
 :::
 
 ## Next Steps
