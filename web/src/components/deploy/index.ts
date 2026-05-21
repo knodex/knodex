@@ -1,9 +1,7 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
-export { DeployForm } from "./DeployForm";
 export { FormField } from "./FormField";
-export { YAMLPreview } from "./YAMLPreview";
 export { DependencyFieldSelector, useDependencyFields } from "./DependencyFieldSelector";
 export type { DependencyFieldInfo, AvailableInstance } from "./DependencyFieldSelector";
 export { ExternalRefSelector } from "./ExternalRefSelector";

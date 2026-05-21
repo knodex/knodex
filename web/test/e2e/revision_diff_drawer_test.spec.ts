@@ -11,6 +11,7 @@ import {
 import type { Instance } from '../../src/types/rgd'
 import type { Project, ProjectListResponse } from '../../src/types/project'
 import type { GraphRevision, RevisionDiff } from '../../src/types/rgd'
+import { buildInstanceRoute } from '../../src/lib/instancePath'
 
 /**
  * Revision Diff Drawer — E2E Tests (STORY-401)
@@ -212,7 +213,7 @@ test.describe('Revision Diff Drawer', () => {
     ])
   }
 
-  const instanceUrl = `/instances/${testInstance.namespace}/${testInstance.kind}/${testInstance.name}`
+  const instanceUrl = buildInstanceRoute(testInstance)
 
   test('debug: network requests for rgd and can-i', async ({ page }) => {
     const allRequests: Array<{ url: string; status?: number; body?: string }> = []

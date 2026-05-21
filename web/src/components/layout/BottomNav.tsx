@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { Link, useLocation } from "react-router-dom";
-import { Box, LayoutGrid, FolderOpen, User } from "@/lib/icons";
+import { User } from "@/lib/icons";
+import { NAV_ITEMS as SHARED_NAV_ITEMS } from "@/lib/nav-items";
 import { cn } from "@/lib/utils";
 
 interface NavItem {
@@ -14,21 +15,18 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   {
-    label: "Instances",
-    icon: Box,
-    to: "/instances",
+    ...SHARED_NAV_ITEMS.instances,
+    to: SHARED_NAV_ITEMS.instances.path,
     match: (p) => p.startsWith("/instances"),
   },
   {
-    label: "Catalog",
-    icon: LayoutGrid,
-    to: "/catalog",
+    ...SHARED_NAV_ITEMS.catalog,
+    to: SHARED_NAV_ITEMS.catalog.path,
     match: (p) => p.startsWith("/catalog"),
   },
   {
-    label: "Projects",
-    icon: FolderOpen,
-    to: "/projects",
+    ...SHARED_NAV_ITEMS.projects,
+    to: SHARED_NAV_ITEMS.projects.path,
     match: (p) => p.startsWith("/projects"),
   },
   {

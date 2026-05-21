@@ -130,10 +130,10 @@ test.describe('Instance Child Resources Tab', () => {
     await page.route(`**/api${API_PATHS.instances}?*`, route =>
       route.fulfill({ json: { items: [detailInstance], totalCount: 1, page: 1, pageSize: 20 } })
     )
-    await page.route(`**/api/v1/namespaces/default/instances/TestPodPair/demo-app`, route =>
+    await page.route(`**/api/v1/apigroups/*/namespaces/default/instances/TestPodPair/demo-app`, route =>
       route.fulfill({ json: detailInstance })
     )
-    await page.route(`**/api/v1/namespaces/default/instances/TestPodPair/demo-app/children`, route =>
+    await page.route(`**/api/v1/apigroups/*/namespaces/default/instances/TestPodPair/demo-app/children`, route =>
       route.fulfill({ json: mockChildrenResponse })
     )
     await page.route(`**/api${API_PATHS.rgds}?*`, route =>
@@ -148,10 +148,10 @@ test.describe('Instance Child Resources Tab', () => {
     await page.route('**/api/v1/account/can-i', route =>
       route.fulfill({ json: { allowed: true } })
     )
-    await page.route('**/api/v1/namespaces/default/instances/TestPodPair/demo-app/history?*', route =>
+    await page.route('**/api/v1/apigroups/*/namespaces/default/instances/TestPodPair/demo-app/history?*', route =>
       route.fulfill({ json: { items: [], totalCount: 0, page: 1, pageSize: 20 } })
     )
-    await page.route('**/api/v1/namespaces/default/instances/TestPodPair/demo-app/timeline?*', route =>
+    await page.route('**/api/v1/apigroups/*/namespaces/default/instances/TestPodPair/demo-app/timeline?*', route =>
       route.fulfill({ json: { events: [] } })
     )
     await page.route(`**/api${API_PATHS.instanceCount}`, route =>
@@ -160,12 +160,12 @@ test.describe('Instance Child Resources Tab', () => {
   })
 
   test('shows Resources tab on instance detail page', async ({ page }) => {
-    await page.goto('/instances/default/TestPodPair/demo-app')
+    await page.goto('/instances/group/kro.run/ns/default/TestPodPair/demo-app')
     await expect(page.getByRole('tab', { name: /Resources/ })).toBeVisible()
   })
 
   test('displays child resource groups when Resources tab clicked', async ({ page }) => {
-    await page.goto('/instances/default/TestPodPair/demo-app')
+    await page.goto('/instances/group/kro.run/ns/default/TestPodPair/demo-app')
 
     // Click Resources tab
     await page.getByRole('tab', { name: /Resources/ }).click()
@@ -176,7 +176,7 @@ test.describe('Instance Child Resources Tab', () => {
   })
 
   test('shows ready count per group', async ({ page }) => {
-    await page.goto('/instances/default/TestPodPair/demo-app')
+    await page.goto('/instances/group/kro.run/ns/default/TestPodPair/demo-app')
     await page.getByRole('tab', { name: /Resources/ }).click()
 
     await expect(page.getByText('2/2 ready')).toBeVisible()
@@ -184,7 +184,7 @@ test.describe('Instance Child Resources Tab', () => {
   })
 
   test('expands group to show individual resources', async ({ page }) => {
-    await page.goto('/instances/default/TestPodPair/demo-app')
+    await page.goto('/instances/group/kro.run/ns/default/TestPodPair/demo-app')
     await page.getByRole('tab', { name: /Resources/ }).click()
 
     // Click frontend group to expand
@@ -197,11 +197,11 @@ test.describe('Instance Child Resources Tab', () => {
 
   test('shows empty state when no children', async ({ page }) => {
     // Override children route with empty response
-    await page.route(`**/api/v1/namespaces/default/instances/TestPodPair/demo-app/children`, route =>
+    await page.route(`**/api/v1/apigroups/*/namespaces/default/instances/TestPodPair/demo-app/children`, route =>
       route.fulfill({ json: { ...mockChildrenResponse, totalCount: 0, groups: [] } })
     )
 
-    await page.goto('/instances/default/TestPodPair/demo-app')
+    await page.goto('/instances/group/kro.run/ns/default/TestPodPair/demo-app')
     await page.getByRole('tab', { name: /Resources/ }).click()
 
     await expect(page.getByText('No child resources found for this instance.')).toBeVisible()

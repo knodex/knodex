@@ -146,9 +146,10 @@ test.describe('Deploy Wizard Flow', () => {
     await expect(deployBtn).toBeVisible({ timeout: 15000 })
     await deployBtn.click()
 
-    // Wizard should open with Target step
-    await expect(page.getByTestId('target-step')).toBeVisible({ timeout: 15000 })
-    await expect(page.getByPlaceholder('my-instance')).toBeVisible()
+    // Deploy page should open with Basics tab
+    await page.waitForURL(/\/deploy\//, { timeout: 10000 })
+    await expect(page.getByTestId('deploy-tab-basics')).toBeVisible({ timeout: 15000 })
+    await expect(page.getByTestId('instance-name-input')).toBeVisible()
     await expect(page.getByTestId('project-select')).toBeVisible()
   })
 
@@ -167,17 +168,17 @@ test.describe('Deploy Wizard Flow', () => {
     await expect(deployBtn).toBeVisible({ timeout: 15000 })
     await deployBtn.click()
 
-    // Fill Target step
-    await expect(page.getByTestId('target-step')).toBeVisible({ timeout: 15000 })
-    await page.getByPlaceholder('my-instance').fill('test-instance')
+    // Fill Basics tab
+    await page.waitForURL(/\/deploy\//, { timeout: 10000 })
+    await expect(page.getByTestId('deploy-tab-basics')).toBeVisible({ timeout: 15000 })
+    await page.getByTestId('instance-name-input').fill('test-instance')
     const nsSelect = page.getByTestId('namespace-select')
     await expect(nsSelect).toBeEnabled({ timeout: 5000 })
-    await nsSelect.click()
-    await page.getByRole('option', { name: 'default' }).click()
+    await nsSelect.selectOption('default')
 
     // Advance to Configure step
-    await page.getByRole('button', { name: /continue/i }).click()
-    await expect(page.getByTestId('configure-step')).toBeVisible({ timeout: 15000 })
+    await page.getByTestId('deploy-footer-next').click()
+    await expect(page.getByTestId('deploy-tab-general')).toHaveAttribute('data-state', 'active')
   })
 
   test('Continue button disabled when Target step is incomplete', async ({ page }) => {
@@ -195,13 +196,16 @@ test.describe('Deploy Wizard Flow', () => {
     await expect(deployBtn).toBeVisible({ timeout: 15000 })
     await deployBtn.click()
 
-    // Target step with empty fields - Continue should be disabled
-    await expect(page.getByTestId('target-step')).toBeVisible({ timeout: 15000 })
-    const continueBtn = page.getByRole('button', { name: /continue/i })
-    await expect(continueBtn).toBeDisabled()
+    // Basics tab with empty fields — Next stays enabled but RHF validation
+    // on click keeps the user on Basics until required fields are filled.
+    await page.waitForURL(/\/deploy\//, { timeout: 10000 })
+    await expect(page.getByTestId('deploy-tab-basics')).toBeVisible({ timeout: 15000 })
+    await expect(page.getByTestId('deploy-tab-basics')).toHaveAttribute('data-state', 'active')
+    await page.getByTestId('deploy-footer-next').click()
+    await expect(page.getByTestId('deploy-tab-basics')).toHaveAttribute('data-state', 'active')
   })
 
-  test('deploy wizard Cancel button closes modal', async ({ page }) => {
+  test('deploy page close button returns to catalog', async ({ page }) => {
     const rgd = createMockRGD('unrestricted-rgd', undefined)
     await setupCommonMocks(page, rgd)
 
@@ -216,13 +220,13 @@ test.describe('Deploy Wizard Flow', () => {
     await expect(deployBtn).toBeVisible({ timeout: 15000 })
     await deployBtn.click()
 
-    await expect(page.getByTestId('target-step')).toBeVisible({ timeout: 15000 })
+    await page.waitForURL(/\/deploy\//, { timeout: 10000 })
+    await expect(page.getByTestId('deploy-tab-basics')).toBeVisible({ timeout: 15000 })
 
-    // Click Cancel
-    await page.getByRole('button', { name: /cancel/i }).click()
+    await page.getByTestId('deploy-header-close').click()
 
-    // Modal should close - target step should no longer be visible
-    await expect(page.getByTestId('target-step')).not.toBeVisible({ timeout: 5000 })
+    // Should navigate away from the deploy page
+    await expect(page).not.toHaveURL(/\/deploy\//, { timeout: 5000 })
   })
 
   test('deploy wizard shows namespace select after project selection', async ({ page }) => {
@@ -240,7 +244,8 @@ test.describe('Deploy Wizard Flow', () => {
     await expect(deployBtn).toBeVisible({ timeout: 15000 })
     await deployBtn.click()
 
-    await expect(page.getByTestId('target-step')).toBeVisible({ timeout: 15000 })
+    await page.waitForURL(/\/deploy\//, { timeout: 10000 })
+    await expect(page.getByTestId('deploy-tab-basics')).toBeVisible({ timeout: 15000 })
 
     // Project auto-selects when single project. Namespace select should be available.
     await expect(page.getByTestId('namespace-select')).toBeVisible()
@@ -261,10 +266,11 @@ test.describe('Deploy Wizard Flow', () => {
     await expect(deployBtn).toBeVisible({ timeout: 15000 })
     await deployBtn.click()
 
-    await expect(page.getByTestId('target-step')).toBeVisible({ timeout: 15000 })
+    await page.waitForURL(/\/deploy\//, { timeout: 10000 })
+    await expect(page.getByTestId('deploy-tab-basics')).toBeVisible({ timeout: 15000 })
 
     // Fill instance name with valid value
-    await page.getByPlaceholder('my-instance').fill('valid-name')
+    await page.getByTestId('instance-name-input').fill('valid-name')
     // Should not show validation error
     await expect(page.getByText(/must start and end with alphanumeric/i)).not.toBeVisible()
   })

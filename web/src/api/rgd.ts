@@ -188,46 +188,64 @@ export async function listInstances(params?: InstanceListParams): Promise<Instan
 
 /**
  * Build the K8s-aligned URL path for an instance.
- * Namespaced: /v1/namespaces/{ns}/instances/{kind}/{name}
- * Cluster-scoped: /v1/instances/{kind}/{name}
+ * GVK-aware: group is the outermost segment, mirroring kube-apiserver ordering.
+ *   Namespaced:     /v1/apigroups/{group}/namespaces/{ns}/instances/{kind}/{name}
+ *   Cluster-scoped: /v1/apigroups/{group}/instances/{kind}/{name}
  */
-export function instancePath(namespace: string, kind: string, name: string): string {
+export function instancePath(
+  group: string,
+  namespace: string,
+  kind: string,
+  name: string,
+): string {
+  const encodedGroup = encodeURIComponent(group);
   const encodedKind = encodeURIComponent(kind);
   const encodedName = encodeURIComponent(name);
   if (namespace) {
-    return `/v1/namespaces/${encodeURIComponent(namespace)}/instances/${encodedKind}/${encodedName}`;
+    return `/v1/apigroups/${encodedGroup}/namespaces/${encodeURIComponent(namespace)}/instances/${encodedKind}/${encodedName}`;
   }
-  return `/v1/instances/${encodedKind}/${encodedName}`;
+  return `/v1/apigroups/${encodedGroup}/instances/${encodedKind}/${encodedName}`;
 }
 
 /**
- * Get a single instance by namespace, kind, and name
+ * Get a single instance by group, namespace, kind, and name.
  */
-export async function getInstance(namespace: string, kind: string, name: string): Promise<Instance> {
-  const response = await apiClient.get<Instance>(instancePath(namespace, kind, name));
+export async function getInstance(
+  group: string,
+  namespace: string,
+  kind: string,
+  name: string,
+): Promise<Instance> {
+  const response = await apiClient.get<Instance>(instancePath(group, namespace, kind, name));
   validateInstanceNamespace(response.data);
   return response.data;
 }
 
 /**
- * Delete an instance by namespace, kind, and name
+ * Delete an instance by group, namespace, kind, and name.
  */
-export async function deleteInstance(namespace: string, kind: string, name: string): Promise<void> {
-  await apiClient.delete(instancePath(namespace, kind, name));
-}
-
-/**
- * Update the spec of an existing instance
- */
-export async function updateInstanceSpec(
+export async function deleteInstance(
+  group: string,
   namespace: string,
   kind: string,
   name: string,
-  request: UpdateInstanceRequest
+): Promise<void> {
+  await apiClient.delete(instancePath(group, namespace, kind, name));
+}
+
+/**
+ * Update the spec of an existing instance.
+ */
+export async function updateInstanceSpec(
+  group: string,
+  namespace: string,
+  kind: string,
+  name: string,
+  request: UpdateInstanceRequest,
 ): Promise<UpdateInstanceResponse> {
   const response = await apiClient.patch<UpdateInstanceResponse>(
-    instancePath(namespace, kind, name),
-    request
+    instancePath(group, namespace, kind, name),
+    request,
   );
   return response.data;
 }
@@ -247,16 +265,19 @@ export async function listRGDInstances(
 
 /**
  * Create a new instance of an RGD.
- * Uses K8s-aligned path: /v1/namespaces/{ns}/instances/{kind} or /v1/instances/{kind}
+ * Uses GVK-aware path: /v1/apigroups/{group}/namespaces/{ns}/instances/{kind}
+ *                  or  /v1/apigroups/{group}/instances/{kind}
  */
 export async function createInstance(
+  group: string,
   kind: string,
-  request: CreateInstanceRequest
+  request: CreateInstanceRequest,
 ): Promise<CreateInstanceResponse> {
+  const encodedGroup = encodeURIComponent(group);
   const encodedKind = encodeURIComponent(kind);
   const url = request.namespace
-    ? `/v1/namespaces/${encodeURIComponent(request.namespace)}/instances/${encodedKind}`
-    : `/v1/instances/${encodedKind}`;
+    ? `/v1/apigroups/${encodedGroup}/namespaces/${encodeURIComponent(request.namespace)}/instances/${encodedKind}`
+    : `/v1/apigroups/${encodedGroup}/instances/${encodedKind}`;
   const response = await apiClient.post<CreateInstanceResponse>(url, request);
   return response.data;
 }
@@ -271,13 +292,15 @@ export interface PreflightResponse {
  * Catches admission webhook violations (e.g. Gatekeeper) on the KRO instance resource.
  */
 export async function preflightInstance(
+  group: string,
   kind: string,
-  request: CreateInstanceRequest
+  request: CreateInstanceRequest,
 ): Promise<PreflightResponse> {
+  const encodedGroup = encodeURIComponent(group);
   const encodedKind = encodeURIComponent(kind);
   const url = request.namespace
-    ? `/v1/namespaces/${encodeURIComponent(request.namespace)}/instances/${encodedKind}/preflight`
-    : `/v1/instances/${encodedKind}/preflight`;
+    ? `/v1/apigroups/${encodedGroup}/namespaces/${encodeURIComponent(request.namespace)}/instances/${encodedKind}/preflight`
+    : `/v1/apigroups/${encodedGroup}/instances/${encodedKind}/preflight`;
   const response = await apiClient.post<PreflightResponse>(url, request);
   return response.data;
 }
@@ -369,12 +392,13 @@ export async function getRGDRevisionDiff(
  * Uses KRO labels to discover all resources created by the instance.
  */
 export async function getInstanceChildren(
+  group: string,
   namespace: string,
   kind: string,
   name: string,
 ): Promise<ChildResourceResponse> {
   const response = await apiClient.get<ChildResourceResponse>(
-    `${instancePath(namespace, kind, name)}/children`,
+    `${instancePath(group, namespace, kind, name)}/children`,
   );
   return response.data;
 }

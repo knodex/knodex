@@ -39,13 +39,13 @@ func TestRecordEvent(t *testing.T) {
 		Message:        "Test event",
 	}
 
-	err := svc.RecordEvent(ctx, "test-ns", "TestKind", "test-instance", event)
+	err := svc.RecordEvent(ctx, "kro.run", "test-ns", "TestKind", "test-instance", event)
 	if err != nil {
 		t.Fatalf("RecordEvent failed: %v", err)
 	}
 
 	// Retrieve history
-	history, err := svc.GetHistory(ctx, "test-ns", "TestKind", "test-instance")
+	history, err := svc.GetHistory(ctx, "kro.run", "test-ns", "TestKind", "test-instance")
 	if err != nil {
 		t.Fatalf("GetHistory failed: %v", err)
 	}
@@ -73,12 +73,12 @@ func TestRecordCreation(t *testing.T) {
 	svc := NewService(nil)
 	ctx := context.Background()
 
-	err := svc.RecordCreation(ctx, "test-ns", "TestKind", "test-instance", "test-rgd", "test-user@example.com", models.DeploymentModeDirect)
+	err := svc.RecordCreation(ctx, "kro.run", "test-ns", "TestKind", "test-instance", "test-rgd", "test-user@example.com", models.DeploymentModeDirect)
 	if err != nil {
 		t.Fatalf("RecordCreation failed: %v", err)
 	}
 
-	history, err := svc.GetHistory(ctx, "test-ns", "TestKind", "test-instance")
+	history, err := svc.GetHistory(ctx, "kro.run", "test-ns", "TestKind", "test-instance")
 	if err != nil {
 		t.Fatalf("GetHistory failed: %v", err)
 	}
@@ -107,18 +107,18 @@ func TestRecordStatusChange(t *testing.T) {
 	ctx := context.Background()
 
 	// Create instance first
-	err := svc.RecordCreation(ctx, "test-ns", "TestKind", "test-instance", "test-rgd", "test-user", models.DeploymentModeDirect)
+	err := svc.RecordCreation(ctx, "kro.run", "test-ns", "TestKind", "test-instance", "test-rgd", "test-user", models.DeploymentModeDirect)
 	if err != nil {
 		t.Fatalf("RecordCreation failed: %v", err)
 	}
 
 	// Record status change
-	err = svc.RecordStatusChange(ctx, "test-ns", "TestKind", "test-instance", "Pending", "Ready")
+	err = svc.RecordStatusChange(ctx, "kro.run", "test-ns", "TestKind", "test-instance", "Pending", "Ready")
 	if err != nil {
 		t.Fatalf("RecordStatusChange failed: %v", err)
 	}
 
-	history, err := svc.GetHistory(ctx, "test-ns", "TestKind", "test-instance")
+	history, err := svc.GetHistory(ctx, "kro.run", "test-ns", "TestKind", "test-instance")
 	if err != nil {
 		t.Fatalf("GetHistory failed: %v", err)
 	}
@@ -146,25 +146,25 @@ func TestRecordDeletion(t *testing.T) {
 	ctx := context.Background()
 
 	// Create instance first
-	err := svc.RecordCreation(ctx, "test-ns", "TestKind", "test-instance", "test-rgd", "test-user", models.DeploymentModeDirect)
+	err := svc.RecordCreation(ctx, "kro.run", "test-ns", "TestKind", "test-instance", "test-rgd", "test-user", models.DeploymentModeDirect)
 	if err != nil {
 		t.Fatalf("RecordCreation failed: %v", err)
 	}
 
 	// Delete instance
-	err = svc.RecordDeletion(ctx, "test-ns", "TestKind", "test-instance", "admin-user")
+	err = svc.RecordDeletion(ctx, "kro.run", "test-ns", "TestKind", "test-instance", "admin-user")
 	if err != nil {
 		t.Fatalf("RecordDeletion failed: %v", err)
 	}
 
 	// Original history should be gone
-	_, err = svc.GetHistory(ctx, "test-ns", "TestKind", "test-instance")
+	_, err = svc.GetHistory(ctx, "kro.run", "test-ns", "TestKind", "test-instance")
 	if err == nil {
 		t.Error("expected error getting history after deletion")
 	}
 
 	// Deleted history should be available
-	deletedHistory, err := svc.GetDeletedHistory(ctx, "test-ns/TestKind/test-instance")
+	deletedHistory, err := svc.GetDeletedHistory(ctx, "kro.run/test-ns/TestKind/test-instance")
 	if err != nil {
 		t.Fatalf("GetDeletedHistory failed: %v", err)
 	}
@@ -190,7 +190,7 @@ func TestRecordDeletion_CleansUpKeyWhenHistoryMissing(t *testing.T) {
 	ctx := context.Background()
 
 	// Manually insert a key into the in-memory cache to simulate an orphaned key
-	key := historyKey("orphan-ns", "OrphanKind", "orphan-instance")
+	key := historyKey("kro.run", "orphan-ns", "OrphanKind", "orphan-instance")
 	svc.mu.Lock()
 	svc.inMemoryCache[key] = &models.DeploymentHistory{
 		InstanceID:   "orphan-ns/OrphanKind/orphan-instance",
@@ -222,13 +222,13 @@ func TestRecordDeletion_CleansUpKeyWhenHistoryMissing(t *testing.T) {
 
 	// RecordDeletion should succeed even though it creates proper history
 	// The important thing is: after RecordDeletion the active key is removed
-	err := svc.RecordDeletion(ctx, "orphan-ns", "OrphanKind", "orphan-instance", "admin")
+	err := svc.RecordDeletion(ctx, "kro.run", "orphan-ns", "OrphanKind", "orphan-instance", "admin")
 	if err != nil {
 		t.Fatalf("RecordDeletion failed: %v", err)
 	}
 
 	// Active key should be cleaned up
-	_, err = svc.GetHistory(ctx, "orphan-ns", "OrphanKind", "orphan-instance")
+	_, err = svc.GetHistory(ctx, "kro.run", "orphan-ns", "OrphanKind", "orphan-instance")
 	if err == nil {
 		t.Error("expected active history key to be cleaned up after deletion")
 	}
@@ -242,13 +242,13 @@ func TestRecordDeletion_NoHistory_CleansActiveKey(t *testing.T) {
 
 	// Call RecordDeletion for an instance that never had history recorded.
 	// This should not error and should still attempt to clean up any active key.
-	err := svc.RecordDeletion(ctx, "no-history-ns", "SomeKind", "no-history-instance", "admin")
+	err := svc.RecordDeletion(ctx, "kro.run", "no-history-ns", "SomeKind", "no-history-instance", "admin")
 	if err != nil {
 		t.Fatalf("RecordDeletion should not fail for missing history: %v", err)
 	}
 
 	// Verify the active key does not exist (it shouldn't have been created)
-	_, err = svc.GetHistory(ctx, "no-history-ns", "SomeKind", "no-history-instance")
+	_, err = svc.GetHistory(ctx, "kro.run", "no-history-ns", "SomeKind", "no-history-instance")
 	if err == nil {
 		t.Error("expected no active history to exist")
 	}
@@ -261,12 +261,12 @@ func TestGetTimeline(t *testing.T) {
 	ctx := context.Background()
 
 	// Create instance with multiple events
-	err := svc.RecordCreation(ctx, "test-ns", "TestKind", "test-instance", "test-rgd", "test-user", models.DeploymentModeGitOps)
+	err := svc.RecordCreation(ctx, "kro.run", "test-ns", "TestKind", "test-instance", "test-rgd", "test-user", models.DeploymentModeGitOps)
 	if err != nil {
 		t.Fatalf("RecordCreation failed: %v", err)
 	}
 
-	err = svc.RecordEvent(ctx, "test-ns", "TestKind", "test-instance", models.DeploymentEvent{
+	err = svc.RecordEvent(ctx, "kro.run", "test-ns", "TestKind", "test-instance", models.DeploymentEvent{
 		EventType:     models.EventTypePushedToGit,
 		Status:        "PushedToGit",
 		User:          "test-user",
@@ -279,12 +279,12 @@ func TestGetTimeline(t *testing.T) {
 		t.Fatalf("RecordEvent failed: %v", err)
 	}
 
-	err = svc.RecordStatusChange(ctx, "test-ns", "TestKind", "test-instance", "PushedToGit", "Ready")
+	err = svc.RecordStatusChange(ctx, "kro.run", "test-ns", "TestKind", "test-instance", "PushedToGit", "Ready")
 	if err != nil {
 		t.Fatalf("RecordStatusChange failed: %v", err)
 	}
 
-	timeline, err := svc.GetTimeline(ctx, "test-ns", "TestKind", "test-instance")
+	timeline, err := svc.GetTimeline(ctx, "kro.run", "test-ns", "TestKind", "test-instance")
 	if err != nil {
 		t.Fatalf("GetTimeline failed: %v", err)
 	}
@@ -317,7 +317,7 @@ func TestMaxEventsPerInstance(t *testing.T) {
 	ctx := context.Background()
 
 	// Create instance
-	err := svc.RecordCreation(ctx, "test-ns", "TestKind", "test-instance", "test-rgd", "test-user", models.DeploymentModeDirect)
+	err := svc.RecordCreation(ctx, "kro.run", "test-ns", "TestKind", "test-instance", "test-rgd", "test-user", models.DeploymentModeDirect)
 	if err != nil {
 		t.Fatalf("RecordCreation failed: %v", err)
 	}
@@ -329,13 +329,13 @@ func TestMaxEventsPerInstance(t *testing.T) {
 			Status:    "Status" + string(rune(i%10)),
 			Message:   "Event " + string(rune(i)),
 		}
-		err := svc.RecordEvent(ctx, "test-ns", "TestKind", "test-instance", event)
+		err := svc.RecordEvent(ctx, "kro.run", "test-ns", "TestKind", "test-instance", event)
 		if err != nil {
 			t.Fatalf("RecordEvent failed at iteration %d: %v", i, err)
 		}
 	}
 
-	history, err := svc.GetHistory(ctx, "test-ns", "TestKind", "test-instance")
+	history, err := svc.GetHistory(ctx, "kro.run", "test-ns", "TestKind", "test-instance")
 	if err != nil {
 		t.Fatalf("GetHistory failed: %v", err)
 	}
@@ -353,14 +353,15 @@ func TestCreateHistoryFromInstance(t *testing.T) {
 	ctx := context.Background()
 
 	instance := &models.Instance{
-		UID:       "test-uid-123",
-		Name:      "test-instance",
-		Namespace: "test-ns",
-		Kind:      "TestKind",
-		RGDName:   "test-rgd",
-		Health:    models.HealthHealthy,
-		CreatedAt: time.Now().Add(-1 * time.Hour),
-		UpdatedAt: time.Now(),
+		UID:        "test-uid-123",
+		Name:       "test-instance",
+		Namespace:  "test-ns",
+		Kind:       "TestKind",
+		APIVersion: "kro.run/v1alpha1",
+		RGDName:    "test-rgd",
+		Health:     models.HealthHealthy,
+		CreatedAt:  time.Now().Add(-1 * time.Hour),
+		UpdatedAt:  time.Now(),
 	}
 
 	err := svc.CreateHistoryFromInstance(ctx, instance, "migration-user")
@@ -368,7 +369,7 @@ func TestCreateHistoryFromInstance(t *testing.T) {
 		t.Fatalf("CreateHistoryFromInstance failed: %v", err)
 	}
 
-	history, err := svc.GetHistory(ctx, "test-ns", "TestKind", "test-instance")
+	history, err := svc.GetHistory(ctx, "kro.run", "test-ns", "TestKind", "test-instance")
 	if err != nil {
 		t.Fatalf("GetHistory failed: %v", err)
 	}
@@ -393,7 +394,7 @@ func TestEventsSortedByTimestamp(t *testing.T) {
 	ctx := context.Background()
 
 	// Create history first
-	err := svc.RecordCreation(ctx, "test-ns", "TestKind", "test-instance", "test-rgd", "test-user", models.DeploymentModeDirect)
+	err := svc.RecordCreation(ctx, "kro.run", "test-ns", "TestKind", "test-instance", "test-rgd", "test-user", models.DeploymentModeDirect)
 	if err != nil {
 		t.Fatalf("RecordCreation failed: %v", err)
 	}
@@ -416,13 +417,13 @@ func TestEventsSortedByTimestamp(t *testing.T) {
 	}
 
 	for _, e := range events {
-		err := svc.RecordEvent(ctx, "test-ns", "TestKind", "test-instance", e)
+		err := svc.RecordEvent(ctx, "kro.run", "test-ns", "TestKind", "test-instance", e)
 		if err != nil {
 			t.Fatalf("RecordEvent failed: %v", err)
 		}
 	}
 
-	history, err := svc.GetHistory(ctx, "test-ns", "TestKind", "test-instance")
+	history, err := svc.GetHistory(ctx, "kro.run", "test-ns", "TestKind", "test-instance")
 	if err != nil {
 		t.Fatalf("GetHistory failed: %v", err)
 	}
@@ -483,15 +484,15 @@ func TestGetFilteredTimeline(t *testing.T) {
 	}
 
 	// Create history first
-	_ = svc.RecordCreation(ctx, "test-ns", "TestKind", "test-instance", "test-rgd", "test-user", models.DeploymentModeDirect)
+	_ = svc.RecordCreation(ctx, "kro.run", "test-ns", "TestKind", "test-instance", "test-rgd", "test-user", models.DeploymentModeDirect)
 
 	// Record the mixed events
 	for _, e := range events {
-		_ = svc.RecordEvent(ctx, "test-ns", "TestKind", "test-instance", e)
+		_ = svc.RecordEvent(ctx, "kro.run", "test-ns", "TestKind", "test-instance", e)
 	}
 
 	t.Run("empty source returns all events", func(t *testing.T) {
-		timeline, err := svc.GetFilteredTimeline(ctx, "test-ns", "TestKind", "test-instance", "")
+		timeline, err := svc.GetFilteredTimeline(ctx, "kro.run", "test-ns", "TestKind", "test-instance", "")
 		if err != nil {
 			t.Fatalf("GetFilteredTimeline failed: %v", err)
 		}
@@ -501,7 +502,7 @@ func TestGetFilteredTimeline(t *testing.T) {
 	})
 
 	t.Run("source=kubernetes returns only K8s events", func(t *testing.T) {
-		timeline, err := svc.GetFilteredTimeline(ctx, "test-ns", "TestKind", "test-instance", "kubernetes")
+		timeline, err := svc.GetFilteredTimeline(ctx, "kro.run", "test-ns", "TestKind", "test-instance", "kubernetes")
 		if err != nil {
 			t.Fatalf("GetFilteredTimeline failed: %v", err)
 		}
@@ -519,7 +520,7 @@ func TestGetFilteredTimeline(t *testing.T) {
 	})
 
 	t.Run("source=deployment returns only deployment events", func(t *testing.T) {
-		timeline, err := svc.GetFilteredTimeline(ctx, "test-ns", "TestKind", "test-instance", "deployment")
+		timeline, err := svc.GetFilteredTimeline(ctx, "kro.run", "test-ns", "TestKind", "test-instance", "deployment")
 		if err != nil {
 			t.Fatalf("GetFilteredTimeline failed: %v", err)
 		}
@@ -532,7 +533,7 @@ func TestGetFilteredTimeline(t *testing.T) {
 	})
 
 	t.Run("unknown source returns nil", func(t *testing.T) {
-		timeline, err := svc.GetFilteredTimeline(ctx, "test-ns", "TestKind", "test-instance", "unknown")
+		timeline, err := svc.GetFilteredTimeline(ctx, "kro.run", "test-ns", "TestKind", "test-instance", "unknown")
 		if err != nil {
 			t.Fatalf("GetFilteredTimeline failed: %v", err)
 		}
@@ -542,7 +543,7 @@ func TestGetFilteredTimeline(t *testing.T) {
 	})
 
 	t.Run("non-existent instance returns error", func(t *testing.T) {
-		_, err := svc.GetFilteredTimeline(ctx, "test-ns", "TestKind", "non-existent", "kubernetes")
+		_, err := svc.GetFilteredTimeline(ctx, "kro.run", "test-ns", "TestKind", "non-existent", "kubernetes")
 		if err == nil {
 			t.Error("expected error for non-existent instance")
 		}

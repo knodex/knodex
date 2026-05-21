@@ -296,7 +296,7 @@ func nsScopedDeploy(t *testing.T, token, namespace string) int {
 		"spec":      map[string]interface{}{},
 	}
 	// Use K8s-aligned route: POST /api/v1/namespaces/{ns}/instances/{kind}
-	path := fmt.Sprintf("/api/v1/namespaces/%s/instances/SimpleWebApp", namespace)
+	path := fmt.Sprintf("/api/v1/apigroups/kro.run/namespaces/%s/instances/SimpleWebApp", namespace)
 	resp, err := makeAuthenticatedRequest("POST", path, token, body)
 	require.NoError(t, err, "HTTP request should not fail")
 	defer resp.Body.Close()
@@ -724,7 +724,7 @@ func TestE2E_NsScoped_BackwardCompat_NoDestinations_ProjectWide(t *testing.T) {
 			"rgdName":   "test-rgd",
 			"spec":      map[string]interface{}{},
 		}
-		path := fmt.Sprintf("/api/v1/namespaces/%s/instances/TestKind", ns)
+		path := fmt.Sprintf("/api/v1/apigroups/kro.run/namespaces/%s/instances/TestKind", ns)
 		resp, err := makeAuthenticatedRequest("POST", path, userToken, body)
 		require.NoError(t, err)
 		resp.Body.Close()
@@ -744,7 +744,7 @@ func TestE2E_NsScoped_BackwardCompat_NoDestinations_ProjectWide(t *testing.T) {
 // and then resolveNamespaceToProjectObject converts to instances/{project}/{ns}/{kind}/{name}.
 func nsScopedInstanceGet(t *testing.T, token, namespace, kind, name string) int {
 	t.Helper()
-	path := fmt.Sprintf("/api/v1/namespaces/%s/instances/%s/%s", namespace, kind, name)
+	path := fmt.Sprintf("/api/v1/apigroups/kro.run/namespaces/%s/instances/%s/%s", namespace, kind, name)
 	resp, err := makeAuthenticatedRequest("GET", path, token, nil)
 	require.NoError(t, err, "HTTP request should not fail")
 	defer resp.Body.Close()
@@ -802,7 +802,7 @@ func TestE2E_NsScoped_InstanceGet_Viewer_AllowedProjectWide(t *testing.T) {
 
 func nsScopedInstanceUpdate(t *testing.T, token, namespace, kind, name string) int {
 	t.Helper()
-	path := fmt.Sprintf("/api/v1/namespaces/%s/instances/%s/%s", namespace, kind, name)
+	path := fmt.Sprintf("/api/v1/apigroups/kro.run/namespaces/%s/instances/%s/%s", namespace, kind, name)
 	body := map[string]interface{}{
 		"spec": map[string]interface{}{"replicas": 2},
 	}
@@ -859,7 +859,7 @@ func TestE2E_NsScoped_InstanceUpdate_ScopedAdmin_DeniedOutsideDestination(t *tes
 
 func nsScopedInstanceDelete(t *testing.T, token, namespace, kind, name string) int {
 	t.Helper()
-	path := fmt.Sprintf("/api/v1/namespaces/%s/instances/%s/%s", namespace, kind, name)
+	path := fmt.Sprintf("/api/v1/apigroups/kro.run/namespaces/%s/instances/%s/%s", namespace, kind, name)
 	resp, err := makeAuthenticatedRequest("DELETE", path, token, nil)
 	require.NoError(t, err, "HTTP request should not fail")
 	defer resp.Body.Close()
@@ -949,7 +949,7 @@ func TestE2E_NsScoped_InstanceSubresource_PlatformOp_AllowedInDestination(t *tes
 
 	subresources := []string{"graph", "children", "events"}
 	for _, sub := range subresources {
-		path := fmt.Sprintf("/api/v1/namespaces/%s/instances/WebApp/test-app/%s", nsScopedNsPlatform, sub)
+		path := fmt.Sprintf("/api/v1/apigroups/kro.run/namespaces/%s/instances/WebApp/test-app/%s", nsScopedNsPlatform, sub)
 		resp, err := makeAuthenticatedRequest("GET", path, token, nil)
 		require.NoError(t, err)
 		resp.Body.Close()
@@ -965,7 +965,7 @@ func TestE2E_NsScoped_InstanceSubresource_PlatformOp_DeniedOutsideDestination(t 
 
 	subresources := []string{"graph", "children", "events"}
 	for _, sub := range subresources {
-		path := fmt.Sprintf("/api/v1/namespaces/%s/instances/WebApp/test-app/%s", nsScopedNsApp, sub)
+		path := fmt.Sprintf("/api/v1/apigroups/kro.run/namespaces/%s/instances/WebApp/test-app/%s", nsScopedNsApp, sub)
 		resp, err := makeAuthenticatedRequest("GET", path, token, nil)
 		require.NoError(t, err)
 		resp.Body.Close()

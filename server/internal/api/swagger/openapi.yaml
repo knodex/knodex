@@ -578,19 +578,21 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
-  /api/v1/namespaces/{namespace}/instances/{kind}:
+  /api/v1/apigroups/{group}/namespaces/{namespace}/instances/{kind}:
     post:
       summary: Deploy a new namespaced instance
       description: |
         Creates a new namespaced instance of an RGD. Supports direct, GitOps, and hybrid
         deployment modes. Protected by DeploymentValidator middleware that checks
         project existence, user deploy permission, and destination policies.
-        Namespace is taken from the URL path. Kind must match the RGD's CRD Kind.
+        Namespace and apiGroup are taken from the URL path. Kind must match the RGD's
+        CRD Kind and group must match the RGD's apiGroup.
       tags: [instances]
       operationId: createNamespacedInstance
       security:
         - bearerAuth: []
       parameters:
+        - $ref: '#/components/parameters/InstanceGroup'
         - $ref: '#/components/parameters/InstanceNamespace'
         - $ref: '#/components/parameters/InstanceKind'
       requestBody:
@@ -625,19 +627,21 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
-  /api/v1/instances/{kind}:
+  /api/v1/apigroups/{group}/instances/{kind}:
     post:
       summary: Deploy a new cluster-scoped instance
       description: |
         Creates a new cluster-scoped instance of an RGD. Supports direct, GitOps, and hybrid
         deployment modes. Protected by DeploymentValidator middleware that checks
         project existence, user deploy permission, and destination policies.
-        Kind must match the RGD's CRD Kind. No namespace segment (cluster-scoped).
+        Kind must match the RGD's CRD Kind and group must match the RGD's apiGroup.
+        No namespace segment (cluster-scoped).
       tags: [instances]
       operationId: createClusterScopedInstance
       security:
         - bearerAuth: []
       parameters:
+        - $ref: '#/components/parameters/InstanceGroup'
         - $ref: '#/components/parameters/InstanceKind'
       requestBody:
         required: true
@@ -690,7 +694,7 @@ paths:
                   count:
                     type: integer
 
-  /api/v1/instances/{kind}/{name}:
+  /api/v1/apigroups/{group}/instances/{kind}/{name}:
     get:
       summary: Get cluster-scoped instance details
       description: Returns details for a specific cluster-scoped instance (no namespace).
@@ -699,6 +703,7 @@ paths:
       security:
         - bearerAuth: []
       parameters:
+        - $ref: '#/components/parameters/InstanceGroup'
         - $ref: '#/components/parameters/InstanceKind'
         - $ref: '#/components/parameters/InstanceName'
       responses:
@@ -718,6 +723,7 @@ paths:
       security:
         - bearerAuth: []
       parameters:
+        - $ref: '#/components/parameters/InstanceGroup'
         - $ref: '#/components/parameters/InstanceKind'
         - $ref: '#/components/parameters/InstanceName'
       requestBody:
@@ -739,6 +745,7 @@ paths:
       security:
         - bearerAuth: []
       parameters:
+        - $ref: '#/components/parameters/InstanceGroup'
         - $ref: '#/components/parameters/InstanceKind'
         - $ref: '#/components/parameters/InstanceName'
       responses:
@@ -757,7 +764,7 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
-  /api/v1/namespaces/{namespace}/instances/{kind}/{name}:
+  /api/v1/apigroups/{group}/namespaces/{namespace}/instances/{kind}/{name}:
     get:
       summary: Get instance details
       description: Returns details for a specific instance.
@@ -766,6 +773,7 @@ paths:
       security:
         - bearerAuth: []
       parameters:
+        - $ref: '#/components/parameters/InstanceGroup'
         - $ref: '#/components/parameters/InstanceNamespace'
         - $ref: '#/components/parameters/InstanceKind'
         - $ref: '#/components/parameters/InstanceName'
@@ -786,6 +794,7 @@ paths:
       security:
         - bearerAuth: []
       parameters:
+        - $ref: '#/components/parameters/InstanceGroup'
         - $ref: '#/components/parameters/InstanceNamespace'
         - $ref: '#/components/parameters/InstanceKind'
         - $ref: '#/components/parameters/InstanceName'
@@ -858,7 +867,7 @@ paths:
   # -------------------------------------------------------------------------
   # Deployment History
   # -------------------------------------------------------------------------
-  /api/v1/namespaces/{namespace}/instances/{kind}/{name}/history:
+  /api/v1/apigroups/{group}/namespaces/{namespace}/instances/{kind}/{name}/history:
     get:
       summary: Get deployment history
       description: Returns the deployment history for an instance.
@@ -867,6 +876,7 @@ paths:
       security:
         - bearerAuth: []
       parameters:
+        - $ref: '#/components/parameters/InstanceGroup'
         - $ref: '#/components/parameters/InstanceNamespace'
         - $ref: '#/components/parameters/InstanceKind'
         - $ref: '#/components/parameters/InstanceName'
@@ -880,7 +890,7 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
-  /api/v1/namespaces/{namespace}/instances/{kind}/{name}/history/export:
+  /api/v1/apigroups/{group}/namespaces/{namespace}/instances/{kind}/{name}/history/export:
     get:
       summary: Export deployment history
       description: Exports deployment history in JSON or CSV format.
@@ -889,6 +899,7 @@ paths:
       security:
         - bearerAuth: []
       parameters:
+        - $ref: '#/components/parameters/InstanceGroup'
         - $ref: '#/components/parameters/InstanceNamespace'
         - $ref: '#/components/parameters/InstanceKind'
         - $ref: '#/components/parameters/InstanceName'
@@ -910,7 +921,7 @@ paths:
               schema:
                 type: string
 
-  /api/v1/namespaces/{namespace}/instances/{kind}/{name}/timeline:
+  /api/v1/apigroups/{group}/namespaces/{namespace}/instances/{kind}/{name}/timeline:
     get:
       summary: Get deployment timeline
       description: Returns a timeline view of deployment events for an instance.
@@ -919,6 +930,7 @@ paths:
       security:
         - bearerAuth: []
       parameters:
+        - $ref: '#/components/parameters/InstanceGroup'
         - $ref: '#/components/parameters/InstanceNamespace'
         - $ref: '#/components/parameters/InstanceKind'
         - $ref: '#/components/parameters/InstanceName'
@@ -930,7 +942,7 @@ paths:
               schema:
                 type: object
 
-  /api/v1/instances/{kind}/{name}/history:
+  /api/v1/apigroups/{group}/instances/{kind}/{name}/history:
     get:
       summary: Get cluster-scoped instance deployment history
       description: Returns the deployment history for a cluster-scoped instance.
@@ -939,6 +951,7 @@ paths:
       security:
         - bearerAuth: []
       parameters:
+        - $ref: '#/components/parameters/InstanceGroup'
         - $ref: '#/components/parameters/InstanceKind'
         - $ref: '#/components/parameters/InstanceName'
       responses:
@@ -951,7 +964,7 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
-  /api/v1/instances/{kind}/{name}/history/export:
+  /api/v1/apigroups/{group}/instances/{kind}/{name}/history/export:
     get:
       summary: Export cluster-scoped instance deployment history
       description: Exports deployment history for a cluster-scoped instance in JSON or CSV format.
@@ -960,6 +973,7 @@ paths:
       security:
         - bearerAuth: []
       parameters:
+        - $ref: '#/components/parameters/InstanceGroup'
         - $ref: '#/components/parameters/InstanceKind'
         - $ref: '#/components/parameters/InstanceName'
         - name: format
@@ -980,7 +994,7 @@ paths:
               schema:
                 type: string
 
-  /api/v1/instances/{kind}/{name}/timeline:
+  /api/v1/apigroups/{group}/instances/{kind}/{name}/timeline:
     get:
       summary: Get cluster-scoped instance deployment timeline
       description: Returns a timeline view of deployment events for a cluster-scoped instance.
@@ -989,6 +1003,7 @@ paths:
       security:
         - bearerAuth: []
       parameters:
+        - $ref: '#/components/parameters/InstanceGroup'
         - $ref: '#/components/parameters/InstanceKind'
         - $ref: '#/components/parameters/InstanceName'
       responses:
@@ -2478,6 +2493,15 @@ components:
       description: Instance namespace
       schema:
         type: string
+    InstanceGroup:
+      name: group
+      in: path
+      required: true
+      description: Kubernetes API group of the resource type (e.g., apps.example.com)
+      schema:
+        type: string
+        pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$'
+        maxLength: 253
     InstanceKind:
       name: kind
       in: path

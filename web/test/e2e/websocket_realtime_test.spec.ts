@@ -114,9 +114,11 @@ test.describe('Global Admin - WebSocket Real-Time Updates', () => {
           const namespace = instanceToUpdate.metadata?.namespace || instanceToUpdate.namespace;
           const kind = instanceToUpdate.kind;
           const instanceName = instanceToUpdate.metadata?.name || instanceToUpdate.name;
+          const apiVersion = instanceToUpdate.apiVersion || instanceToUpdate.metadata?.apiVersion || 'kro.run/v1alpha1';
+          const group = apiVersion.split('/')[0];
           const patchUrl = namespace
-            ? `${BASE_URL}/api/v1/namespaces/${namespace}/instances/${kind}/${instanceName}`
-            : `${BASE_URL}/api/v1/instances/${kind}/${instanceName}`;
+            ? `${BASE_URL}/api/v1/apigroups/${group}/namespaces/${namespace}/instances/${kind}/${instanceName}`
+            : `${BASE_URL}/api/v1/apigroups/${group}/instances/${kind}/${instanceName}`;
 
           console.log('Updating instance:', patchUrl);
 

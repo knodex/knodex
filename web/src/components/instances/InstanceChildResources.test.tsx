@@ -27,6 +27,7 @@ const renderWithProviders = (ui: React.ReactElement) => {
 };
 
 const defaultProps = {
+  group: 'kro.run',
   namespace: 'default',
   kind: 'TestPodPair',
   name: 'demo-app',
@@ -191,7 +192,7 @@ describe('InstanceChildResources', () => {
 
     renderWithProviders(<InstanceChildResources {...defaultProps} />);
 
-    expect(useInstanceChildren).toHaveBeenCalledWith('default', 'TestPodPair', 'demo-app');
+    expect(useInstanceChildren).toHaveBeenCalledWith('kro.run', 'default', 'TestPodPair', 'demo-app');
   });
 
   // --- STORY-421 Task 10: Cluster badge and unreachable banner tests ---

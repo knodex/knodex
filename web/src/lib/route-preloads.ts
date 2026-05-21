@@ -29,7 +29,7 @@ export const SecretsRoute = lazyWithPreload(() => import("@/routes/SecretsRoutes
 export const SecretDetailRoute = lazyWithPreload(() => import("@/routes/SecretsRoutes").then(m => ({ default: m.SecretDetailRoute })));
 export const CategoryPage = lazyWithPreload(() => import("@/components/categories/CategoryPage").then(m => ({ default: m.CategoryPage })));
 export const UserInfoPage = lazyWithPreload(() => import("@/components/account/UserInfoPage").then(m => ({ default: m.UserInfoPage })));
-export const DeployWizardRoute = lazyWithPreload(() => import("@/routes/DeployWizard"));
+export const DeployRoute = lazyWithPreload(() => import("@/routes/DeployRoute"));
 export const DeployDisabledRoute = lazyWithPreload(() => import("@/routes/DeployDisabled"));
 
 /** Route preload map — used by Sidebar to trigger chunk downloads on hover.

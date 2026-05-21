@@ -78,5 +78,17 @@ INFO  catalog package filter disabled (showing all packages)
 ```
 
 :::note[Multiple Packages]
-The filter currently supports a single package value. To expose RGDs from multiple packages, either leave the filter empty (show all) or run separate Knodex instances per package.
+`CATALOG_PACKAGE_FILTER` accepts a comma-separated list of package names. All listed packages are shown simultaneously:
+
+```yaml
+server:
+  config:
+    CATALOG_PACKAGE_FILTER: "platform-team,networking-team"
+```
 :::
+
+## Per-Package Category Configs
+
+`CATALOG_PACKAGE_FILTER` also controls which **category ordering ConfigMaps** are active. ConfigMaps labeled `knodex.io/package: <name>` are only loaded when that package is in the filter; unlabeled ConfigMaps (global scope) are always loaded.
+
+This lets each package ship its own sidebar category layout alongside its RGDs without requiring changes to a shared global ConfigMap. See [Category Ordering](../rgd-authoring/category-ordering.md) for the full configuration reference.

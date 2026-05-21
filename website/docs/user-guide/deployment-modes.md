@@ -22,17 +22,22 @@ Knodex supports three deployment modes that control how instance manifests are a
 
 ## Selecting a Deployment Mode
 
-When deploying an instance, select the deployment mode in the deployment form:
+Deployment mode is selected on the **Basics** tab of the deploy page:
 
 ```
 +--------------------------------------------------+
-| Deployment Mode                                   |
+| Basics                                            |
 +--------------------------------------------------+
+| Name       [ my-web-app-staging              ]    |
+| Namespace  [ select namespace...         v ]      |
+| Project    [ select project...           v ]      |
+|                                                   |
+| Deployment Mode                                   |
 |  (o) Direct    ( ) GitOps    ( ) Hybrid           |
 |                                                   |
-|  Repository:   [ select repository...       v ]   |
-|  Branch:       [ main                        ]    |
-|  Path:         [ manifests/                  ]    |
+|  Repository:   [ select repository...    v ]      |
+|  Branch:       [ main                    ]        |
+|  Path:         [ manifests/              ]        |
 +--------------------------------------------------+
 ```
 
@@ -52,9 +57,9 @@ The instance manifest is applied directly to the Kubernetes cluster using the Kn
 
 ### UI Flow
 
-1. Fill in the deployment form.
-2. Ensure **Direct** is selected as the deployment mode.
-3. Click **Deploy**.
+1. On the **Basics** tab, ensure **Direct** is selected as the deployment mode.
+2. Fill in the remaining tabs.
+3. On the **Review and Deploy** tab, click **Deploy**.
 4. The manifest is applied immediately to the cluster.
 
 ## GitOps Mode
@@ -81,10 +86,10 @@ When using GitOps mode, instance manifests are committed to a Git repository. If
 
 ### UI Flow
 
-1. Fill in the deployment form.
-2. Select **GitOps** as the deployment mode.
-3. Choose the target repository, branch, and path.
-4. Click **Deploy**.
+1. On the **Basics** tab, select **GitOps** as the deployment mode.
+2. Choose the target repository, branch, and path.
+3. Fill in the remaining tabs.
+4. On the **Review and Deploy** tab, click **Deploy**.
 5. The manifest is committed to the repository. The GitOps controller applies it to the cluster.
 
 ## Hybrid Mode
@@ -105,10 +110,10 @@ Same as GitOps mode -- a connected repository and appropriate access.
 
 ### UI Flow
 
-1. Fill in the deployment form.
-2. Select **Hybrid** as the deployment mode.
-3. Choose the target repository, branch, and path.
-4. Click **Deploy**.
+1. On the **Basics** tab, select **Hybrid** as the deployment mode.
+2. Choose the target repository, branch, and path.
+3. Fill in the remaining tabs.
+4. On the **Review and Deploy** tab, click **Deploy**.
 5. The manifest is applied to the cluster immediately and committed to the repository.
 
 ## Repository Requirements

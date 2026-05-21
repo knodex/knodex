@@ -5,11 +5,13 @@ import { useMemo } from "react";
 import { useRGD } from "@/hooks/useRGDs";
 import { useInstanceEvents } from "@/hooks/useHistory";
 import { getInstanceUrl } from "../instance-utils";
+import { apiGroupOf } from "@/lib/instancePath";
 import type { Instance } from "@/types/rgd";
 
 export function useInstanceMetadata(instance: Instance) {
   const { data: parentRGD } = useRGD(instance.rgdName, instance.rgdNamespace);
   const { data: eventsData } = useInstanceEvents(
+    apiGroupOf(instance.apiVersion),
     instance.namespace,
     instance.kind,
     instance.name

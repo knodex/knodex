@@ -91,10 +91,9 @@ export function FormField({
   required = false,
   depth = 0,
   deploymentNamespace,
-  inlineAdvancedSection,
+  inlineAdvancedSection: _inlineAdvancedSection,
 }: FormFieldProps) {
   const {
-    register,
     formState: { errors },
   } = useFormContext();
 
@@ -122,8 +121,6 @@ export function FormField({
             options={property.enum.map(String)}
             required={required}
             error={errorMessage}
-            defaultValue={property.default as string}
-            register={register}
           />
         );
       }
@@ -135,7 +132,6 @@ export function FormField({
           required={required}
           error={errorMessage}
           format={property.format}
-          register={register}
         />
       );
 
@@ -162,7 +158,6 @@ export function FormField({
           description={description}
           required={required}
           error={errorMessage}
-          register={register}
         />
       );
 
@@ -194,7 +189,6 @@ export function FormField({
             required={required}
             depth={depth}
             deploymentNamespace={deploymentNamespace}
-            inlineAdvancedSection={inlineAdvancedSection}
           />
         );
       }
@@ -229,7 +223,6 @@ export function FormField({
           description={description}
           required={required}
           error={errorMessage}
-          register={register}
         />
       );
   }

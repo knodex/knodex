@@ -1126,7 +1126,7 @@ func TestE2E_InstancesVisibleInAPI(t *testing.T) {
 	})
 
 	t.Run("get specific instance", func(t *testing.T) {
-		resp, err := http.Get(server.URL + "/api/v1/namespaces/dev/instances/MicroservicesPlatform/platform-dev")
+		resp, err := http.Get(server.URL + "/api/v1/apigroups/kro.run/namespaces/dev/instances/MicroservicesPlatform/platform-dev")
 		if err != nil {
 			t.Fatalf("failed to make request: %v", err)
 		}
@@ -1212,7 +1212,7 @@ func TestE2E_InstancesVisibleInAPI(t *testing.T) {
 		}
 
 		// Verify we can retrieve instances from cache
-		devInst, found := instanceCache.Get("dev", "MicroservicesPlatform", "platform-dev")
+		devInst, found := instanceCache.Get("kro.run", "dev", "MicroservicesPlatform", "platform-dev")
 		if !found {
 			t.Error("expected to find platform-dev in cache")
 		}
@@ -1275,9 +1275,9 @@ func TestE2E_OldInstanceRoutes_Return404(t *testing.T) {
 		}
 	})
 
-	t.Run("new K8s-aligned cluster-scoped get routes to handler", func(t *testing.T) {
+	t.Run("new GVK-aware cluster-scoped get routes to handler", func(t *testing.T) {
 		// Without auth middleware this returns 401/503, but NOT 404 — proving the route is registered
-		resp, err := http.Get(server.URL + "/api/v1/instances/webapp/my-app")
+		resp, err := http.Get(server.URL + "/api/v1/apigroups/example.com/instances/webapp/my-app")
 		if err != nil {
 			t.Fatalf("request failed: %v", err)
 		}
@@ -1291,9 +1291,9 @@ func TestE2E_OldInstanceRoutes_Return404(t *testing.T) {
 		// History routes are conditionally registered only when HistoryService != nil.
 		// Without HistoryService, these should return 404 (not registered).
 		paths := []string{
-			"/api/v1/instances/webapp/my-app/history",
-			"/api/v1/instances/webapp/my-app/history/export",
-			"/api/v1/instances/webapp/my-app/timeline",
+			"/api/v1/apigroups/example.com/instances/webapp/my-app/history",
+			"/api/v1/apigroups/example.com/instances/webapp/my-app/history/export",
+			"/api/v1/apigroups/example.com/instances/webapp/my-app/timeline",
 		}
 		for _, path := range paths {
 			resp, err := http.Get(server.URL + path)
@@ -1328,8 +1328,8 @@ func TestE2E_InstanceCreation_FailsClosed_NilPolicyEnforcer(t *testing.T) {
 	server := httptest.NewServer(routerResult.Handler)
 	defer server.Close()
 
-	// POST to create instance (K8s-aligned route) — should get 503
-	resp, err := http.Post(server.URL+"/api/v1/instances/webapp", "application/json", nil)
+	// POST to create instance (GVK-aware route) — should get 503
+	resp, err := http.Post(server.URL+"/api/v1/apigroups/example.com/instances/webapp", "application/json", nil)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}

@@ -103,6 +103,39 @@ annotations:
   knodex.io/icon: "my-service"
 ```
 
+## Per-Package Icon ConfigMaps
+
+In addition to the global `knodex-custom-icons` ConfigMap, you can ship per-package icon registries that activate only when the matching package is included in `CATALOG_PACKAGE_FILTER`. This mirrors the per-package pattern used by [category configs](./catalog-filter.md) so each package team can bundle its own brand SVGs alongside its RGDs.
+
+A per-package icon ConfigMap carries both labels:
+
+- `knodex.io/icon-registry: "true"` — picks it up at registry load time.
+- `knodex.io/package: <package-name>` — scopes it to the named package.
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: knodex-custom-icons-networking
+  namespace: knodex
+  labels:
+    knodex.io/icon-registry: "true"
+    knodex.io/package: "networking"
+data:
+  my-loadbalancer: |
+    <svg role="img" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+      <title>My LoadBalancer</title>
+      <rect x="4" y="4" width="16" height="16" rx="2"/>
+    </svg>
+```
+
+When `CATALOG_PACKAGE_FILTER` is empty (default), every icon ConfigMap is loaded regardless of label. When the filter is non-empty:
+
+- ConfigMaps **without** a `knodex.io/package` label are always loaded (global scope).
+- ConfigMaps **with** a `knodex.io/package` label are loaded only when their value (case-insensitive) is in the filter.
+
+The Helm chart exposes this as the `catalog.packageCustomIcons` map: each top-level key is a package name, and each value is the same slug → SVG map used by `catalog.customIcons`.
+
 ## Merge Order and Collision Behavior
 
 When multiple ConfigMaps provide icons:
@@ -118,7 +151,7 @@ Example: If both `knodex-icons-team-a` and `knodex-icons-team-b` define the slug
 ### Check Registered ConfigMaps
 
 ```bash
-kubectl get configmaps -n knodex -l knodex.io/icons=true
+kubectl get configmaps -n knodex -l knodex.io/icon-registry=true
 ```
 
 ### Check a Specific Icon via API

@@ -33,7 +33,7 @@ type RGDProvider interface {
 
 // InstanceProvider abstracts instance lookup for testability.
 type InstanceProvider interface {
-	GetInstance(namespace, kind, name string) (*models.Instance, bool)
+	GetInstance(group, namespace, kind, name string) (*models.Instance, bool)
 }
 
 // RemoteClientProvider abstracts access to remote cluster dynamic clients.
@@ -86,15 +86,15 @@ func NewService(
 
 // ListChildResources discovers all child resources for the given instance
 // by querying the K8s API with KRO label selectors.
-func (s *Service) ListChildResources(ctx context.Context, namespace, kind, name string) (*models.ChildResourceResponse, error) {
+func (s *Service) ListChildResources(ctx context.Context, group, namespace, kind, name string) (*models.ChildResourceResponse, error) {
 	if kind == "" || name == "" {
 		return nil, fmt.Errorf("kind and name are required")
 	}
 
 	// Validate instance exists
-	instance, found := s.instanceProvider.GetInstance(namespace, kind, name)
+	instance, found := s.instanceProvider.GetInstance(group, namespace, kind, name)
 	if !found {
-		return nil, fmt.Errorf("instance %s/%s/%s not found", namespace, kind, name)
+		return nil, fmt.Errorf("instance %s/%s/%s/%s not found", group, namespace, kind, name)
 	}
 
 	// Get the parent RGD to discover resource types

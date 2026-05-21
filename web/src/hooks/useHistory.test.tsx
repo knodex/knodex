@@ -10,6 +10,8 @@ import type { ReactNode } from "react";
 // Mock the history API
 vi.mock("@/api/history");
 
+const TEST_GROUP = "apps.example.com";
+
 const mockHistory = {
   instanceId: "test-uid",
   instanceName: "test-instance",
@@ -85,7 +87,7 @@ describe("useHistory hooks", () => {
       vi.mocked(historyApi.getInstanceHistory).mockResolvedValue(mockHistory);
 
       const { result } = renderHook(
-        () => useInstanceHistory("test-ns", "WebApp", "test-instance"),
+        () => useInstanceHistory(TEST_GROUP, "test-ns", "WebApp", "test-instance"),
         { wrapper: createWrapper() }
       );
 
@@ -97,6 +99,7 @@ describe("useHistory hooks", () => {
 
       expect(result.current.data).toEqual(mockHistory);
       expect(historyApi.getInstanceHistory).toHaveBeenCalledWith(
+        TEST_GROUP,
         "test-ns",
         "WebApp",
         "test-instance"
@@ -107,7 +110,7 @@ describe("useHistory hooks", () => {
       vi.mocked(historyApi.getInstanceHistory).mockResolvedValue(mockHistory);
 
       const { result } = renderHook(
-        () => useInstanceHistory("", "WebApp", "test-instance"),
+        () => useInstanceHistory(TEST_GROUP, "", "WebApp", "test-instance"),
         { wrapper: createWrapper() }
       );
 
@@ -116,6 +119,7 @@ describe("useHistory hooks", () => {
       });
 
       expect(historyApi.getInstanceHistory).toHaveBeenCalledWith(
+        TEST_GROUP,
         "",
         "WebApp",
         "test-instance"
@@ -124,7 +128,7 @@ describe("useHistory hooks", () => {
 
     it("should not fetch when name is empty", async () => {
       const { result } = renderHook(
-        () => useInstanceHistory("test-ns", "WebApp", ""),
+        () => useInstanceHistory(TEST_GROUP, "test-ns", "WebApp", ""),
         { wrapper: createWrapper() }
       );
 
@@ -138,7 +142,7 @@ describe("useHistory hooks", () => {
       vi.mocked(historyApi.getInstanceHistory).mockRejectedValue(error);
 
       const { result } = renderHook(
-        () => useInstanceHistory("test-ns", "WebApp", "test-instance"),
+        () => useInstanceHistory(TEST_GROUP, "test-ns", "WebApp", "test-instance"),
         { wrapper: createWrapper() }
       );
 
@@ -155,7 +159,7 @@ describe("useHistory hooks", () => {
       vi.mocked(historyApi.getInstanceTimeline).mockResolvedValue(mockTimeline);
 
       const { result } = renderHook(
-        () => useInstanceTimeline("test-ns", "WebApp", "test-instance"),
+        () => useInstanceTimeline(TEST_GROUP, "test-ns", "WebApp", "test-instance"),
         { wrapper: createWrapper() }
       );
 
@@ -165,6 +169,7 @@ describe("useHistory hooks", () => {
 
       expect(result.current.data).toEqual(mockTimeline);
       expect(historyApi.getInstanceTimeline).toHaveBeenCalledWith(
+        TEST_GROUP,
         "test-ns",
         "WebApp",
         "test-instance"
@@ -175,7 +180,7 @@ describe("useHistory hooks", () => {
       vi.mocked(historyApi.getInstanceTimeline).mockResolvedValue(mockTimeline);
 
       const { result } = renderHook(
-        () => useInstanceTimeline("", "WebApp", "test-instance"),
+        () => useInstanceTimeline(TEST_GROUP, "", "WebApp", "test-instance"),
         { wrapper: createWrapper() }
       );
 
@@ -184,6 +189,7 @@ describe("useHistory hooks", () => {
       });
 
       expect(historyApi.getInstanceTimeline).toHaveBeenCalledWith(
+        TEST_GROUP,
         "",
         "WebApp",
         "test-instance"
@@ -202,6 +208,7 @@ describe("useHistory hooks", () => {
       });
 
       result.current.mutate({
+        group: TEST_GROUP,
         namespace: "test-ns",
         kind: "WebApp",
         name: "test-instance",
@@ -213,6 +220,7 @@ describe("useHistory hooks", () => {
       });
 
       expect(historyApi.exportInstanceHistory).toHaveBeenCalledWith(
+        TEST_GROUP,
         "test-ns",
         "WebApp",
         "test-instance",
@@ -234,6 +242,7 @@ describe("useHistory hooks", () => {
       });
 
       result.current.mutate({
+        group: TEST_GROUP,
         namespace: "test-ns",
         kind: "WebApp",
         name: "test-instance",

@@ -243,7 +243,7 @@ export function InstancesPage({ onInstanceClick }: InstancesPageProps) {
         <div className="flex flex-col gap-2">
           {filteredItems.map((instance) => (
             <MobileInstanceCard
-              key={`${instance.namespace || "_cluster"}/${instance.kind}/${instance.name}`}
+              key={`${instance.apiVersion}/${instance.namespace || "_cluster"}/${instance.kind}/${instance.name}`}
               instance={instance}
               onClick={handleInstanceClick}
             />
@@ -274,7 +274,7 @@ export function InstancesPage({ onInstanceClick }: InstancesPageProps) {
           <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))" }}>
             {filteredItems.map((instance, index) => (
               <div
-                key={`${instance.namespace || "_cluster"}/${instance.kind}/${instance.name}`}
+                key={`${instance.apiVersion}/${instance.namespace || "_cluster"}/${instance.kind}/${instance.name}`}
                 className="animate-card-enter"
                 style={{ animationDelay: `${Math.min(index * 40, 400)}ms` }}
               >

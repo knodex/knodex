@@ -10,6 +10,7 @@ import {
 } from '../fixture/mock-data'
 import type { Instance } from '../../src/types/rgd'
 import type { Project, ProjectListResponse } from '../../src/types/project'
+import { buildInstanceRoute } from '../../src/lib/instancePath'
 
 /**
  * Instance Detail View — E2E Tests
@@ -229,7 +230,7 @@ test.describe('Instance Detail View', () => {
   test.describe('Header metadata', () => {
     test('shows instance name, health status, kind linked to RGD, and namespace', async ({ page }) => {
       await setupMocks(page, detailInstance)
-      await page.goto(`/instances/${detailInstance.namespace}/${detailInstance.kind}/${detailInstance.name}`)
+      await page.goto(buildInstanceRoute(detailInstance))
 
       // Instance name as heading
       await expect(page.getByRole('heading', { name: detailInstance.name })).toBeVisible()
@@ -249,7 +250,7 @@ test.describe('Instance Detail View', () => {
 
     test('shows RGD description as subtitle', async ({ page }) => {
       await setupMocks(page, detailInstance)
-      await page.goto(`/instances/${detailInstance.namespace}/${detailInstance.kind}/${detailInstance.name}`)
+      await page.goto(buildInstanceRoute(detailInstance))
 
       // RGD description from parent RGD
       await expect(page.getByText('PostgreSQL database with automated backups and monitoring')).toBeVisible()
@@ -259,14 +260,14 @@ test.describe('Instance Detail View', () => {
   test.describe('Source row', () => {
     test('shows "Direct deployment" for direct mode', async ({ page }) => {
       await setupMocks(page, detailInstance)
-      await page.goto(`/instances/${detailInstance.namespace}/${detailInstance.kind}/${detailInstance.name}`)
+      await page.goto(buildInstanceRoute(detailInstance))
 
       await expect(page.getByText('Direct deployment')).toBeVisible()
     })
 
     test('shows repository link for gitops mode', async ({ page }) => {
       await setupMocks(page, gitopsInstance)
-      await page.goto(`/instances/${gitopsInstance.namespace}/${gitopsInstance.kind}/${gitopsInstance.name}`)
+      await page.goto(buildInstanceRoute(gitopsInstance))
 
       const repoLink = page.getByRole('link', { name: 'test-org/test-repo' })
       await expect(repoLink).toBeVisible()
@@ -278,7 +279,7 @@ test.describe('Instance Detail View', () => {
 
     test('does not show branch or path chips in source row for gitops mode', async ({ page }) => {
       await setupMocks(page, gitopsInstance)
-      await page.goto(`/instances/${gitopsInstance.namespace}/${gitopsInstance.kind}/${gitopsInstance.name}`)
+      await page.goto(buildInstanceRoute(gitopsInstance))
 
       // Source row is the thin metadata bar above the tabs (not the Deployment Information card)
       const sourceRow = page.locator('[style*="border-bottom"]').filter({ hasText: 'Source' })
@@ -292,7 +293,7 @@ test.describe('Instance Detail View', () => {
   test.describe('Deployment Information card', () => {
     test('shows Synchronisation: Synced for active gitops instance', async ({ page }) => {
       await setupMocks(page, gitopsInstance)
-      await page.goto(`/instances/${gitopsInstance.namespace}/${gitopsInstance.kind}/${gitopsInstance.name}`)
+      await page.goto(buildInstanceRoute(gitopsInstance))
 
       // Expand the Deployment Information card (collapsed by default)
       await page.getByRole('button', { name: 'Deployment Information' }).click()
@@ -304,7 +305,7 @@ test.describe('Instance Detail View', () => {
 
     test('shows Synchronisation: Suspended when reconciliation is suspended', async ({ page }) => {
       await setupMocks(page, suspendedInstance)
-      await page.goto(`/instances/${suspendedInstance.namespace}/${suspendedInstance.kind}/${suspendedInstance.name}`)
+      await page.goto(buildInstanceRoute(suspendedInstance))
 
       // Expand the Deployment Information card (collapsed by default)
       await page.getByRole('button', { name: 'Deployment Information' }).click()
@@ -317,7 +318,7 @@ test.describe('Instance Detail View', () => {
 
     test('shows Repository row linking to repo root', async ({ page }) => {
       await setupMocks(page, gitopsInstance)
-      await page.goto(`/instances/${gitopsInstance.namespace}/${gitopsInstance.kind}/${gitopsInstance.name}`)
+      await page.goto(buildInstanceRoute(gitopsInstance))
 
       // Expand the Deployment Information card (collapsed by default)
       await page.getByRole('button', { name: 'Deployment Information' }).click()
@@ -329,7 +330,7 @@ test.describe('Instance Detail View', () => {
 
     test('does not show Deployment Information card for direct mode', async ({ page }) => {
       await setupMocks(page, detailInstance)
-      await page.goto(`/instances/${detailInstance.namespace}/${detailInstance.kind}/${detailInstance.name}`)
+      await page.goto(buildInstanceRoute(detailInstance))
 
       await expect(page.getByText('Synchronisation')).not.toBeVisible()
       await expect(page.getByText('Repository')).not.toBeVisible()
@@ -339,7 +340,7 @@ test.describe('Instance Detail View', () => {
   test.describe('Conditions', () => {
     test('shows collapsed conditions with count when all healthy', async ({ page }) => {
       await setupMocks(page, detailInstance)
-      await page.goto(`/instances/${detailInstance.namespace}/${detailInstance.kind}/${detailInstance.name}`)
+      await page.goto(buildInstanceRoute(detailInstance))
 
       // Conditions summary visible
       await expect(page.getByText('2/2')).toBeVisible()
@@ -350,7 +351,7 @@ test.describe('Instance Detail View', () => {
 
     test('expands conditions on click', async ({ page }) => {
       await setupMocks(page, detailInstance)
-      await page.goto(`/instances/${detailInstance.namespace}/${detailInstance.kind}/${detailInstance.name}`)
+      await page.goto(buildInstanceRoute(detailInstance))
 
       // Click the conditions toggle
       await page.getByRole('button', { name: /conditions/i }).click()
@@ -362,7 +363,7 @@ test.describe('Instance Detail View', () => {
 
     test('auto-expands conditions when any is failing', async ({ page }) => {
       await setupMocks(page, unhealthyInstance)
-      await page.goto(`/instances/${unhealthyInstance.namespace}/${unhealthyInstance.kind}/${unhealthyInstance.name}`)
+      await page.goto(buildInstanceRoute(unhealthyInstance))
 
       // Failing condition visible immediately (auto-expanded)
       await expect(page.getByText('Deployment failed: OOMKilled')).toBeVisible()
@@ -373,7 +374,7 @@ test.describe('Instance Detail View', () => {
   test.describe('Spec viewer', () => {
     test('shows spec JSON with copy button', async ({ page }) => {
       await setupMocks(page, detailInstance)
-      await page.goto(`/instances/${detailInstance.namespace}/${detailInstance.kind}/${detailInstance.name}`)
+      await page.goto(buildInstanceRoute(detailInstance))
 
       // Navigate to Spec tab
       await page.getByRole('tab', { name: /spec/i }).click()
@@ -390,7 +391,7 @@ test.describe('Instance Detail View', () => {
   test.describe('Tab navigation', () => {
     test('defaults to Status tab', async ({ page }) => {
       await setupMocks(page, detailInstance)
-      await page.goto(`/instances/${detailInstance.namespace}/${detailInstance.kind}/${detailInstance.name}`)
+      await page.goto(buildInstanceRoute(detailInstance))
 
       const statusTab = page.getByRole('tab', { name: /^Status$/i })
       await expect(statusTab).toHaveAttribute('aria-selected', 'true')
@@ -398,7 +399,7 @@ test.describe('Instance Detail View', () => {
 
     test('switches to Deployment History tab', async ({ page }) => {
       await setupMocks(page, detailInstance)
-      await page.goto(`/instances/${detailInstance.namespace}/${detailInstance.kind}/${detailInstance.name}`)
+      await page.goto(buildInstanceRoute(detailInstance))
 
       await page.getByRole('tab', { name: /deployment history/i }).click()
 

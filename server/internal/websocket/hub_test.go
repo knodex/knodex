@@ -645,7 +645,7 @@ func TestHub_BroadcastDriftUpdate(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 
-	hub.BroadcastDriftUpdate("default", "WebApp", "my-app", false, "proj-a")
+	hub.BroadcastDriftUpdate("apps.example.com", "default", "WebApp", "my-app", false, "proj-a")
 
 	// Wait for broadcast to be processed
 	select {
@@ -657,7 +657,7 @@ func TestHub_BroadcastDriftUpdate(t *testing.T) {
 		if err := json.Unmarshal(msg.Data, &data); err != nil {
 			t.Fatalf("failed to unmarshal drift update data: %v", err)
 		}
-		if data.Namespace != "default" || data.Kind != "WebApp" || data.Name != "my-app" {
+		if data.Group != "apps.example.com" || data.Namespace != "default" || data.Kind != "WebApp" || data.Name != "my-app" {
 			t.Errorf("unexpected data: %+v", data)
 		}
 		if data.Drifted != false {
@@ -697,9 +697,9 @@ func TestHub_BroadcastDriftUpdate_Debouncing(t *testing.T) {
 	}
 
 	// Rapid calls — should be debounced
-	hub.BroadcastDriftUpdate("ns", "Kind", "app", false, "proj-a")
-	hub.BroadcastDriftUpdate("ns", "Kind", "app", false, "proj-a") // debounced
-	hub.BroadcastDriftUpdate("ns", "Kind", "app", false, "proj-a") // debounced
+	hub.BroadcastDriftUpdate("apps.example.com", "ns", "Kind", "app", false, "proj-a")
+	hub.BroadcastDriftUpdate("apps.example.com", "ns", "Kind", "app", false, "proj-a") // debounced
+	hub.BroadcastDriftUpdate("apps.example.com", "ns", "Kind", "app", false, "proj-a") // debounced
 
 	select {
 	case <-client.send:

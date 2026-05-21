@@ -130,20 +130,42 @@ func NewInstanceCRUDHandler(config InstanceCRUDHandlerConfig) *InstanceCRUDHandl
 // Returns true if validation failed (400 response already written); caller should return.
 // name and kind are required (must pass empty-check before calling).
 // namespace is optional — empty means cluster-scoped, skipped.
-func validateInstancePathParams(w http.ResponseWriter, namespace, kind, name string) bool {
+// group MUST be a non-empty DNS-1123 subdomain (Knodex only indexes Kro-spawned
+// CRDs, which always carry an apiGroup; the empty core group is rejected at the
+// route level).
+func validateInstancePathParams(w http.ResponseWriter, group, namespace, kind, name string) bool {
+	if !sanitize.IsValidAPIGroup(group) {
+		response.BadRequest(w, "invalid path parameter", map[string]string{
+			"group": "must be a valid Kubernetes API group (non-empty DNS-1123 subdomain)",
+		})
+		return true
+	}
 	if !sanitize.IsValidDNS1123Subdomain(name) {
-		response.BadRequest(w, "name must be a valid DNS-1123 subdomain (lowercase alphanumeric, hyphens, and dots)", nil)
+		response.BadRequest(w, "invalid path parameter", map[string]string{
+			"name": "must be a valid DNS-1123 subdomain (lowercase alphanumeric, hyphens, and dots)",
+		})
 		return true
 	}
 	if !sanitize.IsValidK8sKind(kind) {
-		response.BadRequest(w, "kind must be a valid Kubernetes Kind name (CamelCase, starting with uppercase letter)", nil)
+		response.BadRequest(w, "invalid path parameter", map[string]string{
+			"kind": "must be a valid Kubernetes Kind name (CamelCase, starting with uppercase letter)",
+		})
 		return true
 	}
 	if namespace != "" && !sanitize.IsValidDNS1123Label(namespace) {
-		response.BadRequest(w, "namespace must be a valid DNS-1123 label (lowercase alphanumeric with hyphens, max 63 chars)", nil)
+		response.BadRequest(w, "invalid path parameter", map[string]string{
+			"namespace": "must be a valid DNS-1123 label (lowercase alphanumeric with hyphens, max 63 chars)",
+		})
 		return true
 	}
 	return false
+}
+
+// instanceNotFoundID returns the structured identifier used in NotFound responses
+// for an instance, including the apiGroup so that two GVKs with the same name
+// don't collide in error messages.
+func instanceNotFoundID(group, namespace, kind, name string) string {
+	return group + "/" + namespace + "/" + kind + "/" + name
 }
 
 // getAccessibleNamespaces retrieves the user's accessible namespaces using AuthorizationService.
@@ -387,8 +409,9 @@ func (h *InstanceCRUDHandler) GetCount(w http.ResponseWriter, r *http.Request) {
 	response.WriteJSON(w, http.StatusOK, InstanceCountResponse{Count: count})
 }
 
-// GetInstance handles GET /api/v1/instances/{namespace}/{kind}/{name}
-// Verifies user has access to the instance's namespace
+// GetInstance handles GET /api/v1/apigroups/{group}/namespaces/{namespace}/instances/{kind}/{name}
+// (and the cluster-scoped variant without `/namespaces/{namespace}`).
+// Verifies user has access to the instance's namespace.
 func (h *InstanceCRUDHandler) GetInstance(w http.ResponseWriter, r *http.Request) {
 	// Check if instance tracker is available
 	if h.instanceTracker == nil {
@@ -403,6 +426,7 @@ func (h *InstanceCRUDHandler) GetInstance(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	group := r.PathValue("group")
 	namespace := r.PathValue("namespace") // empty for cluster-scoped instances
 	kind := r.PathValue("kind")
 	name := r.PathValue("name")
@@ -413,7 +437,7 @@ func (h *InstanceCRUDHandler) GetInstance(w http.ResponseWriter, r *http.Request
 	}
 
 	// STORY-348: DNS-1123 validation for K8s-bound path params
-	if validateInstancePathParams(w, namespace, kind, name) {
+	if validateInstancePathParams(w, group, namespace, kind, name) {
 		return
 	}
 
@@ -425,9 +449,9 @@ func (h *InstanceCRUDHandler) GetInstance(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	instance, found := h.instanceTracker.GetInstance(namespace, kind, name)
+	instance, found := h.instanceTracker.GetInstance(group, namespace, kind, name)
 	if !found {
-		response.NotFound(w, "Instance", namespace+"/"+kind+"/"+name)
+		response.NotFound(w, "Instance", instanceNotFoundID(group, namespace, kind, name))
 		return
 	}
 
@@ -439,7 +463,7 @@ func (h *InstanceCRUDHandler) GetInstance(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if !authorized {
-		response.NotFound(w, "Instance", namespace+"/"+kind+"/"+name)
+		response.NotFound(w, "Instance", instanceNotFoundID(group, namespace, kind, name))
 		return
 	}
 
@@ -449,7 +473,8 @@ func (h *InstanceCRUDHandler) GetInstance(w http.ResponseWriter, r *http.Request
 	response.WriteJSON(w, http.StatusOK, instance)
 }
 
-// DeleteInstance handles DELETE /api/v1/instances/{namespace}/{kind}/{name}
+// DeleteInstance handles DELETE /api/v1/apigroups/{group}/namespaces/{namespace}/instances/{kind}/{name}
+// (and the cluster-scoped variant without `/namespaces/{namespace}`).
 // Authorization handled by CasbinAuthz middleware
 func (h *InstanceCRUDHandler) DeleteInstance(w http.ResponseWriter, r *http.Request) {
 	// Check if instance tracker is available
@@ -471,6 +496,7 @@ func (h *InstanceCRUDHandler) DeleteInstance(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	group := r.PathValue("group")
 	namespace := r.PathValue("namespace") // empty for cluster-scoped instances
 	kind := r.PathValue("kind")
 	name := r.PathValue("name")
@@ -481,7 +507,7 @@ func (h *InstanceCRUDHandler) DeleteInstance(w http.ResponseWriter, r *http.Requ
 	}
 
 	// STORY-348: DNS-1123 validation for K8s-bound path params
-	if validateInstancePathParams(w, namespace, kind, name) {
+	if validateInstancePathParams(w, group, namespace, kind, name) {
 		return
 	}
 
@@ -489,9 +515,9 @@ func (h *InstanceCRUDHandler) DeleteInstance(w http.ResponseWriter, r *http.Requ
 	// The middleware enforces route-level authorization via PolicyEnforcer.CanAccessWithGroups().
 
 	// Get instance to find its API version
-	instance, found := h.instanceTracker.GetInstance(namespace, kind, name)
+	instance, found := h.instanceTracker.GetInstance(group, namespace, kind, name)
 	if !found {
-		response.NotFound(w, "Instance", namespace+"/"+kind+"/"+name)
+		response.NotFound(w, "Instance", instanceNotFoundID(group, namespace, kind, name))
 		return
 	}
 
@@ -512,7 +538,7 @@ func (h *InstanceCRUDHandler) DeleteInstance(w http.ResponseWriter, r *http.Requ
 	}
 	if !authorized {
 		// Return 404 (not 403) to avoid leaking resource existence to cross-project users.
-		response.NotFound(w, "Instance", namespace+"/"+kind+"/"+name)
+		response.NotFound(w, "Instance", instanceNotFoundID(group, namespace, kind, name))
 		return
 	}
 
@@ -537,7 +563,7 @@ func (h *InstanceCRUDHandler) DeleteInstance(w http.ResponseWriter, r *http.Requ
 
 	err := h.instanceTracker.DeleteInstance(ctx, namespace, name, instance.APIVersion, instance.Kind)
 	if err != nil {
-		h.handleDeleteError(w, namespace, kind, name, err)
+		h.handleDeleteError(w, group, namespace, kind, name, err)
 		return
 	}
 
@@ -550,6 +576,7 @@ func (h *InstanceCRUDHandler) DeleteInstance(w http.ResponseWriter, r *http.Requ
 		Name:      name,
 		Project:   instance.ProjectName,
 		Namespace: namespace,
+		Group:     group,
 		RequestID: r.Header.Get("X-Request-ID"),
 		Result:    "success",
 		Details: map[string]any{
@@ -610,7 +637,8 @@ func (h *InstanceCRUDHandler) deleteFromGit(ctx context.Context, instance *model
 	)
 }
 
-// UpdateInstance handles PATCH /api/v1/instances/{namespace}/{kind}/{name}
+// UpdateInstance handles PATCH /api/v1/apigroups/{group}/namespaces/{namespace}/instances/{kind}/{name}
+// (and the cluster-scoped variant without `/namespaces/{namespace}`).
 // Updates the spec of an existing instance. Authorization handled by CasbinAuthz middleware.
 func (h *InstanceCRUDHandler) UpdateInstance(w http.ResponseWriter, r *http.Request) {
 	// Check if instance tracker is available
@@ -632,6 +660,7 @@ func (h *InstanceCRUDHandler) UpdateInstance(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	group := r.PathValue("group")
 	namespace := r.PathValue("namespace") // empty for cluster-scoped instances
 	kind := r.PathValue("kind")
 	name := r.PathValue("name")
@@ -642,7 +671,7 @@ func (h *InstanceCRUDHandler) UpdateInstance(w http.ResponseWriter, r *http.Requ
 	}
 
 	// STORY-348: DNS-1123 validation for K8s-bound path params
-	if validateInstancePathParams(w, namespace, kind, name) {
+	if validateInstancePathParams(w, group, namespace, kind, name) {
 		return
 	}
 
@@ -653,7 +682,7 @@ func (h *InstanceCRUDHandler) UpdateInstance(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if req.Spec == nil || len(req.Spec) == 0 {
+	if len(req.Spec) == 0 {
 		response.BadRequest(w, "spec is required and must not be empty", nil)
 		return
 	}
@@ -666,9 +695,9 @@ func (h *InstanceCRUDHandler) UpdateInstance(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Get instance from tracker cache to find its API version
-	instance, found := h.instanceTracker.GetInstance(namespace, kind, name)
+	instance, found := h.instanceTracker.GetInstance(group, namespace, kind, name)
 	if !found {
-		response.NotFound(w, "Instance", namespace+"/"+kind+"/"+name)
+		response.NotFound(w, "Instance", instanceNotFoundID(group, namespace, kind, name))
 		return
 	}
 
@@ -689,7 +718,7 @@ func (h *InstanceCRUDHandler) UpdateInstance(w http.ResponseWriter, r *http.Requ
 	}
 	if !authorized {
 		// Return 404 (not 403) to avoid leaking resource existence to cross-project users.
-		response.NotFound(w, "Instance", namespace+"/"+kind+"/"+name)
+		response.NotFound(w, "Instance", instanceNotFoundID(group, namespace, kind, name))
 		return
 	}
 
@@ -726,6 +755,7 @@ func (h *InstanceCRUDHandler) UpdateInstance(w http.ResponseWriter, r *http.Requ
 				Name:      name,
 				Project:   instance.ProjectName,
 				Namespace: namespace,
+				Group:     group,
 				RequestID: r.Header.Get("X-Request-ID"),
 				Result:    "error",
 				Details: map[string]any{
@@ -735,7 +765,7 @@ func (h *InstanceCRUDHandler) UpdateInstance(w http.ResponseWriter, r *http.Requ
 					"error":          gitErr.Error(),
 				},
 			})
-			h.handleGitOpsUpdateError(w, namespace, kind, name, gitErr)
+			h.handleGitOpsUpdateError(w, group, namespace, kind, name, gitErr)
 			return
 		}
 
@@ -752,6 +782,7 @@ func (h *InstanceCRUDHandler) UpdateInstance(w http.ResponseWriter, r *http.Requ
 				Name:      name,
 				Project:   instance.ProjectName,
 				Namespace: namespace,
+				Group:     group,
 				RequestID: r.Header.Get("X-Request-ID"),
 				Result:    "error",
 				Details: map[string]any{
@@ -761,7 +792,7 @@ func (h *InstanceCRUDHandler) UpdateInstance(w http.ResponseWriter, r *http.Requ
 					"error":          patchErr.Error(),
 				},
 			})
-			h.handleUpdateError(w, namespace, kind, name, patchErr)
+			h.handleUpdateError(w, group, namespace, kind, name, patchErr)
 			return
 		}
 		// Step 2: Push to Git for audit trail (failure does not fail the update)
@@ -788,6 +819,7 @@ func (h *InstanceCRUDHandler) UpdateInstance(w http.ResponseWriter, r *http.Requ
 				Name:      name,
 				Project:   instance.ProjectName,
 				Namespace: namespace,
+				Group:     group,
 				RequestID: r.Header.Get("X-Request-ID"),
 				Result:    "error",
 				Details: map[string]any{
@@ -797,7 +829,7 @@ func (h *InstanceCRUDHandler) UpdateInstance(w http.ResponseWriter, r *http.Requ
 					"error":          patchErr.Error(),
 				},
 			})
-			h.handleUpdateError(w, namespace, kind, name, patchErr)
+			h.handleUpdateError(w, group, namespace, kind, name, patchErr)
 			return
 		}
 	}
@@ -866,6 +898,7 @@ func (h *InstanceCRUDHandler) UpdateInstance(w http.ResponseWriter, r *http.Requ
 		Name:      name,
 		Project:   instance.ProjectName,
 		Namespace: namespace,
+		Group:     group,
 		RequestID: r.Header.Get("X-Request-ID"),
 		Result:    auditResult,
 		Details:   auditDetails,
@@ -1025,9 +1058,9 @@ func buildDeployRepoConfig(repoConfig *repository.RepositoryConfig) *deployment.
 }
 
 // handleGitOpsUpdateError maps GitOps update errors to HTTP responses.
-func (h *InstanceCRUDHandler) handleGitOpsUpdateError(w http.ResponseWriter, namespace, kind, name string, err error) {
+func (h *InstanceCRUDHandler) handleGitOpsUpdateError(w http.ResponseWriter, group, namespace, kind, name string, err error) {
 	errMsg := err.Error()
-	h.logger.Error("failed to push spec update to Git", "namespace", namespace, "kind", kind, "name", name, "error", errMsg)
+	h.logger.Error("failed to push spec update to Git", "group", group, "namespace", namespace, "kind", kind, "name", name, "error", errMsg)
 
 	if strings.Contains(errMsg, "repository not found") || strings.Contains(errMsg, "not found") {
 		response.BadRequest(w, "Repository configuration not found. Ensure the repository ID is correct.", nil)
@@ -1054,12 +1087,12 @@ func (h *InstanceCRUDHandler) handleGitOpsUpdateError(w http.ResponseWriter, nam
 
 // handleUpdateError maps instance update errors to HTTP responses.
 // Raw error details are logged server-side only; clients receive generic messages.
-func (h *InstanceCRUDHandler) handleUpdateError(w http.ResponseWriter, namespace, kind, name string, err error) {
+func (h *InstanceCRUDHandler) handleUpdateError(w http.ResponseWriter, group, namespace, kind, name string, err error) {
 	errMsg := err.Error()
-	h.logger.Error("failed to update instance", "namespace", namespace, "kind", kind, "name", name, "error", errMsg)
+	h.logger.Error("failed to update instance", "group", group, "namespace", namespace, "kind", kind, "name", name, "error", errMsg)
 
 	if strings.Contains(errMsg, "not found") {
-		response.NotFound(w, "Instance", namespace+"/"+kind+"/"+name)
+		response.NotFound(w, "Instance", instanceNotFoundID(group, namespace, kind, name))
 		return
 	}
 	if strings.Contains(errMsg, "forbidden") {
@@ -1138,12 +1171,12 @@ func specValuesEqual(a, b interface{}) bool {
 
 // handleDeleteError maps instance deletion errors to HTTP responses.
 // Raw error details are logged server-side only; clients receive generic messages.
-func (h *InstanceCRUDHandler) handleDeleteError(w http.ResponseWriter, namespace, kind, name string, err error) {
+func (h *InstanceCRUDHandler) handleDeleteError(w http.ResponseWriter, group, namespace, kind, name string, err error) {
 	errMsg := err.Error()
-	h.logger.Error("failed to delete instance", "namespace", namespace, "kind", kind, "name", name, "error", errMsg)
+	h.logger.Error("failed to delete instance", "group", group, "namespace", namespace, "kind", kind, "name", name, "error", errMsg)
 
 	if strings.Contains(errMsg, "not found") {
-		response.NotFound(w, "Instance", namespace+"/"+kind+"/"+name)
+		response.NotFound(w, "Instance", instanceNotFoundID(group, namespace, kind, name))
 		return
 	}
 	if strings.Contains(errMsg, "forbidden") {
@@ -1236,8 +1269,8 @@ func (h *InstanceCRUDHandler) batchEnrichInstanceDrift(ctx context.Context, inst
 	}
 }
 
-// GetInstanceGraph handles GET /api/v1/namespaces/{namespace}/instances/{kind}/{name}/graph
-// and GET /api/v1/instances/{kind}/{name}/graph (cluster-scoped variant).
+// GetInstanceGraph handles GET /api/v1/apigroups/{group}/namespaces/{namespace}/instances/{kind}/{name}/graph
+// and GET /api/v1/apigroups/{group}/instances/{kind}/{name}/graph (cluster-scoped variant).
 // Returns the runtime graph for an instance: same topology as the definition graph, but with
 // CollectionStatus populated for forEach nodes. STORY-333 will fill in live counts; for now
 // each collection node returns an empty CollectionStatus with Health: Healthy.
@@ -1259,6 +1292,7 @@ func (h *InstanceCRUDHandler) GetInstanceGraph(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	group := r.PathValue("group")
 	namespace := r.PathValue("namespace") // empty for cluster-scoped instances
 	kind := r.PathValue("kind")
 	name := r.PathValue("name")
@@ -1269,7 +1303,7 @@ func (h *InstanceCRUDHandler) GetInstanceGraph(w http.ResponseWriter, r *http.Re
 	}
 
 	// STORY-348: DNS-1123 validation for K8s-bound path params
-	if validateInstancePathParams(w, namespace, kind, name) {
+	if validateInstancePathParams(w, group, namespace, kind, name) {
 		return
 	}
 
@@ -1281,9 +1315,9 @@ func (h *InstanceCRUDHandler) GetInstanceGraph(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	instance, found := h.instanceTracker.GetInstance(namespace, kind, name)
+	instance, found := h.instanceTracker.GetInstance(group, namespace, kind, name)
 	if !found {
-		response.NotFound(w, "Instance", namespace+"/"+kind+"/"+name)
+		response.NotFound(w, "Instance", instanceNotFoundID(group, namespace, kind, name))
 		return
 	}
 
@@ -1295,7 +1329,7 @@ func (h *InstanceCRUDHandler) GetInstanceGraph(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if !authorized {
-		response.NotFound(w, "Instance", namespace+"/"+kind+"/"+name)
+		response.NotFound(w, "Instance", instanceNotFoundID(group, namespace, kind, name))
 		return
 	}
 
@@ -1344,8 +1378,8 @@ func (h *InstanceCRUDHandler) GetInstanceGraph(w http.ResponseWriter, r *http.Re
 	response.WriteJSON(w, http.StatusOK, resp)
 }
 
-// GetInstanceChildren handles GET /api/v1/namespaces/{namespace}/instances/{kind}/{name}/children
-// and GET /api/v1/instances/{kind}/{name}/children (cluster-scoped variant).
+// GetInstanceChildren handles GET /api/v1/apigroups/{group}/namespaces/{namespace}/instances/{kind}/{name}/children
+// and GET /api/v1/apigroups/{group}/instances/{kind}/{name}/children (cluster-scoped variant).
 // Returns all child resources created by KRO for this instance, grouped by node-id.
 func (h *InstanceCRUDHandler) GetInstanceChildren(w http.ResponseWriter, r *http.Request) {
 	if h.childService == nil {
@@ -1364,6 +1398,7 @@ func (h *InstanceCRUDHandler) GetInstanceChildren(w http.ResponseWriter, r *http
 		return
 	}
 
+	group := r.PathValue("group")
 	namespace := r.PathValue("namespace")
 	kind := r.PathValue("kind")
 	name := r.PathValue("name")
@@ -1373,7 +1408,7 @@ func (h *InstanceCRUDHandler) GetInstanceChildren(w http.ResponseWriter, r *http
 		return
 	}
 
-	if validateInstancePathParams(w, namespace, kind, name) {
+	if validateInstancePathParams(w, group, namespace, kind, name) {
 		return
 	}
 
@@ -1386,9 +1421,9 @@ func (h *InstanceCRUDHandler) GetInstanceChildren(w http.ResponseWriter, r *http
 	}
 
 	// Verify instance exists and user has access
-	instance, found := h.instanceTracker.GetInstance(namespace, kind, name)
+	instance, found := h.instanceTracker.GetInstance(group, namespace, kind, name)
 	if !found {
-		response.NotFound(w, "Instance", namespace+"/"+kind+"/"+name)
+		response.NotFound(w, "Instance", instanceNotFoundID(group, namespace, kind, name))
 		return
 	}
 
@@ -1399,14 +1434,15 @@ func (h *InstanceCRUDHandler) GetInstanceChildren(w http.ResponseWriter, r *http
 		return
 	}
 	if !authorized {
-		response.NotFound(w, "Instance", namespace+"/"+kind+"/"+name)
+		response.NotFound(w, "Instance", instanceNotFoundID(group, namespace, kind, name))
 		return
 	}
 
 	// Discover child resources via label queries
-	resp, err := h.childService.ListChildResources(r.Context(), namespace, kind, name)
+	resp, err := h.childService.ListChildResources(r.Context(), group, namespace, kind, name)
 	if err != nil {
 		h.logger.Error("failed to list child resources",
+			"group", group,
 			"namespace", namespace,
 			"kind", kind,
 			"name", name,
@@ -1436,8 +1472,8 @@ type KubernetesEventEntry struct {
 	Source    string    `json:"source"`
 }
 
-// GetInstanceEvents handles GET /api/v1/namespaces/{namespace}/instances/{kind}/{name}/events
-// and GET /api/v1/instances/{kind}/{name}/events (cluster-scoped).
+// GetInstanceEvents handles GET /api/v1/apigroups/{group}/namespaces/{namespace}/instances/{kind}/{name}/events
+// and GET /api/v1/apigroups/{group}/instances/{kind}/{name}/events (cluster-scoped).
 // Returns K8s Events for the instance and all its child resources, queried on-demand
 // from the Kubernetes API (like kubectl get events).
 func (h *InstanceCRUDHandler) GetInstanceEvents(w http.ResponseWriter, r *http.Request) {
@@ -1446,6 +1482,7 @@ func (h *InstanceCRUDHandler) GetInstanceEvents(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	group := r.PathValue("group")
 	namespace := r.PathValue("namespace")
 	kind := r.PathValue("kind")
 	name := r.PathValue("name")
@@ -1454,24 +1491,24 @@ func (h *InstanceCRUDHandler) GetInstanceEvents(w http.ResponseWriter, r *http.R
 		response.BadRequest(w, "kind and name are required", nil)
 		return
 	}
-	if validateInstancePathParams(w, namespace, kind, name) {
+	if validateInstancePathParams(w, group, namespace, kind, name) {
 		return
 	}
 
 	// Get the instance to find its UID
-	instance, found := h.instanceTracker.GetInstance(namespace, kind, name)
+	instance, found := h.instanceTracker.GetInstance(group, namespace, kind, name)
 	if !found {
-		response.NotFound(w, "Instance", namespace+"/"+kind+"/"+name)
+		response.NotFound(w, "Instance", instanceNotFoundID(group, namespace, kind, name))
 		return
 	}
 
 	// Collect child resource names for matching
 	childNames := make(map[string]bool)
 	if h.childService != nil {
-		childResp, err := h.childService.ListChildResources(r.Context(), namespace, kind, name)
+		childResp, err := h.childService.ListChildResources(r.Context(), group, namespace, kind, name)
 		if err == nil && childResp != nil {
-			for _, group := range childResp.Groups {
-				for _, child := range group.Resources {
+			for _, childGroup := range childResp.Groups {
+				for _, child := range childGroup.Resources {
 					childNames[child.Name] = true
 				}
 			}

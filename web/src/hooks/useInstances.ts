@@ -40,13 +40,17 @@ export function useInstanceCount() {
 }
 
 /**
- * Hook for fetching a single instance by namespace, kind, and name
+ * Hook for fetching a single instance by group, namespace, kind, and name.
+ * Group is part of the identity key so two CRDs sharing a Kind across different
+ * apiGroups produce distinct cache entries. Namespace may be empty for
+ * cluster-scoped instances; group MUST be non-empty (the backend rejects
+ * empty apiGroup at the route via IsValidAPIGroup).
  */
-export function useInstance(namespace: string, kind: string, name: string) {
+export function useInstance(group: string, namespace: string, kind: string, name: string) {
   return useQuery({
-    queryKey: ["instance", namespace, kind, name],
-    queryFn: () => getInstance(namespace, kind, name),
-    enabled: !!kind && !!name, // namespace can be empty for cluster-scoped instances
+    queryKey: ["instance", group, namespace, kind, name],
+    queryFn: () => getInstance(group, namespace, kind, name),
+    enabled: !!group && !!kind && !!name,
     staleTime: STALE_TIME.REALTIME,
   });
 }
@@ -58,12 +62,12 @@ export function useDeleteInstance() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ namespace, kind, name }: { namespace: string; kind: string; name: string }) =>
-      deleteInstance(namespace, kind, name),
-    onSettled: (_, __, { namespace, kind, name }) => {
+    mutationFn: ({ group, namespace, kind, name }: { group: string; namespace: string; kind: string; name: string }) =>
+      deleteInstance(group, namespace, kind, name),
+    onSettled: (_, __, { group, namespace, kind, name }) => {
       // Always invalidate cache, even if DELETE returns 404 (instance not found)
       // This ensures stale instances are removed from the UI
-      queryClient.removeQueries({ queryKey: ["instance", namespace, kind, name] });
+      queryClient.removeQueries({ queryKey: ["instance", group, namespace, kind, name] });
       queryClient.invalidateQueries({ queryKey: ["instances"] });
       queryClient.invalidateQueries({ queryKey: ["rgds"] });
     },
@@ -78,19 +82,21 @@ export function useUpdateInstanceSpec() {
 
   return useMutation({
     mutationFn: ({
+      group,
       namespace,
       kind,
       name,
       request,
     }: {
+      group: string;
       namespace: string;
       kind: string;
       name: string;
       request: UpdateInstanceRequest;
-    }) => updateInstanceSpec(namespace, kind, name, request),
-    onSuccess: (_, { namespace, kind, name }) => {
+    }) => updateInstanceSpec(group, namespace, kind, name, request),
+    onSuccess: (_, { group, namespace, kind, name }) => {
       // Invalidate the specific instance and list caches to pick up updated spec
-      queryClient.invalidateQueries({ queryKey: ["instance", namespace, kind, name] });
+      queryClient.invalidateQueries({ queryKey: ["instance", group, namespace, kind, name] });
       queryClient.invalidateQueries({ queryKey: ["instances"] });
     },
   });
@@ -99,12 +105,11 @@ export function useUpdateInstanceSpec() {
 /**
  * Hook for fetching child resources of an instance, grouped by node-id.
  */
-export function useInstanceChildren(namespace: string, kind: string, name: string) {
+export function useInstanceChildren(group: string, namespace: string, kind: string, name: string) {
   return useQuery({
-    queryKey: ["instance", namespace, kind, name, "children"],
-    queryFn: () => getInstanceChildren(namespace, kind, name),
-    enabled: !!kind && !!name,
+    queryKey: ["instance", group, namespace, kind, name, "children"],
+    queryFn: () => getInstanceChildren(group, namespace, kind, name),
+    enabled: !!group && !!kind && !!name,
     staleTime: STALE_TIME.FREQUENT, // child resources change with instance
   });
 }
-

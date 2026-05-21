@@ -109,6 +109,7 @@ type Event struct {
 	// Where
 	Project   string // project scope (empty for global actions)
 	Namespace string // K8s namespace (empty for non-namespaced resources)
+	Group     string // K8s API group of the resource (empty for non-K8s actions)
 
 	// Context
 	RequestID string

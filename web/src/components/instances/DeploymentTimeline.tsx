@@ -34,6 +34,7 @@ import {
 } from "@/components/ui/tooltip";
 
 interface DeploymentTimelineProps {
+  group: string;
   namespace: string;
   kind: string;
   name: string;
@@ -296,12 +297,12 @@ function DetailCard({ entry }: { entry: TimelineEntry }) {
   );
 }
 
-export function DeploymentTimeline({ namespace, kind, name }: DeploymentTimelineProps) {
+export function DeploymentTimeline({ group, namespace, kind, name }: DeploymentTimelineProps) {
   const [isExpanded, setIsExpanded] = useState(true);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [exportFormat, setExportFormat] = useState<HistoryExportFormat>("json");
 
-  const { data: timelineData, isLoading, error, refetch } = useInstanceTimeline(namespace, kind, name);
+  const { data: timelineData, isLoading, error, refetch } = useInstanceTimeline(group, namespace, kind, name);
   const exportHistory = useExportHistory();
 
   const timeline = useMemo(() => timelineData?.timeline ?? [], [timelineData?.timeline]);
@@ -337,7 +338,7 @@ export function DeploymentTimeline({ namespace, kind, name }: DeploymentTimeline
 
   const handleExport = async () => {
     try {
-      await exportHistory.mutateAsync({ namespace, kind, name, format: exportFormat });
+      await exportHistory.mutateAsync({ group, namespace, kind, name, format: exportFormat });
     } catch {
       // Error handled by mutation
     }

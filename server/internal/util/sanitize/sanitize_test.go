@@ -253,6 +253,35 @@ func TestIsValidDNS1123Label(t *testing.T) {
 	}
 }
 
+func TestIsValidAPIGroup(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  bool
+	}{
+		{"valid simple", "kro.run", true},
+		{"valid multi-label", "apps.example.com", true},
+		{"valid single label", "knodex", true},
+		{"valid with hyphens", "my-group.example.com", true},
+		{"valid max length", strings.Repeat("a", 253), true},
+		{"invalid empty (core group rejected)", "", false},
+		{"invalid uppercase", "Apps.example.com", false},
+		{"invalid double dot", "apps..example", false},
+		{"invalid leading hyphen", "-apps.com", false},
+		{"invalid trailing dot", "apps.com.", false},
+		{"invalid too long", strings.Repeat("a", 254), false},
+		{"invalid space", "apps example.com", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsValidAPIGroup(tt.input); got != tt.want {
+				t.Errorf("IsValidAPIGroup(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestIsValidDNS1123Subdomain(t *testing.T) {
 	tests := []struct {
 		name  string

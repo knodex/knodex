@@ -179,3 +179,11 @@ func IsValidDNS1123Subdomain(s string) bool {
 func IsValidK8sKind(s string) bool {
 	return len(s) > 0 && len(s) <= 63 && K8sKindRegex.MatchString(s)
 }
+
+// IsValidAPIGroup checks whether s is a valid Kubernetes API group name.
+// API groups must be non-empty DNS-1123 subdomains (e.g., "apps.example.com",
+// "kro.run"). The empty core group ("") is rejected — Knodex only indexes
+// Kro-spawned CRDs, which always declare a group.
+func IsValidAPIGroup(s string) bool {
+	return IsValidDNS1123Subdomain(s)
+}

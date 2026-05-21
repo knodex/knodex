@@ -14,7 +14,7 @@ import (
 // InstanceCache provides thread-safe storage for discovered instances
 type InstanceCache struct {
 	mu        sync.RWMutex
-	instances map[string]*models.Instance // key: namespace/kind/name
+	instances map[string]*models.Instance // key: group/namespace/kind/name
 }
 
 // NewInstanceCache creates a new instance cache
@@ -24,33 +24,46 @@ func NewInstanceCache() *InstanceCache {
 	}
 }
 
-// instanceCacheKey generates a unique key for an instance
-func instanceCacheKey(namespace, kind, name string) string {
-	return namespace + "/" + kind + "/" + name
+// apiGroupOf extracts the apiGroup from a Kubernetes apiVersion string
+// (e.g., "apps.example.com/v1" → "apps.example.com"). Returns "" if no slash
+// is present, matching the K8s convention for core-group resources.
+func apiGroupOf(apiVersion string) string {
+	if i := strings.IndexByte(apiVersion, '/'); i >= 0 {
+		return apiVersion[:i]
+	}
+	return ""
+}
+
+// instanceCacheKey generates a unique key for an instance.
+// Group is included so two CRs with the same (namespace, kind, name) in
+// different apiGroups do not collide.
+func instanceCacheKey(group, namespace, kind, name string) string {
+	return group + "/" + namespace + "/" + kind + "/" + name
 }
 
 // Set adds or updates an instance in the cache
 func (c *InstanceCache) Set(instance *models.Instance) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	key := instanceCacheKey(instance.Namespace, instance.Kind, instance.Name)
+	group := apiGroupOf(instance.APIVersion)
+	key := instanceCacheKey(group, instance.Namespace, instance.Kind, instance.Name)
 	c.instances[key] = instance
 }
 
 // Get retrieves an instance from the cache
-func (c *InstanceCache) Get(namespace, kind, name string) (*models.Instance, bool) {
+func (c *InstanceCache) Get(group, namespace, kind, name string) (*models.Instance, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	key := instanceCacheKey(namespace, kind, name)
+	key := instanceCacheKey(group, namespace, kind, name)
 	instance, ok := c.instances[key]
 	return instance, ok
 }
 
 // Delete removes an instance from the cache
-func (c *InstanceCache) Delete(namespace, kind, name string) {
+func (c *InstanceCache) Delete(group, namespace, kind, name string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	key := instanceCacheKey(namespace, kind, name)
+	key := instanceCacheKey(group, namespace, kind, name)
 	delete(c.instances, key)
 }
 
@@ -289,10 +302,12 @@ func (c *InstanceCache) sortInstances(instances []models.Instance, sortBy, sortO
 			equal = ni == nj
 		}
 
-		// Tie-break by namespace/kind/name for deterministic order
+		// Tie-break by group/namespace/kind/name for deterministic order
 		if equal {
-			ki := strings.ToLower(instances[i].Namespace + "/" + instances[i].Kind + "/" + instances[i].Name)
-			kj := strings.ToLower(instances[j].Namespace + "/" + instances[j].Kind + "/" + instances[j].Name)
+			gi := apiGroupOf(instances[i].APIVersion)
+			gj := apiGroupOf(instances[j].APIVersion)
+			ki := strings.ToLower(gi + "/" + instances[i].Namespace + "/" + instances[i].Kind + "/" + instances[i].Name)
+			kj := strings.ToLower(gj + "/" + instances[j].Namespace + "/" + instances[j].Kind + "/" + instances[j].Name)
 			if ascending {
 				return ki < kj
 			}

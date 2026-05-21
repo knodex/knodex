@@ -97,18 +97,18 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
         switch (message.type) {
           case "instance_update": {
             const data = message.data as InstanceUpdateData;
-            log("Instance update:", data.action, data.namespace, data.name);
+            log("Instance update:", data.action, data.group, data.namespace, data.name);
 
             if (data.action === "delete") {
               // Remove specific instance from cache
               queryClient.removeQueries({
-                queryKey: ["instance", data.namespace, data.kind, data.name],
+                queryKey: ["instance", data.group, data.namespace, data.kind, data.name],
               });
             } else {
               // Invalidate to trigger a fresh HTTP GET (which includes drift enrichment)
               // Do NOT use setQueryData here — watcher-built instances lack drift state
               queryClient.invalidateQueries({
-                queryKey: ["instance", data.namespace, data.kind, data.name],
+                queryKey: ["instance", data.group, data.namespace, data.kind, data.name],
               });
             }
 
@@ -123,9 +123,9 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 
           case "drift_update": {
             const data = message.data as DriftUpdateData;
-            log("Drift update:", data.namespace, data.kind, data.name, "drifted:", data.drifted);
+            log("Drift update:", data.group, data.namespace, data.kind, data.name, "drifted:", data.drifted);
             queryClient.invalidateQueries({
-              queryKey: ["instance", data.namespace, data.kind, data.name],
+              queryKey: ["instance", data.group, data.namespace, data.kind, data.name],
             });
             // Invalidate instance list so drift badges update on the list view
             queryClient.invalidateQueries({
@@ -185,16 +185,14 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
           case "resource_event": {
             const data = message.data as ResourceEventData;
             log("Resource event:", data.resourceKind, data.resourceName, data.status, data.message);
-            // Invalidate the Kubernetes events query for this instance
-            // The namespace is embedded in the instanceId (namespace/kind/name format)
-            // but we need the namespace from the resourceKind/resourceName lookup.
-            // For now, invalidate by namespace (extracted from instanceId if available)
+            // instanceId is "{group}/{namespace}/{kind}/{name}" — group + namespace are
+            // required for the GVK-aware query key produced by useInstanceKubernetesEvents.
             if (data.instanceId) {
               const parts = data.instanceId.split("/");
-              if (parts.length >= 3) {
-                const ns = parts[0];
+              if (parts.length >= 4) {
+                const [group, ns] = parts;
                 queryClient.invalidateQueries({
-                  queryKey: ["instance-timeline", ns, data.resourceKind, data.resourceName, "kubernetes"],
+                  queryKey: ["instance-timeline", group, ns, data.resourceKind, data.resourceName, "kubernetes"],
                 });
               }
             }

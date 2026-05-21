@@ -79,6 +79,7 @@ func TestInstanceCRUDHandler_GetInstance_NilTracker(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/instances/default/WebApp/test", nil)
 	req.SetPathValue("namespace", "default")
+	req.SetPathValue("group", "kro.run")
 	req.SetPathValue("kind", "Webapp")
 	req.SetPathValue("name", "test")
 	rec := httptest.NewRecorder()
@@ -101,6 +102,7 @@ func TestInstanceCRUDHandler_DeleteInstance_NilTracker(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/instances/default/WebApp/test", nil)
 	req.SetPathValue("namespace", "default")
+	req.SetPathValue("group", "kro.run")
 	req.SetPathValue("kind", "Webapp")
 	req.SetPathValue("name", "test")
 	rec := httptest.NewRecorder()
@@ -153,6 +155,7 @@ func TestInstanceCRUDHandler_DeleteInstance_NilDynamicClient(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/instances/default/WebApp/test", nil)
 	req.SetPathValue("namespace", "default")
+	req.SetPathValue("group", "kro.run")
 	req.SetPathValue("kind", "Webapp")
 	req.SetPathValue("name", "test")
 	rec := httptest.NewRecorder()
@@ -578,7 +581,7 @@ func TestHandleDeleteError_NoRawErrorLeakage(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			rec := httptest.NewRecorder()
-			handler.handleDeleteError(rec, "default", "webapp", "test-instance", tt.err)
+			handler.handleDeleteError(rec, "apps.example.com", "default", "webapp", "test-instance", tt.err)
 
 			resp := rec.Result()
 			defer resp.Body.Close()
@@ -800,6 +803,7 @@ func TestUpdateInstance_Success(t *testing.T) {
 	req := newRequestWithUserContext(http.MethodPatch, "/api/v1/instances/production/WebApp/test-instance",
 		[]byte(body), userCtx)
 	req.SetPathValue("namespace", "production")
+	req.SetPathValue("group", "kro.run")
 	req.SetPathValue("kind", "Webapp")
 	req.SetPathValue("name", "test-instance")
 	rec := httptest.NewRecorder()
@@ -881,6 +885,7 @@ func TestUpdateInstance_Unauthorized(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/instances/production/WebApp/test-instance",
 		strings.NewReader(body))
 	req.SetPathValue("namespace", "production")
+	req.SetPathValue("group", "kro.run")
 	req.SetPathValue("kind", "Webapp")
 	req.SetPathValue("name", "test-instance")
 	rec := httptest.NewRecorder()
@@ -902,6 +907,7 @@ func TestUpdateInstance_NotFound(t *testing.T) {
 	req := newRequestWithUserContext(http.MethodPatch, "/api/v1/instances/production/WebApp/nonexistent",
 		[]byte(body), userCtx)
 	req.SetPathValue("namespace", "production")
+	req.SetPathValue("group", "kro.run")
 	req.SetPathValue("kind", "Webapp")
 	req.SetPathValue("name", "nonexistent")
 	rec := httptest.NewRecorder()
@@ -936,6 +942,7 @@ func TestUpdateInstance_InvalidSpec(t *testing.T) {
 			req := newRequestWithUserContext(http.MethodPatch, "/api/v1/instances/production/WebApp/test-instance",
 				[]byte(tt.body), userCtx)
 			req.SetPathValue("namespace", "production")
+			req.SetPathValue("group", "kro.run")
 			req.SetPathValue("kind", "Webapp")
 			req.SetPathValue("name", "test-instance")
 			rec := httptest.NewRecorder()
@@ -1023,6 +1030,7 @@ func TestUpdateInstance_SpecInjection(t *testing.T) {
 			req := newRequestWithUserContext(http.MethodPatch, "/api/v1/instances/production/WebApp/test-instance",
 				[]byte(tt.body), userCtx)
 			req.SetPathValue("namespace", "production")
+			req.SetPathValue("group", "kro.run")
 			req.SetPathValue("kind", "Webapp")
 			req.SetPathValue("name", "test-instance")
 			rec := httptest.NewRecorder()
@@ -1052,6 +1060,7 @@ func TestUpdateInstance_NilTracker(t *testing.T) {
 	req := newRequestWithUserContext(http.MethodPatch, "/api/v1/instances/default/WebApp/test",
 		[]byte(body), userCtx)
 	req.SetPathValue("namespace", "default")
+	req.SetPathValue("group", "kro.run")
 	req.SetPathValue("kind", "Webapp")
 	req.SetPathValue("name", "test")
 	rec := httptest.NewRecorder()
@@ -1077,6 +1086,7 @@ func TestUpdateInstance_NilDynamicClient(t *testing.T) {
 	req := newRequestWithUserContext(http.MethodPatch, "/api/v1/instances/default/WebApp/test",
 		[]byte(body), userCtx)
 	req.SetPathValue("namespace", "default")
+	req.SetPathValue("group", "kro.run")
 	req.SetPathValue("kind", "Webapp")
 	req.SetPathValue("name", "test")
 	rec := httptest.NewRecorder()
@@ -1150,7 +1160,7 @@ func TestHandleUpdateError_NoRawErrorLeakage(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			rec := httptest.NewRecorder()
-			handler.handleUpdateError(rec, "default", "webapp", "test", tt.err)
+			handler.handleUpdateError(rec, "apps.example.com", "default", "webapp", "test", tt.err)
 
 			if rec.Code != tt.expectedStatus {
 				t.Errorf("expected status %d, got %d", tt.expectedStatus, rec.Code)
@@ -1242,6 +1252,7 @@ func TestUpdateInstance_GitOps_NoRepositoryID(t *testing.T) {
 		req := newRequestWithUserContext(http.MethodPatch, "/api/v1/instances/staging/WebApp/gitops-instance",
 			[]byte(body), userCtx)
 		req.SetPathValue("namespace", "staging")
+		req.SetPathValue("group", "kro.run")
 		req.SetPathValue("kind", "Webapp")
 		req.SetPathValue("name", "gitops-instance")
 		rec := httptest.NewRecorder()
@@ -1264,6 +1275,7 @@ func TestUpdateInstance_GitOps_NoController(t *testing.T) {
 	req := newRequestWithUserContext(http.MethodPatch, "/api/v1/instances/staging/WebApp/gitops-instance",
 		[]byte(body), userCtx)
 	req.SetPathValue("namespace", "staging")
+	req.SetPathValue("group", "kro.run")
 	req.SetPathValue("kind", "Webapp")
 	req.SetPathValue("name", "gitops-instance")
 	rec := httptest.NewRecorder()
@@ -1286,6 +1298,7 @@ func TestUpdateInstance_GitOps_DoesNotPatchK8s(t *testing.T) {
 	req := newRequestWithUserContext(http.MethodPatch, "/api/v1/instances/staging/WebApp/gitops-instance",
 		[]byte(body), userCtx)
 	req.SetPathValue("namespace", "staging")
+	req.SetPathValue("group", "kro.run")
 	req.SetPathValue("kind", "Webapp")
 	req.SetPathValue("name", "gitops-instance")
 	rec := httptest.NewRecorder()
@@ -1311,6 +1324,7 @@ func TestUpdateInstance_Hybrid_PatchesK8sEvenIfGitFails(t *testing.T) {
 	req := newRequestWithUserContext(http.MethodPatch, "/api/v1/instances/staging/WebApp/gitops-instance",
 		[]byte(body), userCtx)
 	req.SetPathValue("namespace", "staging")
+	req.SetPathValue("group", "kro.run")
 	req.SetPathValue("kind", "Webapp")
 	req.SetPathValue("name", "gitops-instance")
 	rec := httptest.NewRecorder()
@@ -1367,6 +1381,7 @@ func TestUpdateInstance_DirectWithLabel(t *testing.T) {
 	req := newRequestWithUserContext(http.MethodPatch, "/api/v1/instances/production/WebApp/test-instance",
 		[]byte(body), userCtx)
 	req.SetPathValue("namespace", "production")
+	req.SetPathValue("group", "kro.run")
 	req.SetPathValue("kind", "Webapp")
 	req.SetPathValue("name", "test-instance")
 	rec := httptest.NewRecorder()
@@ -1409,6 +1424,7 @@ func TestUpdateInstance_GitOps_RepositoryIdAccepted(t *testing.T) {
 	req := newRequestWithUserContext(http.MethodPatch, "/api/v1/instances/staging/WebApp/gitops-instance",
 		[]byte(body), userCtx)
 	req.SetPathValue("namespace", "staging")
+	req.SetPathValue("group", "kro.run")
 	req.SetPathValue("kind", "Webapp")
 	req.SetPathValue("name", "gitops-instance")
 	rec := httptest.NewRecorder()
@@ -1433,6 +1449,7 @@ func TestUpdateInstance_AuditSpecChanges(t *testing.T) {
 	req := newRequestWithUserContext(http.MethodPatch, "/api/v1/instances/production/WebApp/test-instance",
 		[]byte(body), userCtx)
 	req.SetPathValue("namespace", "production")
+	req.SetPathValue("group", "kro.run")
 	req.SetPathValue("kind", "Webapp")
 	req.SetPathValue("name", "test-instance")
 	rec := httptest.NewRecorder()
@@ -1521,6 +1538,7 @@ func TestUpdateInstance_ResourceVersionConflict(t *testing.T) {
 	req := newRequestWithUserContext(http.MethodPatch, "/api/v1/instances/production/WebApp/test-instance",
 		[]byte(body), userCtx)
 	req.SetPathValue("namespace", "production")
+	req.SetPathValue("group", "kro.run")
 	req.SetPathValue("kind", "Webapp")
 	req.SetPathValue("name", "test-instance")
 	rec := httptest.NewRecorder()
@@ -1556,6 +1574,7 @@ func TestUpdateInstance_DirectPatchFailure_AuditRecorded(t *testing.T) {
 	req := newRequestWithUserContext(http.MethodPatch, "/api/v1/instances/production/WebApp/test-instance",
 		[]byte(body), userCtx)
 	req.SetPathValue("namespace", "production")
+	req.SetPathValue("group", "kro.run")
 	req.SetPathValue("kind", "Webapp")
 	req.SetPathValue("name", "test-instance")
 	rec := httptest.NewRecorder()
@@ -1647,6 +1666,7 @@ func TestUpdateInstance_HybridPatchFailure_AuditRecorded(t *testing.T) {
 	req := newRequestWithUserContext(http.MethodPatch, "/api/v1/instances/staging/WebApp/hybrid-instance",
 		[]byte(body), userCtx)
 	req.SetPathValue("namespace", "staging")
+	req.SetPathValue("group", "kro.run")
 	req.SetPathValue("kind", "Webapp")
 	req.SetPathValue("name", "hybrid-instance")
 	rec := httptest.NewRecorder()
@@ -1748,8 +1768,10 @@ func TestCreateInstance_SpecInjection(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			userCtx := &middleware.UserContext{UserID: "dev-user", Email: "dev@test.local"}
-			req := newRequestWithUserContext(http.MethodPost, "/api/v1/instances",
+			req := newRequestWithUserContext(http.MethodPost, "/api/v1/apigroups/kro.run/instances/TestKind",
 				[]byte(tt.body), userCtx)
+			req.SetPathValue("group", "kro.run")
+			req.SetPathValue("kind", "TestKind")
 			rec := httptest.NewRecorder()
 
 			handler.CreateInstance(rec, req)
@@ -1828,9 +1850,10 @@ func TestUpdateInstance_IrregularPlural_UsesDiscovery(t *testing.T) {
 
 	body := `{"spec": {"port": 9090}}`
 	userCtx := &middleware.UserContext{UserID: "dev-user", Email: "dev@test.local"}
-	req := newRequestWithUserContext(http.MethodPatch, "/api/v1/instances/default/Proxy/my-proxy",
+	req := newRequestWithUserContext(http.MethodPatch, "/api/v1/apigroups/example.com/namespaces/default/instances/Proxy/my-proxy",
 		[]byte(body), userCtx)
 	req.SetPathValue("namespace", "default")
+	req.SetPathValue("group", "example.com")
 	req.SetPathValue("kind", "Proxy")
 	req.SetPathValue("name", "my-proxy")
 	rec := httptest.NewRecorder()
@@ -2148,6 +2171,7 @@ func TestGetInstance_ClusterScoped_ProjectAccess(t *testing.T) {
 		Name:            "my-policy",
 		Namespace:       "",
 		Kind:            "Clusterpolicy",
+		APIVersion:      "kro.run/v1alpha1",
 		RGDName:         "cluster-rgd",
 		ProjectName:     "infra",
 		IsClusterScoped: true,
@@ -2187,8 +2211,9 @@ func TestGetInstance_ClusterScoped_ProjectAccess(t *testing.T) {
 				UserID: "user:test",
 				Email:  "test@test.local",
 			}
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/instances//ClusterPolicy/my-policy", nil)
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/apigroups/kro.run/instances/Clusterpolicy/my-policy", nil)
 			req.SetPathValue("namespace", "")
+			req.SetPathValue("group", "kro.run")
 			req.SetPathValue("kind", "Clusterpolicy")
 			req.SetPathValue("name", "my-policy")
 			ctx := context.WithValue(req.Context(), middleware.UserContextKey, userCtx)
@@ -2273,6 +2298,7 @@ func TestDeleteInstance_ClusterScoped_Unauthorized(t *testing.T) {
 	}
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/instances//ClusterPolicy/cluster-policy-1", nil)
 	req.SetPathValue("namespace", "")
+	req.SetPathValue("group", "kro.run")
 	req.SetPathValue("kind", "Clusterpolicy")
 	req.SetPathValue("name", "cluster-policy-1")
 	ctx := context.WithValue(req.Context(), middleware.UserContextKey, userCtx)
@@ -2329,6 +2355,7 @@ func TestUpdateInstance_ClusterScoped_Unauthorized(t *testing.T) {
 	body := strings.NewReader(`{"spec":{"key":"value"}}`)
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/instances//ClusterPolicy/cluster-policy-1", body)
 	req.SetPathValue("namespace", "")
+	req.SetPathValue("group", "kro.run")
 	req.SetPathValue("kind", "Clusterpolicy")
 	req.SetPathValue("name", "cluster-policy-1")
 	ctx := context.WithValue(req.Context(), middleware.UserContextKey, userCtx)
@@ -2430,7 +2457,7 @@ func TestCreateInstance_ClusterScoped_NamespaceNotRequired(t *testing.T) {
 	rgdCache.Set(&models.CatalogRGD{
 		Name:            "cluster-config-rgd",
 		Namespace:       "kro-system",
-		Kind:            "clusterconfig",
+		Kind:            "ClusterConfig",
 		APIVersion:      "kro.run/v1alpha1",
 		IsClusterScoped: true,
 	})
@@ -2448,7 +2475,9 @@ func TestCreateInstance_ClusterScoped_NamespaceNotRequired(t *testing.T) {
 	// Deploy cluster-scoped without namespace — should succeed
 	body := `{"name": "my-cluster-config", "rgdName": "cluster-config-rgd", "spec": {"tier": "gold"}}`
 	userCtx := &middleware.UserContext{UserID: "admin", Email: "admin@test.local"}
-	req := newRequestWithUserContext(http.MethodPost, "/api/v1/instances", []byte(body), userCtx)
+	req := newRequestWithUserContext(http.MethodPost, "/api/v1/apigroups/kro.run/instances/ClusterConfig", []byte(body), userCtx)
+	req.SetPathValue("group", "kro.run")
+	req.SetPathValue("kind", "ClusterConfig")
 	rec := httptest.NewRecorder()
 
 	handler.CreateInstance(rec, req)
@@ -2481,7 +2510,9 @@ func TestCreateInstance_NamespaceScoped_RequiresNamespace(t *testing.T) {
 	// Deploy namespace-scoped without namespace — should fail
 	body := `{"name": "my-app", "rgdName": "app-rgd", "spec": {"replicas": 1}}`
 	userCtx := &middleware.UserContext{UserID: "dev", Email: "dev@test.local"}
-	req := newRequestWithUserContext(http.MethodPost, "/api/v1/instances", []byte(body), userCtx)
+	req := newRequestWithUserContext(http.MethodPost, "/api/v1/apigroups/kro.run/instances/Application", []byte(body), userCtx)
+	req.SetPathValue("group", "kro.run")
+	req.SetPathValue("kind", "Application")
 	rec := httptest.NewRecorder()
 
 	handler.CreateInstance(rec, req)
@@ -2519,7 +2550,9 @@ func TestCreateInstance_ClusterScoped_NoNamespaceInManifest(t *testing.T) {
 
 	body := `{"name": "global-policy", "rgdName": "cluster-policy-rgd", "spec": {"enforce": true}}`
 	userCtx := &middleware.UserContext{UserID: "admin", Email: "admin@test.local"}
-	req := newRequestWithUserContext(http.MethodPost, "/api/v1/instances", []byte(body), userCtx)
+	req := newRequestWithUserContext(http.MethodPost, "/api/v1/apigroups/kro.run/instances/Clusterpolicy", []byte(body), userCtx)
+	req.SetPathValue("group", "kro.run")
+	req.SetPathValue("kind", "Clusterpolicy")
 	rec := httptest.NewRecorder()
 
 	handler.CreateInstance(rec, req)
@@ -2546,7 +2579,7 @@ func TestCreateInstance_ClusterScoped_ProjectLabelInjected(t *testing.T) {
 	rgdCache.Set(&models.CatalogRGD{
 		Name:            "cluster-config-rgd",
 		Namespace:       "kro-system",
-		Kind:            "clusterconfig",
+		Kind:            "ClusterConfig",
 		APIVersion:      "kro.run/v1alpha1",
 		IsClusterScoped: true,
 	})
@@ -2563,7 +2596,9 @@ func TestCreateInstance_ClusterScoped_ProjectLabelInjected(t *testing.T) {
 
 	body := `{"name": "test-config", "rgdName": "cluster-config-rgd", "projectId": "infra", "spec": {"level": "high"}}`
 	userCtx := &middleware.UserContext{UserID: "admin", Email: "admin@test.local"}
-	req := newRequestWithUserContext(http.MethodPost, "/api/v1/instances", []byte(body), userCtx)
+	req := newRequestWithUserContext(http.MethodPost, "/api/v1/apigroups/kro.run/instances/clusterconfig", []byte(body), userCtx)
+	req.SetPathValue("group", "kro.run")
+	req.SetPathValue("kind", "ClusterConfig")
 	rec := httptest.NewRecorder()
 
 	handler.CreateInstance(rec, req)
@@ -2605,7 +2640,7 @@ func TestCreateInstance_ClusterScoped_AnnotationsInjected(t *testing.T) {
 	rgdCache.Set(&models.CatalogRGD{
 		Name:            "cluster-config-rgd",
 		Namespace:       "kro-system",
-		Kind:            "clusterconfig",
+		Kind:            "ClusterConfig",
 		APIVersion:      "kro.run/v1alpha1",
 		IsClusterScoped: true,
 	})
@@ -2622,7 +2657,9 @@ func TestCreateInstance_ClusterScoped_AnnotationsInjected(t *testing.T) {
 
 	body := `{"name": "annotated-config", "rgdName": "cluster-config-rgd", "projectId": "platform", "spec": {"mode": "strict"}}`
 	userCtx := &middleware.UserContext{UserID: "admin", Email: "admin@test.local"}
-	req := newRequestWithUserContext(http.MethodPost, "/api/v1/instances", []byte(body), userCtx)
+	req := newRequestWithUserContext(http.MethodPost, "/api/v1/apigroups/kro.run/instances/clusterconfig", []byte(body), userCtx)
+	req.SetPathValue("group", "kro.run")
+	req.SetPathValue("kind", "ClusterConfig")
 	rec := httptest.NewRecorder()
 
 	handler.CreateInstance(rec, req)
@@ -2844,6 +2881,7 @@ func TestGetInstance_Unauthorized_NoUserContext(t *testing.T) {
 	// Request without user context (no auth middleware set it)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/instances/default/WebApp/test-app", nil)
 	req.SetPathValue("namespace", "default")
+	req.SetPathValue("group", "kro.run")
 	req.SetPathValue("kind", "Webapp")
 	req.SetPathValue("name", "test-app")
 	rec := httptest.NewRecorder()
@@ -2942,6 +2980,7 @@ func TestGetInstance_ClusterScoped_ProjectError(t *testing.T) {
 		Name:            "my-policy",
 		Namespace:       "",
 		Kind:            "Clusterpolicy",
+		APIVersion:      "kro.run/v1alpha1",
 		RGDName:         "cluster-rgd",
 		ProjectName:     "infra",
 		IsClusterScoped: true,
@@ -2962,8 +3001,9 @@ func TestGetInstance_ClusterScoped_ProjectError(t *testing.T) {
 		UserID: "user:dev",
 		Email:  "dev@test.local",
 	}
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/instances//ClusterPolicy/my-policy", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/apigroups/kro.run/instances/Clusterpolicy/my-policy", nil)
 	req.SetPathValue("namespace", "")
+	req.SetPathValue("group", "kro.run")
 	req.SetPathValue("kind", "Clusterpolicy")
 	req.SetPathValue("name", "my-policy")
 	ctx := context.WithValue(req.Context(), middleware.UserContextKey, userCtx)
@@ -2991,7 +3031,7 @@ func TestDeleteInstance_ClusterScoped_ProjectError(t *testing.T) {
 		Namespace:       "",
 		Kind:            "Clusterpolicy",
 		RGDName:         "cluster-rgd",
-		APIVersion:      "example.com/v1",
+		APIVersion:      "kro.run/v1alpha1",
 		ProjectName:     "infra",
 		IsClusterScoped: true,
 	})
@@ -3015,6 +3055,7 @@ func TestDeleteInstance_ClusterScoped_ProjectError(t *testing.T) {
 	}
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/instances//ClusterPolicy/cluster-policy-1", nil)
 	req.SetPathValue("namespace", "")
+	req.SetPathValue("group", "kro.run")
 	req.SetPathValue("kind", "Clusterpolicy")
 	req.SetPathValue("name", "cluster-policy-1")
 	ctx := context.WithValue(req.Context(), middleware.UserContextKey, userCtx)
@@ -3042,7 +3083,7 @@ func TestUpdateInstance_ClusterScoped_ProjectError(t *testing.T) {
 		Namespace:       "",
 		Kind:            "Clusterpolicy",
 		RGDName:         "cluster-rgd",
-		APIVersion:      "example.com/v1",
+		APIVersion:      "kro.run/v1alpha1",
 		ProjectName:     "infra",
 		IsClusterScoped: true,
 	})
@@ -3067,6 +3108,7 @@ func TestUpdateInstance_ClusterScoped_ProjectError(t *testing.T) {
 	body := strings.NewReader(`{"spec":{"key":"value"}}`)
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/instances//ClusterPolicy/cluster-policy-1", body)
 	req.SetPathValue("namespace", "")
+	req.SetPathValue("group", "kro.run")
 	req.SetPathValue("kind", "Clusterpolicy")
 	req.SetPathValue("name", "cluster-policy-1")
 	ctx := context.WithValue(req.Context(), middleware.UserContextKey, userCtx)
@@ -3291,6 +3333,7 @@ func TestGetInstanceGraph_CollectionStatus_Empty(t *testing.T) {
 		Name:         "my-instance",
 		Namespace:    "default",
 		Kind:         "Workerapp",
+		APIVersion:   "kro.run/v1alpha1",
 		RGDName:      "worker-rgd",
 		RGDNamespace: "default",
 	}
@@ -3300,6 +3343,7 @@ func TestGetInstanceGraph_CollectionStatus_Empty(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/namespaces/default/instances/Workerapp/my-instance/graph", nil)
 	req = withAdminContext(req)
 	req.SetPathValue("namespace", "default")
+	req.SetPathValue("group", "kro.run")
 	req.SetPathValue("kind", "Workerapp")
 	req.SetPathValue("name", "my-instance")
 	rec := httptest.NewRecorder()
@@ -3370,6 +3414,7 @@ func TestGetInstanceGraph_NotFound(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/namespaces/default/instances/WorkerApp/missing/graph", nil)
 	req = withAdminContext(req)
 	req.SetPathValue("namespace", "default")
+	req.SetPathValue("group", "kro.run")
 	req.SetPathValue("kind", "Workerapp")
 	req.SetPathValue("name", "missing")
 	rec := httptest.NewRecorder()
@@ -3402,6 +3447,7 @@ func TestGetInstanceGraph_RGDNotFound(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/namespaces/default/instances/WorkerApp/my-instance/graph", nil)
 	req = withAdminContext(req)
 	req.SetPathValue("namespace", "default")
+	req.SetPathValue("group", "kro.run")
 	req.SetPathValue("kind", "Workerapp")
 	req.SetPathValue("name", "my-instance")
 	rec := httptest.NewRecorder()
@@ -3422,6 +3468,7 @@ func TestGetInstanceGraph_ClusterScoped(t *testing.T) {
 		Name:            "global-instance",
 		Namespace:       "", // cluster-scoped: no namespace
 		Kind:            "Globalapp",
+		APIVersion:      "kro.run/v1alpha1",
 		IsClusterScoped: true,
 		RGDName:         "global-rgd",
 		RGDNamespace:    "default",
@@ -3430,9 +3477,10 @@ func TestGetInstanceGraph_ClusterScoped(t *testing.T) {
 	handler := makeInstanceGraphHandler(instance, rgdW)
 
 	// Use the cluster-scoped route — no namespace in the path
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/instances/GlobalApp/global-instance/graph", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/apigroups/kro.run/instances/GlobalApp/global-instance/graph", nil)
 	req = withAdminContext(req)
 	// namespace path value is intentionally not set (empty string, matches cluster-scoped pattern)
+	req.SetPathValue("group", "kro.run")
 	req.SetPathValue("kind", "Globalapp")
 	req.SetPathValue("name", "global-instance")
 	rec := httptest.NewRecorder()
@@ -3470,6 +3518,7 @@ func TestGetInstance_InvalidKind_Returns400(t *testing.T) {
 	userCtx := &middleware.UserContext{UserID: "admin-user", Email: "admin@test.local"}
 	req := newRequestWithUserContext(http.MethodGet, "/api/v1/namespaces/default/instances/UPPER_KIND/my-instance", nil, userCtx)
 	req.SetPathValue("namespace", "default")
+	req.SetPathValue("group", "kro.run")
 	req.SetPathValue("kind", "UPPER_KIND")
 	req.SetPathValue("name", "my-instance")
 	rec := httptest.NewRecorder()
@@ -3490,6 +3539,7 @@ func TestGetInstance_InvalidName_Returns400(t *testing.T) {
 	userCtx := &middleware.UserContext{UserID: "admin-user", Email: "admin@test.local"}
 	req := newRequestWithUserContext(http.MethodGet, "/api/v1/namespaces/default/instances/MyKind/INVALID_NAME", nil, userCtx)
 	req.SetPathValue("namespace", "default")
+	req.SetPathValue("group", "kro.run")
 	req.SetPathValue("kind", "MyKind")
 	req.SetPathValue("name", "INVALID_NAME")
 	rec := httptest.NewRecorder()
@@ -3510,6 +3560,7 @@ func TestGetInstance_InvalidNamespace_Returns400(t *testing.T) {
 	userCtx := &middleware.UserContext{UserID: "admin-user", Email: "admin@test.local"}
 	req := newRequestWithUserContext(http.MethodGet, "/api/v1/namespaces/BAD_NS/instances/MyKind/my-instance", nil, userCtx)
 	req.SetPathValue("namespace", "BAD_NS")
+	req.SetPathValue("group", "kro.run")
 	req.SetPathValue("kind", "MyKind")
 	req.SetPathValue("name", "my-instance")
 	rec := httptest.NewRecorder()
@@ -3531,6 +3582,7 @@ func TestDeleteInstance_InvalidKind_Returns400(t *testing.T) {
 	userCtx := &middleware.UserContext{UserID: "admin-user", Email: "admin@test.local"}
 	req := newRequestWithUserContext(http.MethodDelete, "/api/v1/namespaces/default/instances/bad_kind/my-instance", nil, userCtx)
 	req.SetPathValue("namespace", "default")
+	req.SetPathValue("group", "kro.run")
 	req.SetPathValue("kind", "bad_kind")
 	req.SetPathValue("name", "my-instance")
 	rec := httptest.NewRecorder()
@@ -3553,6 +3605,7 @@ func TestUpdateInstance_InvalidName_Returns400(t *testing.T) {
 	req := newRequestWithUserContext(http.MethodPatch, "/api/v1/namespaces/default/instances/MyKind/UPPER_NAME",
 		[]byte(`{"spec":{"key":"val"}}`), userCtx)
 	req.SetPathValue("namespace", "default")
+	req.SetPathValue("group", "kro.run")
 	req.SetPathValue("kind", "MyKind")
 	req.SetPathValue("name", "UPPER_NAME")
 	rec := httptest.NewRecorder()
@@ -3574,6 +3627,7 @@ func TestGetInstanceGraph_InvalidKind_Returns400(t *testing.T) {
 	userCtx := &middleware.UserContext{UserID: "admin-user", Email: "admin@test.local"}
 	req := newRequestWithUserContext(http.MethodGet, "/api/v1/namespaces/default/instances/BAD_KIND/my-instance/graph", nil, userCtx)
 	req.SetPathValue("namespace", "default")
+	req.SetPathValue("group", "kro.run")
 	req.SetPathValue("kind", "BAD_KIND")
 	req.SetPathValue("name", "my-instance")
 	rec := httptest.NewRecorder()
@@ -3595,6 +3649,7 @@ func TestCreateInstance_InvalidPathNamespace_Returns400(t *testing.T) {
 	userCtx := &middleware.UserContext{UserID: "admin-user", Email: "admin@test.local"}
 	req := newRequestWithUserContext(http.MethodPost, "/api/v1/namespaces/BAD_NS/instances/MyKind", body, userCtx)
 	req.SetPathValue("namespace", "BAD_NS")
+	req.SetPathValue("group", "kro.run")
 	req.SetPathValue("kind", "MyKind")
 	rec := httptest.NewRecorder()
 
@@ -3613,13 +3668,93 @@ func TestCreateInstance_InvalidPathKind_Returns400(t *testing.T) {
 
 	body := []byte(`{"name":"my-instance","rgdName":"test-rgd","spec":{}}`)
 	userCtx := &middleware.UserContext{UserID: "admin-user", Email: "admin@test.local"}
-	req := newRequestWithUserContext(http.MethodPost, "/api/v1/instances/UPPER_KIND", body, userCtx)
+	req := newRequestWithUserContext(http.MethodPost, "/api/v1/apigroups/kro.run/instances/UPPER_KIND", body, userCtx)
+	req.SetPathValue("group", "kro.run")
 	req.SetPathValue("kind", "UPPER_KIND")
 	rec := httptest.NewRecorder()
 
 	handler.CreateInstance(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestCreateInstance_PathGroupMismatch_Returns400 verifies that POST against
+// /api/v1/apigroups/{group}/... fails closed when the path group differs from
+// the RGD's derived apiGroup (parallel to the existing kind-mismatch check).
+func TestCreateInstance_PathGroupMismatch_Returns400(t *testing.T) {
+	t.Parallel()
+
+	rgdCache := watcher.NewRGDCache()
+	rgdCache.Set(&models.CatalogRGD{
+		Name:       "webapp-rgd",
+		Namespace:  "kro-system",
+		Kind:       "Webapp",
+		APIVersion: "apps.example.com/v1",
+	})
+	rgdWatcher := watcher.NewRGDWatcherWithCache(rgdCache)
+
+	handler := NewInstanceDeploymentHandler(InstanceDeploymentHandlerConfig{
+		RGDWatcher:    rgdWatcher,
+		DynamicClient: fakedynamic.NewSimpleDynamicClient(runtime.NewScheme()),
+	})
+
+	body := []byte(`{"name":"my-app","namespace":"default","rgdName":"webapp-rgd","spec":{}}`)
+	userCtx := &middleware.UserContext{UserID: "admin", Email: "admin@test.local"}
+	// Path group "wrong.example.com" must NOT match RGD's "apps.example.com".
+	req := newRequestWithUserContext(http.MethodPost,
+		"/api/v1/apigroups/wrong.example.com/namespaces/default/instances/Webapp",
+		body, userCtx)
+	req.SetPathValue("group", "wrong.example.com")
+	req.SetPathValue("namespace", "default")
+	req.SetPathValue("kind", "Webapp")
+	rec := httptest.NewRecorder()
+
+	handler.CreateInstance(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 on group mismatch, got %d; body: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "group in URL path does not match RGD apiGroup") {
+		t.Errorf("expected group-mismatch error message, got: %s", rec.Body.String())
+	}
+}
+
+// TestCreateInstance_EmptyPathGroup_Returns400 verifies that empty/malformed
+// apiGroups path segments are rejected before any RGD lookup runs.
+func TestCreateInstance_EmptyPathGroup_Returns400(t *testing.T) {
+	t.Parallel()
+
+	handler := NewInstanceDeploymentHandler(InstanceDeploymentHandlerConfig{
+		RGDWatcher:    watcher.NewRGDWatcherWithCache(watcher.NewRGDCache()),
+		DynamicClient: fakedynamic.NewSimpleDynamicClient(runtime.NewScheme()),
+	})
+
+	tests := []struct {
+		name      string
+		pathGroup string
+	}{
+		{"empty group", ""},
+		{"uppercase group", "Apps.Example.Com"},
+		{"leading hyphen", "-apps.example.com"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := []byte(`{"name":"x","namespace":"default","rgdName":"r","spec":{}}`)
+			userCtx := &middleware.UserContext{UserID: "u", Email: "u@test"}
+			req := newRequestWithUserContext(http.MethodPost,
+				"/api/v1/apigroups/"+tt.pathGroup+"/namespaces/default/instances/Webapp",
+				body, userCtx)
+			req.SetPathValue("group", tt.pathGroup)
+			req.SetPathValue("namespace", "default")
+			req.SetPathValue("kind", "Webapp")
+			rec := httptest.NewRecorder()
+
+			handler.CreateInstance(rec, req)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d; body: %s", rec.Code, rec.Body.String())
+			}
+		})
 	}
 }
 
@@ -3632,7 +3767,8 @@ func TestCreateInstance_InvalidBodyNamespace_Returns400(t *testing.T) {
 
 	body := []byte(`{"name":"my-instance","namespace":"INVALID_NS!!","rgdName":"test-rgd","spec":{}}`)
 	userCtx := &middleware.UserContext{UserID: "admin-user", Email: "admin@test.local"}
-	req := newRequestWithUserContext(http.MethodPost, "/api/v1/instances/MyKind", body, userCtx)
+	req := newRequestWithUserContext(http.MethodPost, "/api/v1/apigroups/kro.run/instances/MyKind", body, userCtx)
+	req.SetPathValue("group", "kro.run")
 	req.SetPathValue("kind", "MyKind")
 	rec := httptest.NewRecorder()
 
@@ -3656,6 +3792,7 @@ func TestGetInstanceChildren_NilChildService(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/namespaces/default/instances/WebApp/my-app/children", nil)
 	req = withAdminContext(req)
 	req.SetPathValue("namespace", "default")
+	req.SetPathValue("group", "kro.run")
 	req.SetPathValue("kind", "Webapp")
 	req.SetPathValue("name", "my-app")
 	rec := httptest.NewRecorder()
@@ -3690,6 +3827,7 @@ func TestGetInstanceChildren_NilInstanceTracker(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/namespaces/default/instances/WebApp/my-app/children", nil)
 	req = withAdminContext(req)
 	req.SetPathValue("namespace", "default")
+	req.SetPathValue("group", "kro.run")
 	req.SetPathValue("kind", "Webapp")
 	req.SetPathValue("name", "my-app")
 	rec := httptest.NewRecorder()
@@ -3724,6 +3862,7 @@ func TestGetInstanceChildren_MissingUserContext(t *testing.T) {
 	// No user context — raw request with no middleware
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/namespaces/default/instances/WebApp/my-app/children", nil)
 	req.SetPathValue("namespace", "default")
+	req.SetPathValue("group", "kro.run")
 	req.SetPathValue("kind", "Webapp")
 	req.SetPathValue("name", "my-app")
 	rec := httptest.NewRecorder()
@@ -3758,6 +3897,7 @@ func TestGetInstanceChildren_InstanceNotFound(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/namespaces/default/instances/WebApp/missing/children", nil)
 	req = withAdminContext(req)
 	req.SetPathValue("namespace", "default")
+	req.SetPathValue("group", "kro.run")
 	req.SetPathValue("kind", "Webapp")
 	req.SetPathValue("name", "missing")
 	rec := httptest.NewRecorder()
@@ -3782,6 +3922,7 @@ func TestGetInstanceChildren_Success(t *testing.T) {
 		Name:         "my-app",
 		Namespace:    "default",
 		Kind:         instanceKind,
+		APIVersion:   "kro.run/v1alpha1",
 		RGDName:      "web-rgd",
 		RGDNamespace: "default",
 	}
@@ -3831,6 +3972,7 @@ func TestGetInstanceChildren_Success(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/namespaces/default/instances/Webapp/my-app/children", nil)
 	req = withAdminContext(req)
 	req.SetPathValue("namespace", "default")
+	req.SetPathValue("group", "kro.run")
 	req.SetPathValue("kind", instanceKind)
 	req.SetPathValue("name", "my-app")
 	rec := httptest.NewRecorder()

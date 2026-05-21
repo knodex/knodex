@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Check, AlertCircle, Loader2 } from "@/lib/icons";
 import { cn } from "@/lib/utils";
+import { buildInstanceRoute } from "@/lib/instancePath";
 
 interface TimelineEntry {
   id: string;
@@ -19,6 +20,8 @@ interface DeployTimelineProps {
   /** Reserved for future WebSocket subscription (see STORY-382 comment). */
   instanceId?: string;
   instanceName: string;
+  /** Full apiVersion ("{group}/{version}") for GVK-aware route building. */
+  apiVersion: string;
   namespace: string;
   kind: string;
   rgdName?: string;
@@ -27,6 +30,7 @@ interface DeployTimelineProps {
 
 export function DeployTimeline({
   instanceName,
+  apiVersion,
   namespace,
   kind,
   rgdName,
@@ -77,8 +81,15 @@ export function DeployTimeline({
   }, [entries]);
 
   const handleViewInstance = useCallback(() => {
-    navigate(`/instances/${encodeURIComponent(namespace)}/${encodeURIComponent(kind)}/${encodeURIComponent(instanceName)}`);
-  }, [navigate, namespace, kind, instanceName]);
+    navigate(
+      buildInstanceRoute({
+        apiVersion,
+        namespace: namespace || undefined,
+        kind,
+        name: instanceName,
+      }),
+    );
+  }, [navigate, apiVersion, namespace, kind, instanceName]);
 
   const handleRedeploy = useCallback(() => {
     if (rgdName) {

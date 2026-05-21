@@ -45,8 +45,10 @@ const (
 )
 
 // InstanceUpdateCallback is called when instances are added, updated, or deleted
-// with details about what changed
-type InstanceUpdateCallback func(action InstanceAction, namespace, kind, name string, instance *models.Instance)
+// with details about what changed. The group parameter is the apiGroup of the
+// resource (derived from the apiVersion); together with namespace/kind/name it
+// uniquely identifies the instance across all GVKs in the cluster.
+type InstanceUpdateCallback func(action InstanceAction, group, namespace, kind, name string, instance *models.Instance)
 
 // rgdRef holds the namespace and name of an RGD associated with an informer
 type rgdRef struct {
@@ -281,7 +283,7 @@ func (t *InstanceTracker) notifyChange() {
 }
 
 // notifyUpdate invokes all registered update callbacks with instance details
-func (t *InstanceTracker) notifyUpdate(action InstanceAction, namespace, kind, name string, instance *models.Instance) {
+func (t *InstanceTracker) notifyUpdate(action InstanceAction, group, namespace, kind, name string, instance *models.Instance) {
 	for i, cb := range t.onUpdateCallbacks {
 		func(idx int, callback InstanceUpdateCallback) {
 			defer func() {
@@ -289,7 +291,7 @@ func (t *InstanceTracker) notifyUpdate(action InstanceAction, namespace, kind, n
 					t.logger.Error("panic in onUpdateCallback", "index", idx, "error", r)
 				}
 			}()
-			callback(action, namespace, kind, name, instance)
+			callback(action, group, namespace, kind, name, instance)
 		}(i, cb)
 	}
 	// Also call the change callbacks
@@ -346,7 +348,7 @@ func (t *InstanceTracker) handleRGDChange() {
 			// Purge cached instances for this RGD
 			removed := t.cache.DeleteByRGD(entry.rgd.namespace, entry.rgd.name)
 			for _, inst := range removed {
-				t.notifyUpdate(InstanceActionDelete, inst.Namespace, inst.Kind, inst.Name, nil)
+				t.notifyUpdate(InstanceActionDelete, apiGroupOf(inst.APIVersion), inst.Namespace, inst.Kind, inst.Name, nil)
 			}
 
 			delete(t.informers, key)
@@ -445,6 +447,13 @@ func (t *InstanceTracker) ensureInformerForRGD(rgd *models.CatalogRGD) {
 // For "group/version" format (e.g., "example.com/v1"), returns (group, version).
 // For version-only format (e.g., "v1alpha1"), defaults group to kro.RGDGroup
 // for alpha/beta versions, or "" for stable core K8s versions (e.g., "v1").
+//
+// NOTE: This is for parsing the RGD's *declared* apiVersion (often version-only,
+// because Kro applies the group at CRD-creation time). It is NOT the same as
+// `apiGroupOf` in instance_cache.go, which extracts the group from a fully-
+// qualified instance APIVersion ("group/version"). For an instance, prefer
+// `apiGroupOf` — the kro-defaulting branch here would misclassify "v1" as
+// an alpha/beta apiVersion and is reserved for RGD discovery only.
 func parseAPIVersion(apiVersion string) (group, version string) {
 	parts := strings.Split(apiVersion, "/")
 	if len(parts) == 2 {
@@ -566,7 +575,7 @@ func (t *InstanceTracker) handleInstanceAdd(obj interface{}, rgdName, rgdNamespa
 		"name", instance.Name,
 		"namespace", instance.Namespace,
 		"rgd", rgdName)
-	t.notifyUpdate(InstanceActionAdd, instance.Namespace, instance.Kind, instance.Name, instance)
+	t.notifyUpdate(InstanceActionAdd, apiGroupOf(instance.APIVersion), instance.Namespace, instance.Kind, instance.Name, instance)
 }
 
 // handleInstanceUpdate processes an updated instance
@@ -578,15 +587,16 @@ func (t *InstanceTracker) handleInstanceUpdate(oldObj, newObj interface{}, rgdNa
 	}
 
 	// Check if this instance belongs to the expected RGD
+	group := apiGroupOf(parser.GetAPIVersion(u))
 	if !t.belongsToRGD(u, rgdName, rgdNamespace) {
 		// Instance doesn't belong to this RGD. However, since multiple RGDs can produce
 		// the same CRD type, we must be careful not to delete instances owned by other RGDs.
 		// Only delete if the cached instance was previously owned by THIS RGD (disassociation case).
-		cachedInstance, exists := t.cache.Get(parser.GetNamespace(u), parser.GetKind(u), parser.GetName(u))
+		cachedInstance, exists := t.cache.Get(group, parser.GetNamespace(u), parser.GetKind(u), parser.GetName(u))
 		if exists && cachedInstance.RGDName == rgdName && cachedInstance.RGDNamespace == rgdNamespace {
 			// The cached instance belonged to this RGD but is now disassociated - delete it
-			t.cache.Delete(parser.GetNamespace(u), parser.GetKind(u), parser.GetName(u))
-			t.notifyUpdate(InstanceActionDelete, parser.GetNamespace(u), parser.GetKind(u), parser.GetName(u), nil)
+			t.cache.Delete(group, parser.GetNamespace(u), parser.GetKind(u), parser.GetName(u))
+			t.notifyUpdate(InstanceActionDelete, group, parser.GetNamespace(u), parser.GetKind(u), parser.GetName(u), nil)
 			t.logger.Debug("deleted disassociated instance",
 				"name", parser.GetName(u),
 				"namespace", parser.GetNamespace(u),
@@ -602,7 +612,7 @@ func (t *InstanceTracker) handleInstanceUpdate(oldObj, newObj interface{}, rgdNa
 		"name", instance.Name,
 		"namespace", instance.Namespace,
 		"health", instance.Health)
-	t.notifyUpdate(InstanceActionUpdate, instance.Namespace, instance.Kind, instance.Name, instance)
+	t.notifyUpdate(InstanceActionUpdate, apiGroupOf(instance.APIVersion), instance.Namespace, instance.Kind, instance.Name, instance)
 }
 
 // handleInstanceDelete processes a deleted instance
@@ -622,15 +632,16 @@ func (t *InstanceTracker) handleInstanceDelete(obj interface{}) {
 		}
 	}
 
+	group := apiGroupOf(parser.GetAPIVersion(u))
 	namespace := parser.GetNamespace(u)
 	kind := parser.GetKind(u)
 	name := parser.GetName(u)
-	t.cache.Delete(namespace, kind, name)
+	t.cache.Delete(group, namespace, kind, name)
 	t.logger.Debug("deleted instance",
 		"name", name,
 		"namespace", namespace,
 		"kind", kind)
-	t.notifyUpdate(InstanceActionDelete, namespace, kind, name, nil)
+	t.notifyUpdate(InstanceActionDelete, group, namespace, kind, name, nil)
 }
 
 // belongsToRGD checks if an instance belongs to a specific RGD
@@ -894,7 +905,7 @@ func (t *InstanceTracker) updateInstancesRGDStatus(rgd *models.CatalogRGD) {
 			updated.RGDIcon = rgd.Icon
 			updated.RGDCategory = rgd.Category
 			t.cache.Set(&updated)
-			t.notifyUpdate(InstanceActionUpdate, updated.Namespace, updated.Kind, updated.Name, &updated)
+			t.notifyUpdate(InstanceActionUpdate, apiGroupOf(updated.APIVersion), updated.Namespace, updated.Kind, updated.Name, &updated)
 		}
 	}
 }
@@ -904,9 +915,11 @@ func (t *InstanceTracker) ListInstances(opts models.InstanceListOptions) models.
 	return t.cache.List(opts)
 }
 
-// GetInstance returns a single instance by namespace, kind, and name
-func (t *InstanceTracker) GetInstance(namespace, kind, name string) (*models.Instance, bool) {
-	return t.cache.Get(namespace, kind, name)
+// GetInstance returns a single instance by group, namespace, kind, and name.
+// Group is the apiGroup of the resource (e.g., "apps.example.com"); pass "" for
+// core-group resources.
+func (t *InstanceTracker) GetInstance(group, namespace, kind, name string) (*models.Instance, bool) {
+	return t.cache.Get(group, namespace, kind, name)
 }
 
 // GetInstanceByUID returns the instance with the given Kubernetes UID.
@@ -947,11 +960,13 @@ func (t *InstanceTracker) CountFilteredInstances(filter func(*models.Instance) b
 	return t.cache.CountFiltered(filter)
 }
 
-// DeleteInstance deletes an instance from the cluster
+// DeleteInstance deletes an instance from the cluster. Group is derived from
+// apiVersion and used for cache key composition.
 func (t *InstanceTracker) DeleteInstance(ctx context.Context, namespace, name, apiVersion, kind string) error {
 	// Resolve GVR via discovery with naive-pluralization fallback.
 	// ResolveGVR handles apiVersion parsing, discovery, fallback, and warning logs internally.
 	gvr, _ := t.ResolveGVR(apiVersion, kind)
+	group := apiGroupOf(apiVersion)
 
 	// Scope-aware delete: cluster-scoped instances have empty namespace
 	var err error
@@ -968,8 +983,8 @@ func (t *InstanceTracker) DeleteInstance(ctx context.Context, namespace, name, a
 	// Proactively remove from cache as a safety net.
 	// The informer handler is idempotent, so a duplicate delete is harmless.
 	// This ensures cleanup even if the informer isn't running (e.g., RGD was deleted).
-	t.cache.Delete(namespace, kind, name)
-	t.notifyUpdate(InstanceActionDelete, namespace, kind, name, nil)
+	t.cache.Delete(group, namespace, kind, name)
+	t.notifyUpdate(InstanceActionDelete, group, namespace, kind, name, nil)
 
 	return nil
 }

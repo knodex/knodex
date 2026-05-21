@@ -10,6 +10,7 @@ import {
 } from '../fixture/mock-data'
 import type { Instance } from '../../src/types/rgd'
 import type { Project, ProjectListResponse } from '../../src/types/project'
+import { buildInstanceRoute } from '../../src/lib/instancePath'
 
 /**
  * Revision Timeline Markers — E2E Tests (STORY-402)
@@ -133,7 +134,7 @@ const timelineWithoutRevisions = {
   ],
 }
 
-const instanceUrl = `/instances/${testInstance.namespace}/${testInstance.kind}/${testInstance.name}`
+const instanceUrl = buildInstanceRoute(testInstance)
 
 async function setupBaseMocks(
   page: import('@playwright/test').Page,

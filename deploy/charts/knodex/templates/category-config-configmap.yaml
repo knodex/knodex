@@ -3,10 +3,28 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: knodex-category-config
+  namespace: {{ .Release.Namespace }}
   labels:
     {{- include "knodex.labels" . | nindent 4 }}
     app.kubernetes.io/component: catalog
+    knodex.io/category-config: "true"
 data:
   categories: |
     {{- .Values.catalog.categoryConfig | toYaml | nindent 4 }}
+{{- end }}
+{{- range $pkg, $entries := .Values.catalog.packageCategoryConfigs }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: knodex-category-config-{{ $pkg }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "knodex.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: catalog
+    knodex.io/category-config: "true"
+    knodex.io/package: {{ $pkg | quote }}
+data:
+  categories: |
+    {{- $entries | toYaml | nindent 4 }}
 {{- end }}

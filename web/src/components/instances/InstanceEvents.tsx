@@ -24,6 +24,7 @@ import { cn } from "@/lib/utils";
 type FilterType = "all" | "Normal" | "Warning";
 
 interface InstanceEventsProps {
+  group: string;
   namespace: string;
   kind: string;
   name: string;
@@ -89,10 +90,11 @@ function EventRow({ event }: { event: KubernetesEvent }) {
   );
 }
 
-export function InstanceEvents({ namespace, kind, name }: InstanceEventsProps) {
+export function InstanceEvents({ group, namespace, kind, name }: InstanceEventsProps) {
   const [filterType, setFilterType] = useState<FilterType>("all");
 
   const { data, isLoading, error, refetch } = useInstanceEvents(
+    group,
     namespace,
     kind,
     name

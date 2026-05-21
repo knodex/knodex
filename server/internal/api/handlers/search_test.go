@@ -231,11 +231,12 @@ func TestSearchHandler_ReturnsInstanceResults(t *testing.T) {
 
 	cache := watcher.NewInstanceCache()
 	inst := &models.Instance{
-		Name:      "my-postgres",
-		Namespace: "default",
-		Kind:      "MyDB",
-		Health:    models.HealthHealthy,
-		Labels:    map[string]string{models.ProjectLabel: "alpha"},
+		Name:       "my-postgres",
+		Namespace:  "default",
+		APIVersion: "db.example.com/v1",
+		Kind:       "MyDB",
+		Health:     models.HealthHealthy,
+		Labels:     map[string]string{models.ProjectLabel: "alpha"},
 	}
 	cache.Set(inst)
 	tracker := watcher.NewInstanceTrackerWithCache(cache)
@@ -269,6 +270,7 @@ func TestSearchHandler_ReturnsInstanceResults(t *testing.T) {
 	assert.Equal(t, "alpha", inst0.Project)
 	assert.Equal(t, "default", inst0.Namespace)
 	assert.Equal(t, "Healthy", inst0.Status)
+	assert.Equal(t, "db.example.com/v1", inst0.APIVersion)
 	assert.Equal(t, "MyDB", inst0.Kind)
 }
 

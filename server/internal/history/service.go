@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -47,10 +48,13 @@ func NewService(redisClient *redis.Client) *Service {
 	}
 }
 
-// historyKey returns the Redis key for an instance's history
-func historyKey(namespace, kind, name string) string {
+// historyKey returns the Redis key for an instance's history.
+// The group segment makes the key GVK-aware so two CRs with the same
+// (namespace, kind, name) in different apiGroups don't collide.
+func historyKey(group, namespace, kind, name string) string {
 	// Sanitize inputs to prevent Redis pattern injection
-	return fmt.Sprintf("%s%s/%s/%s", historyKeyPrefix, sanitize.RedisKey(namespace), sanitize.RedisKey(kind), sanitize.RedisKey(name))
+	return fmt.Sprintf("%s%s/%s/%s/%s", historyKeyPrefix,
+		sanitize.RedisKey(group), sanitize.RedisKey(namespace), sanitize.RedisKey(kind), sanitize.RedisKey(name))
 }
 
 // deletedHistoryKey returns the Redis key for a deleted instance's history
@@ -59,8 +63,10 @@ func deletedHistoryKey(instanceID string) string {
 	return fmt.Sprintf("%s%s", deletedHistoryKeyPrefix, sanitize.RedisKey(instanceID))
 }
 
-// RecordEvent records a deployment event for an instance
-func (s *Service) RecordEvent(ctx context.Context, namespace, kind, name string, event models.DeploymentEvent) error {
+// RecordEvent records a deployment event for an instance.
+// group is the K8s API group of the instance's apiVersion (e.g., "apps.example.com");
+// it is included in the Redis key so two CRs with the same Kind across groups don't collide.
+func (s *Service) RecordEvent(ctx context.Context, group, namespace, kind, name string, event models.DeploymentEvent) error {
 	// Generate event ID if not set
 	if event.ID == "" {
 		event.ID = uuid.New().String()
@@ -72,11 +78,11 @@ func (s *Service) RecordEvent(ctx context.Context, namespace, kind, name string,
 	}
 
 	// Get existing history or create new
-	history, err := s.GetHistory(ctx, namespace, kind, name)
+	history, err := s.GetHistory(ctx, group, namespace, kind, name)
 	if err != nil {
 		// Create new history if not found
 		history = &models.DeploymentHistory{
-			InstanceID:   fmt.Sprintf("%s/%s/%s", namespace, kind, name),
+			InstanceID:   fmt.Sprintf("%s/%s/%s/%s", group, namespace, kind, name),
 			InstanceName: name,
 			Namespace:    namespace,
 			Events:       []models.DeploymentEvent{},
@@ -102,11 +108,12 @@ func (s *Service) RecordEvent(ctx context.Context, namespace, kind, name string,
 	}
 
 	// Save history
-	return s.saveHistory(ctx, namespace, kind, name, history)
+	return s.saveHistory(ctx, group, namespace, kind, name, history)
 }
 
-// RecordCreation records an instance creation event
-func (s *Service) RecordCreation(ctx context.Context, namespace, kind, name, rgdName, user string, deploymentMode models.DeploymentMode) error {
+// RecordCreation records an instance creation event.
+// group is the K8s API group of the instance's apiVersion (e.g., "apps.example.com").
+func (s *Service) RecordCreation(ctx context.Context, group, namespace, kind, name, rgdName, user string, deploymentMode models.DeploymentMode) error {
 	event := models.DeploymentEvent{
 		Timestamp:      time.Now().UTC(),
 		EventType:      models.EventTypeCreated,
@@ -117,14 +124,15 @@ func (s *Service) RecordCreation(ctx context.Context, namespace, kind, name, rgd
 		Details: map[string]interface{}{
 			"rgdName":   rgdName,
 			"namespace": namespace,
+			"group":     group,
 		},
 	}
 
 	// Also set RGDName on the history
-	history, err := s.GetHistory(ctx, namespace, kind, name)
+	history, err := s.GetHistory(ctx, group, namespace, kind, name)
 	if err != nil || history == nil {
 		history = &models.DeploymentHistory{
-			InstanceID:     fmt.Sprintf("%s/%s/%s", namespace, kind, name),
+			InstanceID:     fmt.Sprintf("%s/%s/%s/%s", group, namespace, kind, name),
 			InstanceName:   name,
 			Namespace:      namespace,
 			RGDName:        rgdName,
@@ -140,11 +148,12 @@ func (s *Service) RecordCreation(ctx context.Context, namespace, kind, name, rgd
 	history.CurrentStatus = event.Status
 	history.DeploymentMode = deploymentMode
 
-	return s.saveHistory(ctx, namespace, kind, name, history)
+	return s.saveHistory(ctx, group, namespace, kind, name, history)
 }
 
-// RecordStatusChange records a status change event
-func (s *Service) RecordStatusChange(ctx context.Context, namespace, kind, name, oldStatus, newStatus string) error {
+// RecordStatusChange records a status change event.
+// group is the K8s API group of the instance's apiVersion.
+func (s *Service) RecordStatusChange(ctx context.Context, group, namespace, kind, name, oldStatus, newStatus string) error {
 	// Determine event type based on new status
 	eventType := models.EventTypeStatusChanged
 	switch newStatus {
@@ -170,15 +179,17 @@ func (s *Service) RecordStatusChange(ctx context.Context, namespace, kind, name,
 		},
 	}
 
-	return s.RecordEvent(ctx, namespace, kind, name, event)
+	return s.RecordEvent(ctx, group, namespace, kind, name, event)
 }
 
-// RecordDeletion records an instance deletion event and preserves history
-func (s *Service) RecordDeletion(ctx context.Context, namespace, kind, name, user string) error {
+// RecordDeletion records an instance deletion event and preserves history.
+// group is the K8s API group of the instance's apiVersion.
+func (s *Service) RecordDeletion(ctx context.Context, group, namespace, kind, name, user string) error {
 	// Get existing history
-	history, err := s.GetHistory(ctx, namespace, kind, name)
+	history, err := s.GetHistory(ctx, group, namespace, kind, name)
 	if err != nil {
 		slog.Warn("Failed to get history for deletion record",
+			"group", group,
 			"namespace", namespace,
 			"kind", kind,
 			"name", name,
@@ -186,7 +197,7 @@ func (s *Service) RecordDeletion(ctx context.Context, namespace, kind, name, use
 		)
 		// Still clean up the active key even when history doesn't exist,
 		// to prevent orphaned Redis keys with ~90-day TTL.
-		s.deleteActiveKey(ctx, namespace, kind, name)
+		s.deleteActiveKey(ctx, group, namespace, kind, name)
 		return nil // Don't fail deletion if history retrieval fails
 	}
 
@@ -219,11 +230,11 @@ func (s *Service) RecordDeletion(ctx context.Context, namespace, kind, name, use
 		}
 
 		// Delete the active history key
-		s.redisClient.Del(ctx, historyKey(namespace, kind, name))
+		s.redisClient.Del(ctx, historyKey(group, namespace, kind, name))
 	} else {
 		// In-memory: move to deleted cache
 		s.mu.Lock()
-		delete(s.inMemoryCache, historyKey(namespace, kind, name))
+		delete(s.inMemoryCache, historyKey(group, namespace, kind, name))
 		s.inMemoryCache[deletedHistoryKey(history.InstanceID)] = history
 		s.mu.Unlock()
 	}
@@ -233,8 +244,8 @@ func (s *Service) RecordDeletion(ctx context.Context, namespace, kind, name, use
 
 // deleteActiveKey removes the active history Redis key for an instance.
 // This is used as a safety net to prevent orphaned keys when history retrieval fails.
-func (s *Service) deleteActiveKey(ctx context.Context, namespace, kind, name string) {
-	key := historyKey(namespace, kind, name)
+func (s *Service) deleteActiveKey(ctx context.Context, group, namespace, kind, name string) {
+	key := historyKey(group, namespace, kind, name)
 	if s.redisClient != nil {
 		s.redisClient.Del(ctx, key)
 	} else {
@@ -244,15 +255,16 @@ func (s *Service) deleteActiveKey(ctx context.Context, namespace, kind, name str
 	}
 }
 
-// GetHistory retrieves the deployment history for an instance
-func (s *Service) GetHistory(ctx context.Context, namespace, kind, name string) (*models.DeploymentHistory, error) {
-	key := historyKey(namespace, kind, name)
+// GetHistory retrieves the deployment history for an instance.
+// group is the K8s API group of the instance's apiVersion.
+func (s *Service) GetHistory(ctx context.Context, group, namespace, kind, name string) (*models.DeploymentHistory, error) {
+	key := historyKey(group, namespace, kind, name)
 
 	if s.redisClient != nil {
 		data, err := s.redisClient.Get(ctx, key).Bytes()
 		if err != nil {
 			if err == redis.Nil {
-				return nil, fmt.Errorf("history not found for %s/%s/%s", namespace, kind, name)
+				return nil, fmt.Errorf("history not found for %s/%s/%s/%s", group, namespace, kind, name)
 			}
 			return nil, fmt.Errorf("failed to get history from Redis: %w", err)
 		}
@@ -273,7 +285,7 @@ func (s *Service) GetHistory(ctx context.Context, namespace, kind, name string) 
 		return history, nil
 	}
 
-	return nil, fmt.Errorf("history not found for %s/%s/%s", namespace, kind, name)
+	return nil, fmt.Errorf("history not found for %s/%s/%s/%s", group, namespace, kind, name)
 }
 
 // GetDeletedHistory retrieves the history for a deleted instance
@@ -308,9 +320,10 @@ func (s *Service) GetDeletedHistory(ctx context.Context, instanceID string) (*mo
 	return nil, fmt.Errorf("deleted history not found for %s", instanceID)
 }
 
-// GetTimeline returns a simplified timeline for an instance
-func (s *Service) GetTimeline(ctx context.Context, namespace, kind, name string) ([]models.TimelineEntry, error) {
-	history, err := s.GetHistory(ctx, namespace, kind, name)
+// GetTimeline returns a simplified timeline for an instance.
+// group is the K8s API group of the instance's apiVersion.
+func (s *Service) GetTimeline(ctx context.Context, group, namespace, kind, name string) ([]models.TimelineEntry, error) {
+	history, err := s.GetHistory(ctx, group, namespace, kind, name)
 	if err != nil {
 		return nil, err
 	}
@@ -321,8 +334,9 @@ func (s *Service) GetTimeline(ctx context.Context, namespace, kind, name string)
 // GetFilteredTimeline returns a timeline filtered by source for an instance.
 // source can be "kubernetes" (only K8s Events), "deployment" (only deployment events),
 // or empty (all events, same as GetTimeline).
-func (s *Service) GetFilteredTimeline(ctx context.Context, namespace, kind, name, source string) ([]models.TimelineEntry, error) {
-	history, err := s.GetHistory(ctx, namespace, kind, name)
+// group is the K8s API group of the instance's apiVersion.
+func (s *Service) GetFilteredTimeline(ctx context.Context, group, namespace, kind, name, source string) ([]models.TimelineEntry, error) {
+	history, err := s.GetHistory(ctx, group, namespace, kind, name)
 	if err != nil {
 		return nil, err
 	}
@@ -355,9 +369,10 @@ func (s *Service) GetFilteredTimeline(ctx context.Context, namespace, kind, name
 	return filtered, nil
 }
 
-// saveHistory saves the deployment history to storage
-func (s *Service) saveHistory(ctx context.Context, namespace, kind, name string, history *models.DeploymentHistory) error {
-	key := historyKey(namespace, kind, name)
+// saveHistory saves the deployment history to storage.
+// group is the K8s API group of the instance's apiVersion.
+func (s *Service) saveHistory(ctx context.Context, group, namespace, kind, name string, history *models.DeploymentHistory) error {
+	key := historyKey(group, namespace, kind, name)
 
 	// Sort events by timestamp
 	sort.Slice(history.Events, func(i, j int) bool {
@@ -387,10 +402,12 @@ func (s *Service) saveHistory(ctx context.Context, namespace, kind, name string,
 }
 
 // CreateHistoryFromInstance creates or updates history from an existing instance
-// This is used to populate history for instances that were created before history tracking
+// This is used to populate history for instances that were created before history tracking.
+// The instance's group is derived from instance.APIVersion.
 func (s *Service) CreateHistoryFromInstance(ctx context.Context, instance *models.Instance, user string) error {
+	group := apiGroupOf(instance.APIVersion)
 	// Check if history already exists
-	existing, _ := s.GetHistory(ctx, instance.Namespace, instance.Kind, instance.Name)
+	existing, _ := s.GetHistory(ctx, group, instance.Namespace, instance.Kind, instance.Name)
 	if existing != nil && len(existing.Events) > 0 {
 		// History already exists, don't overwrite
 		return nil
@@ -431,5 +448,14 @@ func (s *Service) CreateHistoryFromInstance(ctx context.Context, instance *model
 		history.CurrentStatus = "Ready"
 	}
 
-	return s.saveHistory(ctx, instance.Namespace, instance.Kind, instance.Name, history)
+	return s.saveHistory(ctx, group, instance.Namespace, instance.Kind, instance.Name, history)
+}
+
+// apiGroupOf extracts the apiGroup from an apiVersion string
+// (e.g., "apps.example.com/v1" → "apps.example.com"). Returns "" if no slash present.
+func apiGroupOf(apiVersion string) string {
+	if i := strings.IndexByte(apiVersion, '/'); i >= 0 {
+		return apiVersion[:i]
+	}
+	return ""
 }

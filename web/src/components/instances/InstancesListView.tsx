@@ -103,7 +103,7 @@ export function InstancesListView({ items, onInstanceClick }: InstancesListViewP
             const totalConditions = instance.conditions?.length ?? 0;
             return (
               <TableRow
-                key={`${instance.namespace || "_cluster"}/${instance.kind}/${instance.name}`}
+                key={`${instance.apiVersion}/${instance.namespace || "_cluster"}/${instance.kind}/${instance.name}`}
                 className="cursor-pointer"
                 onClick={() => onInstanceClick?.(instance)}
                 role="button"

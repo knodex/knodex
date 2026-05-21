@@ -4,16 +4,8 @@
 import React, { useCallback, useMemo } from "react";
 import { Link, useLocation } from "react-router-dom";
 import {
-  LayoutGrid,
-  Box,
   ExternalLink,
-  Settings,
-  ShieldCheck,
-  ScrollText,
   ChevronLeft,
-  KeyRound,
-  FolderOpen,
-  GitBranch,
   FileText,
   Shield,
   AlertTriangle,
@@ -21,6 +13,7 @@ import {
 import type { LucideProps } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { getLucideIcon } from "@/lib/icons";
+import { NAV_ITEMS } from "@/lib/nav-items";
 import { routePreloads } from "@/lib/route-preloads";
 import { useRGDCount } from "@/hooks/useRGDs";
 import { useRGDList } from "@/hooks/useRGDs";
@@ -103,6 +96,8 @@ const NavItemLink = React.memo(function NavItemLink({
  * SidebarNav renders the sidebar navigation content (logo, nav sections, footer).
  * Used by both the desktop Sidebar and the tablet/mobile SidebarDrawer.
  */
+const SettingsIcon = NAV_ITEMS.settings.icon;
+
 export function SidebarNav({ onNavItemClick }: SidebarNavProps) {
   const location = useLocation();
 
@@ -171,25 +166,25 @@ export function SidebarNav({ onNavItemClick }: SidebarNavProps) {
   // --- Section definitions ---
 
   const infrastructureItems: NavItem[] = useMemo(() => [
-    { id: "catalog", label: "Catalog", icon: LayoutGrid, badge: rgdCount, to: "/catalog" },
-    { id: "instances", label: "Instances", icon: Box, badge: instanceCount, to: "/instances" },
+    { ...NAV_ITEMS.catalog, to: NAV_ITEMS.catalog.path, badge: rgdCount },
+    { ...NAV_ITEMS.instances, to: NAV_ITEMS.instances.path, badge: instanceCount },
   ], [rgdCount, instanceCount]);
 
   const manageItems: NavItem[] = useMemo(() => {
     const items: NavItem[] = [];
     if (canViewSecrets === true) {
-      items.push({ id: "secrets", label: "Secrets", icon: KeyRound, to: "/secrets" });
+      items.push({ ...NAV_ITEMS.secrets, to: NAV_ITEMS.secrets.path });
     }
-    items.push({ id: "projects", label: "Projects", icon: FolderOpen, to: "/projects" });
-    items.push({ id: "repositories", label: "Repositories", icon: GitBranch, to: "/repositories" });
+    items.push({ ...NAV_ITEMS.projects, to: NAV_ITEMS.projects.path });
+    items.push({ ...NAV_ITEMS.repositories, to: NAV_ITEMS.repositories.path });
     return items;
   }, [canViewSecrets]);
 
   const enterpriseItems: NavItem[] = useMemo(() => {
     if (!isEnterprise()) return [];
     return [
-      { id: "compliance", label: "Compliance", icon: ShieldCheck, badge: violationCount, to: "/compliance" },
-      { id: "audit", label: "Audit", icon: ScrollText, to: "/audit" },
+      { ...NAV_ITEMS.compliance, to: NAV_ITEMS.compliance.path, badge: violationCount },
+      { ...NAV_ITEMS.audit, to: NAV_ITEMS.audit.path },
     ];
   }, [violationCount]);
 
@@ -248,7 +243,7 @@ export function SidebarNav({ onNavItemClick }: SidebarNavProps) {
   // Catalog sub-nav: "All Resources" + each Casbin-filtered category
   const catalogSubNav: NavItem[] = useMemo(() => {
     const items: NavItem[] = [
-      { id: "catalog-all", label: "All Resources", icon: LayoutGrid, badge: rgdCount, to: "/catalog" },
+      { id: "catalog-all", label: "All Resources", icon: NAV_ITEMS.catalog.icon, badge: rgdCount, to: "/catalog" },
     ];
     if (categories && categories.length > 0) {
       categories.forEach((category) => {
@@ -285,7 +280,7 @@ export function SidebarNav({ onNavItemClick }: SidebarNavProps) {
   }, [categorySlugMatch, rgdDetailCategory]);
 
   const complianceSubNav: NavItem[] = useMemo(() => [
-    { id: "compliance-overview", label: "Overview", icon: ShieldCheck, to: "/compliance" },
+    { id: "compliance-overview", label: "Overview", icon: NAV_ITEMS.compliance.icon, to: "/compliance" },
     { id: "compliance-templates", label: "Templates", icon: FileText, to: "/compliance/templates" },
     { id: "compliance-constraints", label: "Constraints", icon: Shield, to: "/compliance/constraints" },
     { id: "compliance-violations", label: "Violations", icon: AlertTriangle, badge: violationCount, to: "/compliance/violations" },
@@ -469,7 +464,7 @@ export function SidebarNav({ onNavItemClick }: SidebarNavProps) {
           aria-label="Settings"
           aria-current={activeTab === "settings" ? "page" : undefined}
         >
-          <Settings className="h-5 w-5 flex-shrink-0" aria-hidden="true" />
+          <SettingsIcon className="h-5 w-5 flex-shrink-0" aria-hidden="true" />
           <span className="flex-1 text-left whitespace-nowrap overflow-hidden">
             Settings
           </span>

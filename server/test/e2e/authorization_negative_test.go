@@ -38,10 +38,10 @@ func TestAuthorization_Negative_MissingJWTToken(t *testing.T) {
 		{"GET", "/api/v1/repositories"},
 		{"GET", "/api/v1/namespaces"},
 		{"POST", "/api/v1/projects"},
-		{"POST", "/api/v1/instances"},
+		{"POST", "/api/v1/apigroups/kro.run/instances/SimpleApp"},
 		{"POST", "/api/v1/repositories"},
 		{"DELETE", "/api/v1/projects/test-project"},
-		{"DELETE", "/api/v1/namespaces/default/instances/SimpleApp/test"},
+		{"DELETE", "/api/v1/apigroups/kro.run/namespaces/default/instances/SimpleApp/test"},
 	}
 
 	for _, ep := range endpoints {
@@ -278,7 +278,7 @@ func TestAuthorization_Negative_NamespaceOutsideProject(t *testing.T) {
 	}
 
 	t.Run("DeployToOutsideNamespace", func(t *testing.T) {
-		resp, err := makeAuthenticatedRequest("POST", "/api/v1/instances", teamAToken, instancePayload)
+		resp, err := makeAuthenticatedRequest("POST", "/api/v1/apigroups/kro.run/instances/SimpleApp", teamAToken, instancePayload)
 		require.NoError(t, err)
 		defer resp.Body.Close()
 

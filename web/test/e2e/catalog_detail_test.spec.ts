@@ -67,16 +67,59 @@ test.describe('RGD Detail View', () => {
       })
     })
 
-    // Mock schema endpoint
-    await page.route('**/api/v1/schema/**', async (route) => {
+    // Mock schema endpoint for the deploy page.
+    // The DeployPage renders a "Schema unavailable" error state when schema is null
+    // and never mounts the tabs. Provide a minimal valid schema so deploy-tab-basics
+    // renders for the "clicking deploy navigates to deploy page" test.
+    // URL pattern matches the real endpoint /api/v1/rgds/{name}/schema.
+    await page.route(/\/api\/v1\/rgds\/postgres-database\/schema/, async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
           rgd: 'postgres-database',
-          schema: null,
-          crdFound: false,
+          crdFound: true,
+          schema: {
+            group: 'kro.run',
+            version: 'v1alpha1',
+            kind: 'PostgresDatabase',
+            description: 'PostgreSQL database',
+            properties: {
+              name: { type: 'string', description: 'Database name' },
+            },
+            required: ['name'],
+          },
         }),
+      })
+    })
+
+    // Mock projects/namespaces so DeployPage's project + namespace selectors render.
+    await page.route('**/api/v1/projects**', async (route) => {
+      const url = route.request().url()
+      if (url.includes('/namespaces')) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ namespaces: ['default'] }),
+        })
+      } else {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            items: [{ name: 'default-project', destinations: [{ namespace: 'default' }] }],
+            totalCount: 1,
+          }),
+        })
+      }
+    })
+
+    // Mock repositories (consumed by the deployment mode selector on Basics tab).
+    await page.route('**/api/v1/repositories**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ items: [], totalCount: 0 }),
       })
     })
 
@@ -134,15 +177,13 @@ test.describe('RGD Detail View', () => {
     await expect(rgdCards.first()).toBeVisible()
   })
 
-  test('clicking deploy opens deploy modal', async ({ page }) => {
+  test('clicking deploy navigates to deploy page', async ({ page }) => {
     // Click deploy button
     const deployButton = page.getByRole('button', { name: /deploy/i }).first()
     await expect(deployButton).toBeVisible({ timeout: 10000 })
     await deployButton.click()
 
-    // Should show the deploy modal/form (dialog role or form elements)
-    await expect(
-      page.getByRole('dialog').or(page.locator('[data-testid="deploy-config-section"]'))
-    ).toBeVisible({ timeout: 10000 })
+    await page.waitForURL(/\/deploy\//, { timeout: 10000 })
+    await expect(page.getByTestId('deploy-tab-basics')).toBeVisible({ timeout: 10000 })
   })
 })

@@ -715,9 +715,10 @@ func (a *App) Run(ctx context.Context) error { //nolint:gocyclo // orchestration
 		SSOStore:                ssoStore,
 		AllowedRedirectOrigins:  cfg.Auth.AllowedRedirectOrigins,
 		CookieConfig:            cookie.Config{Secure: cfg.Cookie.Secure, Domain: cfg.Cookie.Domain},
-		OrganizationFilter:      a.organizationFilter, // EE catalog filtering (empty = no filter)
-		Organization:            cfg.Organization,     // Display identity for GET /api/v1/settings
-		SwaggerEnabled:          cfg.SwaggerEnabled,   // Serve Swagger UI at /swagger/ (SWAGGER_UI_ENABLED)
+		OrganizationFilter:      a.organizationFilter,     // EE catalog filtering (empty = no filter)
+		Organization:            cfg.Organization,         // Display identity for GET /api/v1/settings
+		SwaggerEnabled:          cfg.SwaggerEnabled,       // Serve Swagger UI at /swagger/ (SWAGGER_UI_ENABLED)
+		CatalogPackageFilter:    cfg.CatalogPackageFilter, // Per-package category config filtering
 		AuditRecorder:           auditRecorder,
 		AuditLoginMiddleware:    auditLoginMiddleware,
 		AuditMiddleware:         auditMiddleware,
@@ -893,7 +894,7 @@ func (a *App) Run(ctx context.Context) error { //nolint:gocyclo // orchestration
 		// Register GitOps drift reconciliation callback
 		// When an instance is updated and its live spec matches the desired spec in Redis,
 		// the drift entry is cleared (ArgoCD/Flux has reconciled the change).
-		instanceTracker.SetOnUpdateCallback(func(action watcher.InstanceAction, namespace, kind, name string, instance *models.Instance) {
+		instanceTracker.SetOnUpdateCallback(func(action watcher.InstanceAction, group, namespace, kind, name string, instance *models.Instance) {
 			if action != watcher.InstanceActionUpdate || instance == nil || instance.Spec == nil {
 				return
 			}
@@ -910,7 +911,7 @@ func (a *App) Run(ctx context.Context) error { //nolint:gocyclo // orchestration
 				if projectNamespace == "" {
 					projectNamespace = getProjectIDFromNamespace(k8sClient, namespace, projectService)
 				}
-				wsHub.BroadcastDriftUpdate(namespace, kind, name, false, projectNamespace)
+				wsHub.BroadcastDriftUpdate(group, namespace, kind, name, false, projectNamespace)
 			}
 		})
 
@@ -1040,11 +1041,11 @@ func newInstanceUpdateCallback(
 	k8sClient kubernetes.Interface,
 	projectService *rbac.ProjectService,
 	wsHub *websocket.Hub,
-) func(watcher.InstanceAction, string, string, string, *models.Instance) {
+) func(watcher.InstanceAction, string, string, string, string, *models.Instance) {
 	instanceStatusCache := make(map[string]string)
 	var statusCacheMu sync.Mutex
 
-	return func(action watcher.InstanceAction, namespace, kind, name string, instance *models.Instance) {
+	return func(action watcher.InstanceAction, group, namespace, kind, name string, instance *models.Instance) {
 		var wsAction websocket.Action
 		switch action {
 		case watcher.InstanceActionAdd:
@@ -1065,13 +1066,13 @@ func newInstanceUpdateCallback(
 			projectNamespace = getProjectIDFromNamespace(k8sClient, namespace, projectService)
 		}
 
-		wsHub.BroadcastInstanceUpdate(wsAction, namespace, kind, name, instance, projectNamespace)
+		wsHub.BroadcastInstanceUpdate(wsAction, group, namespace, kind, name, instance, projectNamespace)
 
 		// Record history events
 		historyCtx, historyCancel := context.WithTimeout(context.Background(), historyRecordTimeout)
 		defer historyCancel()
 
-		instanceKey := namespace + "/" + kind + "/" + name
+		instanceKey := group + "/" + namespace + "/" + kind + "/" + name
 		switch action {
 		case watcher.InstanceActionAdd:
 			if instance != nil {
@@ -1089,9 +1090,9 @@ func newInstanceUpdateCallback(
 				statusCacheMu.Lock()
 				previousStatus, exists := instanceStatusCache[instanceKey]
 				if exists && previousStatus != currentStatus {
-					if err := historyService.RecordStatusChange(historyCtx, namespace, kind, name, previousStatus, currentStatus); err != nil {
+					if err := historyService.RecordStatusChange(historyCtx, group, namespace, kind, name, previousStatus, currentStatus); err != nil {
 						slog.Warn("failed to record instance status change",
-							"namespace", namespace, "kind", kind, "name", name,
+							"group", group, "namespace", namespace, "kind", kind, "name", name,
 							"old_status", previousStatus, "new_status", currentStatus, "error", err)
 					}
 				}
@@ -1099,9 +1100,9 @@ func newInstanceUpdateCallback(
 				statusCacheMu.Unlock()
 			}
 		case watcher.InstanceActionDelete:
-			if err := historyService.RecordDeletion(historyCtx, namespace, kind, name, "system"); err != nil {
+			if err := historyService.RecordDeletion(historyCtx, group, namespace, kind, name, "system"); err != nil {
 				slog.Warn("failed to record instance deletion history",
-					"namespace", namespace, "kind", kind, "name", name, "error", err)
+					"group", group, "namespace", namespace, "kind", kind, "name", name, "error", err)
 			}
 			statusCacheMu.Lock()
 			delete(instanceStatusCache, instanceKey)

@@ -9,6 +9,7 @@ import { StatusIndicator } from "@/components/ui/status-indicator";
 import { formatDistanceToNow } from "@/lib/date";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { buildInstanceRoute } from "@/lib/instancePath";
 import { HEALTH_TO_STATUS, LEFT_BORDER_COLOR, getInstanceUrl } from "./instance-utils";
 
 interface MobileInstanceCardProps {
@@ -36,14 +37,13 @@ export const MobileInstanceCard = React.memo(function MobileInstanceCard({
     };
   }, []);
 
-  const { namespace, kind, name } = instance;
   const handleClick = useCallback(() => {
     if (onClick) {
       onClick(instance);
       return;
     }
-    navigate(`/instances/${encodeURIComponent(namespace)}/${encodeURIComponent(kind)}/${encodeURIComponent(name)}`);
-  }, [onClick, instance, navigate, namespace, kind, name]);
+    navigate(buildInstanceRoute(instance));
+  }, [onClick, instance, navigate]);
 
   const handleCopyUrl = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();

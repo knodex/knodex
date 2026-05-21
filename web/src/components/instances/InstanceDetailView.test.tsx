@@ -386,6 +386,7 @@ describe('InstanceDetailView', () => {
 
       await waitFor(() => {
         expect(mockMutateAsync).toHaveBeenCalledWith({
+          group: 'kro.run',
           namespace: 'test-namespace',
           kind: 'TestResource',
           name: 'test-instance',
@@ -802,6 +803,7 @@ describe('InstanceDetailView', () => {
 
       await waitFor(() => {
         expect(mockMutateAsync).toHaveBeenCalledWith({
+          group: 'kro.run',
           namespace: '',
           kind: 'TestResource',
           name: 'test-instance',

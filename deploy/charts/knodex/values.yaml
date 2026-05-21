@@ -428,6 +428,28 @@ catalog:
   #     weight: 30
   #     icon: network
 
+  # -- Per-package category configs.
+  # Each key is the package name (must match a knodex.io/package label on RGDs).
+  # Generates one ConfigMap per key, labeled knodex.io/category-config=true and
+  # knodex.io/package=<package-name>. Activated only when that package is in CATALOG_PACKAGE_FILTER.
+  # Weight merging: minimum weight wins across all active configs for the same category name.
+  # Icon merging: icon from the alphabetically-first ConfigMap name with a non-empty icon wins.
+  # Changes require a server restart to take effect.
+  # @default -- `{}` (no per-package configs)
+  packageCategoryConfigs: {}
+  # Example:
+  # packageCategoryConfigs:
+  #   networking:
+  #     - name: Networking
+  #       weight: 10
+  #       icon: network
+  #     - name: Security
+  #       weight: 20
+  #   database:
+  #     - name: Data
+  #       weight: 15
+  #       icon: database
+
   # -- Custom icon registry.
   # Add brand SVG icons not included in the built-in set. Each key is the icon slug
   # (lowercase letters, digits, and hyphens only); the value is the inline SVG content.
@@ -447,6 +469,30 @@ catalog:
   #       <title>Internal Tool</title>
   #       <rect x="4" y="4" width="16" height="16" rx="2"/>
   #     </svg>
+
+  # -- Per-package custom icon registries.
+  # Each key is the package name (must match a knodex.io/package label on the package's RGDs).
+  # Generates one ConfigMap per key, labeled knodex.io/icon-registry=true and knodex.io/package=<name>.
+  # Active only when that package is in CATALOG_PACKAGE_FILTER (empty filter activates all).
+  # Same slug/SVG schema as customIcons. Collision resolution is alphabetical-first by ConfigMap
+  # name, so the global customIcons ConfigMap wins over package-suffixed ones for shared slugs.
+  # Changes require a server restart to take effect.
+  # @default -- `{}` (no per-package icon registries)
+  packageCustomIcons: {}
+  # Example:
+  # packageCustomIcons:
+  #   networking:
+  #     my-loadbalancer: |
+  #       <svg role="img" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  #         <title>My LoadBalancer</title>
+  #         <rect x="4" y="4" width="16" height="16" rx="2"/>
+  #       </svg>
+  #   database:
+  #     my-db: |
+  #       <svg role="img" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  #         <title>My DB</title>
+  #         <circle cx="12" cy="12" r="8"/>
+  #       </svg>
 
 # -- Enterprise features
 enterprise:

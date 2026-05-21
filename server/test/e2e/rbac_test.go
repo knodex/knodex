@@ -615,7 +615,7 @@ func TestE2E_Instance_CreateInstance_Unauthenticated(t *testing.T) {
 		"rgdName":   "test-rgd",
 	}
 
-	resp, err := makeAuthenticatedRequest("POST", "/api/v1/instances", "", instance)
+	resp, err := makeAuthenticatedRequest("POST", "/api/v1/apigroups/kro.run/instances/SimpleApp", "", instance)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 

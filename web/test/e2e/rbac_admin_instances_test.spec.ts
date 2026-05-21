@@ -54,9 +54,10 @@ test.describe('Global Admin - Instance Deployment & Management', () => {
     await expect(deployButton).toBeVisible({ timeout: 10000 });
     await deployButton.click();
 
-    // Step 1: Target — fill instance name, select project & namespace
-    await expect(page.getByTestId('target-step')).toBeVisible({ timeout: 15000 });
-    await page.getByPlaceholder('my-instance').fill(`test-instance-alpha-${Date.now()}`);
+    // Step 1: Basics tab — fill instance name, select project & namespace
+    await page.waitForURL(/\/deploy\//, { timeout: 10000 });
+    await expect(page.getByTestId('deploy-tab-basics')).toBeVisible({ timeout: 15000 });
+    await page.getByTestId('instance-name-input').fill(`test-instance-alpha-${Date.now()}`);
 
     // Select namespace (auto-selects project when only one)
     const nsSelect = page.getByTestId('namespace-select');
@@ -69,13 +70,13 @@ test.describe('Global Admin - Instance Deployment & Management', () => {
     }
 
     // Advance to Configure step
-    const continueBtn = page.getByRole('button', { name: /continue/i });
+    const continueBtn = page.getByTestId('deploy-footer-next');
     await expect(continueBtn).toBeEnabled({ timeout: 5000 });
     await continueBtn.click();
-    await expect(page.getByTestId('configure-step')).toBeVisible({ timeout: 15000 });
+    await expect(page.getByTestId('deploy-tab-general')).toHaveAttribute('data-state', 'active');
 
     // Fill any visible text fields on Configure step
-    const textInputs = page.getByTestId('configure-step').locator('input[type="text"]');
+    const textInputs = page.getByTestId('schema-tab-general').locator('input[type="text"]');
     const inputCount = await textInputs.count();
     for (let i = 0; i < inputCount; i++) {
       const input = textInputs.nth(i);
@@ -91,12 +92,12 @@ test.describe('Global Admin - Instance Deployment & Management', () => {
     });
 
     // Advance to Review step
-    const continueBtn2 = page.getByRole('button', { name: /continue/i });
+    const continueBtn2 = page.getByTestId('deploy-footer-next');
     await expect(continueBtn2).toBeEnabled({ timeout: 10000 });
     await continueBtn2.click();
 
     // Click Deploy on Review step
-    const deploySubmit = page.getByTestId('deploy-submit-button');
+    const deploySubmit = page.getByTestId('deploy-footer-deploy');
     await expect(deploySubmit).toBeEnabled({ timeout: 10000 });
     await deploySubmit.click();
 
@@ -415,9 +416,11 @@ test.describe('Global Admin - Instance Deployment & Management', () => {
     // Confirm deletion and wait for the DELETE API call to complete
     const confirmButton = page.locator('button:has-text("Confirm"), button:has-text("Yes"), button:has-text("Delete")').last();
 
-    // Wait for the DELETE request to the backend
+    // Wait for the DELETE request to the backend. The GVK-aware route is
+    // /api/v1/apigroups/{group}/(namespaces/{ns}/)?instances/{kind}/{name} — match by
+    // substring "/instances/" plus DELETE method.
     const deleteRequestPromise = page.waitForResponse(
-      response => response.url().includes('/api/v1/instances/') && response.request().method() === 'DELETE',
+      response => /\/api\/v1\/apigroups\/[^/]+\/.*instances\//.test(response.url()) && response.request().method() === 'DELETE',
       { timeout: 15000 }
     );
 

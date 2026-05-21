@@ -9,8 +9,10 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strings"
 
 	"github.com/redis/go-redis/v9"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/discovery"
@@ -53,6 +55,25 @@ func serverNamespace() string {
 	return "knodex"
 }
 
+// filterConfigMapsByPackage returns ConfigMaps that are active given the package filter set.
+// ConfigMaps without a knodex.io/package label are always included (global scope).
+// ConfigMaps with a knodex.io/package label are included when filterSet is empty (no filter)
+// or when the package value (lowercased) is present in filterSet.
+func filterConfigMapsByPackage(cms []corev1.ConfigMap, filterSet map[string]bool) []corev1.ConfigMap {
+	filtered := make([]corev1.ConfigMap, 0, len(cms))
+	for _, cm := range cms {
+		pkg, hasPkg := cm.Labels["knodex.io/package"]
+		if !hasPkg {
+			filtered = append(filtered, cm)
+			continue
+		}
+		if len(filterSet) == 0 || filterSet[strings.ToLower(pkg)] {
+			filtered = append(filtered, cm)
+		}
+	}
+	return filtered
+}
+
 // RouterConfig holds configuration for the router
 type RouterConfig struct {
 	RateLimitRequestsPerMin int          // User rate limit requests per minute (default: 100)
@@ -92,6 +113,7 @@ type RouterConfig struct {
 	OrganizationFilter      string        // Enterprise org filter for catalog (empty = no filtering)
 	Organization            string        // Organization identity for settings endpoint (from KNODEX_ORGANIZATION, default "default")
 	SwaggerEnabled          bool          // Enable Swagger UI at /swagger/ (default: false, env: SWAGGER_UI_ENABLED)
+	CatalogPackageFilter    []string      // Restrict category config to matching package labels (empty = no filtering, from CATALOG_PACKAGE_FILTER)
 }
 
 // RouterResult holds the HTTP handler and resources that need lifecycle management.
@@ -157,52 +179,112 @@ func NewRouterWithConfig(healthChecker *health.Checker, rgdWatcher *watcher.RGDW
 		iconsRegistry = icons.NewEmptyRegistry()
 	}
 
-	// Load custom icons from labeled ConfigMaps if K8s client is available
+	// Load custom icons from labeled ConfigMaps if K8s client is available.
+	// Per-package icon ConfigMaps (knodex.io/package=<pkg>) are filtered by CATALOG_PACKAGE_FILTER;
+	// ConfigMaps without a package label are always loaded (global scope).
 	if cfg.K8sClient != nil {
 		cmList, cmErr := cfg.K8sClient.CoreV1().ConfigMaps(serverNamespace()).List(
 			context.Background(), metav1.ListOptions{
 				LabelSelector: "knodex.io/icon-registry=true",
 			})
 		if cmErr != nil {
-			logger.Warn("failed to list icon registry ConfigMaps", "error", cmErr)
-		} else if len(cmList.Items) > 0 {
-			// Sort alphabetically by name for deterministic first-wins collision resolution
-			sort.Slice(cmList.Items, func(i, j int) bool {
-				return cmList.Items[i].Name < cmList.Items[j].Name
-			})
-			entries := make([]icons.ConfigMapEntry, len(cmList.Items))
-			for i, cm := range cmList.Items {
-				entries[i] = icons.ConfigMapEntry{Name: cm.Name, Data: cm.Data}
+			if !apierrors.IsForbidden(cmErr) {
+				logger.Warn("failed to list icon registry ConfigMaps", "error", cmErr)
 			}
-			iconsRegistry.LoadFromConfigMaps(entries, logger)
+		} else if len(cmList.Items) > 0 {
+			filterSet := make(map[string]bool, len(cfg.CatalogPackageFilter))
+			for _, p := range cfg.CatalogPackageFilter {
+				filterSet[p] = true // already lowercased by config loader
+			}
+			active := filterConfigMapsByPackage(cmList.Items, filterSet)
+			if len(active) > 0 {
+				// Sort alphabetically by name for deterministic first-wins collision resolution
+				sort.Slice(active, func(i, j int) bool {
+					return active[i].Name < active[j].Name
+				})
+				entries := make([]icons.ConfigMapEntry, len(active))
+				for i, cm := range active {
+					entries[i] = icons.ConfigMapEntry{Name: cm.Name, Data: cm.Data}
+				}
+				iconsRegistry.LoadFromConfigMaps(entries, logger)
+				logger.Info("icon registry loaded",
+					"discovered", len(cmList.Items),
+					"active_after_filter", len(active))
+			}
 		}
-		// No matching ConfigMaps is not an error
 	}
 
-	// Load category ordering config from knodex-category-config ConfigMap.
-	// Absent ConfigMap or missing/empty 'categories' key → no category sub-nav (nil slice).
+	// Load category ordering config from ConfigMaps labeled knodex.io/category-config=true.
+	// Falls back to legacy named ConfigMap for backward compat.
+	// Absent ConfigMap(s) or empty 'categories' keys → no category sub-nav (nil slice).
 	var categoryConfig []services.CategoryEntry
 	if cfg.K8sClient != nil {
-		cm, cmErr := cfg.K8sClient.CoreV1().ConfigMaps(serverNamespace()).Get(
-			context.Background(), "knodex-category-config", metav1.GetOptions{})
-		if cmErr != nil {
-			if !apierrors.IsNotFound(cmErr) {
-				logger.Warn("failed to load category config ConfigMap", "error", cmErr)
+		ns := serverNamespace()
+
+		// Step A: label-selector discovery
+		cmList, listErr := cfg.K8sClient.CoreV1().ConfigMaps(ns).List(
+			context.Background(),
+			metav1.ListOptions{LabelSelector: "knodex.io/category-config=true"},
+		)
+		discoveredNames := make(map[string]bool)
+		var activeCMs []corev1.ConfigMap
+		if listErr != nil {
+			if !apierrors.IsForbidden(listErr) {
+				logger.Warn("failed to list category config ConfigMaps", "error", listErr)
 			}
-			// Not found or error (including 403) → categoryConfig remains nil
 		} else {
-			yamlData, hasKey := cm.Data["categories"]
-			if !hasKey || yamlData == "" {
-				logger.Warn("knodex-category-config ConfigMap exists but 'categories' key is missing or empty")
-			} else if parseErr := yaml.Unmarshal([]byte(yamlData), &categoryConfig); parseErr != nil {
-				logger.Warn("failed to parse category config YAML", "error", parseErr)
-				categoryConfig = nil
-			} else if len(categoryConfig) == 0 {
-				logger.Warn("knodex-category-config ConfigMap parsed successfully but contains no entries")
-			} else {
-				logger.Info("category config loaded from ConfigMap; server restart required to apply changes",
-					"entries", len(categoryConfig))
+			for _, cm := range cmList.Items {
+				discoveredNames[cm.Name] = true
+				activeCMs = append(activeCMs, cm)
 			}
+		}
+
+		// Step B: backward-compat legacy Get (only if not already discovered via label)
+		if !discoveredNames["knodex-category-config"] {
+			legacyCM, getErr := cfg.K8sClient.CoreV1().ConfigMaps(ns).Get(
+				context.Background(), "knodex-category-config", metav1.GetOptions{})
+			if getErr != nil && !apierrors.IsNotFound(getErr) {
+				logger.Warn("failed to load legacy category config ConfigMap", "error", getErr)
+			} else if getErr == nil {
+				activeCMs = append(activeCMs, *legacyCM)
+			}
+		}
+
+		// Step C: filter by package label vs CATALOG_PACKAGE_FILTER
+		filterSet := make(map[string]bool, len(cfg.CatalogPackageFilter))
+		for _, p := range cfg.CatalogPackageFilter {
+			filterSet[p] = true // already lowercased by config loader
+		}
+		filtered := filterConfigMapsByPackage(activeCMs, filterSet)
+
+		// Step D: parse each active ConfigMap's "categories" key
+		configsByName := make(map[string][]services.CategoryEntry, len(filtered))
+		for _, cm := range filtered {
+			yamlData, ok := cm.Data["categories"]
+			if !ok || yamlData == "" {
+				logger.Warn("category config ConfigMap missing 'categories' key", "name", cm.Name)
+				continue
+			}
+			var entries []services.CategoryEntry
+			if err := yaml.Unmarshal([]byte(yamlData), &entries); err != nil {
+				logger.Warn("failed to parse category config YAML", "name", cm.Name, "error", err)
+				continue
+			}
+			if len(entries) > 0 {
+				configsByName[cm.Name] = entries
+			}
+		}
+
+		// Step E: merge all active configs
+		if len(configsByName) > 0 {
+			categoryConfig = services.MergeCategoryConfigs(configsByName)
+			logger.Info("category config loaded",
+				"discovered", len(activeCMs),
+				"active_after_filter", len(filtered),
+				"parsed_configmaps", len(configsByName),
+				"merged_entries", len(categoryConfig))
+		} else if len(filtered) > 0 {
+			logger.Warn("category config ConfigMaps found but parsed to zero entries")
 		}
 	}
 
@@ -256,7 +338,11 @@ func NewRouterWithConfig(healthChecker *health.Checker, rgdWatcher *watcher.RGDW
 				go func() {
 					instances := instanceTracker.Cache().GetByTargetCluster(clusterRef)
 					for _, inst := range instances {
-						wsHub.BroadcastInstanceUpdate("update", inst.Namespace, inst.Kind, inst.Name, inst, inst.ProjectName)
+						group := ""
+						if i := strings.IndexByte(inst.APIVersion, '/'); i >= 0 {
+							group = inst.APIVersion[:i]
+						}
+						wsHub.BroadcastInstanceUpdate("update", group, inst.Namespace, inst.Kind, inst.Name, inst, inst.ProjectName)
 					}
 				}()
 			})
@@ -336,16 +422,16 @@ func NewRouterWithConfig(healthChecker *health.Checker, rgdWatcher *watcher.RGDW
 	protectedMux.HandleFunc("GET /api/v1/instances", crudHandler.ListInstances)
 	protectedMux.HandleFunc("GET /api/v1/instances/count", crudHandler.GetCount)
 
-	// K8s-aligned instance routes (STORY-327):
-	// Namespaced: /api/v1/namespaces/{namespace}/instances/{kind}/{name}
-	// Cluster-scoped: /api/v1/instances/{kind}/{name} (no namespace segment)
-	protectedMux.HandleFunc("GET /api/v1/namespaces/{namespace}/instances/{kind}/{name}", crudHandler.GetInstance)
-	protectedMux.HandleFunc("GET /api/v1/instances/{kind}/{name}", crudHandler.GetInstance)
+	// GVK-aware instance routes (apiGroup-first, mirroring K8s URL ordering):
+	// Namespaced: /api/v1/apigroups/{group}/namespaces/{namespace}/instances/{kind}/{name}
+	// Cluster-scoped: /api/v1/apigroups/{group}/instances/{kind}/{name}
+	protectedMux.HandleFunc("GET /api/v1/apigroups/{group}/namespaces/{namespace}/instances/{kind}/{name}", crudHandler.GetInstance)
+	protectedMux.HandleFunc("GET /api/v1/apigroups/{group}/instances/{kind}/{name}", crudHandler.GetInstance)
 
 	// GitOps monitoring routes (only registered if GitOpsHandler is available)
 	// Instance creation with deployment validation middleware
-	// K8s-aligned: POST /api/v1/namespaces/{ns}/instances/{kind} (namespaced)
-	//              POST /api/v1/instances/{kind} (cluster-scoped)
+	// GVK-aware: POST /api/v1/apigroups/{group}/namespaces/{ns}/instances/{kind} (namespaced)
+	//            POST /api/v1/apigroups/{group}/instances/{kind} (cluster-scoped)
 	if cfg.ProjectService != nil && cfg.PolicyEnforcer != nil {
 		deploymentValidator := middleware.DeploymentValidator(middleware.DeploymentValidatorConfig{
 			ProjectService: cfg.ProjectService,
@@ -353,50 +439,50 @@ func NewRouterWithConfig(healthChecker *health.Checker, rgdWatcher *watcher.RGDW
 			Logger:         slog.Default().With("component", "deployment-validator"),
 		})
 		createHandler := deploymentValidator(http.HandlerFunc(deploymentHandler.CreateInstance))
-		protectedMux.Handle("POST /api/v1/namespaces/{namespace}/instances/{kind}", createHandler)
-		protectedMux.Handle("POST /api/v1/instances/{kind}", createHandler)
+		protectedMux.Handle("POST /api/v1/apigroups/{group}/namespaces/{namespace}/instances/{kind}", createHandler)
+		protectedMux.Handle("POST /api/v1/apigroups/{group}/instances/{kind}", createHandler)
 	} else {
 		// Fail-closed: return 503 when authorization services are not initialized
 		unavailableHandler := func(w http.ResponseWriter, r *http.Request) {
 			response.ServiceUnavailable(w, "instance creation temporarily unavailable")
 		}
-		protectedMux.HandleFunc("POST /api/v1/namespaces/{namespace}/instances/{kind}", unavailableHandler)
-		protectedMux.HandleFunc("POST /api/v1/instances/{kind}", unavailableHandler)
+		protectedMux.HandleFunc("POST /api/v1/apigroups/{group}/namespaces/{namespace}/instances/{kind}", unavailableHandler)
+		protectedMux.HandleFunc("POST /api/v1/apigroups/{group}/instances/{kind}", unavailableHandler)
 	}
 
 	// Preflight dry-run — validates via Kubernetes server-side dry-run, no resources created
-	protectedMux.HandleFunc("POST /api/v1/namespaces/{namespace}/instances/{kind}/preflight", deploymentHandler.PreflightInstance)
-	protectedMux.HandleFunc("POST /api/v1/instances/{kind}/preflight", deploymentHandler.PreflightInstance)
+	protectedMux.HandleFunc("POST /api/v1/apigroups/{group}/namespaces/{namespace}/instances/{kind}/preflight", deploymentHandler.PreflightInstance)
+	protectedMux.HandleFunc("POST /api/v1/apigroups/{group}/instances/{kind}/preflight", deploymentHandler.PreflightInstance)
 
-	protectedMux.HandleFunc("PATCH /api/v1/namespaces/{namespace}/instances/{kind}/{name}", crudHandler.UpdateInstance)
-	protectedMux.HandleFunc("DELETE /api/v1/namespaces/{namespace}/instances/{kind}/{name}", crudHandler.DeleteInstance)
-	protectedMux.HandleFunc("PATCH /api/v1/instances/{kind}/{name}", crudHandler.UpdateInstance)
-	protectedMux.HandleFunc("DELETE /api/v1/instances/{kind}/{name}", crudHandler.DeleteInstance)
+	protectedMux.HandleFunc("PATCH /api/v1/apigroups/{group}/namespaces/{namespace}/instances/{kind}/{name}", crudHandler.UpdateInstance)
+	protectedMux.HandleFunc("DELETE /api/v1/apigroups/{group}/namespaces/{namespace}/instances/{kind}/{name}", crudHandler.DeleteInstance)
+	protectedMux.HandleFunc("PATCH /api/v1/apigroups/{group}/instances/{kind}/{name}", crudHandler.UpdateInstance)
+	protectedMux.HandleFunc("DELETE /api/v1/apigroups/{group}/instances/{kind}/{name}", crudHandler.DeleteInstance)
 
 	// Protected API v1 routes - Deployment history (require authentication)
 	if cfg.HistoryService != nil {
 		historyHandler := handlers.NewHistoryHandler(cfg.HistoryService, cfg.GraphRevisionWatcher, logger)
 		// Namespaced history routes
-		protectedMux.HandleFunc("GET /api/v1/namespaces/{namespace}/instances/{kind}/{name}/history", historyHandler.GetHistory)
-		protectedMux.HandleFunc("GET /api/v1/namespaces/{namespace}/instances/{kind}/{name}/history/export", historyHandler.ExportHistory)
-		protectedMux.HandleFunc("GET /api/v1/namespaces/{namespace}/instances/{kind}/{name}/timeline", historyHandler.GetTimeline)
+		protectedMux.HandleFunc("GET /api/v1/apigroups/{group}/namespaces/{namespace}/instances/{kind}/{name}/history", historyHandler.GetHistory)
+		protectedMux.HandleFunc("GET /api/v1/apigroups/{group}/namespaces/{namespace}/instances/{kind}/{name}/history/export", historyHandler.ExportHistory)
+		protectedMux.HandleFunc("GET /api/v1/apigroups/{group}/namespaces/{namespace}/instances/{kind}/{name}/timeline", historyHandler.GetTimeline)
 		// Cluster-scoped history routes
-		protectedMux.HandleFunc("GET /api/v1/instances/{kind}/{name}/history", historyHandler.GetHistory)
-		protectedMux.HandleFunc("GET /api/v1/instances/{kind}/{name}/history/export", historyHandler.ExportHistory)
-		protectedMux.HandleFunc("GET /api/v1/instances/{kind}/{name}/timeline", historyHandler.GetTimeline)
+		protectedMux.HandleFunc("GET /api/v1/apigroups/{group}/instances/{kind}/{name}/history", historyHandler.GetHistory)
+		protectedMux.HandleFunc("GET /api/v1/apigroups/{group}/instances/{kind}/{name}/history/export", historyHandler.ExportHistory)
+		protectedMux.HandleFunc("GET /api/v1/apigroups/{group}/instances/{kind}/{name}/timeline", historyHandler.GetTimeline)
 	}
 
 	// Instance graph sub-resource routes (STORY-331)
-	protectedMux.HandleFunc("GET /api/v1/namespaces/{namespace}/instances/{kind}/{name}/graph", crudHandler.GetInstanceGraph)
-	protectedMux.HandleFunc("GET /api/v1/instances/{kind}/{name}/graph", crudHandler.GetInstanceGraph)
+	protectedMux.HandleFunc("GET /api/v1/apigroups/{group}/namespaces/{namespace}/instances/{kind}/{name}/graph", crudHandler.GetInstanceGraph)
+	protectedMux.HandleFunc("GET /api/v1/apigroups/{group}/instances/{kind}/{name}/graph", crudHandler.GetInstanceGraph)
 
 	// Instance child resources sub-resource routes (STORY-408)
-	protectedMux.HandleFunc("GET /api/v1/namespaces/{namespace}/instances/{kind}/{name}/children", crudHandler.GetInstanceChildren)
-	protectedMux.HandleFunc("GET /api/v1/instances/{kind}/{name}/children", crudHandler.GetInstanceChildren)
+	protectedMux.HandleFunc("GET /api/v1/apigroups/{group}/namespaces/{namespace}/instances/{kind}/{name}/children", crudHandler.GetInstanceChildren)
+	protectedMux.HandleFunc("GET /api/v1/apigroups/{group}/instances/{kind}/{name}/children", crudHandler.GetInstanceChildren)
 
 	// Instance K8s events — on-demand from K8s API (instance + child resources)
-	protectedMux.HandleFunc("GET /api/v1/namespaces/{namespace}/instances/{kind}/{name}/events", crudHandler.GetInstanceEvents)
-	protectedMux.HandleFunc("GET /api/v1/instances/{kind}/{name}/events", crudHandler.GetInstanceEvents)
+	protectedMux.HandleFunc("GET /api/v1/apigroups/{group}/namespaces/{namespace}/instances/{kind}/{name}/events", crudHandler.GetInstanceEvents)
+	protectedMux.HandleFunc("GET /api/v1/apigroups/{group}/instances/{kind}/{name}/events", crudHandler.GetInstanceEvents)
 
 	// Protected API v1 routes - K8s resource listing (for ExternalRef selectors)
 	protectedMux.HandleFunc("GET /api/v1/resources", k8sResourceHandler.ListResources)

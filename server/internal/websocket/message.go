@@ -53,6 +53,7 @@ type Message struct {
 // InstanceUpdateData contains instance update information
 type InstanceUpdateData struct {
 	Action    Action      `json:"action"`
+	Group     string      `json:"group"` // K8s API group; combined with namespace/kind/name forms the unique resource identity
 	Namespace string      `json:"namespace"`
 	Kind      string      `json:"kind"`
 	Name      string      `json:"name"`
@@ -141,6 +142,7 @@ type CountsUpdateData struct {
 
 // DriftUpdateData contains drift state change information
 type DriftUpdateData struct {
+	Group     string `json:"group"` // K8s API group of the drifted instance
 	Namespace string `json:"namespace"`
 	Kind      string `json:"kind"`
 	Name      string `json:"name"`
@@ -219,10 +221,12 @@ func NewMessage(msgType MessageType, data interface{}) (*Message, error) {
 	}, nil
 }
 
-// NewInstanceUpdateMessage creates an instance update message
-func NewInstanceUpdateMessage(action Action, namespace, kind, name string, instance interface{}, projectID string) (*Message, error) {
+// NewInstanceUpdateMessage creates an instance update message.
+// group is the K8s API group of the instance's apiVersion (e.g., "apps.example.com").
+func NewInstanceUpdateMessage(action Action, group, namespace, kind, name string, instance interface{}, projectID string) (*Message, error) {
 	data := InstanceUpdateData{
 		Action:    action,
+		Group:     group,
 		Namespace: namespace,
 		Kind:      kind,
 		Name:      name,
@@ -291,9 +295,11 @@ func NewCountsUpdateMessage(rgdCount, instanceCount int) (*Message, error) {
 	return NewMessage(MessageTypeCountsUpdate, data)
 }
 
-// NewDriftUpdateMessage creates a drift update message
-func NewDriftUpdateMessage(namespace, kind, name string, drifted bool, projectID string) (*Message, error) {
+// NewDriftUpdateMessage creates a drift update message.
+// group is the K8s API group of the instance's apiVersion (e.g., "apps.example.com").
+func NewDriftUpdateMessage(group, namespace, kind, name string, drifted bool, projectID string) (*Message, error) {
 	data := DriftUpdateData{
+		Group:     group,
 		Namespace: namespace,
 		Kind:      kind,
 		Name:      name,

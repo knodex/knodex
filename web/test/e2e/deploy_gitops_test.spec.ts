@@ -43,7 +43,7 @@ test.describe('GitOps Path Configuration', () => {
     // Note: This may fail if backend doesn't support DELETE, which is okay
     for (const instance of createdInstances) {
       try {
-        await request.delete(`${BASE_URL}/api/v1/namespaces/${instance.namespace}/instances/${instance.kind}/${instance.name}`, {
+        await request.delete(`${BASE_URL}/api/v1/apigroups/${($instance.apiVersion ?? 'kro.run/v1alpha1').split('/')[0]}/namespaces/${instance.namespace}/instances/${instance.kind}/${instance.name}`, {
           failOnStatusCode: false
         });
       } catch {

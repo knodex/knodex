@@ -1,7 +1,6 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import type { useFormContext } from "react-hook-form";
 import type { FormProperty, AdvancedSection } from "@/types/rgd";
 
 /**
@@ -13,13 +12,6 @@ export interface BaseFieldProps {
   description?: string;
   required?: boolean;
   error?: string;
-}
-
-/**
- * Props for fields that use react-hook-form's register
- */
-export interface RegisterFieldProps extends BaseFieldProps {
-  register: ReturnType<typeof useFormContext>["register"];
 }
 
 /**
@@ -39,7 +31,7 @@ export interface FormFieldProps {
 /**
  * Props for TextField component
  */
-export interface TextFieldProps extends RegisterFieldProps {
+export interface TextFieldProps extends BaseFieldProps {
   format?: string;
 }
 
@@ -55,18 +47,17 @@ export interface NumberFieldProps extends BaseFieldProps {
 /**
  * Props for CheckboxField component
  */
-export type CheckboxFieldProps = RegisterFieldProps;
+export type CheckboxFieldProps = BaseFieldProps;
 
 /**
  * Props for SelectField component
  */
-export interface SelectFieldProps extends RegisterFieldProps {
+export interface SelectFieldProps extends BaseFieldProps {
   options: string[];
-  defaultValue?: string;
 }
 
 /**
- * Props for ObjectField component (collapsible section)
+ * Props for ObjectField component (section header + always-visible children)
  */
 export interface ObjectFieldProps {
   name: string;
@@ -77,8 +68,6 @@ export interface ObjectFieldProps {
   depth: number;
   /** The deployment namespace selected at the top of the deploy form */
   deploymentNamespace?: string;
-  /** Per-feature inline advanced section (e.g., bastion.advanced) rendered inside ObjectField */
-  inlineAdvancedSection?: AdvancedSection;
 }
 
 /**

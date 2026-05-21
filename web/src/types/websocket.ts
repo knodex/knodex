@@ -46,6 +46,8 @@ export interface WebSocketMessage<T = unknown> {
  */
 export interface InstanceUpdateData {
   action: Action;
+  /** K8s API group; combined with namespace/kind/name forms the unique resource identity. */
+  group: string;
   namespace: string;
   kind: string;
   name: string;
@@ -170,6 +172,8 @@ export interface RevisionUpdateData {
  * Used for real-time drift state changes (reconciled/drifted)
  */
 export interface DriftUpdateData {
+  /** K8s API group of the drifted instance. */
+  group: string;
   namespace: string;
   kind: string;
   name: string;

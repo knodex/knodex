@@ -1,6 +1,6 @@
 ---
 title: Category Ordering
-description: Configure sidebar category ordering, icons, and visibility using the knodex-category-config ConfigMap.
+description: Configure sidebar category ordering, icons, and visibility using labeled ConfigMaps — including per-package scoping.
 sidebar_position: 4
 ---
 
@@ -10,19 +10,22 @@ import ProductTag from "@site/src/components/ProductTag";
 
 # Category Ordering
 
-The Knodex sidebar displays categories from a ConfigMap that controls ordering, icon overrides, and visibility. Categories not listed in the ConfigMap are hidden from the sidebar, even if RGDs with that category exist in the cluster.
+Knodex discovers category ordering, icon overrides, and visibility rules from Kubernetes ConfigMaps labeled `knodex.io/category-config: "true"`. Multiple ConfigMaps can be active simultaneously; their entries are merged so that each package team can maintain its own config without touching a monolithic global one.
 
 ![Catalog sidebar showing category navigation with counts](/img/docs/catalog-categories.png)
 
 ## How It Works
 
-1. The Knodex server reads the `knodex-category-config` ConfigMap at startup
-2. Categories discovered from RGD annotations are matched against ConfigMap entries (case-insensitive)
-3. Matched categories are sorted by `weight` (ascending), then alphabetically for equal weights
-4. Each visible category is then filtered per-user through Casbin policies
+At server startup, Knodex loads category config through three steps:
+
+1. **Label-selector discovery** — lists all ConfigMaps in the server namespace labeled `knodex.io/category-config: "true"`.
+2. **Package filtering** — if `CATALOG_PACKAGE_FILTER` is set, excludes ConfigMaps whose `knodex.io/package` label does not match (ConfigMaps without a package label are always included).
+3. **Merge** — all active ConfigMaps are merged into one list. Weight conflicts use the minimum value; icon conflicts use the alphabetically-first ConfigMap name that provides a non-empty icon.
+
+After merging, each category is filtered per-user through Casbin policies before appearing in the sidebar.
 
 :::warning[Restart Required]
-The ConfigMap is read at server startup. Changes to the ConfigMap require a server restart (pod rollout) to take effect.
+ConfigMaps are read at server startup. Changes require a server pod rollout to take effect.
 :::
 
 ## ConfigMap Schema
@@ -33,6 +36,8 @@ kind: ConfigMap
 metadata:
   name: knodex-category-config
   namespace: knodex
+  labels:
+    knodex.io/category-config: "true"
 data:
   categories: |
     - name: "Applications"
@@ -43,14 +48,6 @@ data:
     - name: "Networking"
       weight: 30
       icon: "globe"
-    - name: "Storage"
-      weight: 40
-    - name: "Security"
-      weight: 50
-      icon: "shield"
-    - name: "Monitoring"
-      weight: 60
-      icon: "activity"
 ```
 
 ### Fields
@@ -58,12 +55,97 @@ data:
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `name` | string | Yes | Category name. Matched case-insensitively against `knodex.io/category` annotations on RGDs. |
-| `weight` | integer | Yes | Sort order. Lower weights appear first in the sidebar. |
-| `icon` | string | No | Lucide icon name override. Must match the pattern `[a-z0-9-]+`. |
+| `weight` | integer | Yes | Sort order. Lower weights appear first. Equal weights sort alphabetically by name. |
+| `icon` | string | No | Lucide icon name override. Must match `[a-z0-9-]+`. |
+
+## Merge Rules
+
+When the same category name appears in multiple active ConfigMaps:
+
+- **Weight** — the minimum value across all active configs wins. This lets a package team promote its categories to a higher sidebar position without requiring the global config to change.
+- **Display name** — taken from the entry with the lowest weight. On a tie, the alphabetically-first ConfigMap name's display name is kept.
+- **Icon** — taken from the alphabetically-first ConfigMap name that provides a non-empty icon value.
+
+```
+knodex-category-config       Networking weight=30, icon=globe
+knodex-category-config-net   Networking weight=5,  icon=network
+
+→ merged: Networking weight=5 (minimum), icon=network (from knodex-category-config-net, alphabetically first with an icon)
+```
+
+## Per-Package ConfigMaps
+
+Add a `knodex.io/package: <name>` label to scope a ConfigMap to a specific package. It is only activated when `CATALOG_PACKAGE_FILTER` includes that package name.
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: knodex-category-config-networking
+  namespace: knodex
+  labels:
+    knodex.io/category-config: "true"
+    knodex.io/package: networking
+data:
+  categories: |
+    - name: Networking
+      weight: 5
+      icon: network
+    - name: Security
+      weight: 15
+```
+
+ConfigMaps **without** a `knodex.io/package` label are always included regardless of the filter setting (global scope).
+
+See [Catalog Package Filter](../administration/catalog-filter.md) for how to configure `CATALOG_PACKAGE_FILTER`.
+
+## Helm Configuration
+
+### Global config (`catalog.categoryConfig`)
+
+Generates the `knodex-category-config` ConfigMap, always active:
+
+```yaml
+catalog:
+  categoryConfig:
+    - name: Infrastructure
+      weight: 10
+      icon: server
+    - name: Applications
+      weight: 20
+    - name: Networking
+      weight: 30
+      icon: network
+```
+
+### Per-package configs (`catalog.packageCategoryConfigs`)
+
+Generates one ConfigMap per key, scoped to its package:
+
+```yaml
+catalog:
+  packageCategoryConfigs:
+    networking:
+      - name: Networking
+        weight: 5
+        icon: network
+      - name: Security
+        weight: 15
+    database:
+      - name: Data
+        weight: 20
+        icon: database
+```
+
+Each key generates `knodex-category-config-<key>` with labels `knodex.io/category-config: "true"` and `knodex.io/package: <key>`.
+
+## Backward Compatibility
+
+If `knodex-category-config` exists **without** the `knodex.io/category-config: "true"` label (pre-0.6 install), the server still loads it via a named `Get` as a global config. After a Helm upgrade to 0.6+, the ConfigMap gains the label and is discovered via the label selector; the named fallback detects this and skips the duplicate load.
 
 ## Ordering by Weight
 
-Categories are sorted by weight ascending. Equal weights are sorted alphabetically by name.
+Lower weights appear first. Equal weights sort alphabetically by name.
 
 ```yaml
 # Sidebar order: Applications (10), Databases (20), Networking (30)
@@ -81,36 +163,26 @@ Use increments of 10 to leave room for inserting new categories without renumber
 
 Icons are resolved in this order:
 
-1. **ConfigMap `icon` field** -- If the ConfigMap entry specifies an icon, it is used (must be a valid Lucide icon name)
-2. **Custom icon registry** -- If a `knodex-icon-config` ConfigMap provides SVG icons for the category slug, the SVG is used
-3. **RGD annotation** -- The `knodex.io/icon` annotation on individual RGDs (applies to the RGD card, not the category)
-4. **Default** -- Falls back to `layout-grid`
-
-The ConfigMap icon only validates against the pattern `[a-z0-9-]+`. Invalid icon names are logged as warnings and the fallback chain continues.
+1. **ConfigMap `icon` field** — if the merged ConfigMap entry specifies an icon (and it is a valid Lucide icon name), it is used
+2. **Custom icon registry** — if a custom icon ConfigMap provides an SVG for the category slug, the SVG is used
+3. **Default** — falls back to `layout-grid`
 
 ## Casbin Filtering
 
-After ConfigMap filtering, each category is individually checked against the user's Casbin policies. There are two gates:
+After ConfigMap filtering and merging, each category is checked against the user's Casbin policies:
 
-1. **ConfigMap gate** -- The category must appear in the ConfigMap to be visible in the sidebar at all
-2. **Casbin gate** -- The user must have `rgds/{category-slug}/*` permission with `get` action
+1. **ConfigMap gate** — the category must appear in the active merged config to be visible at all
+2. **Casbin gate** — the user must have `rgds/{category-slug}/*` permission with `get` action
 
-A user with `rgds/databases/*` permission but no `rgds/networking/*` permission sees only the Databases category, even if both are in the ConfigMap.
-
-The Casbin object path uses the category slug (lowercase, hyphenated form of the name).
+A user with `rgds/databases/*` permission but no `rgds/networking/*` permission sees only Databases, even if both are in the merged config.
 
 ## Hidden Categories
 
-To hide a category from the sidebar, simply omit it from the ConfigMap. RGDs with that category still exist and can be accessed via direct URL or API, but they do not appear in the sidebar navigation.
+To hide a category, omit it from all active ConfigMaps. RGDs with that category remain accessible via the API and direct URL.
 
-This is useful for:
-- Categories under development
-- Categories that should only be accessible programmatically
-- Gradually rolling out new categories to users
+## Deployment
 
-## Deployment Namespace
-
-The ConfigMap must be deployed to the same namespace as the Knodex server. If using the Helm chart, this is the release namespace (typically `knodex`).
+The ConfigMaps must be deployed to the same namespace as the Knodex server (the Helm release namespace, typically `knodex`).
 
 ```bash
 kubectl apply -f category-config.yaml -n knodex
@@ -119,64 +191,19 @@ kubectl rollout restart deployment knodex -n knodex
 
 ## ServiceAccount Permissions
 
-The Knodex server's ServiceAccount needs `get` permission on ConfigMaps in its namespace. The Helm chart's default ClusterRole includes this permission. If you manage RBAC manually, ensure the ServiceAccount can read the ConfigMap.
-
-## Full Example
-
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: knodex-category-config
-  namespace: knodex
-data:
-  categories: |
-    - name: "Applications"
-      weight: 10
-      icon: "box"
-    - name: "Web"
-      weight: 15
-      icon: "globe"
-    - name: "Databases"
-      weight: 20
-      icon: "database"
-    - name: "Networking"
-      weight: 30
-      icon: "globe"
-    - name: "Storage"
-      weight: 40
-      icon: "hard-drive"
-    - name: "Security"
-      weight: 50
-      icon: "shield"
-    - name: "Monitoring"
-      weight: 60
-      icon: "activity"
-    - name: "CI-CD"
-      weight: 70
-      icon: "git-branch"
-    - name: "Messaging"
-      weight: 80
-      icon: "mail"
-    - name: "Infrastructure"
-      weight: 90
-      icon: "server"
-    - name: "Identity"
-      weight: 95
-      icon: "users"
-    - name: "Compute"
-      weight: 100
-      icon: "cpu"
-```
+The server's ServiceAccount needs `get` and `list` on ConfigMaps in its namespace. The Helm chart's default ClusterRole includes both. If you manage RBAC manually, ensure both verbs are granted.
 
 ## Behavior Reference
 
 | Scenario | Result |
 |----------|--------|
-| Category in ConfigMap, RGDs exist, user has Casbin access | Visible in sidebar |
-| Category in ConfigMap, no RGDs exist with that category | Not shown (no discovered categories to match) |
-| Category NOT in ConfigMap, RGDs exist | Hidden from sidebar |
-| Category in ConfigMap, user lacks Casbin access | Hidden for that user |
-| ConfigMap not deployed | Empty sidebar (no categories shown) |
-| ConfigMap deployed but `categories` key missing | Empty sidebar |
-| Category name case mismatch (e.g., ConfigMap "Databases" vs annotation "databases") | Matched (case-insensitive) |
+| Category in merged config, RGDs exist, user has Casbin access | Visible in sidebar |
+| Category in merged config, no matching RGDs | Not shown |
+| Category NOT in any active ConfigMap | Hidden from sidebar |
+| Category in merged config, user lacks Casbin access | Hidden for that user |
+| No active ConfigMaps | Empty sidebar |
+| ConfigMap present but `categories` key missing or empty | Logged as warning; ConfigMap skipped |
+| Same category in two ConfigMaps, different weights | Minimum weight used |
+| Same category in two ConfigMaps, different icons | Icon from alphabetically-first ConfigMap name with non-empty icon |
+| Package-scoped ConfigMap, filter not set | Included (all packages active when no filter) |
+| Package-scoped ConfigMap, filter set to different package | Excluded |

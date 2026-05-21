@@ -9,6 +9,7 @@ import { useInstanceList } from "@/hooks/useInstances";
 import type { Instance } from "@/types/rgd";
 import { InstanceMiniCard } from "@/components/shared/InstanceMiniCard";
 import { Badge } from "@/components/ui/badge";
+import { buildInstanceRoute } from "@/lib/instancePath";
 
 /** Page size for the batched instance query used to resolve dependency instances.
  * Must be large enough to contain all candidate instances in the target namespace(s).
@@ -138,7 +139,7 @@ export function InstanceExternalRefs({ instance }: InstanceExternalRefsProps) {
             action={
               depInstance ? (
                 <Link
-                  to={`/instances/${encodeURIComponent(depInstance.namespace)}/${encodeURIComponent(depInstance.kind)}/${encodeURIComponent(depInstance.name)}`}
+                  to={buildInstanceRoute(depInstance)}
                   className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-primary transition-colors"
                 >
                   View instance

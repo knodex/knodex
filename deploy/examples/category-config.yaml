@@ -1,8 +1,11 @@
+# Global category config — always active (no knodex.io/package label)
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: knodex-category-config
   namespace: knodex-system
+  labels:
+    knodex.io/category-config: "true"
 data:
   categories: |
     - name: Infrastructure
@@ -13,3 +16,23 @@ data:
     - name: Networking
       weight: 30
       icon: network
+---
+# Package-scoped config — active only when "networking" is in CATALOG_PACKAGE_FILTER.
+# Weight merging: if the same category appears in multiple active configs, the minimum
+# weight wins. Here, Networking gets weight=5 instead of the global weight=30.
+# Icon merging: icon from the alphabetically-first ConfigMap with a non-empty icon wins.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: knodex-category-config-networking
+  namespace: knodex-system
+  labels:
+    knodex.io/category-config: "true"
+    knodex.io/package: networking
+data:
+  categories: |
+    - name: Networking
+      weight: 5
+      icon: network
+    - name: Security
+      weight: 15

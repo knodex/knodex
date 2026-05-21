@@ -296,9 +296,9 @@ test.describe('Full Deployment Flow with Mode Restrictions', () => {
         await route.continue()
       }
     }
-    await page.route('**/namespaces/*/instances/**', instanceCreateHandler)
+    await page.route('**/apigroups/*/namespaces/*/instances/**', instanceCreateHandler)
     // Also handle cluster-scoped: POST /api/v1/instances/{kind}
-    await page.route('**/api/v1/instances/*', instanceCreateHandler)
+    await page.route('**/api/v1/apigroups/*/instances/*', instanceCreateHandler)
   }
 
   test('AC-1: Complete deployment flow with gitops-only RGD', async ({ page }) => {
@@ -360,8 +360,8 @@ test.describe('Full Deployment Flow with Mode Restrictions', () => {
         await route.continue()
       }
     }
-    await page.route('**/namespaces/*/instances/**', captureHandler)
-    await page.route('**/api/v1/instances/*', captureHandler)
+    await page.route('**/apigroups/*/namespaces/*/instances/**', captureHandler)
+    await page.route('**/api/v1/apigroups/*/instances/*', captureHandler)
 
     // Navigate to catalog
     await page.goto('/catalog')
@@ -381,15 +381,15 @@ test.describe('Full Deployment Flow with Mode Restrictions', () => {
     await expect(deployBtn).toBeVisible({ timeout: 15000 })
     await deployBtn.click()
 
-    // Step 1: Target — fill instance name, select project & namespace
-    await expect(page.getByTestId('target-step')).toBeVisible({ timeout: 15000 })
-    await page.getByPlaceholder('my-instance').fill('my-test-instance')
+    // Step 1: Basics tab — fill instance name, select project & namespace
+    await page.waitForURL(/\/deploy\//, { timeout: 10000 })
+    await expect(page.getByTestId('deploy-tab-basics')).toBeVisible({ timeout: 15000 })
+    await page.getByTestId('instance-name-input').fill('my-test-instance')
 
     // Select project and namespace
     const nsSelect = page.getByTestId('namespace-select')
     await expect(nsSelect).toBeEnabled({ timeout: 5000 })
-    await nsSelect.click()
-    await page.getByRole('option', { name: 'default' }).click()
+    await nsSelect.selectOption('default')
 
     // Deployment mode: gitops-only RGD auto-selects gitops; select a repository
     const repoSelect = page.locator('select#repository')
@@ -398,13 +398,13 @@ test.describe('Full Deployment Flow with Mode Restrictions', () => {
     }
 
     // Advance to Configure step
-    const continueBtn = page.getByRole('button', { name: /continue/i })
+    const continueBtn = page.getByTestId('deploy-footer-next')
     await expect(continueBtn).toBeEnabled({ timeout: 5000 })
     await continueBtn.click()
-    await expect(page.getByTestId('configure-step')).toBeVisible({ timeout: 15000 })
+    await expect(page.getByTestId('deploy-tab-general')).toHaveAttribute('data-state', 'active')
 
     // Wait for form validation (trigger() runs on mount) then advance to Review step
-    const reviewContinueBtn = page.getByRole('button', { name: /continue/i })
+    const reviewContinueBtn = page.getByTestId('deploy-footer-next')
     await expect(reviewContinueBtn).toBeEnabled({ timeout: 10000 })
     await reviewContinueBtn.click()
 
@@ -473,8 +473,8 @@ test.describe('Full Deployment Flow with Mode Restrictions', () => {
         await route.continue()
       }
     }
-    await page.route('**/namespaces/*/instances/**', rejectDirectHandler)
-    await page.route('**/api/v1/instances/*', rejectDirectHandler)
+    await page.route('**/apigroups/*/namespaces/*/instances/**', rejectDirectHandler)
+    await page.route('**/api/v1/apigroups/*/instances/*', rejectDirectHandler)
     // Also match the base /api/v1/instances URL (no trailing path segment)
     await page.route('**/api/v1/instances', rejectDirectHandler)
 
@@ -554,8 +554,8 @@ test.describe('Full Deployment Flow with Mode Restrictions', () => {
         await route.continue()
       }
     }
-    await page.route('**/namespaces/*/instances/**', ac4Handler)
-    await page.route('**/api/v1/instances/*', ac4Handler)
+    await page.route('**/apigroups/*/namespaces/*/instances/**', ac4Handler)
+    await page.route('**/api/v1/apigroups/*/instances/*', ac4Handler)
     // Also match the base /api/v1/instances URL (no trailing path segment)
     await page.route('**/api/v1/instances', ac4Handler)
 
@@ -620,9 +620,10 @@ test.describe('Full Deployment Flow with Mode Restrictions', () => {
     await expect(deployBtn).toBeVisible({ timeout: 15000 })
     await deployBtn.click()
 
-    // Wizard should open with Target step
-    await expect(page.getByTestId('target-step')).toBeVisible({ timeout: 15000 })
-    await expect(page.getByPlaceholder('my-instance')).toBeVisible()
+    // Deploy page should open with Basics tab
+    await page.waitForURL(/\/deploy\//, { timeout: 10000 })
+    await expect(page.getByTestId('deploy-tab-basics')).toBeVisible({ timeout: 15000 })
+    await expect(page.getByTestId('instance-name-input')).toBeVisible()
   })
 
   test('Verify deployment shows instance in list after success', async ({ page }) => {
@@ -675,8 +676,8 @@ test.describe('Full Deployment Flow with Mode Restrictions', () => {
         await route.continue()
       }
     }
-    await page.route('**/namespaces/*/instances/**', createHandler)
-    await page.route('**/api/v1/instances/*', createHandler)
+    await page.route('**/apigroups/*/namespaces/*/instances/**', createHandler)
+    await page.route('**/api/v1/apigroups/*/instances/*', createHandler)
 
     // Navigate to catalog and deploy
     await page.goto('/catalog')
@@ -693,27 +694,26 @@ test.describe('Full Deployment Flow with Mode Restrictions', () => {
     await expect(deployBtn).toBeVisible({ timeout: 15000 })
     await deployBtn.click()
 
-    // Step 1: Target — fill instance name, select project & namespace
-    await expect(page.getByTestId('target-step')).toBeVisible({ timeout: 15000 })
-    await page.getByPlaceholder('my-instance').fill('my-deployed-instance')
+    // Step 1: Basics tab — fill instance name, select project & namespace
+    await page.waitForURL(/\/deploy\//, { timeout: 10000 })
+    await expect(page.getByTestId('deploy-tab-basics')).toBeVisible({ timeout: 15000 })
+    await page.getByTestId('instance-name-input').fill('my-deployed-instance')
 
     const nsSelect = page.getByTestId('namespace-select')
     await expect(nsSelect).toBeEnabled({ timeout: 5000 })
-    await nsSelect.click()
-    await page.getByRole('option', { name: 'default' }).click()
+    await nsSelect.selectOption('default')
 
     // Advance to Configure step
-    await page.getByRole('button', { name: /continue/i }).click()
-    await expect(page.getByTestId('configure-step')).toBeVisible({ timeout: 15000 })
+    await page.getByTestId('deploy-footer-next').click()
+    await expect(page.getByTestId('deploy-tab-general')).toHaveAttribute('data-state', 'active')
 
-    // Blur any active field to trigger onBlur validation, then advance to Review
-    await page.getByTestId('configure-step').click({ position: { x: 1, y: 1 } })
-    const reviewBtn = page.getByRole('button', { name: /continue/i })
+    // Advance to Review
+    const reviewBtn = page.getByTestId('deploy-footer-next')
     await expect(reviewBtn).toBeEnabled({ timeout: 10000 })
     await reviewBtn.click()
 
     // Submit deployment
-    const submitButton = page.getByTestId('deploy-submit-button')
+    const submitButton = page.getByTestId('deploy-footer-deploy')
     await expect(submitButton).toBeEnabled({ timeout: 10000 })
     await submitButton.click()
 

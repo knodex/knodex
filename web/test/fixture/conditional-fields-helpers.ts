@@ -79,8 +79,9 @@ export async function captureFormSubmission<T = Record<string, unknown>>(
   submitAction: () => Promise<void>
 ): Promise<T> {
   let submittedData: T | null = null
-  // Instance creation endpoint: POST /api/v1/namespaces/{ns}/instances/{kind}
-  const instancePattern = '**/api/v1/namespaces/*/instances/**'
+  // Instance creation endpoint (GVK-aware):
+  //   POST /api/v1/apigroups/{group}/namespaces/{ns}/instances/{kind}
+  const instancePattern = '**/api/v1/apigroups/*/namespaces/*/instances/**'
   const responsePromise = page.waitForResponse(instancePattern)
 
   await page.route(instancePattern, async (route) => {

@@ -35,7 +35,7 @@ import {
   SecretDetailRoute,
   CategoryPage,
   UserInfoPage,
-  DeployWizardRoute,
+  DeployRoute,
 } from "@/lib/route-preloads";
 import { MobileDeployGuard } from "@/components/layout/MobileDeployGuard";
 
@@ -92,7 +92,7 @@ function App() {
                     <RouteErrorBoundary>
                       <MobileDeployGuard>
                         <Suspense fallback={<RouteLoader />}>
-                          <DeployWizardRoute />
+                          <DeployRoute />
                         </Suspense>
                       </MobileDeployGuard>
                     </RouteErrorBoundary>
@@ -110,8 +110,24 @@ function App() {
                     </RouteErrorBoundary>
                   }
                 />
+                {/*
+                 * GVK-aware instance detail routes, mirroring kube-apiserver URL
+                 * ordering: group first, then optional namespace. The cluster vs
+                 * namespaced shape is encoded by two distinct routes — there is no
+                 * empty-namespace sentinel.
+                 */}
                 <Route
-                  path="instances/:namespace/:kind/:name"
+                  path="instances/group/:group/ns/:namespace/:kind/:name"
+                  element={
+                    <RouteErrorBoundary>
+                      <Suspense fallback={<RouteLoader />}>
+                        <InstanceDetailRoute />
+                      </Suspense>
+                    </RouteErrorBoundary>
+                  }
+                />
+                <Route
+                  path="instances/group/:group/cluster/:kind/:name"
                   element={
                     <RouteErrorBoundary>
                       <Suspense fallback={<RouteLoader />}>

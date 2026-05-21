@@ -115,6 +115,7 @@ describe("useWebSocket", () => {
         timestamp: new Date().toISOString(),
         data: {
           action: "update",
+          group: "apps.example.com",
           namespace: "default",
           kind: "WebApp",
           name: "my-instance",
@@ -127,9 +128,9 @@ describe("useWebSocket", () => {
       });
 
       await waitFor(() => {
-        // Should invalidate the specific instance query key (namespace, kind, name)
+        // Should invalidate the specific instance query key (group, namespace, kind, name)
         expect(invalidateSpy).toHaveBeenCalledWith({
-          queryKey: ["instance", "default", "WebApp", "my-instance"],
+          queryKey: ["instance", "apps.example.com", "default", "WebApp", "my-instance"],
         });
       });
 
@@ -138,9 +139,10 @@ describe("useWebSocket", () => {
         (call) =>
           Array.isArray(call[0]) &&
           call[0][0] === "instance" &&
-          call[0][1] === "default" &&
-          call[0][2] === "WebApp" &&
-          call[0][3] === "my-instance"
+          call[0][1] === "apps.example.com" &&
+          call[0][2] === "default" &&
+          call[0][3] === "WebApp" &&
+          call[0][4] === "my-instance"
       );
       expect(setQueryDataCalls).toHaveLength(0);
     });
@@ -198,6 +200,7 @@ describe("useWebSocket", () => {
             timestamp: new Date().toISOString(),
             data: {
               action: "update",
+              group: "apps.example.com",
               namespace: "default",
               kind: "WebApp",
               name: "my-instance",
@@ -208,13 +211,14 @@ describe("useWebSocket", () => {
       });
 
       await waitFor(() => {
-        // Each message should produce an invalidation for the specific instance (ns, kind, name)
+        // Each message should produce an invalidation for the specific instance (group, ns, kind, name)
         const specificCalls = invalidateSpy.mock.calls.filter(
           (call) =>
             (call[0] as { queryKey?: string[] }).queryKey?.[0] === "instance" &&
-            (call[0] as { queryKey?: string[] }).queryKey?.[1] === "default" &&
-            (call[0] as { queryKey?: string[] }).queryKey?.[2] === "WebApp" &&
-            (call[0] as { queryKey?: string[] }).queryKey?.[3] === "my-instance"
+            (call[0] as { queryKey?: string[] }).queryKey?.[1] === "apps.example.com" &&
+            (call[0] as { queryKey?: string[] }).queryKey?.[2] === "default" &&
+            (call[0] as { queryKey?: string[] }).queryKey?.[3] === "WebApp" &&
+            (call[0] as { queryKey?: string[] }).queryKey?.[4] === "my-instance"
         );
         expect(specificCalls).toHaveLength(3);
       });
@@ -342,6 +346,7 @@ describe("useWebSocket", () => {
           timestamp: new Date().toISOString(),
           data: {
             action: "delete",
+            group: "apps.example.com",
             namespace: "default",
             kind: "WebApp",
             name: "deleted-instance",
@@ -351,7 +356,7 @@ describe("useWebSocket", () => {
 
       await waitFor(() => {
         expect(removeSpy).toHaveBeenCalledWith({
-          queryKey: ["instance", "default", "WebApp", "deleted-instance"],
+          queryKey: ["instance", "apps.example.com", "default", "WebApp", "deleted-instance"],
         });
       });
     });

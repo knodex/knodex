@@ -517,16 +517,27 @@ func GetUserGroupsFromContext(ctx context.Context) ([]string, error) {
 // Object format: {resource_type}/{resource_name} (e.g., "projects/engineering")
 // Action: HTTP method mapped to action (get, list, create, update, delete)
 //
-// K8s-aligned routes (STORY-327): Paths like /api/v1/namespaces/{ns}/instances/...
-// are normalized to instances/{ns}/... so Casbin policies match unchanged.
+// GVK-aware routes: Paths like /api/v1/apigroups/{group}/namespaces/{ns}/instances/...
+// are normalized to instances/{ns}/... so Casbin policies match unchanged. The
+// apiGroup segment is stripped because group is type metadata, not part of the
+// authorization scope (project + namespace are the tenancy boundary).
 func inferCasbinObjectAndAction(r *http.Request, cleanPath string) (object, action string) {
 	// Strip API prefix to get resource path
 	resourcePath := strings.TrimPrefix(cleanPath, "/api/v1/")
 
+	pathParts := strings.Split(resourcePath, "/")
+
+	// Strip apigroups/{group} prefix when present. The Casbin policy object does
+	// NOT include the apiGroup — adding it would force every existing policy to
+	// be rewritten when the route shape changed. See the spec's Casbin policy
+	// stability decision.
+	if len(pathParts) >= 2 && pathParts[0] == "apigroups" {
+		pathParts = pathParts[2:]
+	}
+
 	// Normalize K8s-aligned namespace paths: namespaces/{ns}/{resource}/... → {resource}/{ns}/...
 	// This ensures Casbin objects remain in the format "instances/{ns}/{kind}/{name}"
 	// regardless of whether the HTTP path uses /namespaces/{ns}/instances/ convention.
-	pathParts := strings.Split(resourcePath, "/")
 	if len(pathParts) >= 3 && pathParts[0] == "namespaces" {
 		namespace := pathParts[1]
 		resource := pathParts[2]
@@ -655,10 +666,10 @@ func isInstanceListRequest(path, method string) bool {
 // The DeploymentValidator checks project-scoped permissions using "instances/{projectId}/*"
 // which matches both built-in roles (instances/*) and project roles (instances/proj-name/*).
 //
-// K8s-aligned routes (STORY-327):
+// GVK-aware routes:
 //
-//	POST /api/v1/namespaces/{ns}/instances/{kind} (namespaced)
-//	POST /api/v1/instances/{kind} (cluster-scoped)
+//	POST /api/v1/apigroups/{group}/namespaces/{ns}/instances/{kind} (namespaced)
+//	POST /api/v1/apigroups/{group}/instances/{kind} (cluster-scoped)
 func isInstanceCreateRequest(path, method string) bool {
 	if method != http.MethodPost {
 		return false
@@ -666,6 +677,11 @@ func isInstanceCreateRequest(path, method string) bool {
 
 	cleanPath := strings.TrimRight(path, "/")
 	parts := strings.Split(strings.TrimPrefix(cleanPath, "/api/v1/"), "/")
+
+	// Strip apigroups/{group} prefix when present.
+	if len(parts) >= 2 && parts[0] == "apigroups" {
+		parts = parts[2:]
+	}
 
 	// Pattern 1: namespaces/{ns}/instances/{kind}
 	if len(parts) == 4 && parts[0] == "namespaces" && parts[2] == "instances" {

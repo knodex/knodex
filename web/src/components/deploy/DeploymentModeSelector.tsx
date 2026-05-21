@@ -85,7 +85,7 @@ export function DeploymentModeSelector({
   }, [repositories, repositoryId]);
 
   return (
-    <div className={cn("space-y-4", className)}>
+    <div className={cn("space-y-4", className)} data-testid="deployment-mode-select">
       {/* Mode Selection */}
       <div className="space-y-2">
         {/* eslint-disable-next-line jsx-a11y/label-has-associated-control */}
@@ -170,6 +170,7 @@ export function DeploymentModeSelector({
                 id="repository"
                 value={repositoryId}
                 onChange={(e) => onRepositoryChange(e.target.value)}
+                data-testid="repository-select"
                 className="w-full px-3 py-2 text-sm rounded-md border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
               >
                 <option value="">Select a repository...</option>
@@ -235,6 +236,7 @@ export function DeploymentModeSelector({
               value={gitBranch}
               onChange={(e) => onGitBranchChange(e.target.value)}
               placeholder={selectedRepository.defaultBranch || "main"}
+              data-testid="git-branch-input"
               className="w-full px-2.5 py-1.5 text-xs rounded-md border border-border bg-background focus:outline-none focus:ring-1 focus:ring-primary/50 focus:border-primary"
             />
           </div>
@@ -252,6 +254,7 @@ export function DeploymentModeSelector({
               value={gitPath}
               onChange={(e) => onGitPathChange(e.target.value)}
               placeholder="auto-generated (namespace/kind/name.yaml)"
+              data-testid="git-path-input"
               className="w-full px-2.5 py-1.5 text-xs rounded-md border border-border bg-background focus:outline-none focus:ring-1 focus:ring-primary/50 focus:border-primary"
             />
           </div>

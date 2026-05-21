@@ -1,25 +1,26 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useState } from "react";
 import { AlertTriangle, ShieldAlert } from "@/lib/icons";
 import type { ComplianceValidateViolation } from "@/api/compliance";
 
 interface ComplianceBannerProps {
   violations: ComplianceValidateViolation[];
-  result: "warning" | "block";
-  onAcknowledge?: () => void;
+  result: "pass" | "warning" | "block";
+  /** Controlled acknowledgment state (warning only). */
+  acknowledged: boolean;
+  onAcknowledgedChange: (value: boolean) => void;
 }
 
-export function ComplianceBanner({ violations, result, onAcknowledge }: ComplianceBannerProps) {
-  const [acknowledged, setAcknowledged] = useState(false);
+export function ComplianceBanner({
+  violations,
+  result,
+  acknowledged,
+  onAcknowledgedChange,
+}: ComplianceBannerProps) {
+  if (result === "pass") return null;
 
   const isBlock = result === "block";
-
-  const handleAcknowledge = () => {
-    setAcknowledged(true);
-    onAcknowledge?.();
-  };
 
   return (
     <div className="space-y-3">
@@ -56,12 +57,17 @@ export function ComplianceBanner({ violations, result, onAcknowledge }: Complian
         </div>
       ))}
 
-      {!isBlock && !acknowledged && onAcknowledge && (
-        <label className="flex items-center gap-2 text-sm cursor-pointer" style={{ color: "var(--text-secondary)" }}>
+      {!isBlock && (
+        <label
+          className="flex items-center gap-2 text-sm cursor-pointer"
+          style={{ color: "var(--text-secondary)" }}
+        >
           <input
             type="checkbox"
-            onChange={handleAcknowledge}
+            checked={acknowledged}
+            onChange={(e) => onAcknowledgedChange(e.target.checked)}
             className="rounded"
+            data-testid="compliance-acknowledge-checkbox"
           />
           Acknowledge warnings and continue
         </label>

@@ -199,13 +199,14 @@ func TestInstanceTracker_GetInstance(t *testing.T) {
 	tracker := NewInstanceTrackerWithCache(cache)
 
 	cache.Set(&models.Instance{
-		Name:      "test-instance",
-		Namespace: "default",
-		Kind:      "WebApp",
-		RGDName:   "test-rgd",
+		Name:       "test-instance",
+		Namespace:  "default",
+		Kind:       "WebApp",
+		APIVersion: "apps.example.com/v1",
+		RGDName:    "test-rgd",
 	})
 
-	instance, ok := tracker.GetInstance("default", "WebApp", "test-instance")
+	instance, ok := tracker.GetInstance("apps.example.com", "default", "WebApp", "test-instance")
 	if !ok {
 		t.Fatal("expected to find instance")
 	}
@@ -213,7 +214,7 @@ func TestInstanceTracker_GetInstance(t *testing.T) {
 		t.Errorf("expected name 'test-instance', got '%s'", instance.Name)
 	}
 
-	_, ok = tracker.GetInstance("default", "WebApp", "non-existent")
+	_, ok = tracker.GetInstance("apps.example.com", "default", "WebApp", "non-existent")
 	if ok {
 		t.Error("expected not to find non-existent instance")
 	}
@@ -453,11 +454,12 @@ func TestInstanceTracker_SetOnUpdateCallback(t *testing.T) {
 	tracker := NewInstanceTrackerWithCache(NewInstanceCache())
 
 	var receivedAction InstanceAction
-	var receivedNamespace, receivedKind, receivedName string
+	var receivedGroup, receivedNamespace, receivedKind, receivedName string
 	var receivedInstance *models.Instance
 
-	tracker.SetOnUpdateCallback(func(action InstanceAction, namespace, kind, name string, instance *models.Instance) {
+	tracker.SetOnUpdateCallback(func(action InstanceAction, group, namespace, kind, name string, instance *models.Instance) {
 		receivedAction = action
+		receivedGroup = group
 		receivedNamespace = namespace
 		receivedKind = kind
 		receivedName = name
@@ -471,10 +473,13 @@ func TestInstanceTracker_SetOnUpdateCallback(t *testing.T) {
 		Health:    models.HealthHealthy,
 	}
 
-	tracker.notifyUpdate(InstanceActionAdd, "test-ns", "TestKind", "test-instance", testInstance)
+	tracker.notifyUpdate(InstanceActionAdd, "apps.example.com", "test-ns", "TestKind", "test-instance", testInstance)
 
 	if receivedAction != InstanceActionAdd {
 		t.Errorf("expected action %s, got %s", InstanceActionAdd, receivedAction)
+	}
+	if receivedGroup != "apps.example.com" {
+		t.Errorf("expected group 'apps.example.com', got '%s'", receivedGroup)
 	}
 	if receivedNamespace != "test-ns" {
 		t.Errorf("expected namespace 'test-ns', got '%s'", receivedNamespace)
@@ -499,11 +504,11 @@ func TestInstanceTracker_NotifyUpdate_CallsLegacyCallback(t *testing.T) {
 	})
 
 	updateCallbackCalled := false
-	tracker.SetOnUpdateCallback(func(action InstanceAction, namespace, kind, name string, instance *models.Instance) {
+	tracker.SetOnUpdateCallback(func(action InstanceAction, group, namespace, kind, name string, instance *models.Instance) {
 		updateCallbackCalled = true
 	})
 
-	tracker.notifyUpdate(InstanceActionUpdate, "ns", "TestKind", "name", nil)
+	tracker.notifyUpdate(InstanceActionUpdate, "g", "ns", "TestKind", "name", nil)
 
 	if !updateCallbackCalled {
 		t.Error("expected update callback to be called")
@@ -519,14 +524,14 @@ func TestInstanceTracker_MultipleUpdateCallbacks(t *testing.T) {
 	callback1Called := false
 	callback2Called := false
 
-	tracker.SetOnUpdateCallback(func(action InstanceAction, namespace, kind, name string, instance *models.Instance) {
+	tracker.SetOnUpdateCallback(func(action InstanceAction, group, namespace, kind, name string, instance *models.Instance) {
 		callback1Called = true
 	})
-	tracker.SetOnUpdateCallback(func(action InstanceAction, namespace, kind, name string, instance *models.Instance) {
+	tracker.SetOnUpdateCallback(func(action InstanceAction, group, namespace, kind, name string, instance *models.Instance) {
 		callback2Called = true
 	})
 
-	tracker.notifyUpdate(InstanceActionAdd, "ns", "TestKind", "name", nil)
+	tracker.notifyUpdate(InstanceActionAdd, "g", "ns", "TestKind", "name", nil)
 
 	if !callback1Called {
 		t.Error("expected first update callback to be called")
@@ -565,16 +570,16 @@ func TestInstanceTracker_CallbackPanicRecovery(t *testing.T) {
 	callback2Called := false
 
 	// First callback panics
-	tracker.SetOnUpdateCallback(func(action InstanceAction, namespace, kind, name string, instance *models.Instance) {
+	tracker.SetOnUpdateCallback(func(action InstanceAction, group, namespace, kind, name string, instance *models.Instance) {
 		panic("test panic")
 	})
 	// Second callback should still fire
-	tracker.SetOnUpdateCallback(func(action InstanceAction, namespace, kind, name string, instance *models.Instance) {
+	tracker.SetOnUpdateCallback(func(action InstanceAction, group, namespace, kind, name string, instance *models.Instance) {
 		callback2Called = true
 	})
 
 	// Should not panic
-	tracker.notifyUpdate(InstanceActionAdd, "ns", "TestKind", "name", nil)
+	tracker.notifyUpdate(InstanceActionAdd, "g", "ns", "TestKind", "name", nil)
 
 	if !callback2Called {
 		t.Error("expected second callback to fire despite first callback panicking")
@@ -622,7 +627,7 @@ func TestInstanceTracker_HandleRGDChange_PurgesCache(t *testing.T) {
 
 	// Track delete notifications
 	var deletedInstances []string
-	tracker.SetOnUpdateCallback(func(action InstanceAction, namespace, kind, name string, instance *models.Instance) {
+	tracker.SetOnUpdateCallback(func(action InstanceAction, group, namespace, kind, name string, instance *models.Instance) {
 		if action == InstanceActionDelete {
 			deletedInstances = append(deletedInstances, namespace+"/"+kind+"/"+name)
 		}
@@ -635,7 +640,7 @@ func TestInstanceTracker_HandleRGDChange_PurgesCache(t *testing.T) {
 		// Simulate: rgd-a is no longer in currentKeys
 		removed := cache.DeleteByRGD(entry.rgd.namespace, entry.rgd.name)
 		for _, inst := range removed {
-			tracker.notifyUpdate(InstanceActionDelete, inst.Namespace, inst.Kind, inst.Name, nil)
+			tracker.notifyUpdate(InstanceActionDelete, apiGroupOf(inst.APIVersion), inst.Namespace, inst.Kind, inst.Name, nil)
 		}
 		delete(tracker.informers, key)
 	}
@@ -647,7 +652,7 @@ func TestInstanceTracker_HandleRGDChange_PurgesCache(t *testing.T) {
 	}
 
 	// Verify rgd-b instance remains
-	_, ok := cache.Get("prod", "Database", "inst3")
+	_, ok := cache.Get("", "prod", "Database", "inst3")
 	if !ok {
 		t.Error("expected rgd-b instance to remain")
 	}
@@ -793,6 +798,7 @@ func TestInstanceTracker_InactiveRGD_InstancesPreserved(t *testing.T) {
 		Name:         "instance-1",
 		Namespace:    "ns1",
 		Kind:         "TestResource",
+		APIVersion:   "example.com/v1",
 		RGDName:      "my-rgd",
 		RGDNamespace: "default",
 		RGDStatus:    "Active",
@@ -801,6 +807,7 @@ func TestInstanceTracker_InactiveRGD_InstancesPreserved(t *testing.T) {
 		Name:         "instance-2",
 		Namespace:    "ns2",
 		Kind:         "TestResource",
+		APIVersion:   "example.com/v1",
 		RGDName:      "my-rgd",
 		RGDNamespace: "default",
 		RGDStatus:    "Active",
@@ -832,10 +839,10 @@ func TestInstanceTracker_InactiveRGD_InstancesPreserved(t *testing.T) {
 	tracker.handleRGDChange()
 
 	// Verify instances are still in cache
-	if _, found := instanceCache.Get("ns1", "TestResource", "instance-1"); !found {
+	if _, found := instanceCache.Get("example.com", "ns1", "TestResource", "instance-1"); !found {
 		t.Error("expected instance-1 to remain in cache after RGD goes inactive")
 	}
-	if _, found := instanceCache.Get("ns2", "TestResource", "instance-2"); !found {
+	if _, found := instanceCache.Get("example.com", "ns2", "TestResource", "instance-2"); !found {
 		t.Error("expected instance-2 to remain in cache after RGD goes inactive")
 	}
 
@@ -865,6 +872,7 @@ func TestInstanceTracker_DeletedRGD_InstancesPurged(t *testing.T) {
 		Name:         "instance-1",
 		Namespace:    "ns1",
 		Kind:         "TestResource",
+		APIVersion:   "example.com/v1",
 		RGDName:      "my-rgd",
 		RGDNamespace: "default",
 	})
@@ -888,7 +896,7 @@ func TestInstanceTracker_DeletedRGD_InstancesPurged(t *testing.T) {
 	tracker.handleRGDChange()
 
 	// Verify instance was purged
-	if _, found := instanceCache.Get("ns1", "TestResource", "instance-1"); found {
+	if _, found := instanceCache.Get("example.com", "ns1", "TestResource", "instance-1"); found {
 		t.Error("expected instance-1 to be purged after RGD is deleted")
 	}
 }
@@ -908,6 +916,7 @@ func TestInstanceTracker_RGDStatusChangePropagation(t *testing.T) {
 		Name:         "instance-1",
 		Namespace:    "ns1",
 		Kind:         "TestResource",
+		APIVersion:   "example.com/v1",
 		RGDName:      "my-rgd",
 		RGDNamespace: "default",
 		RGDStatus:    "Active",
@@ -918,7 +927,7 @@ func TestInstanceTracker_RGDStatusChangePropagation(t *testing.T) {
 
 	// Track WebSocket notifications
 	var notifications []string
-	tracker.SetOnUpdateCallback(func(action InstanceAction, namespace, kind, name string, instance *models.Instance) {
+	tracker.SetOnUpdateCallback(func(action InstanceAction, group, namespace, kind, name string, instance *models.Instance) {
 		if action == InstanceActionUpdate && instance != nil {
 			notifications = append(notifications, namespace+"/"+kind+"/"+name+"="+instance.RGDStatus)
 		}
@@ -933,7 +942,7 @@ func TestInstanceTracker_RGDStatusChangePropagation(t *testing.T) {
 	tracker.updateInstancesRGDStatus(updatedRGD)
 
 	// Verify instance's RGDStatus was updated
-	inst, found := instanceCache.Get("ns1", "TestResource", "instance-1")
+	inst, found := instanceCache.Get("example.com", "ns1", "TestResource", "instance-1")
 	if !found {
 		t.Fatal("expected instance to remain in cache")
 	}
@@ -1086,15 +1095,16 @@ func TestInstanceTracker_DeleteInstance_StandardPluralPassesNamespaceAndName(t *
 
 	// Pre-populate cache so we can verify cache cleanup
 	cache.Set(&models.Instance{
-		Name:      "my-app",
-		Namespace: "production",
-		Kind:      "App",
-		RGDName:   "test-rgd",
+		Name:       "my-app",
+		Namespace:  "production",
+		Kind:       "App",
+		APIVersion: "example.com/v1",
+		RGDName:    "test-rgd",
 	})
 
 	// Track delete notifications
 	var deletedKey string
-	tracker.SetOnUpdateCallback(func(action InstanceAction, namespace, kind, name string, instance *models.Instance) {
+	tracker.SetOnUpdateCallback(func(action InstanceAction, group, namespace, kind, name string, instance *models.Instance) {
 		if action == InstanceActionDelete {
 			deletedKey = namespace + "/" + kind + "/" + name
 		}
@@ -1127,7 +1137,7 @@ func TestInstanceTracker_DeleteInstance_StandardPluralPassesNamespaceAndName(t *
 	}
 
 	// Verify cache cleanup (M1 fix: cache eviction was previously untested)
-	if _, found := cache.Get("production", "App", "my-app"); found {
+	if _, found := cache.Get("example.com", "production", "App", "my-app"); found {
 		t.Error("expected instance to be removed from cache after DeleteInstance")
 	}
 
@@ -1325,10 +1335,11 @@ func TestInstanceTracker_DeleteInstance_ClusterScoped_NoNamespace(t *testing.T) 
 
 	cache := NewInstanceCache()
 	cache.Set(&models.Instance{
-		Name:      "my-config",
-		Namespace: "",
-		Kind:      "ClusterConfig",
-		RGDName:   "cluster-config-rgd",
+		Name:       "my-config",
+		Namespace:  "",
+		Kind:       "ClusterConfig",
+		APIVersion: "example.com/v1",
+		RGDName:    "cluster-config-rgd",
 	})
 
 	tracker := NewInstanceTrackerWithCache(cache)
@@ -1336,7 +1347,7 @@ func TestInstanceTracker_DeleteInstance_ClusterScoped_NoNamespace(t *testing.T) 
 	tracker.discoveryClient = fakeDiscovery
 
 	var deletedKey string
-	tracker.SetOnUpdateCallback(func(action InstanceAction, namespace, kind, name string, instance *models.Instance) {
+	tracker.SetOnUpdateCallback(func(action InstanceAction, group, namespace, kind, name string, instance *models.Instance) {
 		if action == InstanceActionDelete {
 			deletedKey = namespace + "/" + kind + "/" + name
 		}
@@ -1368,7 +1379,7 @@ func TestInstanceTracker_DeleteInstance_ClusterScoped_NoNamespace(t *testing.T) 
 	}
 
 	// Verify cache cleanup
-	if _, found := cache.Get("", "ClusterConfig", "my-config"); found {
+	if _, found := cache.Get("example.com", "", "ClusterConfig", "my-config"); found {
 		t.Error("expected instance to be removed from cache")
 	}
 
@@ -1606,7 +1617,7 @@ func TestInstanceTracker_HandleInstanceAdd_ClusterScoped(t *testing.T) {
 	tracker.rgdWatcher = rgdWatcher
 
 	var notifiedNamespace string
-	tracker.SetOnUpdateCallback(func(action InstanceAction, namespace, kind, name string, instance *models.Instance) {
+	tracker.SetOnUpdateCallback(func(action InstanceAction, group, namespace, kind, name string, instance *models.Instance) {
 		if action == InstanceActionAdd {
 			notifiedNamespace = namespace
 		}
@@ -1633,7 +1644,7 @@ func TestInstanceTracker_HandleInstanceAdd_ClusterScoped(t *testing.T) {
 	tracker.handleInstanceAdd(u, "cluster-rgd", "")
 
 	// Verify instance in cache with empty namespace
-	inst, ok := cache.Get("", "ClusterConfig", "my-config")
+	inst, ok := cache.Get("example.com", "", "ClusterConfig", "my-config")
 	if !ok {
 		t.Fatal("expected cluster-scoped instance in cache")
 	}
@@ -1678,6 +1689,7 @@ func TestInstanceTracker_MixedScope_Coexistence(t *testing.T) {
 		Name:            "global-config",
 		Namespace:       "",
 		Kind:            "ClusterConfig",
+		APIVersion:      "example.com/v1",
 		RGDName:         "cluster-rgd",
 		RGDNamespace:    "",
 		IsClusterScoped: true,
@@ -1688,6 +1700,7 @@ func TestInstanceTracker_MixedScope_Coexistence(t *testing.T) {
 		Name:            "my-app",
 		Namespace:       "prod",
 		Kind:            "App",
+		APIVersion:      "example.com/v1",
 		RGDName:         "ns-rgd",
 		RGDNamespace:    "",
 		IsClusterScoped: false,
@@ -1698,7 +1711,7 @@ func TestInstanceTracker_MixedScope_Coexistence(t *testing.T) {
 		t.Errorf("expected 2 instances, got %d", cache.Count())
 	}
 
-	clusterInst, ok := tracker.GetInstance("", "ClusterConfig", "global-config")
+	clusterInst, ok := tracker.GetInstance("example.com", "", "ClusterConfig", "global-config")
 	if !ok {
 		t.Fatal("expected to find cluster-scoped instance")
 	}
@@ -1706,7 +1719,7 @@ func TestInstanceTracker_MixedScope_Coexistence(t *testing.T) {
 		t.Error("expected cluster-scoped instance to have IsClusterScoped=true")
 	}
 
-	nsInst, ok := tracker.GetInstance("prod", "App", "my-app")
+	nsInst, ok := tracker.GetInstance("example.com", "prod", "App", "my-app")
 	if !ok {
 		t.Fatal("expected to find namespace-scoped instance")
 	}

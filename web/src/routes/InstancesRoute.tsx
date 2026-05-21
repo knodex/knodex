@@ -4,13 +4,14 @@
 import { useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { InstancesPage } from "@/components/instances";
+import { buildInstanceRoute } from "@/lib/instancePath";
 import type { Instance } from "@/types/rgd";
 
 export default function InstancesRoute() {
   const navigate = useNavigate();
 
   const handleInstanceClick = useCallback((instance: Instance) => {
-    navigate(`/instances/${encodeURIComponent(instance.namespace)}/${encodeURIComponent(instance.kind)}/${encodeURIComponent(instance.name)}`);
+    navigate(buildInstanceRoute(instance));
   }, [navigate]);
 
   return <InstancesPage onInstanceClick={handleInstanceClick} />;

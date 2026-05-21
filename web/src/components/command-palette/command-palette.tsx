@@ -4,15 +4,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import {
-  LayoutGrid,
-  Package,
-  FolderKanban,
-  Settings,
-  Shield,
-  Clock,
-  Rocket,
-} from "@/lib/icons";
+import { Clock, FolderKanban, Package, Rocket } from "@/lib/icons";
 
 import {
   CommandDialog,
@@ -24,6 +16,8 @@ import {
 } from "@/components/ui/command";
 import { searchAll } from "@/api/search";
 import { STALE_TIME } from "@/lib/query-client";
+import { NAV_ITEMS } from "@/lib/nav-items";
+import { buildInstanceRoute } from "@/lib/instancePath";
 
 // --- Types ---
 
@@ -39,13 +33,14 @@ interface RecentItem {
 const RECENT_STORAGE_KEY = "command-palette-recent";
 const MAX_RECENT_ITEMS = 10;
 
-const NAVIGATE_ITEMS = [
-  { id: "nav-instances", label: "Instances", href: "/instances", icon: Package },
-  { id: "nav-catalog", label: "Catalog", href: "/catalog", icon: LayoutGrid },
-  { id: "nav-projects", label: "Projects", href: "/projects", icon: FolderKanban },
-  { id: "nav-secrets", label: "Secrets", href: "/secrets", icon: Shield },
-  { id: "nav-settings", label: "Settings", href: "/settings", icon: Settings },
-];
+const PALETTE_NAV_IDS = ["instances", "catalog", "projects", "secrets", "settings"] as const;
+
+const NAVIGATE_ITEMS = PALETTE_NAV_IDS.map((id) => ({
+  id: `nav-${id}`,
+  label: NAV_ITEMS[id].label,
+  href: NAV_ITEMS[id].path,
+  icon: NAV_ITEMS[id].icon,
+}));
 
 // --- Recent items helpers ---
 
@@ -230,13 +225,18 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
           <CommandGroup heading="Instances">
             {instanceResults.map((inst) => (
               <CommandItem
-                key={`inst-${inst.namespace}-${inst.kind}-${inst.name}`}
-                value={`inst-${inst.namespace}-${inst.kind}-${inst.name}`}
+                key={`inst-${inst.apiVersion}-${inst.namespace}-${inst.kind}-${inst.name}`}
+                value={`inst-${inst.apiVersion}-${inst.namespace}-${inst.kind}-${inst.name}`}
                 onSelect={() =>
                   handleSelect(
-                    `/instances/${encodeURIComponent(inst.namespace)}/${encodeURIComponent(inst.kind)}/${encodeURIComponent(inst.name)}`,
+                    buildInstanceRoute({
+                      apiVersion: inst.apiVersion,
+                      namespace: inst.namespace || undefined,
+                      kind: inst.kind,
+                      name: inst.name,
+                    }),
                     inst.name,
-                    `inst-${inst.namespace}-${inst.kind}-${inst.name}`
+                    `inst-${inst.apiVersion}-${inst.namespace}-${inst.kind}-${inst.name}`,
                   )
                 }
               >

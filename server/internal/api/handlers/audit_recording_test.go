@@ -1079,7 +1079,8 @@ func TestInstanceCRUDHandler_DeleteInstance_AuditDetails(t *testing.T) {
 	})
 
 	userCtx := &middleware.UserContext{UserID: "admin-user", Email: "admin@test.local"}
-	req := newRequestWithUserContext(http.MethodDelete, "/api/v1/instances/production/WebApp/test-instance", nil, userCtx)
+	req := newRequestWithUserContext(http.MethodDelete, "/api/v1/apigroups/kro.run/namespaces/production/instances/Webapp/test-instance", nil, userCtx)
+	req.SetPathValue("group", "kro.run")
 	req.SetPathValue("namespace", "production")
 	req.SetPathValue("kind", "Webapp")
 	req.SetPathValue("name", "test-instance")
@@ -1106,6 +1107,9 @@ func TestInstanceCRUDHandler_DeleteInstance_AuditDetails(t *testing.T) {
 	}
 	if e.Namespace != "production" {
 		t.Errorf("expected namespace 'production', got %q", e.Namespace)
+	}
+	if e.Group != "kro.run" {
+		t.Errorf("expected group 'kro.run', got %q", e.Group)
 	}
 	if e.Project != "alpha" {
 		t.Errorf("expected project 'alpha', got %q", e.Project)

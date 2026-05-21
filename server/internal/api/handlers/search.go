@@ -50,12 +50,16 @@ type RGDSearchResult struct {
 }
 
 // InstanceSearchResult is a search result for an instance.
+//
+// APIVersion is included so the UI can build GVK-aware detail-page routes
+// (the route shape is /instances/group/{group}/...).
 type InstanceSearchResult struct {
-	Name      string `json:"name"`
-	Project   string `json:"project"`
-	Namespace string `json:"namespace"`
-	Status    string `json:"status"`
-	Kind      string `json:"kind"`
+	Name       string `json:"name"`
+	Project    string `json:"project"`
+	Namespace  string `json:"namespace"`
+	Status     string `json:"status"`
+	APIVersion string `json:"apiVersion"`
+	Kind       string `json:"kind"`
 }
 
 // ProjectSearchResult is a search result for a project.
@@ -224,11 +228,12 @@ func (h *SearchHandler) searchInstances(authCtx *services.UserAuthContext, lower
 		}
 
 		results = append(results, InstanceSearchResult{
-			Name:      inst.Name,
-			Project:   project,
-			Namespace: inst.Namespace,
-			Status:    string(inst.Health),
-			Kind:      inst.Kind,
+			Name:       inst.Name,
+			Project:    project,
+			Namespace:  inst.Namespace,
+			Status:     string(inst.Health),
+			APIVersion: inst.APIVersion,
+			Kind:       inst.Kind,
 		})
 
 		if len(results) >= maxSearchResultsPerGroup {

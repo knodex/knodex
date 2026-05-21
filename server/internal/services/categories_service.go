@@ -3,7 +3,11 @@
 
 package services
 
-import "context"
+import (
+	"context"
+	"sort"
+	"strings"
+)
 
 // CategoryService defines the interface for category operations.
 // Categories are auto-discovered from knodex.io/category annotations on live RGDs.
@@ -53,4 +57,69 @@ type CategoryEntry struct {
 	Name   string `yaml:"name"   json:"name"`
 	Weight int    `yaml:"weight" json:"weight"`
 	Icon   string `yaml:"icon,omitempty" json:"icon,omitempty"`
+}
+
+// MergeCategoryConfigs merges multiple ConfigMap payloads into a deduplicated CategoryEntry slice.
+// configsByName maps ConfigMap name → parsed []CategoryEntry.
+//
+// Merge rules:
+//   - Weight: minimum across all active configs for that category name.
+//   - Icon: from the alphabetically-first ConfigMap name with a non-empty icon for that category.
+//   - Display name: preserved from the entry with the lowest weight (alphabetically-first CM on tie).
+//
+// Output is sorted by weight ascending, then display name alphabetically as tiebreaker.
+func MergeCategoryConfigs(configsByName map[string][]CategoryEntry) []CategoryEntry {
+	if len(configsByName) == 0 {
+		return nil
+	}
+
+	type mergeState struct {
+		weight      int
+		displayName string
+		icon        string
+		iconSource  string // CM name that provided the icon (for alphabetical tiebreak)
+	}
+
+	cmNames := make([]string, 0, len(configsByName))
+	for name := range configsByName {
+		cmNames = append(cmNames, name)
+	}
+	sort.Strings(cmNames)
+
+	byKey := make(map[string]*mergeState)
+
+	for _, cmName := range cmNames {
+		for _, entry := range configsByName[cmName] {
+			key := strings.ToLower(entry.Name)
+			if existing, ok := byKey[key]; !ok {
+				s := &mergeState{weight: entry.Weight, displayName: entry.Name}
+				if entry.Icon != "" {
+					s.icon = entry.Icon
+					s.iconSource = cmName
+				}
+				byKey[key] = s
+			} else {
+				if entry.Weight < existing.weight {
+					existing.weight = entry.Weight
+					existing.displayName = entry.Name
+				}
+				if entry.Icon != "" && (existing.icon == "" || cmName < existing.iconSource) {
+					existing.icon = entry.Icon
+					existing.iconSource = cmName
+				}
+			}
+		}
+	}
+
+	result := make([]CategoryEntry, 0, len(byKey))
+	for _, s := range byKey {
+		result = append(result, CategoryEntry{Name: s.displayName, Weight: s.weight, Icon: s.icon})
+	}
+	sort.SliceStable(result, func(i, j int) bool {
+		if result[i].Weight != result[j].Weight {
+			return result[i].Weight < result[j].Weight
+		}
+		return result[i].Name < result[j].Name
+	})
+	return result
 }

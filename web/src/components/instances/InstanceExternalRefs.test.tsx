@@ -167,7 +167,10 @@ describe("InstanceExternalRefs", () => {
 
     // Should render as a link to the dependency instance
     const link = screen.getByRole("link");
-    expect(link).toHaveAttribute("href", "/instances/default/AKSCluster/my-cluster");
+    expect(link).toHaveAttribute(
+      "href",
+      "/instances/group/kro.run/ns/default/AKSCluster/my-cluster",
+    );
 
     // Should show instance name and health badge
     expect(screen.getByText("my-cluster")).toBeInTheDocument();

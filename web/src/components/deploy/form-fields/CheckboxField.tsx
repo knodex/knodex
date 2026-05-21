@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { memo } from "react";
+import { useFormContext, useController } from "react-hook-form";
 import type { CheckboxFieldProps } from "./types";
 
 /**
@@ -13,15 +14,20 @@ export const CheckboxField = memo(function CheckboxField({
   description,
   required,
   error,
-  register,
 }: CheckboxFieldProps) {
+  const { control } = useFormContext();
+  const { field: { value, onChange, onBlur, ref } } = useController({ name, control });
+
   return (
     <div className="space-y-1.5" data-testid={`field-${name}`}>
       <div className="flex items-center gap-2">
         <input
           id={name}
           type="checkbox"
-          {...register(name)}
+          checked={Boolean(value)}
+          onChange={onChange}
+          onBlur={onBlur}
+          ref={ref}
           data-testid={`input-${name}`}
           aria-invalid={!!error}
           aria-describedby={error ? `error-${name}` : undefined}

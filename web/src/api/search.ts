@@ -15,6 +15,8 @@ export interface InstanceSearchResult {
   project: string;
   namespace: string;
   status: string;
+  /** Full apiVersion ("{group}/{version}"); required for GVK-aware route building. */
+  apiVersion: string;
   kind: string;
 }
 

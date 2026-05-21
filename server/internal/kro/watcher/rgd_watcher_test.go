@@ -137,6 +137,113 @@ func TestRGDWatcher_ShouldIncludeInCatalog(t *testing.T) {
 	}
 }
 
+func TestRGDWatcher_RejectsInvalidAPIGroup(t *testing.T) {
+	fakeClient := testutil.NewFakeDynamicClient(t)
+	watcher := NewRGDWatcherWithClient(fakeClient)
+	catalogAnn := map[string]string{kro.CatalogAnnotation: "true"}
+
+	tests := []struct {
+		name             string
+		schemaAPIVersion string
+		want             bool
+	}{
+		{"valid group", "apps.example.com/v1", true},
+		{"valid single-label group", "kro.run/v1alpha1", true},
+		{"invalid uppercase group", "Apps.example.com/v1", false},
+		{"invalid empty schema apiVersion", "-", false},
+		{"invalid empty group", "/v1", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rgd := testutil.NewUnstructuredRGD("test-rgd", "default",
+				testutil.WithAnnotations(catalogAnn),
+				testutil.WithSchemaAPIVersion(tt.schemaAPIVersion),
+			)
+			if got := watcher.shouldIncludeInCatalog(rgd); got != tt.want {
+				t.Errorf("shouldIncludeInCatalog with schemaAPIVersion=%q = %v, want %v",
+					tt.schemaAPIVersion, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRGDWatcher_RejectsMultipleServedVersions(t *testing.T) {
+	fakeClient := testutil.NewFakeDynamicClient(t)
+	watcher := NewRGDWatcherWithClient(fakeClient)
+	catalogAnn := map[string]string{kro.CatalogAnnotation: "true"}
+
+	tests := []struct {
+		name     string
+		versions []map[string]interface{}
+		want     bool
+	}{
+		{
+			name:     "no versions block",
+			versions: nil,
+			want:     true,
+		},
+		{
+			name: "single served version",
+			versions: []map[string]interface{}{
+				{"name": "v1", "served": true, "storage": true},
+			},
+			want: true,
+		},
+		{
+			name: "one served + one non-served",
+			versions: []map[string]interface{}{
+				{"name": "v1", "served": true, "storage": true},
+				{"name": "v1alpha1", "served": false, "storage": false},
+			},
+			want: true,
+		},
+		{
+			name: "two served versions",
+			versions: []map[string]interface{}{
+				{"name": "v1", "served": true, "storage": true},
+				{"name": "v1beta1", "served": true, "storage": false},
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := []testutil.RGDOption{testutil.WithAnnotations(catalogAnn)}
+			if tt.versions != nil {
+				opts = append(opts, testutil.WithCRDVersions(tt.versions))
+			}
+			rgd := testutil.NewUnstructuredRGD("test-rgd", "default", opts...)
+			if got := watcher.shouldIncludeInCatalog(rgd); got != tt.want {
+				t.Errorf("shouldIncludeInCatalog with versions=%+v = %v, want %v",
+					tt.versions, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestRGDWatcher_HandleAdd_SkipsInvalidRGD verifies that an RGD violating
+// ingestion invariants (multi-served-version) is not added to the catalog.
+func TestRGDWatcher_HandleAdd_SkipsInvalidRGD(t *testing.T) {
+	fakeClient := testutil.NewFakeDynamicClient(t)
+	watcher := NewRGDWatcherWithClient(fakeClient)
+
+	rgd := testutil.NewUnstructuredRGD("multi-version", "default",
+		testutil.WithAnnotations(map[string]string{kro.CatalogAnnotation: "true"}),
+		testutil.WithCRDVersions([]map[string]interface{}{
+			{"name": "v1", "served": true},
+			{"name": "v2", "served": true},
+		}),
+	)
+
+	watcher.handleAdd(rgd)
+
+	if _, found := watcher.cache.Get("default", "multi-version"); found {
+		t.Error("RGD with multiple served versions should not be indexed")
+	}
+}
+
 func TestRGDWatcher_UnstructuredToRGD(t *testing.T) {
 	fakeClient := testutil.NewFakeDynamicClient(t)
 	watcher := NewRGDWatcherWithClient(fakeClient)

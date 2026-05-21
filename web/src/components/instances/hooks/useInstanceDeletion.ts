@@ -3,6 +3,7 @@
 
 import { useCallback } from "react";
 import { useDeleteInstance } from "@/hooks/useInstances";
+import { apiGroupOf } from "@/lib/instancePath";
 import { showSuccessToast } from "@/lib/toast-helpers";
 import type { Instance } from "@/types/rgd";
 
@@ -12,6 +13,7 @@ export function useInstanceDeletion(instance: Instance, onDeleted?: () => void) 
   const handleDelete = useCallback(async () => {
     try {
       await deleteInstance.mutateAsync({
+        group: apiGroupOf(instance.apiVersion),
         namespace: instance.namespace,
         kind: instance.kind,
         name: instance.name,
@@ -21,7 +23,7 @@ export function useInstanceDeletion(instance: Instance, onDeleted?: () => void) 
     } catch {
       // Error is displayed in the dialog via deleteInstance.error
     }
-  }, [deleteInstance, instance.namespace, instance.kind, instance.name, onDeleted]);
+  }, [deleteInstance, instance.apiVersion, instance.namespace, instance.kind, instance.name, onDeleted]);
 
   return {
     handleDelete,

@@ -416,21 +416,23 @@ func (h *Hub) enqueue(msg *Message, dropLogAttrs ...any) {
 }
 
 // BroadcastInstanceUpdate sends an instance update to all subscribed clients.
+// group is the K8s API group; combined with (namespace, kind, name) it forms the
+// unique identity so two GVKs sharing a Kind cannot collide in the dedupe map.
 // kind is the resource kind (e.g., "WebApp") used for client-side cache key matching.
 // projectNamespace is the project's namespace name (e.g., "acme"), used for RBAC filtering.
-func (h *Hub) BroadcastInstanceUpdate(action Action, namespace, kind, name string, instance interface{}, projectNamespace string) {
-	key := "instance:" + namespace + "/" + kind + "/" + name
+func (h *Hub) BroadcastInstanceUpdate(action Action, group, namespace, kind, name string, instance interface{}, projectNamespace string) {
+	key := "instance:" + group + "/" + namespace + "/" + kind + "/" + name
 	if !h.shouldBroadcast(key) {
 		return
 	}
 
-	msg, err := NewInstanceUpdateMessage(action, namespace, kind, name, instance, projectNamespace)
+	msg, err := NewInstanceUpdateMessage(action, group, namespace, kind, name, instance, projectNamespace)
 	if err != nil {
 		h.logger.Error("Failed to create instance update message", "error", err)
 		return
 	}
 
-	h.enqueue(msg, "type", "instance", "namespace", namespace, "kind", kind, "name", name)
+	h.enqueue(msg, "type", "instance", "group", group, "namespace", namespace, "kind", kind, "name", name)
 }
 
 // BroadcastInstanceEventUpdate sends a per-resource deploy event to all subscribed clients.
@@ -452,20 +454,22 @@ func (h *Hub) BroadcastInstanceEventUpdate(instanceID, resourceKind, resourceNam
 }
 
 // BroadcastDriftUpdate sends a drift state change to all subscribed clients.
+// group is the K8s API group; combined with (namespace, kind, name) it forms the
+// unique identity so two GVKs sharing a Kind cannot collide in the dedupe map.
 // projectNamespace is the project's namespace name (e.g., "acme"), used for RBAC filtering.
-func (h *Hub) BroadcastDriftUpdate(namespace, kind, name string, drifted bool, projectNamespace string) {
-	key := "drift:" + namespace + "/" + kind + "/" + name
+func (h *Hub) BroadcastDriftUpdate(group, namespace, kind, name string, drifted bool, projectNamespace string) {
+	key := "drift:" + group + "/" + namespace + "/" + kind + "/" + name
 	if !h.shouldBroadcast(key) {
 		return
 	}
 
-	msg, err := NewDriftUpdateMessage(namespace, kind, name, drifted, projectNamespace)
+	msg, err := NewDriftUpdateMessage(group, namespace, kind, name, drifted, projectNamespace)
 	if err != nil {
 		h.logger.Error("Failed to create drift update message", "error", err)
 		return
 	}
 
-	h.enqueue(msg, "type", "drift", "namespace", namespace, "kind", kind, "name", name)
+	h.enqueue(msg, "type", "drift", "group", group, "namespace", namespace, "kind", kind, "name", name)
 }
 
 // BroadcastRGDUpdate sends an RGD update to all subscribed clients.

@@ -79,7 +79,7 @@ func TestNewInstanceUpdateMessage(t *testing.T) {
 		"namespace": "default",
 	}
 
-	msg, err := NewInstanceUpdateMessage(ActionAdd, "default", "WebApp", "test-instance", testInstance, "project-a")
+	msg, err := NewInstanceUpdateMessage(ActionAdd, "apps.example.com", "default", "WebApp", "test-instance", testInstance, "project-a")
 	if err != nil {
 		t.Fatalf("NewInstanceUpdateMessage failed: %v", err)
 	}
@@ -95,6 +95,10 @@ func TestNewInstanceUpdateMessage(t *testing.T) {
 
 	if updateData.Action != ActionAdd {
 		t.Errorf("expected action %s, got %s", ActionAdd, updateData.Action)
+	}
+
+	if updateData.Group != "apps.example.com" {
+		t.Errorf("expected group apps.example.com, got %s", updateData.Group)
 	}
 
 	if updateData.Namespace != "default" {

@@ -573,9 +573,10 @@ export const API_PATHS = {
   rgdCount: "/api/v1/rgds/count",
   instances: "/api/v1/instances",
   instanceCount: "/api/v1/instances/count",
-  // K8s-aligned namespaced instance path: /api/v1/namespaces/{ns}/instances/{kind}/{name}
-  // Tests that mock instance detail pages must also intercept this pattern
-  namespacedInstances: "/api/v1/namespaces/*/instances",
+  // GVK-aware namespaced instance path:
+  //   /api/v1/apigroups/{group}/namespaces/{ns}/instances/{kind}/{name}
+  // Tests that mock instance detail pages must also intercept this pattern.
+  namespacedInstances: "/api/v1/apigroups/*/namespaces/*/instances",
   projects: "/api/v1/projects",
   categories: "/api/v1/categories",
   canI: "/api/v1/account/can-i",

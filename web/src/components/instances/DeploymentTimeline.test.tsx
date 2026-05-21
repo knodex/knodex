@@ -89,7 +89,7 @@ describe("DeploymentTimeline", () => {
   it("renders loading state", () => {
     setupMocks({ data: undefined, isLoading: true });
 
-    render(<DeploymentTimeline namespace="test-ns" kind="WebApp" name="test-instance" />, {
+    render(<DeploymentTimeline group="apps.example.com" namespace="test-ns" kind="WebApp" name="test-instance" />, {
       wrapper: createWrapper(),
     });
 
@@ -102,7 +102,7 @@ describe("DeploymentTimeline", () => {
     const mockRefetch = vi.fn();
     setupMocks({ data: undefined, isLoading: false, error: new Error("Network error"), refetch: mockRefetch });
 
-    render(<DeploymentTimeline namespace="test-ns" kind="WebApp" name="test-instance" />, {
+    render(<DeploymentTimeline group="apps.example.com" namespace="test-ns" kind="WebApp" name="test-instance" />, {
       wrapper: createWrapper(),
     });
 
@@ -118,7 +118,7 @@ describe("DeploymentTimeline", () => {
   it("renders timeline nodes with labels on the horizontal rail", () => {
     setupMocks();
 
-    render(<DeploymentTimeline namespace="test-ns" kind="WebApp" name="test-instance" />, {
+    render(<DeploymentTimeline group="apps.example.com" namespace="test-ns" kind="WebApp" name="test-instance" />, {
       wrapper: createWrapper(),
     });
 
@@ -138,7 +138,7 @@ describe("DeploymentTimeline", () => {
   it("auto-selects the current event and shows its detail card", () => {
     setupMocks();
 
-    render(<DeploymentTimeline namespace="test-ns" kind="WebApp" name="test-instance" />, {
+    render(<DeploymentTimeline group="apps.example.com" namespace="test-ns" kind="WebApp" name="test-instance" />, {
       wrapper: createWrapper(),
     });
 
@@ -149,7 +149,7 @@ describe("DeploymentTimeline", () => {
   it("shows detail for a clicked node", () => {
     setupMocks();
 
-    render(<DeploymentTimeline namespace="test-ns" kind="WebApp" name="test-instance" />, {
+    render(<DeploymentTimeline group="apps.example.com" namespace="test-ns" kind="WebApp" name="test-instance" />, {
       wrapper: createWrapper(),
     });
 
@@ -164,7 +164,7 @@ describe("DeploymentTimeline", () => {
   it("renders git commit link when PushedToGit node is selected", () => {
     setupMocks();
 
-    render(<DeploymentTimeline namespace="test-ns" kind="WebApp" name="test-instance" />, {
+    render(<DeploymentTimeline group="apps.example.com" namespace="test-ns" kind="WebApp" name="test-instance" />, {
       wrapper: createWrapper(),
     });
 
@@ -184,7 +184,7 @@ describe("DeploymentTimeline", () => {
   it("toggles expansion when header is clicked", () => {
     setupMocks();
 
-    render(<DeploymentTimeline namespace="test-ns" kind="WebApp" name="test-instance" />, {
+    render(<DeploymentTimeline group="apps.example.com" namespace="test-ns" kind="WebApp" name="test-instance" />, {
       wrapper: createWrapper(),
     });
 
@@ -208,7 +208,7 @@ describe("DeploymentTimeline", () => {
       data: { namespace: "test-ns", kind: "WebApp", name: "test-instance", timeline: [] },
     });
 
-    render(<DeploymentTimeline namespace="test-ns" kind="WebApp" name="test-instance" />, {
+    render(<DeploymentTimeline group="apps.example.com" namespace="test-ns" kind="WebApp" name="test-instance" />, {
       wrapper: createWrapper(),
     });
 
@@ -220,7 +220,7 @@ describe("DeploymentTimeline", () => {
     const mockMutateAsync = vi.fn().mockResolvedValue({ success: true });
     setupMocks({}, { mutateAsync: mockMutateAsync });
 
-    render(<DeploymentTimeline namespace="test-ns" kind="WebApp" name="test-instance" />, {
+    render(<DeploymentTimeline group="apps.example.com" namespace="test-ns" kind="WebApp" name="test-instance" />, {
       wrapper: createWrapper(),
     });
 
@@ -229,6 +229,7 @@ describe("DeploymentTimeline", () => {
 
     await waitFor(() => {
       expect(mockMutateAsync).toHaveBeenCalledWith({
+        group: "apps.example.com",
         namespace: "test-ns",
         kind: "WebApp",
         name: "test-instance",
@@ -241,7 +242,7 @@ describe("DeploymentTimeline", () => {
     const mockMutateAsync = vi.fn().mockResolvedValue({ success: true });
     setupMocks({}, { mutateAsync: mockMutateAsync });
 
-    render(<DeploymentTimeline namespace="test-ns" kind="WebApp" name="test-instance" />, {
+    render(<DeploymentTimeline group="apps.example.com" namespace="test-ns" kind="WebApp" name="test-instance" />, {
       wrapper: createWrapper(),
     });
 
@@ -253,6 +254,7 @@ describe("DeploymentTimeline", () => {
 
     await waitFor(() => {
       expect(mockMutateAsync).toHaveBeenCalledWith({
+        group: "apps.example.com",
         namespace: "test-ns",
         kind: "WebApp",
         name: "test-instance",
@@ -264,7 +266,7 @@ describe("DeploymentTimeline", () => {
   it("shows export error message", () => {
     setupMocks({}, { isError: true });
 
-    render(<DeploymentTimeline namespace="test-ns" kind="WebApp" name="test-instance" />, {
+    render(<DeploymentTimeline group="apps.example.com" namespace="test-ns" kind="WebApp" name="test-instance" />, {
       wrapper: createWrapper(),
     });
 
@@ -298,7 +300,7 @@ describe("DeploymentTimeline", () => {
     setupMocks({ data: timelineWithRevision });
 
     const { container } = render(
-      <DeploymentTimeline namespace="test-ns" kind="WebApp" name="test-instance" />,
+      <DeploymentTimeline group="apps.example.com" namespace="test-ns" kind="WebApp" name="test-instance" />,
       { wrapper: createWrapper() }
     );
 
@@ -356,7 +358,7 @@ describe("DeploymentTimeline", () => {
 
     setupMocks({ data: timelineWithRevision });
 
-    render(<DeploymentTimeline namespace="test-ns" kind="WebApp" name="test-instance" />, {
+    render(<DeploymentTimeline group="apps.example.com" namespace="test-ns" kind="WebApp" name="test-instance" />, {
       wrapper: createWrapper(),
     });
 
@@ -411,7 +413,7 @@ describe("DeploymentTimeline", () => {
 
     setupMocks({ data: mixedTimeline });
 
-    render(<DeploymentTimeline namespace="test-ns" kind="WebApp" name="test-instance" />, {
+    render(<DeploymentTimeline group="apps.example.com" namespace="test-ns" kind="WebApp" name="test-instance" />, {
       wrapper: createWrapper(),
     });
 
@@ -428,7 +430,7 @@ describe("DeploymentTimeline", () => {
   it("disables download button while exporting", () => {
     setupMocks({}, { isPending: true });
 
-    render(<DeploymentTimeline namespace="test-ns" kind="WebApp" name="test-instance" />, {
+    render(<DeploymentTimeline group="apps.example.com" namespace="test-ns" kind="WebApp" name="test-instance" />, {
       wrapper: createWrapper(),
     });
 
@@ -473,7 +475,7 @@ describe("DeploymentTimeline", () => {
     setupMocks({ data: timeline });
 
     const { container } = render(
-      <DeploymentTimeline namespace="test-ns" kind="WebApp" name="test-instance" />,
+      <DeploymentTimeline group="apps.example.com" namespace="test-ns" kind="WebApp" name="test-instance" />,
       { wrapper: createWrapper() }
     );
 

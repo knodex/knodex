@@ -36,7 +36,9 @@ type mockInstanceProvider struct {
 	instances map[string]*models.Instance
 }
 
-func (m *mockInstanceProvider) GetInstance(namespace, kind, name string) (*models.Instance, bool) {
+func (m *mockInstanceProvider) GetInstance(group, namespace, kind, name string) (*models.Instance, bool) {
+	// Tests still key by namespace/kind/name; ignore group for fixture lookups.
+	_ = group
 	key := namespace + "/" + kind + "/" + name
 	inst, ok := m.instances[key]
 	return inst, ok
@@ -459,7 +461,7 @@ func TestListChildResources_InstanceNotFound(t *testing.T) {
 		slog.Default(),
 	)
 
-	_, err := svc.ListChildResources(context.Background(), "default", "TestPodPair", "missing")
+	_, err := svc.ListChildResources(context.Background(), "example.com", "default", "TestPodPair", "missing")
 	if err == nil {
 		t.Fatal("expected error for missing instance")
 	}
@@ -480,7 +482,7 @@ func TestListChildResources_RGDNotFound(t *testing.T) {
 		slog.Default(),
 	)
 
-	_, err := svc.ListChildResources(context.Background(), "default", "TestPodPair", "demo-app")
+	_, err := svc.ListChildResources(context.Background(), "example.com", "default", "TestPodPair", "demo-app")
 	if err == nil {
 		t.Fatal("expected error for missing RGD")
 	}
@@ -521,7 +523,7 @@ func TestListChildResources_Success(t *testing.T) {
 		slog.Default(),
 	)
 
-	resp, err := svc.ListChildResources(context.Background(), "default", "TestPodPair", "demo-app")
+	resp, err := svc.ListChildResources(context.Background(), "example.com", "default", "TestPodPair", "demo-app")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -679,7 +681,7 @@ func TestListChildResources_TargetCluster_PopulatesClusterField(t *testing.T) {
 		reachable: map[string]bool{"prod-eu-west": true},
 	})
 
-	resp, err := svc.ListChildResources(context.Background(), "team-alpha", "TestApp", "demo")
+	resp, err := svc.ListChildResources(context.Background(), "example.com", "team-alpha", "TestApp", "demo")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -726,7 +728,7 @@ func TestListChildResources_NoAnnotation_NoClusterField(t *testing.T) {
 		slog.Default(),
 	)
 
-	resp, err := svc.ListChildResources(context.Background(), "default", "TestApp", "demo")
+	resp, err := svc.ListChildResources(context.Background(), "example.com", "default", "TestApp", "demo")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -763,7 +765,7 @@ func TestListChildResources_UnreachableCluster(t *testing.T) {
 		reachable: map[string]bool{"prod-us-east": false},
 	})
 
-	resp, err := svc.ListChildResources(context.Background(), "default", "TestApp", "demo")
+	resp, err := svc.ListChildResources(context.Background(), "example.com", "default", "TestApp", "demo")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -811,7 +813,7 @@ func TestListChildResources_NilProvider_UsesManagementCluster(t *testing.T) {
 	)
 	// No SetRemoteClientProvider — provider is nil
 
-	resp, err := svc.ListChildResources(context.Background(), "default", "TestApp", "demo")
+	resp, err := svc.ListChildResources(context.Background(), "example.com", "default", "TestApp", "demo")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -850,7 +852,7 @@ func TestListChildResources_GetDynamicClientError(t *testing.T) {
 		clientErrs: map[string]error{"prod-eu-west": fmt.Errorf("connection refused")},
 	})
 
-	resp, err := svc.ListChildResources(context.Background(), "default", "TestApp", "demo")
+	resp, err := svc.ListChildResources(context.Background(), "example.com", "default", "TestApp", "demo")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -907,7 +909,7 @@ func TestListChildResources_RemoteClusterUsesRemoteClient(t *testing.T) {
 		reachable: map[string]bool{"prod-eu-west": true},
 	})
 
-	resp, err := svc.ListChildResources(context.Background(), "team-alpha", "TestApp", "demo")
+	resp, err := svc.ListChildResources(context.Background(), "example.com", "team-alpha", "TestApp", "demo")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

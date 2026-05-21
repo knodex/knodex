@@ -13,3 +13,22 @@ data:
     {{- $svg | nindent 4 }}
   {{- end }}
 {{- end }}
+{{- range $pkg, $iconMap := .Values.catalog.packageCustomIcons }}
+{{- if $iconMap }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "knodex.fullname" $ }}-custom-icons-{{ $pkg }}
+  labels:
+    {{- include "knodex.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: catalog
+    knodex.io/icon-registry: "true"
+    knodex.io/package: {{ $pkg | quote }}
+data:
+  {{- range $slug, $svg := $iconMap }}
+  {{ $slug }}: |
+    {{- $svg | nindent 4 }}
+  {{- end }}
+{{- end }}
+{{- end }}

@@ -14,11 +14,13 @@ import (
 // --- Unstructured RGD builder ---
 
 type rgdConfig struct {
-	annotations map[string]string
-	labels      map[string]string
-	status      string
-	pluralName  string
-	scope       string
+	annotations      map[string]string
+	labels           map[string]string
+	status           string
+	pluralName       string
+	scope            string
+	schemaAPIVersion string // overrides default "example.com/v1"; "-" to omit entirely
+	crdVersions      []map[string]interface{}
 }
 
 // RGDOption configures NewUnstructuredRGD.
@@ -51,6 +53,19 @@ func WithScope(s string) RGDOption {
 	return func(c *rgdConfig) { c.scope = s }
 }
 
+// WithSchemaAPIVersion overrides spec.schema.apiVersion on the unstructured RGD.
+// The default is "example.com/v1". Pass "-" to omit the field entirely.
+func WithSchemaAPIVersion(v string) RGDOption {
+	return func(c *rgdConfig) { c.schemaAPIVersion = v }
+}
+
+// WithCRDVersions sets spec.schema.crd.spec.versions on the unstructured RGD.
+// Each entry should include at least "name" and "served". Used to test the
+// multi-served-version invariant in the RGD watcher.
+func WithCRDVersions(versions []map[string]interface{}) RGDOption {
+	return func(c *rgdConfig) { c.crdVersions = versions }
+}
+
 // NewUnstructuredRGD creates an *unstructured.Unstructured RGD for K8s-level tests.
 // Default status state is "Active". Use WithStatus("") to omit status.
 func NewUnstructuredRGD(name, namespace string, opts ...RGDOption) *unstructured.Unstructured {
@@ -72,10 +87,19 @@ func NewUnstructuredRGD(name, namespace string, opts ...RGDOption) *unstructured
 	}
 
 	schemaMap := map[string]interface{}{
-		"apiVersion": "example.com/v1",
-		"kind":       "TestResource",
+		"kind": "TestResource",
 	}
-	// Build crd.spec.names block when pluralName or scope is set
+	// Default apiVersion is "example.com/v1"; "-" sentinel omits it.
+	switch cfg.schemaAPIVersion {
+	case "":
+		schemaMap["apiVersion"] = "example.com/v1"
+	case "-":
+		// omit
+	default:
+		schemaMap["apiVersion"] = cfg.schemaAPIVersion
+	}
+	// Build crd.spec block when names or versions are set
+	crdSpec := map[string]interface{}{}
 	namesBlock := map[string]interface{}{}
 	if cfg.pluralName != "" {
 		namesBlock["plural"] = cfg.pluralName
@@ -84,10 +108,18 @@ func NewUnstructuredRGD(name, namespace string, opts ...RGDOption) *unstructured
 		namesBlock["scope"] = cfg.scope
 	}
 	if len(namesBlock) > 0 {
+		crdSpec["names"] = namesBlock
+	}
+	if cfg.crdVersions != nil {
+		versionsSlice := make([]interface{}, 0, len(cfg.crdVersions))
+		for _, v := range cfg.crdVersions {
+			versionsSlice = append(versionsSlice, v)
+		}
+		crdSpec["versions"] = versionsSlice
+	}
+	if len(crdSpec) > 0 {
 		schemaMap["crd"] = map[string]interface{}{
-			"spec": map[string]interface{}{
-				"names": namesBlock,
-			},
+			"spec": crdSpec,
 		}
 	}
 	spec := map[string]interface{}{

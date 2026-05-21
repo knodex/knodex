@@ -1,19 +1,12 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useCallback, useState, Suspense } from "react";
+import { useCallback } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { RGDDetailView } from "@/components/detail";
 import { useRGD } from "@/hooks/useRGDs";
 import { useCanI } from "@/hooks/useCanI";
 import { Loader2, AlertCircle } from "@/lib/icons";
-import { lazyWithPreload } from "@/lib/lazy-preload";
-
-// Lazy-load DeployModal — it pulls in the entire deploy form system (~675 lines)
-// and is only rendered when the user clicks "Deploy"
-const DeployModal = lazyWithPreload(() =>
-  import("@/components/deploy/DeployModal").then(m => ({ default: m.DeployModal }))
-);
 
 export default function RGDDetailRoute() {
   const { rgdName } = useParams<{ rgdName: string }>();
@@ -23,8 +16,6 @@ export default function RGDDetailRoute() {
   const { allowed: canDeploy, isLoading: isLoadingCanDeploy, isError: isErrorCanDeploy } = useCanI('instances', 'create');
 
   const { data: rgd, isLoading, error } = useRGD(decodeURIComponent(rgdName || ''), undefined);
-
-  const [deployModalOpen, setDeployModalOpen] = useState(false);
 
   const handleBack = useCallback(() => {
     navigate('/catalog');
@@ -61,22 +52,15 @@ export default function RGDDetailRoute() {
   const canDeployRGD = !isErrorCanDeploy && (isLoadingCanDeploy || canDeploy);
 
   return (
-    <>
-      <RGDDetailView
-        rgd={rgd}
-        onBack={handleBack}
-        onDeploy={canDeployRGD ? () => setDeployModalOpen(true) : undefined}
-        initialTab={initialTab}
-      />
-      {deployModalOpen && (
-        <Suspense fallback={null}>
-          <DeployModal
-            rgd={rgd}
-            open={deployModalOpen}
-            onClose={() => setDeployModalOpen(false)}
-          />
-        </Suspense>
-      )}
-    </>
+    <RGDDetailView
+      rgd={rgd}
+      onBack={handleBack}
+      onDeploy={
+        canDeployRGD
+          ? () => navigate(`/deploy/${encodeURIComponent(rgdName || "")}`)
+          : undefined
+      }
+      initialTab={initialTab}
+    />
   );
 }

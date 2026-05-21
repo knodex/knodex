@@ -42,15 +42,16 @@ func NewHistoryHandler(hs *history.Service, rp services.GraphRevisionProvider, l
 }
 
 // GetHistory handles instance deployment history retrieval.
-// K8s-aligned routes: /api/v1/namespaces/{ns}/instances/{kind}/{name}/history (namespaced)
+// GVK-aware routes: /api/v1/apigroups/{group}/namespaces/{ns}/instances/{kind}/{name}/history (namespaced)
 //
-//	/api/v1/instances/{kind}/{name}/history (cluster-scoped)
+//	/api/v1/apigroups/{group}/instances/{kind}/{name}/history (cluster-scoped)
 func (h *HistoryHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 	if h.historyService == nil {
 		response.ServiceUnavailable(w, "History service not available")
 		return
 	}
 
+	group := r.PathValue("group")
 	namespace := r.PathValue("namespace") // empty for cluster-scoped instances
 	kind := r.PathValue("kind")
 	name := r.PathValue("name")
@@ -61,13 +62,13 @@ func (h *HistoryHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// STORY-348: DNS-1123 validation for K8s-bound path params
-	if validateInstancePathParams(w, namespace, kind, name) {
+	if validateInstancePathParams(w, group, namespace, kind, name) {
 		return
 	}
 
 	// Get history from service
-	instanceID := namespace + "/" + kind + "/" + name
-	historyData, err := h.historyService.GetHistory(r.Context(), namespace, kind, name)
+	instanceID := group + "/" + namespace + "/" + kind + "/" + name
+	historyData, err := h.historyService.GetHistory(r.Context(), group, namespace, kind, name)
 	if err != nil {
 		if !strings.Contains(err.Error(), "not found") {
 			h.logger.Error("failed to retrieve history", "instanceId", instanceID, "error", err)
@@ -88,9 +89,9 @@ func (h *HistoryHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetTimeline handles instance timeline retrieval.
-// K8s-aligned routes: /api/v1/namespaces/{ns}/instances/{kind}/{name}/timeline (namespaced)
+// GVK-aware routes: /api/v1/apigroups/{group}/namespaces/{ns}/instances/{kind}/{name}/timeline (namespaced)
 //
-//	/api/v1/instances/{kind}/{name}/timeline (cluster-scoped)
+//	/api/v1/apigroups/{group}/instances/{kind}/{name}/timeline (cluster-scoped)
 //
 // Query params: ?source=kubernetes (only K8s Events), ?source=deployment (only deployment events)
 func (h *HistoryHandler) GetTimeline(w http.ResponseWriter, r *http.Request) {
@@ -99,6 +100,7 @@ func (h *HistoryHandler) GetTimeline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	group := r.PathValue("group")
 	namespace := r.PathValue("namespace") // empty for cluster-scoped instances
 	kind := r.PathValue("kind")
 	name := r.PathValue("name")
@@ -109,7 +111,7 @@ func (h *HistoryHandler) GetTimeline(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// STORY-348: DNS-1123 validation for K8s-bound path params
-	if validateInstancePathParams(w, namespace, kind, name) {
+	if validateInstancePathParams(w, group, namespace, kind, name) {
 		return
 	}
 
@@ -117,8 +119,8 @@ func (h *HistoryHandler) GetTimeline(w http.ResponseWriter, r *http.Request) {
 	source := r.URL.Query().Get("source")
 
 	// Get full history (not just timeline) so we have RGDName for revision lookup
-	instanceID := namespace + "/" + kind + "/" + name
-	historyData, err := h.historyService.GetHistory(r.Context(), namespace, kind, name)
+	instanceID := group + "/" + namespace + "/" + kind + "/" + name
+	historyData, err := h.historyService.GetHistory(r.Context(), group, namespace, kind, name)
 	if err != nil {
 		if !strings.Contains(err.Error(), "not found") {
 			h.logger.Error("failed to retrieve timeline", "instanceId", instanceID, "error", err)
@@ -137,6 +139,7 @@ func (h *HistoryHandler) GetTimeline(w http.ResponseWriter, r *http.Request) {
 			timeline = filterTimelineBySource(timeline, source)
 		}
 		response.WriteJSON(w, http.StatusOK, map[string]interface{}{
+			"group":     group,
 			"namespace": namespace,
 			"kind":      kind,
 			"name":      name,
@@ -148,7 +151,7 @@ func (h *HistoryHandler) GetTimeline(w http.ResponseWriter, r *http.Request) {
 	// Use filtered timeline when source is specified, otherwise use standard timeline
 	var timeline []models.TimelineEntry
 	if source != "" {
-		timeline, err = h.historyService.GetFilteredTimeline(r.Context(), namespace, kind, name, source)
+		timeline, err = h.historyService.GetFilteredTimeline(r.Context(), group, namespace, kind, name, source)
 		if err != nil {
 			h.logger.Error("failed to retrieve filtered timeline", "instanceId", instanceID, "source", source, "error", err)
 			response.ServiceUnavailable(w, "history service unavailable")
@@ -173,6 +176,7 @@ func (h *HistoryHandler) GetTimeline(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"group":     group,
 		"namespace": namespace,
 		"kind":      kind,
 		"name":      name,
@@ -262,15 +266,16 @@ func mergeRevisionMarkers(timeline []models.TimelineEntry, revisions []models.Gr
 }
 
 // ExportHistory handles instance deployment history export.
-// K8s-aligned routes: /api/v1/namespaces/{ns}/instances/{kind}/{name}/history/export (namespaced)
+// GVK-aware routes: /api/v1/apigroups/{group}/namespaces/{ns}/instances/{kind}/{name}/history/export (namespaced)
 //
-//	/api/v1/instances/{kind}/{name}/history/export (cluster-scoped)
+//	/api/v1/apigroups/{group}/instances/{kind}/{name}/history/export (cluster-scoped)
 func (h *HistoryHandler) ExportHistory(w http.ResponseWriter, r *http.Request) {
 	if h.historyService == nil {
 		response.ServiceUnavailable(w, "History service not available")
 		return
 	}
 
+	group := r.PathValue("group")
 	namespace := r.PathValue("namespace") // empty for cluster-scoped instances
 	kind := r.PathValue("kind")
 	name := r.PathValue("name")
@@ -281,7 +286,7 @@ func (h *HistoryHandler) ExportHistory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// STORY-348: DNS-1123 validation for K8s-bound path params
-	if validateInstancePathParams(w, namespace, kind, name) {
+	if validateInstancePathParams(w, group, namespace, kind, name) {
 		return
 	}
 
@@ -298,8 +303,8 @@ func (h *HistoryHandler) ExportHistory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get history from service
-	instanceID := namespace + "/" + kind + "/" + name
-	historyData, err := h.historyService.GetHistory(r.Context(), namespace, kind, name)
+	instanceID := group + "/" + namespace + "/" + kind + "/" + name
+	historyData, err := h.historyService.GetHistory(r.Context(), group, namespace, kind, name)
 	if err != nil {
 		if !strings.Contains(err.Error(), "not found") {
 			h.logger.Error("failed to retrieve history for export", "instanceId", instanceID, "error", err)

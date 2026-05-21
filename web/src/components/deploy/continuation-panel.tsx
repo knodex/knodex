@@ -6,6 +6,7 @@ import { useNavigate } from "react-router-dom";
 import { Rocket, ArrowRight, LayoutGrid } from "@/lib/icons";
 import { useDeployContextStore } from "@/stores/deploy-context-store";
 import apiClient from "@/api/client";
+import { buildInstanceRoute } from "@/lib/instancePath";
 
 interface RelatedRGD {
   name: string;
@@ -17,6 +18,8 @@ interface RelatedRGD {
 interface ContinuationPanelProps {
   rgdName: string;
   instanceName: string;
+  /** Full apiVersion ("{group}/{version}") for GVK-aware route building. */
+  apiVersion: string;
   namespace: string;
   kind: string;
 }
@@ -24,6 +27,7 @@ interface ContinuationPanelProps {
 export function ContinuationPanel({
   rgdName,
   instanceName,
+  apiVersion,
   namespace,
   kind,
 }: ContinuationPanelProps) {
@@ -40,8 +44,15 @@ export function ContinuationPanel({
   }, [rgdName]);
 
   const handleViewInstance = useCallback(() => {
-    navigate(`/instances/${encodeURIComponent(namespace)}/${encodeURIComponent(kind)}/${encodeURIComponent(instanceName)}`);
-  }, [navigate, namespace, kind, instanceName]);
+    navigate(
+      buildInstanceRoute({
+        apiVersion,
+        namespace: namespace || undefined,
+        kind,
+        name: instanceName,
+      }),
+    );
+  }, [navigate, apiVersion, namespace, kind, instanceName]);
 
   const handleDeployNext = useCallback(
     (nextRgdName: string) => {

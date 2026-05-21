@@ -326,7 +326,7 @@ func TestDeploymentModeRaceCondition(t *testing.T) {
 			"deploymentMode": "direct", // This should be rejected - RGD now only allows gitops
 		}
 
-		resp, err := MakeAuthenticatedRequest(client, backendURL, "POST", "/api/v1/instances", token, deployReq)
+		resp, err := MakeAuthenticatedRequest(client, backendURL, "POST", "/api/v1/apigroups/kro.run/instances/SimpleApp", token, deployReq)
 		if err != nil {
 			t.Fatalf("Failed to make deployment request: %v", err)
 		}
@@ -486,7 +486,7 @@ func TestDeploymentModeAnnotationFormats(t *testing.T) {
 				deployReq["repositoryId"] = "test-repo"
 			}
 
-			resp, err := MakeAuthenticatedRequest(client, backendURL, "POST", "/api/v1/instances", token, deployReq)
+			resp, err := MakeAuthenticatedRequest(client, backendURL, "POST", "/api/v1/apigroups/kro.run/instances/SimpleApp", token, deployReq)
 			if err != nil {
 				t.Fatalf("Failed to make request: %v", err)
 			}
@@ -595,7 +595,7 @@ func TestAllowedModesResponseFormat(t *testing.T) {
 		"deploymentMode": "direct",
 	}
 
-	resp, err := MakeAuthenticatedRequest(client, backendURL, "POST", "/api/v1/instances", token, deployReq)
+	resp, err := MakeAuthenticatedRequest(client, backendURL, "POST", "/api/v1/apigroups/kro.run/instances/SimpleApp", token, deployReq)
 	if err != nil {
 		t.Fatalf("Failed to make request: %v", err)
 	}

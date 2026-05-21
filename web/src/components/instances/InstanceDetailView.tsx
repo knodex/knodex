@@ -29,6 +29,7 @@ import { useInstanceDialogs } from "./hooks/useInstanceDialogs";
 import { useInstanceDeletion } from "./hooks/useInstanceDeletion";
 import { useInstanceTabs } from "./hooks/useInstanceTabs";
 import { useInstanceMetadata } from "./hooks/useInstanceMetadata";
+import { apiGroupOf } from "@/lib/instancePath";
 
 /** Spec viewer with copy button */
 function SpecViewer({ spec }: { spec: Record<string, unknown> }) {
@@ -85,6 +86,7 @@ export function InstanceDetailView({
     metadata.externalRefCount,
     metadata.hasSpec,
   );
+  const group = apiGroupOf(instance.apiVersion);
 
   return (
     <div className="space-y-0 animate-fade-in">
@@ -156,16 +158,16 @@ export function InstanceDetailView({
           />
         )}
         {effectiveTab === "deployment-history" && (
-          <DeploymentTimeline namespace={instance.namespace} kind={instance.kind} name={instance.name} />
+          <DeploymentTimeline group={group} namespace={instance.namespace} kind={instance.kind} name={instance.name} />
         )}
         {effectiveTab === "events" && (
-          <InstanceEvents namespace={instance.namespace} kind={instance.kind} name={instance.name} />
+          <InstanceEvents group={group} namespace={instance.namespace} kind={instance.kind} name={instance.name} />
         )}
         {effectiveTab === "external-refs" && (
           <InstanceExternalRefs instance={instance} />
         )}
         {effectiveTab === "children" && (
-          <InstanceChildResources namespace={instance.namespace} kind={instance.kind} name={instance.name} />
+          <InstanceChildResources group={group} namespace={instance.namespace} kind={instance.kind} name={instance.name} />
         )}
         {effectiveTab === "spec" && instance.spec && Object.keys(instance.spec).length > 0 && (
           <SpecViewer spec={instance.spec} />

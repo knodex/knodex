@@ -134,7 +134,7 @@ describe('Instance namespace validation at API boundary', () => {
         data: { name: 'bad-single', namespace: '', isClusterScoped: false },
       });
 
-      const result = await getInstance('', 'MyKind', 'bad-single');
+      const result = await getInstance('apps.example.com', '', 'MyKind', 'bad-single');
 
       // In dev mode (Vitest), error is used instead of warn
       expect(mockError).toHaveBeenCalledWith(
@@ -151,7 +151,7 @@ describe('Instance namespace validation at API boundary', () => {
         data: { name: 'good-single', namespace: 'prod', isClusterScoped: false },
       });
 
-      await getInstance('prod', 'MyKind', 'good-single');
+      await getInstance('apps.example.com', 'prod', 'MyKind', 'good-single');
 
       expect(mockWarn).not.toHaveBeenCalled();
       expect(mockError).not.toHaveBeenCalled();
@@ -160,21 +160,21 @@ describe('Instance namespace validation at API boundary', () => {
 });
 
 describe('instancePath URL builder', () => {
-  it('builds namespaced URL with /v1/namespaces/{ns}/instances/{kind}/{name}', () => {
-    expect(instancePath('default', 'WebApp', 'my-app')).toBe(
-      '/v1/namespaces/default/instances/WebApp/my-app'
+  it('builds namespaced URL with /v1/apigroups/{group}/namespaces/{ns}/instances/{kind}/{name}', () => {
+    expect(instancePath('apps.example.com', 'default', 'WebApp', 'my-app')).toBe(
+      '/v1/apigroups/apps.example.com/namespaces/default/instances/WebApp/my-app'
     );
   });
 
-  it('builds cluster-scoped URL with /v1/instances/{kind}/{name}', () => {
-    expect(instancePath('', 'ClusterPolicy', 'global-policy')).toBe(
-      '/v1/instances/ClusterPolicy/global-policy'
+  it('builds cluster-scoped URL with /v1/apigroups/{group}/instances/{kind}/{name}', () => {
+    expect(instancePath('policy.example.com', '', 'ClusterPolicy', 'global-policy')).toBe(
+      '/v1/apigroups/policy.example.com/instances/ClusterPolicy/global-policy'
     );
   });
 
   it('encodes special characters in path segments', () => {
-    expect(instancePath('my ns', 'My Kind', 'my name')).toBe(
-      '/v1/namespaces/my%20ns/instances/My%20Kind/my%20name'
+    expect(instancePath('grp.example.com', 'my ns', 'My Kind', 'my name')).toBe(
+      '/v1/apigroups/grp.example.com/namespaces/my%20ns/instances/My%20Kind/my%20name'
     );
   });
 });

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { memo } from "react";
+import { useFormContext, useController } from "react-hook-form";
 import { cn } from "@/lib/utils";
 import type { TextFieldProps } from "./types";
 import { inputBaseClasses, getInputBorderClass } from "./utils";
@@ -16,8 +17,10 @@ export const TextField = memo(function TextField({
   required,
   error,
   format,
-  register,
 }: TextFieldProps) {
+  const { control } = useFormContext();
+  const { field: { value, onChange, onBlur, ref } } = useController({ name, control });
+
   const inputType =
     format === "password" ? "password" : format === "email" ? "email" : "text";
   const isTextarea =
@@ -39,7 +42,10 @@ export const TextField = memo(function TextField({
       {isTextarea ? (
         <textarea
           id={name}
-          {...register(name)}
+          value={(value as string) ?? ""}
+          onChange={onChange}
+          onBlur={onBlur}
+          ref={ref as React.Ref<HTMLTextAreaElement>}
           data-testid={`input-${name}`}
           aria-invalid={!!error}
           aria-describedby={error ? `error-${name}` : undefined}
@@ -50,7 +56,10 @@ export const TextField = memo(function TextField({
         <input
           id={name}
           type={inputType}
-          {...register(name)}
+          value={(value as string) ?? ""}
+          onChange={onChange}
+          onBlur={onBlur}
+          ref={ref}
           data-testid={`input-${name}`}
           aria-invalid={!!error}
           aria-describedby={error ? `error-${name}` : undefined}

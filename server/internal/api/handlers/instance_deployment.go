@@ -128,9 +128,9 @@ func NewInstanceDeploymentHandler(config InstanceDeploymentHandlerConfig) *Insta
 }
 
 // CreateInstance handles instance creation.
-// K8s-aligned routes: POST /api/v1/namespaces/{ns}/instances/{kind} (namespaced)
+// GVK-aware routes: POST /api/v1/apigroups/{group}/namespaces/{ns}/instances/{kind} (namespaced)
 //
-//	POST /api/v1/instances/{kind} (cluster-scoped)
+//	POST /api/v1/apigroups/{group}/instances/{kind} (cluster-scoped)
 //
 // Enforces project-scoped namespace deployment.
 // Supports deployment modes: direct, gitops, hybrid.
@@ -161,18 +161,29 @@ func (h *InstanceDeploymentHandler) CreateInstance(w http.ResponseWriter, r *htt
 		return
 	}
 
-	// K8s-aligned routes: namespace and kind come from path parameters.
+	// GVK-aware routes: group, namespace, and kind come from path parameters.
 	// Path namespace takes precedence over body namespace.
+	pathGroup := r.PathValue("group")
 	pathNamespace := r.PathValue("namespace")
 	pathKind := r.PathValue("kind")
 
 	// STORY-348: DNS-1123 validation for K8s-bound path params
+	if !sanitize.IsValidAPIGroup(pathGroup) {
+		response.BadRequest(w, "invalid path parameter", map[string]string{
+			"group": "must be a valid Kubernetes API group (non-empty DNS-1123 subdomain)",
+		})
+		return
+	}
 	if pathNamespace != "" && !sanitize.IsValidDNS1123Label(pathNamespace) {
-		response.BadRequest(w, "namespace must be a valid DNS-1123 label (lowercase alphanumeric with hyphens, max 63 chars)", nil)
+		response.BadRequest(w, "invalid path parameter", map[string]string{
+			"namespace": "must be a valid DNS-1123 label (lowercase alphanumeric with hyphens, max 63 chars)",
+		})
 		return
 	}
 	if pathKind != "" && !sanitize.IsValidK8sKind(pathKind) {
-		response.BadRequest(w, "kind must be a valid Kubernetes Kind name (CamelCase, starting with uppercase letter)", nil)
+		response.BadRequest(w, "invalid path parameter", map[string]string{
+			"kind": "must be a valid Kubernetes Kind name (CamelCase, starting with uppercase letter)",
+		})
 		return
 	}
 
@@ -183,7 +194,9 @@ func (h *InstanceDeploymentHandler) CreateInstance(w http.ResponseWriter, r *htt
 	// STORY-348: Validate body namespace when path namespace is absent (cluster-scoped route).
 	// Path namespace is already validated above; body namespace needs the same check.
 	if pathNamespace == "" && req.Namespace != "" && !sanitize.IsValidDNS1123Label(req.Namespace) {
-		response.BadRequest(w, "namespace must be a valid DNS-1123 label (lowercase alphanumeric with hyphens, max 63 chars)", nil)
+		response.BadRequest(w, "invalid request body", map[string]string{
+			"namespace": "must be a valid DNS-1123 label (lowercase alphanumeric with hyphens, max 63 chars)",
+		})
 		return
 	}
 
@@ -255,6 +268,20 @@ func (h *InstanceDeploymentHandler) CreateInstance(w http.ResponseWriter, r *htt
 		response.BadRequest(w, "kind in URL path does not match RGD kind", map[string]string{
 			"pathKind": pathKind,
 			"rgdKind":  rgd.Kind,
+		})
+		return
+	}
+
+	// Validate path group matches the RGD's derived apiGroup. The RGD's group is
+	// the prefix of rgd.APIVersion up to the first slash.
+	rgdGroup := ""
+	if idx := strings.Index(rgd.APIVersion, "/"); idx >= 0 {
+		rgdGroup = rgd.APIVersion[:idx]
+	}
+	if pathGroup != rgdGroup {
+		response.BadRequest(w, "group in URL path does not match RGD apiGroup", map[string]string{
+			"pathGroup": pathGroup,
+			"rgdGroup":  rgdGroup,
 		})
 		return
 	}
@@ -451,7 +478,7 @@ func (h *InstanceDeploymentHandler) CreateInstance(w http.ResponseWriter, r *htt
 
 	// Record deployment creation in history service (sets rgdName for timeline merge)
 	if h.historyService != nil {
-		if err := h.historyService.RecordCreation(r.Context(), namespace, kind, req.Name, req.RGDName, userCtx.Email, models.DeploymentMode(deployMode)); err != nil {
+		if err := h.historyService.RecordCreation(r.Context(), pathGroup, namespace, kind, req.Name, req.RGDName, userCtx.Email, models.DeploymentMode(deployMode)); err != nil {
 			h.logger.Warn("failed to record deployment creation in history", "error", err, "instance", req.Name)
 		}
 
@@ -464,7 +491,7 @@ func (h *InstanceDeploymentHandler) CreateInstance(w http.ResponseWriter, r *htt
 				User:      userCtx.Email,
 				Message:   "Instance is awaiting its first GitOps synchronization to provision resources.",
 			}
-			if err := h.historyService.RecordEvent(r.Context(), namespace, kind, req.Name, waitEvent); err != nil {
+			if err := h.historyService.RecordEvent(r.Context(), pathGroup, namespace, kind, req.Name, waitEvent); err != nil {
 				h.logger.Warn("failed to record WaitingForSync event in history", "error", err, "instance", req.Name)
 			}
 		}
@@ -492,6 +519,7 @@ func (h *InstanceDeploymentHandler) CreateInstance(w http.ResponseWriter, r *htt
 		Name:      req.Name,
 		Project:   req.ProjectID,
 		Namespace: namespace,
+		Group:     pathGroup,
 		RequestID: r.Header.Get("X-Request-ID"),
 		Result:    "success",
 		Details:   deployDetails,
@@ -555,17 +583,25 @@ func (h *InstanceDeploymentHandler) directDeploy(ctx context.Context, req *deplo
 // (e.g. Deployments created by KRO) are not caught here — those surface as
 // condition errors after deployment.
 //
-// K8s-aligned routes: POST /api/v1/namespaces/{ns}/instances/{kind}/preflight
+// GVK-aware routes: POST /api/v1/apigroups/{group}/namespaces/{ns}/instances/{kind}/preflight
 //
-//	POST /api/v1/instances/{kind}/preflight
+//	POST /api/v1/apigroups/{group}/instances/{kind}/preflight
 func (h *InstanceDeploymentHandler) PreflightInstance(w http.ResponseWriter, r *http.Request) {
 	if h.rgdWatcher == nil {
 		response.InternalError(w, "RGD watcher not available")
 		return
 	}
 
+	pathGroup := r.PathValue("group")
 	namespace := r.PathValue("namespace")
 	pathKind := r.PathValue("kind")
+
+	if !sanitize.IsValidAPIGroup(pathGroup) {
+		response.BadRequest(w, "invalid path parameter", map[string]string{
+			"group": "must be a valid Kubernetes API group (non-empty DNS-1123 subdomain)",
+		})
+		return
+	}
 
 	req, err := helpers.DecodeJSON[CreateInstanceRequest](r, w, 0)
 	if err != nil {
@@ -600,6 +636,15 @@ func (h *InstanceDeploymentHandler) PreflightInstance(w http.ResponseWriter, r *
 
 	if pathKind != "" && pathKind != rgd.Kind {
 		response.BadRequest(w, "kind in URL path does not match RGD kind", nil)
+		return
+	}
+
+	rgdGroup := ""
+	if idx := strings.Index(rgd.APIVersion, "/"); idx >= 0 {
+		rgdGroup = rgd.APIVersion[:idx]
+	}
+	if pathGroup != rgdGroup {
+		response.BadRequest(w, "group in URL path does not match RGD apiGroup", nil)
 		return
 	}
 
@@ -657,9 +702,8 @@ func (h *InstanceDeploymentHandler) PreflightInstance(w http.ResponseWriter, r *
 	response.WriteJSON(w, http.StatusOK, preflightResponse{Valid: true})
 }
 
-// parseAdmissionWebhookError extracts a user-friendly message from a Kubernetes
-// admission webhook denial error. Returns the original error string if no
-// known pattern matches.
+// parseAdmissionWebhookError maps a raw Kubernetes error into a user-friendly
+// preflight message. Returns the original string if no known pattern matches.
 func parseAdmissionWebhookError(errMsg string) string {
 	// Gatekeeper: admission webhook "validation.gatekeeper.sh" denied the request: [constraint] reason
 	if idx := strings.Index(errMsg, `admission webhook "validation.gatekeeper.sh" denied the request: `); idx != -1 {
@@ -678,6 +722,16 @@ func parseAdmissionWebhookError(errMsg string) string {
 	// Generic admission webhook denial
 	if idx := strings.Index(errMsg, `admission webhook "`); idx != -1 {
 		return "Blocked by admission webhook: " + errMsg[idx:]
+	}
+	// CRD not registered or RGD not yet ready — kro creates CRDs asynchronously
+	// so this is expected briefly after a new RGD is applied.
+	if strings.Contains(errMsg, "the server could not find the requested resource") ||
+		strings.Contains(errMsg, "no matches for kind") {
+		return "The resource type is not yet registered in the cluster. The RGD may still be initializing — wait a moment and try again."
+	}
+	// Target namespace missing
+	if strings.Contains(errMsg, "not found") && strings.Contains(errMsg, "namespace") {
+		return "The target namespace does not exist in the cluster. Create it before deploying."
 	}
 	return errMsg
 }

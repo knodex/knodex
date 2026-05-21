@@ -30,6 +30,7 @@ import { useFieldVisibility } from "@/hooks/useFieldVisibility";
 import { useAdvancedFieldSplit } from "@/hooks/useAdvancedFieldSplit";
 import { useRGDSchema } from "@/hooks/useRGDs";
 import { useUpdateInstanceSpec } from "@/hooks/useInstances";
+import { apiGroupOf } from "@/lib/instancePath";
 import type { Instance, DeploymentMode } from "@/types/rgd";
 import type { GitInfo } from "@/types/rgd";
 import { cn } from "@/lib/utils";
@@ -68,6 +69,7 @@ export function EditInstanceSpecDialog({
 
     try {
       const result = await updateMutation.mutateAsync({
+        group: apiGroupOf(instance.apiVersion),
         namespace: instance.namespace,
         kind: instance.kind,
         name: instance.name,

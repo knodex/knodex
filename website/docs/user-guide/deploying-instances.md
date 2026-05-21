@@ -10,7 +10,7 @@ import ProductTag from "@site/src/components/ProductTag";
 
 # Deploying Instances
 
-Deploying an instance creates a running set of Kubernetes resources from a ResourceGraphDefinition (RGD). Knodex generates a deployment form based on the RGD schema so you can configure and deploy without writing YAML.
+Deploying an instance creates a running set of Kubernetes resources from a ResourceGraphDefinition (RGD). Knodex generates a tabbed deployment page based on the RGD schema so you can configure and deploy without writing YAML.
 
 ## Starting a Deployment
 
@@ -21,81 +21,75 @@ There are four ways to begin a deployment:
 3. **From an instance add-on** -- On an existing instance's detail page, click **Deploy Add-on**. This pre-fills the `externalRef` field with the parent instance reference.
 4. **From an example template** -- On the RGD's Examples tab, click **Use Template** to populate the deployment form with example values.
 
-## The Deployment Form
+## The Deploy Page
 
-### Basic Information
+The deploy page is organized into tabs. Tab order and labels are derived from the RGD schema.
 
-The first section collects the instance identity:
+### Basics Tab
+
+The first tab collects instance identity and deployment settings:
 
 - **Name** -- A DNS-compatible name for the instance. Must be lowercase, alphanumeric, and may contain hyphens. Maximum 63 characters. Example: `my-web-app-staging`.
 - **Namespace** -- The target Kubernetes namespace (scoped to your project destinations).
 - **Project** -- The project this instance belongs to.
+- **Deployment Mode** -- How the manifest is applied: Direct, GitOps, or Hybrid. See [Deployment Modes](deployment-modes).
 
-### RGD-Specific Parameters
+### Schema Tabs
 
-The form dynamically generates input fields based on the RGD schema. Each field shows its type, description, and any constraints.
+One tab is generated for each top-level object key in the RGD's `spec.schema.spec`. Scalar fields that are not grouped under any top-level object are collected into a single **General** tab. Each tab renders input fields based on the RGD schema:
 
-```
-+--------------------------------------------------+
-| Instance Parameters                               |
-+--------------------------------------------------+
-| Image *            [ nginx:latest            ]    |
-| Replicas           [ 3                       ]    |
-| Port *             [ 8080                    ]    |
-| Enable Ingress     [x]                            |
-| Environment        [ production         v ]       |
-+--------------------------------------------------+
-  * = required field
-```
-
-- Required fields are marked with an asterisk and must be filled before deployment.
+- Required fields are marked and must be filled before deployment.
 - Optional fields show their default values, which you can override.
 - Enum fields appear as dropdowns with the allowed values.
 - Boolean fields appear as checkboxes.
-- Complex object fields expand into nested form sections.
+- Complex nested fields expand into sub-sections.
+- An **Advanced** toggle on each tab hides rarely-changed fields by default.
 
-### Advanced Options
+### Review and Deploy Tab
 
-Expand the **Advanced Options** section to configure:
+The final tab shows a summary of your configuration and runs pre-deployment checks:
 
-- **Resource limits** -- CPU and memory requests/limits for the deployed pods
-- **Ingress settings** -- Hostname, TLS, and path configuration
-- **Environment variables** -- Additional environment variables injected into containers
+- **Compliance check** (Enterprise) -- Validates the manifest against your organization's compliance policies. Deployments blocked by a policy cannot proceed.
+- **Admission preflight** -- Runs a dry-run against the cluster's admission webhooks and reports any rejections.
+- **Configuration summary** -- Lists the values you entered across all tabs, with an **Edit** link next to each section to jump back to the relevant tab.
+- **YAML manifest** -- Shows the full Kubernetes manifest that will be applied.
 
-### Form Validation
+## Tab Validation Badges
 
-The form validates input in real time. Validation covers:
+Each tab displays a badge indicating its validation state:
 
-| Check | Example |
+| Badge | Meaning |
 |-------|---------|
-| Required fields | "Name is required" |
-| Type constraints | "Replicas must be an integer" |
-| Range constraints | "Port must be between 1 and 65535" |
-| Pattern constraints | "Name must match DNS label format" |
-| Length constraints | "Description must be under 256 characters" |
+| Red dot | The tab contains one or more validation errors |
+| Green check | All fields on the tab are valid |
+| Gray dot | The tab has not been visited yet |
 
-Fix all validation errors before proceeding. Invalid fields are highlighted in red with descriptive error messages.
+## Action Footer
 
-## YAML Preview
+A fixed footer persists at the bottom of the page throughout the deployment:
 
-Before deploying, click **YAML Preview** to see the full Kubernetes manifest that will be applied. The preview shows the complete instance resource.
-
-The YAML preview is read-only and shows the manifest that will be applied based on your current form values. To make changes, update the form fields directly.
+| Button | Available when | Action |
+|--------|---------------|--------|
+| **Previous** | Any tab after the first | Navigate to the prior tab |
+| **Next** | Any tab before Review | Validate the current tab and advance |
+| **Review and Deploy** | Any tab before Review | Jump directly to the Review and Deploy tab |
+| **Deploy** | Review and Deploy tab | Submit the deployment |
 
 ## Deploying
 
 ### Final Checks
 
-Before clicking **Deploy**, verify:
+Before clicking **Deploy** on the Review and Deploy tab, confirm:
 
-- All required fields are filled and valid
-- The target namespace is correct
-- Secret requirements are satisfied (check the Secrets tab on the RGD)
+- No tabs show a red validation badge
+- The compliance check passed (Enterprise) or no compliance policy is configured
+- The admission preflight shows no blocking errors
+- The target namespace and project are correct
 - The deployment mode is set appropriately (see [Deployment Modes](deployment-modes))
 
 ### After Deploying
 
-On success, you are redirected to the instance detail page. The time it takes for an instance to become healthy depends entirely on the resources the RGD creates and the controllers or operators responsible for reconciling them. Knodex does not control the lifecycle of the underlying resources — it only creates the instance custom resource.
+On success, you are redirected to the instance detail page.
 
 Monitor the instance's **Status** tab to track conditions reported by KRO and the underlying operators.
 
@@ -106,6 +100,3 @@ When using the **GitOps** deployment mode, Knodex commits the instance manifest 
 - The instance appears in Knodex with an **unhealthy** status — this is expected because the resource does not exist in the cluster yet
 - Your platform's GitOps tool (ArgoCD, Flux, etc.) detects the new manifest in the repository and applies it to the cluster
 - Once KRO picks up the applied resource and reconciles the underlying resources, the instance status in Knodex updates automatically
-
-See [Deployment Modes](deployment-modes) for details on configuring Direct, GitOps, and Hybrid modes.
-

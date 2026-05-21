@@ -18,6 +18,7 @@ func TestInstanceCache_SetGet(t *testing.T) {
 		Name:         "test-instance",
 		Namespace:    "default",
 		Kind:         "WebApp",
+		APIVersion:   "apps.example.com/v1",
 		RGDName:      "test-rgd",
 		RGDNamespace: "default",
 		Health:       models.HealthHealthy,
@@ -26,7 +27,7 @@ func TestInstanceCache_SetGet(t *testing.T) {
 
 	cache.Set(instance)
 
-	got, ok := cache.Get("default", "WebApp", "test-instance")
+	got, ok := cache.Get("apps.example.com", "default", "WebApp", "test-instance")
 	if !ok {
 		t.Fatal("expected to find instance")
 	}
@@ -42,14 +43,16 @@ func TestInstanceCache_SetGet_SameNameDifferentKind(t *testing.T) {
 	cache := NewInstanceCache()
 
 	webapp := &models.Instance{
-		Name:      "demo",
-		Namespace: "demo",
-		Kind:      "WebApp",
+		Name:       "demo",
+		Namespace:  "demo",
+		Kind:       "WebApp",
+		APIVersion: "apps.example.com/v1",
 	}
 	database := &models.Instance{
-		Name:      "demo",
-		Namespace: "demo",
-		Kind:      "Database",
+		Name:       "demo",
+		Namespace:  "demo",
+		Kind:       "Database",
+		APIVersion: "apps.example.com/v1",
 	}
 
 	cache.Set(webapp)
@@ -60,7 +63,7 @@ func TestInstanceCache_SetGet_SameNameDifferentKind(t *testing.T) {
 		t.Errorf("expected count 2, got %d", cache.Count())
 	}
 
-	gotWebapp, ok := cache.Get("demo", "WebApp", "demo")
+	gotWebapp, ok := cache.Get("apps.example.com", "demo", "WebApp", "demo")
 	if !ok {
 		t.Fatal("expected to find WebApp instance")
 	}
@@ -68,7 +71,7 @@ func TestInstanceCache_SetGet_SameNameDifferentKind(t *testing.T) {
 		t.Errorf("expected Kind 'WebApp', got '%s'", gotWebapp.Kind)
 	}
 
-	gotDB, ok := cache.Get("demo", "Database", "demo")
+	gotDB, ok := cache.Get("apps.example.com", "demo", "Database", "demo")
 	if !ok {
 		t.Fatal("expected to find Database instance")
 	}
@@ -77,19 +80,91 @@ func TestInstanceCache_SetGet_SameNameDifferentKind(t *testing.T) {
 	}
 }
 
+// TestInstanceCache_GroupCollision verifies that two instances sharing
+// (namespace, kind, name) but in different apiGroups are stored separately
+// and retrievable via group-aware Get.
+func TestInstanceCache_GroupCollision(t *testing.T) {
+	cache := NewInstanceCache()
+
+	appsWebApp := &models.Instance{
+		Name:       "foo",
+		Namespace:  "default",
+		Kind:       "WebApp",
+		APIVersion: "apps.example.com/v1",
+		RGDName:    "apps-webapp",
+	}
+	servicesWebApp := &models.Instance{
+		Name:       "foo",
+		Namespace:  "default",
+		Kind:       "WebApp",
+		APIVersion: "services.example.com/v1",
+		RGDName:    "services-webapp",
+	}
+
+	cache.Set(appsWebApp)
+	cache.Set(servicesWebApp)
+
+	if cache.Count() != 2 {
+		t.Fatalf("expected 2 distinct instances across groups, got %d", cache.Count())
+	}
+
+	gotApps, ok := cache.Get("apps.example.com", "default", "WebApp", "foo")
+	if !ok {
+		t.Fatal("expected apps.example.com/WebApp instance")
+	}
+	if gotApps.RGDName != "apps-webapp" {
+		t.Errorf("expected RGDName 'apps-webapp', got '%s'", gotApps.RGDName)
+	}
+
+	gotServices, ok := cache.Get("services.example.com", "default", "WebApp", "foo")
+	if !ok {
+		t.Fatal("expected services.example.com/WebApp instance")
+	}
+	if gotServices.RGDName != "services-webapp" {
+		t.Errorf("expected RGDName 'services-webapp', got '%s'", gotServices.RGDName)
+	}
+
+	// Deleting one group must not affect the other
+	cache.Delete("apps.example.com", "default", "WebApp", "foo")
+	if cache.Count() != 1 {
+		t.Errorf("expected 1 remaining after group-scoped delete, got %d", cache.Count())
+	}
+	if _, ok := cache.Get("services.example.com", "default", "WebApp", "foo"); !ok {
+		t.Error("expected services.example.com/WebApp to remain")
+	}
+
+	// Sort tie-break must include group: identical createdAt + name + namespace
+	cache.Clear()
+	sameTime := time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC)
+	cache.Set(&models.Instance{Name: "foo", Namespace: "default", Kind: "WebApp", APIVersion: "services.example.com/v1", CreatedAt: sameTime})
+	cache.Set(&models.Instance{Name: "foo", Namespace: "default", Kind: "WebApp", APIVersion: "apps.example.com/v1", CreatedAt: sameTime})
+
+	for attempt := 0; attempt < 5; attempt++ {
+		result := cache.List(models.InstanceListOptions{Page: 1, PageSize: 10, SortBy: "createdAt", SortOrder: "asc"})
+		if len(result.Items) != 2 {
+			t.Fatalf("attempt %d: expected 2 items, got %d", attempt, len(result.Items))
+		}
+		// apps.example.com sorts before services.example.com
+		if got := apiGroupOf(result.Items[0].APIVersion); got != "apps.example.com" {
+			t.Errorf("attempt %d: expected first group apps.example.com, got %q", attempt, got)
+		}
+	}
+}
+
 func TestInstanceCache_Delete(t *testing.T) {
 	cache := NewInstanceCache()
 
 	instance := &models.Instance{
-		Name:      "test-instance",
-		Namespace: "default",
-		Kind:      "WebApp",
+		Name:       "test-instance",
+		Namespace:  "default",
+		Kind:       "WebApp",
+		APIVersion: "apps.example.com/v1",
 	}
 
 	cache.Set(instance)
-	cache.Delete("default", "WebApp", "test-instance")
+	cache.Delete("apps.example.com", "default", "WebApp", "test-instance")
 
-	_, ok := cache.Get("default", "WebApp", "test-instance")
+	_, ok := cache.Get("apps.example.com", "default", "WebApp", "test-instance")
 	if ok {
 		t.Error("expected instance to be deleted")
 	}
@@ -485,13 +560,13 @@ func TestInstanceCache_DeleteByRGD(t *testing.T) {
 		t.Errorf("expected 1 remaining instance, got %d", cache.Count())
 	}
 
-	_, ok := cache.Get("default", "Database", "inst3")
+	_, ok := cache.Get("", "default", "Database", "inst3")
 	if !ok {
 		t.Error("expected rgd-b instance to remain")
 	}
 
 	// Verify rgd-a instances are gone
-	_, ok = cache.Get("default", "WebApp", "inst1")
+	_, ok = cache.Get("", "default", "WebApp", "inst1")
 	if ok {
 		t.Error("expected rgd-a instance inst1 to be deleted")
 	}
@@ -527,9 +602,10 @@ func TestInstanceCache_ClusterScoped_SetGetDelete(t *testing.T) {
 		RGDName:   "cluster-config-rgd",
 	}
 
+	clusterInst.APIVersion = "cluster.example.com/v1"
 	cache.Set(clusterInst)
 
-	got, ok := cache.Get("", "ClusterConfig", "global-config")
+	got, ok := cache.Get("cluster.example.com", "", "ClusterConfig", "global-config")
 	if !ok {
 		t.Fatal("expected to find cluster-scoped instance")
 	}
@@ -541,8 +617,8 @@ func TestInstanceCache_ClusterScoped_SetGetDelete(t *testing.T) {
 	}
 
 	// Delete cluster-scoped instance
-	cache.Delete("", "ClusterConfig", "global-config")
-	_, ok = cache.Get("", "ClusterConfig", "global-config")
+	cache.Delete("cluster.example.com", "", "ClusterConfig", "global-config")
+	_, ok = cache.Get("cluster.example.com", "", "ClusterConfig", "global-config")
 	if ok {
 		t.Error("expected cluster-scoped instance to be deleted")
 	}
@@ -553,18 +629,20 @@ func TestInstanceCache_ClusterScoped_NoCollisionWithNamespaced(t *testing.T) {
 
 	// Cluster-scoped instance (empty namespace)
 	clusterInst := &models.Instance{
-		Name:      "my-resource",
-		Namespace: "",
-		Kind:      "MyKind",
-		RGDName:   "cluster-rgd",
+		Name:       "my-resource",
+		Namespace:  "",
+		Kind:       "MyKind",
+		APIVersion: "example.com/v1",
+		RGDName:    "cluster-rgd",
 	}
 
 	// Namespace-scoped instance with same kind and name
 	nsInst := &models.Instance{
-		Name:      "my-resource",
-		Namespace: "default",
-		Kind:      "MyKind",
-		RGDName:   "ns-rgd",
+		Name:       "my-resource",
+		Namespace:  "default",
+		Kind:       "MyKind",
+		APIVersion: "example.com/v1",
+		RGDName:    "ns-rgd",
 	}
 
 	cache.Set(clusterInst)
@@ -576,7 +654,7 @@ func TestInstanceCache_ClusterScoped_NoCollisionWithNamespaced(t *testing.T) {
 	}
 
 	// Retrieve cluster-scoped
-	got, ok := cache.Get("", "MyKind", "my-resource")
+	got, ok := cache.Get("example.com", "", "MyKind", "my-resource")
 	if !ok {
 		t.Fatal("expected to find cluster-scoped instance")
 	}
@@ -585,7 +663,7 @@ func TestInstanceCache_ClusterScoped_NoCollisionWithNamespaced(t *testing.T) {
 	}
 
 	// Retrieve namespace-scoped
-	got, ok = cache.Get("default", "MyKind", "my-resource")
+	got, ok = cache.Get("example.com", "default", "MyKind", "my-resource")
 	if !ok {
 		t.Fatal("expected to find namespace-scoped instance")
 	}
@@ -594,11 +672,11 @@ func TestInstanceCache_ClusterScoped_NoCollisionWithNamespaced(t *testing.T) {
 	}
 
 	// Delete cluster-scoped should not affect namespace-scoped
-	cache.Delete("", "MyKind", "my-resource")
+	cache.Delete("example.com", "", "MyKind", "my-resource")
 	if cache.Count() != 1 {
 		t.Errorf("expected 1 instance after deleting cluster-scoped, got %d", cache.Count())
 	}
-	_, ok = cache.Get("default", "MyKind", "my-resource")
+	_, ok = cache.Get("example.com", "default", "MyKind", "my-resource")
 	if !ok {
 		t.Error("expected namespace-scoped instance to remain after deleting cluster-scoped")
 	}
@@ -670,15 +748,15 @@ func TestInstanceCache_ClusterScoped_DeleteByRGD(t *testing.T) {
 }
 
 func TestInstanceCacheKey_EmptyNamespace(t *testing.T) {
-	// Verify key format for cluster-scoped instances
-	key := instanceCacheKey("", "ClusterConfig", "my-config")
-	expected := "/ClusterConfig/my-config"
+	// Verify key format for cluster-scoped instances includes group
+	key := instanceCacheKey("example.com", "", "ClusterConfig", "my-config")
+	expected := "example.com//ClusterConfig/my-config"
 	if key != expected {
 		t.Errorf("expected key %q, got %q", expected, key)
 	}
 
 	// Verify no collision with namespace-scoped
-	nsKey := instanceCacheKey("default", "ClusterConfig", "my-config")
+	nsKey := instanceCacheKey("example.com", "default", "ClusterConfig", "my-config")
 	if key == nsKey {
 		t.Error("cluster-scoped and namespace-scoped keys should not collide")
 	}

@@ -59,6 +59,7 @@ describe('useInstanceDeletion', () => {
     });
 
     expect(mockMutateAsync).toHaveBeenCalledWith({
+      group: 'kro.run',
       namespace: 'test-namespace',
       kind: 'TestResource',
       name: 'test-instance',

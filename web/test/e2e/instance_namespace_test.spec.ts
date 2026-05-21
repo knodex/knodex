@@ -297,11 +297,13 @@ test.describe('Note: Instance Namespace Filtering Security Fix', () => {
             const ns = firstInstance.namespace || firstInstance.metadata?.namespace
             const kind = firstInstance.kind || 'SimpleApp'
             const name = firstInstance.name || firstInstance.metadata?.name
+            const apiVersion = firstInstance.apiVersion || firstInstance.metadata?.apiVersion || 'kro.run/v1alpha1'
+            const group = apiVersion.split('/')[0]
 
             if (ns && name) {
-              // Try to get instance details
+              // Try to get instance details (GVK-aware path).
               const detailResponse = await page.request.get(
-                `${BASE_URL}/api/v1/namespaces/${ns}/instances/${kind}/${name}`,
+                `${BASE_URL}/api/v1/apigroups/${group}/namespaces/${ns}/instances/${kind}/${name}`,
                 { headers: { Authorization: `Bearer ${token}` } }
               )
 

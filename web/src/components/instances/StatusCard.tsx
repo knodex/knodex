@@ -8,6 +8,7 @@ import type { Instance } from "@/types/rgd";
 import { StatusIndicator } from "@/components/ui/status-indicator";
 import { formatDistanceToNow } from "@/lib/date";
 import { cn } from "@/lib/utils";
+import { buildInstanceRoute } from "@/lib/instancePath";
 import { HEALTH_TO_STATUS, LEFT_BORDER_COLOR, getInstanceUrl, safeHostname } from "./instance-utils";
 
 interface StatusCardProps {
@@ -29,15 +30,13 @@ export const StatusCard = React.memo(function StatusCard({
   const serviceUrl = getInstanceUrl(instance);
   const age = formatDistanceToNow(instance.createdAt);
 
-  const { namespace, kind, name } = instance;
   const handleClick = useCallback(() => {
     if (onClick) {
       onClick(instance);
       return;
     }
-    const path = `/instances/${encodeURIComponent(namespace)}/${encodeURIComponent(kind)}/${encodeURIComponent(name)}`;
-    navigate(path);
-  }, [onClick, instance, navigate, namespace, kind, name]);
+    navigate(buildInstanceRoute(instance));
+  }, [onClick, instance, navigate]);
 
   const handleUrlClick = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();

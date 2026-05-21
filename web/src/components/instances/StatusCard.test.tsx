@@ -153,19 +153,25 @@ describe("StatusCard", () => {
   });
 
   describe("click navigation (AC #5)", () => {
-    it("navigates to detail page for namespaced instance", () => {
+    it("navigates to detail page for namespaced instance using GVK-aware route", () => {
       renderStatusCard(
-        createTestInstance({ namespace: "prod", kind: "AKSCluster", name: "cluster-1" })
+        createTestInstance({
+          apiVersion: "compute.example.com/v1",
+          namespace: "prod",
+          kind: "AKSCluster",
+          name: "cluster-1",
+        })
       );
       fireEvent.click(screen.getByTestId("status-card"));
       expect(mockNavigate).toHaveBeenCalledWith(
-        "/instances/prod/AKSCluster/cluster-1"
+        "/instances/group/compute.example.com/ns/prod/AKSCluster/cluster-1"
       );
     });
 
     it("navigates to detail page for cluster-scoped instance", () => {
       renderStatusCard(
         createTestInstance({
+          apiVersion: "policy.example.com/v1",
           isClusterScoped: true,
           namespace: "",
           kind: "GlobalPolicy",
@@ -173,9 +179,8 @@ describe("StatusCard", () => {
         })
       );
       fireEvent.click(screen.getByTestId("status-card"));
-      // cluster-scoped: namespace is empty string, still included in URL
       expect(mockNavigate).toHaveBeenCalledWith(
-        "/instances//GlobalPolicy/my-policy"
+        "/instances/group/policy.example.com/cluster/GlobalPolicy/my-policy"
       );
     });
 
@@ -189,15 +194,19 @@ describe("StatusCard", () => {
     });
 
     it("navigates on Enter key press", () => {
-      renderStatusCard(createTestInstance({ namespace: "ns", kind: "K", name: "n" }));
+      renderStatusCard(
+        createTestInstance({ apiVersion: "g.example/v1", namespace: "ns", kind: "K", name: "n" })
+      );
       fireEvent.keyDown(screen.getByTestId("status-card"), { key: "Enter" });
-      expect(mockNavigate).toHaveBeenCalledWith("/instances/ns/K/n");
+      expect(mockNavigate).toHaveBeenCalledWith("/instances/group/g.example/ns/ns/K/n");
     });
 
     it("navigates on Space key press", () => {
-      renderStatusCard(createTestInstance({ namespace: "ns", kind: "K", name: "n" }));
+      renderStatusCard(
+        createTestInstance({ apiVersion: "g.example/v1", namespace: "ns", kind: "K", name: "n" })
+      );
       fireEvent.keyDown(screen.getByTestId("status-card"), { key: " " });
-      expect(mockNavigate).toHaveBeenCalledWith("/instances/ns/K/n");
+      expect(mockNavigate).toHaveBeenCalledWith("/instances/group/g.example/ns/ns/K/n");
     });
   });
 

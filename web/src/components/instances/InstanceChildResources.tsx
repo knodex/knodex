@@ -93,13 +93,14 @@ function ResourceGroupCard({ group }: { group: ChildResourceGroup }) {
 }
 
 interface InstanceChildResourcesProps {
+  group: string;
   namespace: string;
   kind: string;
   name: string;
 }
 
-export function InstanceChildResources({ namespace, kind, name }: InstanceChildResourcesProps) {
-  const { data, isLoading, error } = useInstanceChildren(namespace, kind, name);
+export function InstanceChildResources({ group, namespace, kind, name }: InstanceChildResourcesProps) {
+  const { data, isLoading, error } = useInstanceChildren(group, namespace, kind, name);
 
   if (isLoading) {
     return (

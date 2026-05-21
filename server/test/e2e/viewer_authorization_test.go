@@ -213,7 +213,7 @@ func waitForViewerInstances(t *testing.T, timeout time.Duration) {
 	for time.Now().Before(deadline) {
 		// Try to get one of our test instances
 		resp, err := makeAuthenticatedRequest("GET",
-			fmt.Sprintf("/api/v1/namespaces/%s/instances/SimpleApp/%s", viewerTestNamespace, viewerTestInstances[0].name),
+			fmt.Sprintf("/api/v1/apigroups/kro.run/namespaces/%s/instances/SimpleApp/%s", viewerTestNamespace, viewerTestInstances[0].name),
 			token, nil)
 		if err != nil {
 			t.Logf("Poll error: %v", err)
@@ -348,7 +348,7 @@ func TestE2E_ViewerAuth_DirectModel_InstanceDetailsRequiresCasbinAuth(t *testing
 	inst := viewerTestInstances[0]
 
 	resp, err := makeAuthenticatedRequest("GET",
-		fmt.Sprintf("/api/v1/namespaces/%s/instances/SimpleApp/%s", inst.namespace, inst.name),
+		fmt.Sprintf("/api/v1/apigroups/kro.run/namespaces/%s/instances/SimpleApp/%s", inst.namespace, inst.name),
 		token, nil)
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -393,7 +393,7 @@ func TestE2E_ViewerAuth_CannotCreateInstance(t *testing.T) {
 		},
 	}
 
-	resp, err := makeAuthenticatedRequest("POST", "/api/v1/instances", token, newInstance)
+	resp, err := makeAuthenticatedRequest("POST", "/api/v1/apigroups/kro.run/instances/SimpleApp", token, newInstance)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -417,7 +417,7 @@ func TestE2E_ViewerAuth_CannotDeleteInstance(t *testing.T) {
 	// Try to delete one of our test instances
 	inst := viewerTestInstances[0]
 	resp, err := makeAuthenticatedRequest("DELETE",
-		fmt.Sprintf("/api/v1/namespaces/%s/instances/SimpleApp/%s", inst.namespace, inst.name),
+		fmt.Sprintf("/api/v1/apigroups/kro.run/namespaces/%s/instances/SimpleApp/%s", inst.namespace, inst.name),
 		token, nil)
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -440,7 +440,7 @@ func TestE2E_ViewerAuth_CannotAccessOtherNamespace(t *testing.T) {
 
 	// Try to access an instance in default namespace (viewer only has access to viewerTestNamespace)
 	resp, err := makeAuthenticatedRequest("GET",
-		"/api/v1/namespaces/default/instances/SimpleApp/some-instance",
+		"/api/v1/apigroups/kro.run/namespaces/default/instances/SimpleApp/some-instance",
 		token, nil)
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -540,7 +540,7 @@ func TestE2E_ViewerAuth_NoOIDCGroup_InstanceDetailsDenied(t *testing.T) {
 	// Should NOT be able to access specific instance details (direct Casbin model)
 	inst := viewerTestInstances[0]
 	resp, err := makeAuthenticatedRequest("GET",
-		fmt.Sprintf("/api/v1/namespaces/%s/instances/SimpleApp/%s", inst.namespace, inst.name),
+		fmt.Sprintf("/api/v1/apigroups/kro.run/namespaces/%s/instances/SimpleApp/%s", inst.namespace, inst.name),
 		tokenWithoutGroup, nil)
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -575,7 +575,7 @@ func TestE2E_ViewerAuth_RegressionSTORY140_KeyMatchPatternWorks(t *testing.T) {
 	// Test that the namespace-scoped policy correctly matches instance paths
 	inst := viewerTestInstances[0]
 	resp, err := makeAuthenticatedRequest("GET",
-		fmt.Sprintf("/api/v1/namespaces/%s/instances/SimpleApp/%s", inst.namespace, inst.name),
+		fmt.Sprintf("/api/v1/apigroups/kro.run/namespaces/%s/instances/SimpleApp/%s", inst.namespace, inst.name),
 		token, nil)
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -607,7 +607,7 @@ func TestE2E_ViewerAuth_RegressionSTORY140_ViewerCannotEscalate(t *testing.T) {
 	// Test that viewer cannot create
 	// Note: May return 403 (authorization denied) or 404 (RGD not found) depending on
 	// whether authorization or RGD validation runs first. Both indicate viewer cannot create.
-	createResp, err := makeAuthenticatedRequest("POST", "/api/v1/instances", token, map[string]interface{}{
+	createResp, err := makeAuthenticatedRequest("POST", "/api/v1/apigroups/kro.run/instances/SimpleApp", token, map[string]interface{}{
 		"name":         "escalation-test",
 		"namespace":    viewerTestNamespace,
 		"rgdName":      "simple-app",
@@ -620,7 +620,7 @@ func TestE2E_ViewerAuth_RegressionSTORY140_ViewerCannotEscalate(t *testing.T) {
 
 	// Test that viewer cannot delete
 	deleteResp, err := makeAuthenticatedRequest("DELETE",
-		fmt.Sprintf("/api/v1/namespaces/%s/instances/SimpleApp/%s", viewerTestNamespace, viewerTestInstances[0].name),
+		fmt.Sprintf("/api/v1/apigroups/kro.run/namespaces/%s/instances/SimpleApp/%s", viewerTestNamespace, viewerTestInstances[0].name),
 		token, nil)
 	require.NoError(t, err)
 	deleteResp.Body.Close()

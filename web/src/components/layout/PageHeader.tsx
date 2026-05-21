@@ -28,6 +28,8 @@ interface PageHeaderProps {
   actions?: ReactNode;
   /** Optional right-aligned action elements (children slot, same position as actions) */
   children?: ReactNode;
+  /** Optional left-aligned content in the same row as actions */
+  leftActions?: ReactNode;
   /** Optional className for customization */
   className?: string;
 }
@@ -44,6 +46,7 @@ export function PageHeader({
   breadcrumbs,
   actions,
   children,
+  leftActions,
   className,
 }: PageHeaderProps) {
   const desc = description || subtitle;
@@ -83,9 +86,10 @@ export function PageHeader({
       <h1 tabIndex={-1} className="sr-only outline-none">{title}</h1>
 
       {/* Actions row */}
-      {rightContent && (
-        <div className="flex items-center justify-end gap-2">
-          {rightContent}
+      {(leftActions || rightContent) && (
+        <div className={cn("flex items-center gap-2", leftActions ? "justify-between" : "justify-end")}>
+          {leftActions && <div>{leftActions}</div>}
+          {rightContent && <div className="flex items-center gap-2">{rightContent}</div>}
         </div>
       )}
       {desc && (

@@ -1019,6 +1019,43 @@ func TestInferCasbinObjectAndAction(t *testing.T) {
 			expectedObject: "instances/default/WebApp/my-app/history",
 			expectedAction: "get",
 		},
+		// GVK-aware paths: the apigroups/{group} prefix is stripped during normalization
+		// so Casbin policies stay shape-stable. Group is type metadata, not an authz scope.
+		{
+			name:           "get namespaced instance (GVK-aware)",
+			method:         "GET",
+			path:           "/api/v1/apigroups/apps.example.com/namespaces/default/instances/WebApp/my-app",
+			expectedObject: "instances/default/WebApp/my-app",
+			expectedAction: "get",
+		},
+		{
+			name:           "get cluster-scoped instance (GVK-aware)",
+			method:         "GET",
+			path:           "/api/v1/apigroups/cert-manager.io/instances/Certificate/wildcard",
+			expectedObject: "instances/Certificate/wildcard",
+			expectedAction: "get",
+		},
+		{
+			name:           "create namespaced instance (GVK-aware)",
+			method:         "POST",
+			path:           "/api/v1/apigroups/apps.example.com/namespaces/default/instances/WebApp",
+			expectedObject: "instances/default/WebApp",
+			expectedAction: "create",
+		},
+		{
+			name:           "create cluster-scoped instance (GVK-aware)",
+			method:         "POST",
+			path:           "/api/v1/apigroups/cert-manager.io/instances/ClusterIssuer",
+			expectedObject: "instances/ClusterIssuer",
+			expectedAction: "create",
+		},
+		{
+			name:           "get namespaced instance history sub-resource (GVK-aware)",
+			method:         "GET",
+			path:           "/api/v1/apigroups/apps.example.com/namespaces/default/instances/WebApp/my-app/history",
+			expectedObject: "instances/default/WebApp/my-app/history",
+			expectedAction: "get",
+		},
 		{
 			name:           "list rgds",
 			method:         "GET",
@@ -1365,6 +1402,25 @@ func TestIsInstanceCreateRequest(t *testing.T) {
 			name:     "POST instances/stuck not matched (collection guard)",
 			path:     "/api/v1/instances/stuck",
 			method:   "POST",
+			expected: false,
+		},
+		// GVK-aware paths: apigroups/{group} prefix is stripped before pattern matching.
+		{
+			name:     "namespaced create (GVK-aware)",
+			path:     "/api/v1/apigroups/apps.example.com/namespaces/default/instances/WebApp",
+			method:   "POST",
+			expected: true,
+		},
+		{
+			name:     "cluster-scoped create (GVK-aware)",
+			path:     "/api/v1/apigroups/cert-manager.io/instances/ClusterIssuer",
+			method:   "POST",
+			expected: true,
+		},
+		{
+			name:     "GVK-aware GET not matched",
+			path:     "/api/v1/apigroups/apps.example.com/namespaces/default/instances/WebApp/my-app",
+			method:   "GET",
 			expected: false,
 		},
 	}

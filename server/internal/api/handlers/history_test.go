@@ -35,7 +35,7 @@ func TestHistoryHandler_GetHistory_NotFound_FallsThrough(t *testing.T) {
 	handler := NewHistoryHandler(svc, nil, nil)
 
 	req := newHistoryRequest("GET", "/api/v1/namespaces/default/instances/MyKind/my-instance/history",
-		map[string]string{"namespace": "default", "kind": "MyKind", "name": "my-instance"})
+		map[string]string{"group": "kro.run", "namespace": "default", "kind": "MyKind", "name": "my-instance"})
 	rr := httptest.NewRecorder()
 	handler.GetHistory(rr, req)
 
@@ -50,13 +50,13 @@ func TestHistoryHandler_GetHistory_Found(t *testing.T) {
 	svc := history.NewService(nil)
 
 	// Seed history via RecordCreation
-	err := svc.RecordCreation(t.Context(), "default", "MyKind", "my-instance", "test-rgd", "admin", models.DeploymentModeDirect)
+	err := svc.RecordCreation(t.Context(), "kro.run", "default", "MyKind", "my-instance", "test-rgd", "admin", models.DeploymentModeDirect)
 	require.NoError(t, err)
 
 	handler := NewHistoryHandler(svc, nil, nil)
 
 	req := newHistoryRequest("GET", "/api/v1/namespaces/default/instances/MyKind/my-instance/history",
-		map[string]string{"namespace": "default", "kind": "MyKind", "name": "my-instance"})
+		map[string]string{"group": "kro.run", "namespace": "default", "kind": "MyKind", "name": "my-instance"})
 	rr := httptest.NewRecorder()
 	handler.GetHistory(rr, req)
 
@@ -67,16 +67,16 @@ func TestHistoryHandler_GetHistory_DeletedHistory(t *testing.T) {
 	svc := history.NewService(nil)
 
 	// Create and then delete to move to deleted history
-	err := svc.RecordCreation(t.Context(), "default", "MyKind", "my-instance", "test-rgd", "admin", models.DeploymentModeDirect)
+	err := svc.RecordCreation(t.Context(), "kro.run", "default", "MyKind", "my-instance", "test-rgd", "admin", models.DeploymentModeDirect)
 	require.NoError(t, err)
-	err = svc.RecordDeletion(t.Context(), "default", "MyKind", "my-instance", "admin")
+	err = svc.RecordDeletion(t.Context(), "kro.run", "default", "MyKind", "my-instance", "admin")
 	require.NoError(t, err)
 
 	handler := NewHistoryHandler(svc, nil, nil)
 
 	// Active history is gone, but deleted history should be found
 	req := newHistoryRequest("GET", "/api/v1/namespaces/default/instances/MyKind/my-instance/history",
-		map[string]string{"namespace": "default", "kind": "MyKind", "name": "my-instance"})
+		map[string]string{"group": "kro.run", "namespace": "default", "kind": "MyKind", "name": "my-instance"})
 	rr := httptest.NewRecorder()
 	handler.GetHistory(rr, req)
 
@@ -88,7 +88,7 @@ func TestHistoryHandler_ExportHistory_NotFound(t *testing.T) {
 	handler := NewHistoryHandler(svc, nil, nil)
 
 	req := newHistoryRequest("GET", "/api/v1/namespaces/default/instances/MyKind/my-instance/history/export",
-		map[string]string{"namespace": "default", "kind": "MyKind", "name": "my-instance"})
+		map[string]string{"group": "kro.run", "namespace": "default", "kind": "MyKind", "name": "my-instance"})
 	rr := httptest.NewRecorder()
 	handler.ExportHistory(rr, req)
 
@@ -98,13 +98,13 @@ func TestHistoryHandler_ExportHistory_NotFound(t *testing.T) {
 func TestHistoryHandler_ExportHistory_Found(t *testing.T) {
 	svc := history.NewService(nil)
 
-	err := svc.RecordCreation(t.Context(), "default", "MyKind", "my-instance", "test-rgd", "admin", models.DeploymentModeDirect)
+	err := svc.RecordCreation(t.Context(), "kro.run", "default", "MyKind", "my-instance", "test-rgd", "admin", models.DeploymentModeDirect)
 	require.NoError(t, err)
 
 	handler := NewHistoryHandler(svc, nil, nil)
 
 	req := newHistoryRequest("GET", "/api/v1/namespaces/default/instances/MyKind/my-instance/history/export?format=json",
-		map[string]string{"namespace": "default", "kind": "MyKind", "name": "my-instance"})
+		map[string]string{"group": "kro.run", "namespace": "default", "kind": "MyKind", "name": "my-instance"})
 	rr := httptest.NewRecorder()
 	handler.ExportHistory(rr, req)
 
@@ -122,7 +122,7 @@ func TestHistoryHandler_GetHistory_RedisUnavailable_Returns503(t *testing.T) {
 	handler := NewHistoryHandler(svc, nil, nil)
 
 	req := newHistoryRequest("GET", "/api/v1/namespaces/default/instances/MyKind/my-instance/history",
-		map[string]string{"namespace": "default", "kind": "MyKind", "name": "my-instance"})
+		map[string]string{"group": "kro.run", "namespace": "default", "kind": "MyKind", "name": "my-instance"})
 	rr := httptest.NewRecorder()
 	handler.GetHistory(rr, req)
 
@@ -142,7 +142,7 @@ func TestHistoryHandler_ExportHistory_RedisUnavailable_Returns503(t *testing.T) 
 	handler := NewHistoryHandler(svc, nil, nil)
 
 	req := newHistoryRequest("GET", "/api/v1/namespaces/default/instances/MyKind/my-instance/history/export",
-		map[string]string{"namespace": "default", "kind": "MyKind", "name": "my-instance"})
+		map[string]string{"group": "kro.run", "namespace": "default", "kind": "MyKind", "name": "my-instance"})
 	rr := httptest.NewRecorder()
 	handler.ExportHistory(rr, req)
 
@@ -154,7 +154,7 @@ func TestHistoryHandler_GetTimeline_NotFound(t *testing.T) {
 	handler := NewHistoryHandler(svc, nil, nil)
 
 	req := newHistoryRequest("GET", "/api/v1/namespaces/default/instances/MyKind/my-instance/timeline",
-		map[string]string{"namespace": "default", "kind": "MyKind", "name": "my-instance"})
+		map[string]string{"group": "kro.run", "namespace": "default", "kind": "MyKind", "name": "my-instance"})
 	rr := httptest.NewRecorder()
 	handler.GetTimeline(rr, req)
 
@@ -174,7 +174,7 @@ func TestHistoryHandler_GetTimeline_RedisUnavailable_Returns503(t *testing.T) {
 	handler := NewHistoryHandler(svc, nil, nil)
 
 	req := newHistoryRequest("GET", "/api/v1/namespaces/default/instances/MyKind/my-instance/timeline",
-		map[string]string{"namespace": "default", "kind": "MyKind", "name": "my-instance"})
+		map[string]string{"group": "kro.run", "namespace": "default", "kind": "MyKind", "name": "my-instance"})
 	rr := httptest.NewRecorder()
 	handler.GetTimeline(rr, req)
 
@@ -189,7 +189,7 @@ func TestHistoryHandler_NilService(t *testing.T) {
 	handler := NewHistoryHandler(nil, nil, nil)
 
 	req := newHistoryRequest("GET", "/api/v1/namespaces/default/instances/MyKind/my-instance/history",
-		map[string]string{"namespace": "default", "kind": "MyKind", "name": "my-instance"})
+		map[string]string{"group": "kro.run", "namespace": "default", "kind": "MyKind", "name": "my-instance"})
 	rr := httptest.NewRecorder()
 	handler.GetHistory(rr, req)
 
@@ -205,7 +205,7 @@ func TestHistoryHandler_GetHistory_InvalidKind_Returns400(t *testing.T) {
 	handler := NewHistoryHandler(svc, nil, nil)
 
 	req := newHistoryRequest("GET", "/api/v1/namespaces/default/instances/INVALID_KIND/my-instance/history",
-		map[string]string{"namespace": "default", "kind": "INVALID_KIND", "name": "my-instance"})
+		map[string]string{"group": "kro.run", "namespace": "default", "kind": "INVALID_KIND", "name": "my-instance"})
 	rr := httptest.NewRecorder()
 	handler.GetHistory(rr, req)
 
@@ -214,7 +214,7 @@ func TestHistoryHandler_GetHistory_InvalidKind_Returns400(t *testing.T) {
 	var resp response.ErrorResponse
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 	assert.Equal(t, response.ErrCodeBadRequest, resp.Code)
-	assert.Contains(t, resp.Message, "kind must be a valid Kubernetes Kind name")
+	assert.Contains(t, resp.Details["kind"], "must be a valid Kubernetes Kind name")
 }
 
 func TestHistoryHandler_GetHistory_InvalidName_Returns400(t *testing.T) {
@@ -222,7 +222,7 @@ func TestHistoryHandler_GetHistory_InvalidName_Returns400(t *testing.T) {
 	handler := NewHistoryHandler(svc, nil, nil)
 
 	req := newHistoryRequest("GET", "/api/v1/namespaces/default/instances/MyKind/INVALID_NAME/history",
-		map[string]string{"namespace": "default", "kind": "MyKind", "name": "INVALID_NAME"})
+		map[string]string{"group": "kro.run", "namespace": "default", "kind": "MyKind", "name": "INVALID_NAME"})
 	rr := httptest.NewRecorder()
 	handler.GetHistory(rr, req)
 
@@ -231,7 +231,7 @@ func TestHistoryHandler_GetHistory_InvalidName_Returns400(t *testing.T) {
 	var resp response.ErrorResponse
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 	assert.Equal(t, response.ErrCodeBadRequest, resp.Code)
-	assert.Contains(t, resp.Message, "name must be a valid DNS-1123 subdomain")
+	assert.Contains(t, resp.Details["name"], "must be a valid DNS-1123 subdomain")
 }
 
 func TestHistoryHandler_GetHistory_InvalidNamespace_Returns400(t *testing.T) {
@@ -239,7 +239,7 @@ func TestHistoryHandler_GetHistory_InvalidNamespace_Returns400(t *testing.T) {
 	handler := NewHistoryHandler(svc, nil, nil)
 
 	req := newHistoryRequest("GET", "/api/v1/namespaces/INVALID_NS/instances/MyKind/my-instance/history",
-		map[string]string{"namespace": "INVALID_NS", "kind": "MyKind", "name": "my-instance"})
+		map[string]string{"group": "kro.run", "namespace": "INVALID_NS", "kind": "MyKind", "name": "my-instance"})
 	rr := httptest.NewRecorder()
 	handler.GetHistory(rr, req)
 
@@ -248,7 +248,7 @@ func TestHistoryHandler_GetHistory_InvalidNamespace_Returns400(t *testing.T) {
 	var resp response.ErrorResponse
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 	assert.Equal(t, response.ErrCodeBadRequest, resp.Code)
-	assert.Contains(t, resp.Message, "namespace must be a valid DNS-1123 label")
+	assert.Contains(t, resp.Details["namespace"], "must be a valid DNS-1123 label")
 }
 
 func TestHistoryHandler_GetTimeline_InvalidKind_Returns400(t *testing.T) {
@@ -256,7 +256,7 @@ func TestHistoryHandler_GetTimeline_InvalidKind_Returns400(t *testing.T) {
 	handler := NewHistoryHandler(svc, nil, nil)
 
 	req := newHistoryRequest("GET", "/api/v1/namespaces/default/instances/bad_kind/my-instance/timeline",
-		map[string]string{"namespace": "default", "kind": "bad_kind", "name": "my-instance"})
+		map[string]string{"group": "kro.run", "namespace": "default", "kind": "bad_kind", "name": "my-instance"})
 	rr := httptest.NewRecorder()
 	handler.GetTimeline(rr, req)
 
@@ -269,13 +269,13 @@ func TestHistoryHandler_GetTimeline_InvalidKind_Returns400(t *testing.T) {
 
 func TestHistoryHandler_GetTimeline_NilProvider_NoRevisionMarkers(t *testing.T) {
 	svc := history.NewService(nil)
-	err := svc.RecordCreation(t.Context(), "default", "MyKind", "my-instance", "test-rgd", "admin", models.DeploymentModeDirect)
+	err := svc.RecordCreation(t.Context(), "kro.run", "default", "MyKind", "my-instance", "test-rgd", "admin", models.DeploymentModeDirect)
 	require.NoError(t, err)
 
 	handler := NewHistoryHandler(svc, nil, nil)
 
 	req := newHistoryRequest("GET", "/api/v1/namespaces/default/instances/MyKind/my-instance/timeline",
-		map[string]string{"namespace": "default", "kind": "MyKind", "name": "my-instance"})
+		map[string]string{"group": "kro.run", "namespace": "default", "kind": "MyKind", "name": "my-instance"})
 	rr := httptest.NewRecorder()
 	handler.GetTimeline(rr, req)
 
@@ -294,7 +294,7 @@ func TestHistoryHandler_GetTimeline_NilProvider_NoRevisionMarkers(t *testing.T) 
 
 func TestHistoryHandler_GetTimeline_WithProvider_MergedTimeline(t *testing.T) {
 	svc := history.NewService(nil)
-	err := svc.RecordCreation(t.Context(), "default", "MyKind", "my-instance", "test-rgd", "admin", models.DeploymentModeDirect)
+	err := svc.RecordCreation(t.Context(), "kro.run", "default", "MyKind", "my-instance", "test-rgd", "admin", models.DeploymentModeDirect)
 	require.NoError(t, err)
 
 	provider := &mockGraphRevisionProvider{
@@ -309,7 +309,7 @@ func TestHistoryHandler_GetTimeline_WithProvider_MergedTimeline(t *testing.T) {
 	handler := NewHistoryHandler(svc, provider, nil)
 
 	req := newHistoryRequest("GET", "/api/v1/namespaces/default/instances/MyKind/my-instance/timeline",
-		map[string]string{"namespace": "default", "kind": "MyKind", "name": "my-instance"})
+		map[string]string{"group": "kro.run", "namespace": "default", "kind": "MyKind", "name": "my-instance"})
 	rr := httptest.NewRecorder()
 	handler.GetTimeline(rr, req)
 
@@ -477,7 +477,7 @@ func TestHistoryHandler_ExportHistory_InvalidName_Returns400(t *testing.T) {
 	handler := NewHistoryHandler(svc, nil, nil)
 
 	req := newHistoryRequest("GET", "/api/v1/namespaces/default/instances/MyKind/name_invalid/history/export",
-		map[string]string{"namespace": "default", "kind": "MyKind", "name": "name_invalid"})
+		map[string]string{"group": "kro.run", "namespace": "default", "kind": "MyKind", "name": "name_invalid"})
 	rr := httptest.NewRecorder()
 	handler.ExportHistory(rr, req)
 

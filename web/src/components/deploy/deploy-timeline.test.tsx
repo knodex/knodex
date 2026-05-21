@@ -22,6 +22,7 @@ function renderTimeline() {
       <DeployTimeline
         instanceId="inst-123"
         instanceName="my-postgres"
+        apiVersion="example.com/v1"
         namespace="default"
         kind="MyDB"
         rgdName="postgres-rgd"

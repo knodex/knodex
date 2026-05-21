@@ -27,6 +27,7 @@ import (
 	kroadapter "github.com/knodex/knodex/server/internal/kro/graph"
 	kroparser "github.com/knodex/knodex/server/internal/kro/parser"
 	"github.com/knodex/knodex/server/internal/models"
+	"github.com/knodex/knodex/server/internal/util/sanitize"
 )
 
 // ChangeCallback is called when RGDs change in the cache
@@ -480,7 +481,77 @@ func (w *RGDWatcher) shouldIncludeInCatalog(u *unstructured.Unstructured) bool {
 		}
 	}
 
+	// Structural invariants required for GVK-aware identity: valid apiGroup and
+	// at most one served CRD version. RGDs violating these are excluded from the
+	// catalog with a WARN log (Kro itself does not enforce these constraints).
+	if !w.passesIngestionInvariants(u) {
+		return false
+	}
+
 	return true
+}
+
+// passesIngestionInvariants returns true if the RGD passes Knodex's structural
+// requirements for catalog ingestion. Logs WARN on failure. The two invariants:
+//
+//  1. The declared CRD apiGroup must be a valid DNS-1123 subdomain. Empty/core
+//     group is rejected because Knodex only indexes Kro-spawned CRDs.
+//  2. At most one entry in spec.schema.crd.spec.versions may be served. This
+//     guarantees (group, kind) uniquely identifies an instance type and lets
+//     Knodex omit version from URLs and cache keys.
+func (w *RGDWatcher) passesIngestionInvariants(u *unstructured.Unstructured) bool {
+	group, _ := parseAPIVersion(deriveCRDAPIVersion(u))
+	if !sanitize.IsValidAPIGroup(group) {
+		w.logger.Warn("skipping RGD with invalid apiGroup",
+			"name", u.GetName(),
+			"namespace", u.GetNamespace(),
+			"group", group,
+			"reason", "InvalidAPIGroup")
+		return false
+	}
+
+	spec := parser.GetSpecOrEmpty(u)
+	versions, err := parser.GetSlice(spec, "schema", "crd", "spec", "versions")
+	if err == nil && versions != nil {
+		servedCount := 0
+		for _, v := range versions {
+			vm, ok := v.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if served, ok := vm["served"].(bool); ok && served {
+				servedCount++
+			}
+		}
+		if servedCount > 1 {
+			w.logger.Warn("skipping RGD with multiple served CRD versions",
+				"name", u.GetName(),
+				"namespace", u.GetNamespace(),
+				"servedCount", servedCount,
+				"reason", "MultipleServedVersionsUnsupported")
+			return false
+		}
+	}
+
+	return true
+}
+
+// deriveCRDAPIVersion returns the apiVersion of the CRD declared by an RGD,
+// mirroring the extraction logic in unstructuredToRGD: read spec.schema.apiVersion
+// (falling back to spec.apiVersion), and prepend the RGD's own group when the
+// declared apiVersion has no slash.
+func deriveCRDAPIVersion(u *unstructured.Unstructured) string {
+	apiVersion := parser.GetSpecFieldStringOrDefault(u, "", "schema", "apiVersion")
+	if apiVersion == "" {
+		apiVersion = parser.GetSpecFieldStringOrDefault(u, "", "apiVersion")
+	}
+	if apiVersion != "" && !strings.Contains(apiVersion, "/") {
+		rgdAPIVersion := parser.GetAPIVersion(u)
+		if parts := strings.Split(rgdAPIVersion, "/"); len(parts) == 2 {
+			apiVersion = parts[0] + "/" + apiVersion
+		}
+	}
+	return apiVersion
 }
 
 // unstructuredToRGD converts an unstructured RGD to our model
