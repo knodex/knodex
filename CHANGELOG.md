@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.7.0](https://github.com/knodex/knodex/compare/v0.6.0...v0.7.0) (2026-05-21)
+
+
+### ⚠ BREAKING CHANGES
+
+* **api:** Instance API route structure now includes GVK components; clients must update URL patterns for instance CRUD operations.
+
+### Features
+
+* **api:** GVK-aware instance routes and multi-package catalog ([88d5a73](https://github.com/knodex/knodex/commit/88d5a73ab81e1f86672f57162430bdf016d27061))
+
 ## [0.6.0](https://github.com/knodex/knodex/compare/v0.5.0...v0.6.0) (2026-05-11)
 
 
