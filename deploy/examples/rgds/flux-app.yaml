@@ -24,7 +24,6 @@ spec:
     apiVersion: v1alpha1
     kind: FluxApp
     spec:
-      name: string | description="Application name"
       chart: string | default="nginx" description="Helm chart name"
       chartVersion: string | default="*" description="Helm chart version constraint"
       repoUrl: string | default="https://charts.bitnami.com/bitnami" description="Helm repository URL"
@@ -55,7 +54,7 @@ spec:
         apiVersion: source.toolkit.fluxcd.io/v1
         kind: HelmRepository
         metadata:
-          name: ${schema.spec.name}-repo
+          name: ${schema.metadata.name}-repo
           labels:
             app.kubernetes.io/managed-by: knodex
         spec:
@@ -68,7 +67,7 @@ spec:
         apiVersion: helm.toolkit.fluxcd.io/v2
         kind: HelmRelease
         metadata:
-          name: ${schema.spec.name}
+          name: ${schema.metadata.name}
           labels:
             app.kubernetes.io/managed-by: knodex
         spec:

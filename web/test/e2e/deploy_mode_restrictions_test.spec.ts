@@ -154,7 +154,7 @@ test.describe('Deploy Wizard Flow', () => {
     await expect(page.getByTestId('project-select')).toBeVisible()
   })
 
-  test('deploy wizard advances from Target to Configure step', async ({ page }) => {
+  test('deploy wizard advances from General to next tab', async ({ page }) => {
     const rgd = createMockRGD('unrestricted-rgd', undefined)
     await setupCommonMocks(page, rgd)
 
@@ -177,9 +177,10 @@ test.describe('Deploy Wizard Flow', () => {
     await expect(nsSelect).toBeEnabled({ timeout: 5000 })
     await selectShadcnOption(nsSelect, 'default')
 
-    // Advance to Configure step
+    // Advance from General — mock RGD has only scalar properties, so the
+    // only remaining tab is Review.
     await page.getByTestId('deploy-footer-next').click()
-    await expect(page.getByTestId('deploy-tab-general')).toHaveAttribute('data-state', 'active')
+    await expect(page.getByTestId('deploy-tab-review')).toHaveAttribute('data-state', 'active')
   })
 
   test('Continue button disabled when Target step is incomplete', async ({ page }) => {

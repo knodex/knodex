@@ -44,6 +44,7 @@ One tab is generated for each top-level object key in the RGD's `spec.schema.spe
 - Boolean fields appear as checkboxes.
 - Complex nested fields expand into sub-sections.
 - An **Advanced** toggle on each tab hides rarely-changed fields by default.
+- Some sections (and some entire tabs) start with an **Enabled** checkbox. The rest of the fields in that section are hidden until you tick it -- handy for optional sub-systems like a database, bastion, or monitoring. Untick it to clear the section back out.
 
 ### Review and Deploy Tab
 

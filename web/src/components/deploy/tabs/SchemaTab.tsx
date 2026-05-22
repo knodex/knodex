@@ -28,17 +28,32 @@ export function SchemaTab({ tab }: SchemaTabProps) {
   // General-kind tabs use bare keys (no prefix); object tabs nest under tab.id.
   const parentName = tab.kind === "general" ? "" : tab.id;
 
+  // Feature-toggle pattern (mirrors ObjectField): when the tab's object has an
+  // `enabled` boolean child, render the enabled checkbox always but hide peer
+  // fields when enabled=false. Only applies to schema-kind tabs since reserved
+  // keys prevent a top-level `enabled` from reaching the General tab.
+  const hasEnabledToggle =
+    tab.kind !== "general" && tab.properties?.enabled?.type === "boolean";
+  const enabledFieldName = hasEnabledToggle ? `${tab.id}.enabled` : "";
+  const enabledValue = useWatch({
+    control,
+    name: enabledFieldName || "__schemaTabEnabledNoop__",
+  });
+  const isFeatureEnabled = hasEnabledToggle ? Boolean(enabledValue) : true;
+
   return (
     <div className="space-y-4" data-testid={`schema-tab-${tab.id}`}>
-      {ordered.flatMap(([key, prop]) =>
-        renderFlattenableField({
+      {ordered.flatMap(([key, prop]) => {
+        const isPeer = hasEnabledToggle && key !== "enabled";
+        if (isPeer && !isFeatureEnabled) return [];
+        return renderFlattenableField({
           parentName,
           key,
           prop,
           required: requiredSet.has(key),
           deploymentNamespace,
-        })
-      )}
+        });
+      })}
     </div>
   );
 }
