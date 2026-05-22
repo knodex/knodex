@@ -53,7 +53,16 @@ func SPAHandler() http.Handler {
 		// Try to open the file from the embedded filesystem
 		f, err := sub.Open(path)
 		if err != nil {
-			// File not found — serve index.html for SPA client-side routing
+			// Requests with a file extension are static assets (JS/CSS/images/etc).
+			// Returning index.html for these causes the browser to receive HTML
+			// where it expects JS/CSS, triggering MIME-type errors like
+			// "'text/html' is not a valid JavaScript MIME type".
+			// Return 404 so the browser knows the asset is truly missing.
+			if filepath.Ext(path) != "" {
+				http.NotFound(w, r)
+				return
+			}
+			// Extensionless path — treat as a client-side route and fall through to SPA.
 			serveIndexHTML(w, r, sub)
 			return
 		}
