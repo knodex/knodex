@@ -172,13 +172,9 @@ describe("useWebSocket", () => {
       });
 
       await waitFor(() => {
-        // Should invalidate instances list with predicate that excludes count queries
-        expect(invalidateSpy).toHaveBeenCalledWith(
-          expect.objectContaining({
-            queryKey: ["instances"],
-            predicate: expect.any(Function),
-          })
-        );
+        expect(invalidateSpy).toHaveBeenCalledWith({
+          queryKey: ["instances"],
+        });
       });
     });
 

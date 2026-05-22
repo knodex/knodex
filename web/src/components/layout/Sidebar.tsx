@@ -15,15 +15,10 @@ import { cn } from "@/lib/utils";
 import { getLucideIcon } from "@/lib/icons";
 import { NAV_ITEMS } from "@/lib/nav-items";
 import { routePreloads } from "@/lib/route-preloads";
-import { useRGDCount } from "@/hooks/useRGDs";
 import { useRGDList } from "@/hooks/useRGDs";
-import { useInstanceCount, useInstanceList } from "@/hooks/useInstances";
 import { useViolationCount, isEnterprise } from "@/hooks/useCompliance";
 import { useCategoriesEnabled } from "@/hooks/useCategories";
 import { useCanI } from "@/hooks/useCanI";
-import { useCurrentProject } from "@/hooks/useAuth";
-import { useProjects } from "@/hooks/useProjects";
-import { filterByProjectNamespaces } from "@/lib/project-utils";
 
 type NavTab = "catalog" | "instances" | "compliance" | "settings" | "projects" | "repositories" | string;
 
@@ -122,40 +117,17 @@ export function SidebarNav({ onNavItemClick }: SidebarNavProps) {
     onNavItemClick?.();
   }, [onNavItemClick]);
 
-  // Project-aware counts for sidebar badges
-  const currentProject = useCurrentProject();
-  const { data: rgdCountData } = useRGDCount();
-  const { data: instanceCountData } = useInstanceCount();
   const { data: violationCount } = useViolationCount();
 
-  // When a project is selected, use full lists (already cached by pages) to compute filtered counts
+  // Cached RGD list — used to map an RGD detail route back to its category for
+  // sidebar highlighting. Called with no params so the query stays disabled
+  // (`enabled: params !== undefined`); the cache key `["rgds", undefined]` is
+  // populated by route-preloads.ts. On cache miss (e.g., hard refresh to a
+  // detail page) the highlight falls through to "All Resources".
   const { data: rgdListData } = useRGDList();
-  const { data: instanceListData } = useInstanceList();
-  const { data: projectsData } = useProjects();
 
   // Secrets nav visibility: only shown when user has any secrets permission
   const { allowed: canViewSecrets } = useCanI("secrets", "get", "-");
-
-  const rgdCount = useMemo(() => {
-    // When categories are available, sum their counts for an RBAC-accurate total.
-    // The WebSocket-pushed rgdCount is cluster-wide (unfiltered), so we prefer
-    // the per-category counts which are already Casbin-filtered by the server.
-    if (!currentProject && categories && categories.length > 0) {
-      return categories.reduce((sum, cat) => sum + cat.count, 0);
-    }
-    if (!currentProject) return rgdCountData?.count ?? 0;
-    if (!rgdListData?.items) return 0;
-    return rgdListData.items.filter(
-      (rgd) => rgd.labels?.["knodex.io/project"] === currentProject
-    ).length;
-  }, [currentProject, rgdCountData, rgdListData, categories]);
-
-  const instanceCount = useMemo(() => {
-    if (!currentProject) return instanceCountData?.count ?? 0;
-    if (!instanceListData?.items) return 0;
-    const selectedProject = projectsData?.items?.find((p) => p.name === currentProject);
-    return filterByProjectNamespaces(instanceListData.items, selectedProject).length;
-  }, [currentProject, instanceCountData, instanceListData, projectsData]);
 
   // Trigger route chunk preload on hover/focus
   const handlePreload = useCallback((to: string) => {
@@ -166,9 +138,9 @@ export function SidebarNav({ onNavItemClick }: SidebarNavProps) {
   // --- Section definitions ---
 
   const infrastructureItems: NavItem[] = useMemo(() => [
-    { ...NAV_ITEMS.catalog, to: NAV_ITEMS.catalog.path, badge: rgdCount },
-    { ...NAV_ITEMS.instances, to: NAV_ITEMS.instances.path, badge: instanceCount },
-  ], [rgdCount, instanceCount]);
+    { ...NAV_ITEMS.catalog, to: NAV_ITEMS.catalog.path },
+    { ...NAV_ITEMS.instances, to: NAV_ITEMS.instances.path },
+  ], []);
 
   const manageItems: NavItem[] = useMemo(() => {
     const items: NavItem[] = [];
@@ -243,7 +215,7 @@ export function SidebarNav({ onNavItemClick }: SidebarNavProps) {
   // Catalog sub-nav: "All Resources" + each Casbin-filtered category
   const catalogSubNav: NavItem[] = useMemo(() => {
     const items: NavItem[] = [
-      { id: "catalog-all", label: "All Resources", icon: NAV_ITEMS.catalog.icon, badge: rgdCount, to: "/catalog" },
+      { id: "catalog-all", label: "All Resources", icon: NAV_ITEMS.catalog.icon, to: "/catalog" },
     ];
     if (categories && categories.length > 0) {
       categories.forEach((category) => {
@@ -257,7 +229,7 @@ export function SidebarNav({ onNavItemClick }: SidebarNavProps) {
       });
     }
     return items;
-  }, [rgdCount, categories]);
+  }, [categories]);
 
   // When on an RGD detail page (/catalog/:rgdName), find the RGD's category
   // from the cached list so we can keep the correct sidebar category highlighted.

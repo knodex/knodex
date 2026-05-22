@@ -16,7 +16,6 @@ export type MessageType =
   | "violation_update"
   | "template_update"
   | "constraint_update"
-  | "counts_update"
   | "revision_update"
   | "resource_event"
   | "error"
@@ -146,14 +145,6 @@ export interface ConstraintUpdateData {
 
   /** Current number of violations */
   violationCount: number;
-}
-
-/**
- * Counts update data - pushed via WebSocket for sidebar badge updates
- */
-export interface CountsUpdateData {
-  rgdCount: number;
-  instanceCount: number;
 }
 
 /**

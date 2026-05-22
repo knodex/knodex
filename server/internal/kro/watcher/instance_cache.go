@@ -142,33 +142,6 @@ func (c *InstanceCache) CountByRGD(rgdNamespace, rgdName string) int {
 	return count
 }
 
-// CountByNamespaces returns the count of instances in the given namespaces.
-// Uses namespace pattern matching (supports wildcards like "team-*").
-// ["*"] matches all namespaces (global admin). Empty slice returns 0 (no access).
-//
-// NOTE: This method only counts namespace-scoped instances. Cluster-scoped
-// instances (IsClusterScoped=true) require project-based filtering which this
-// method cannot provide. Use CountFiltered for project-aware counting that
-// includes cluster-scoped instances (see GetCount handler for an example).
-func (c *InstanceCache) CountByNamespaces(namespaces []string, matchFunc func(namespace string, patterns []string) bool) int {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	// Empty slice means no access (fail-closed).
-	// ["*"] matches all namespaces via matchFunc (MatchNamespaceInList).
-	if len(namespaces) == 0 {
-		return 0
-	}
-
-	count := 0
-	for _, instance := range c.instances {
-		if matchFunc(instance.Namespace, namespaces) {
-			count++
-		}
-	}
-	return count
-}
-
 // CountByRGDAndNamespaces returns the count of instances for a specific RGD
 // filtered by the user's accessible namespaces.
 // Uses namespace pattern matching (supports wildcards like "team-*").

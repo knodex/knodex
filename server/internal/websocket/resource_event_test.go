@@ -66,6 +66,5 @@ func TestExistingInstanceStatus_Unchanged(t *testing.T) {
 	assert.Equal(t, MessageType("instance_update"), MessageTypeInstanceUpdate)
 	assert.Equal(t, MessageType("rgd_update"), MessageTypeRGDUpdate)
 	assert.Equal(t, MessageType("violation_update"), MessageTypeViolationUpdate)
-	assert.Equal(t, MessageType("counts_update"), MessageTypeCountsUpdate)
 	assert.Equal(t, MessageType("drift_update"), MessageTypeDriftUpdate)
 }

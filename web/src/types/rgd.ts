@@ -637,13 +637,6 @@ export interface StuckInstancesResponse {
 }
 
 /**
- * Response for count endpoints (RGDs and Instances)
- */
-export interface CountResponse {
-  count: number;
-}
-
-/**
  * GraphRevision condition (e.g., GraphVerified, Ready)
  */
 export interface GraphRevisionCondition {

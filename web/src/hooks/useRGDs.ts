@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { useQuery, useMutation, keepPreviousData, useQueryClient } from "@tanstack/react-query";
-import { listRGDs, getRGD, getRGDSchema, listRGDInstances, createInstance, getRGDResourceGraph, getRGDDefinitionGraph, getRGDCount, getRGDRevision, getRGDRevisions, getRGDRevisionDiff, getRGDFilters } from "@/api/rgd";
+import { listRGDs, getRGD, getRGDSchema, listRGDInstances, createInstance, getRGDResourceGraph, getRGDDefinitionGraph, getRGDRevision, getRGDRevisions, getRGDRevisionDiff, getRGDFilters } from "@/api/rgd";
 import { listK8sResources } from "@/api/k8s";
 import type { RGDListParams, CreateInstanceRequest } from "@/types/rgd";
 import { STALE_TIME } from "@/lib/query-client";
@@ -29,20 +29,6 @@ export function useRGDFilters() {
     queryKey: ["rgds", "filters"],
     queryFn: getRGDFilters,
     staleTime: STALE_TIME.FREQUENT,
-  });
-}
-
-/**
- * Hook for fetching RGD count (for sidebar badge)
- * Uses lightweight count endpoint to avoid fetching full list
- */
-export function useRGDCount() {
-  return useQuery({
-    queryKey: ["rgds", "count"],
-    queryFn: getRGDCount,
-    staleTime: Infinity, // Counts pushed via WebSocket - no polling needed
-    refetchOnWindowFocus: false,
-    refetchOnMount: false,
   });
 }
 
