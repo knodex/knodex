@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { render, screen, fireEvent } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import { DeploymentModeSelector } from "./DeploymentModeSelector";
@@ -130,15 +131,16 @@ describe("DeploymentModeSelector", () => {
       expect(screen.getByText("Git Repository")).toBeInTheDocument();
     });
 
-    it("displays repository options in dropdown", () => {
+    it("shows the placeholder when no repository is selected", () => {
       render(<DeploymentModeSelector {...defaultProps} mode="gitops" />);
 
-      expect(screen.getByText("Select a repository...")).toBeInTheDocument();
-      expect(screen.getByText(/Production Deployments/)).toBeInTheDocument();
-      expect(screen.getByText(/Development Deployments/)).toBeInTheDocument();
+      // shadcn Select trigger shows the placeholder via SelectValue
+      expect(screen.getByTestId("repository-select")).toHaveTextContent(
+        "Select a repository..."
+      );
     });
 
-    it("shows selected repository when repositoryId is provided", () => {
+    it("shows selected repository name in trigger when repositoryId is provided", () => {
       render(
         <DeploymentModeSelector
           {...defaultProps}
@@ -147,12 +149,15 @@ describe("DeploymentModeSelector", () => {
         />
       );
 
-      const select = screen.getByRole("combobox") as HTMLSelectElement;
-      expect(select.value).toBe("repo-1");
+      // Radix Select renders the chosen item's text inside the trigger button
+      expect(screen.getByTestId("repository-select")).toHaveTextContent(
+        /Production Deployments/
+      );
     });
 
-    it("calls onRepositoryChange when repository is selected", () => {
+    it("calls onRepositoryChange when an option is picked from the dropdown", async () => {
       const onRepositoryChange = vi.fn();
+      const user = userEvent.setup();
       render(
         <DeploymentModeSelector
           {...defaultProps}
@@ -161,8 +166,11 @@ describe("DeploymentModeSelector", () => {
         />
       );
 
-      const select = screen.getByRole("combobox");
-      fireEvent.change(select, { target: { value: "repo-2" } });
+      // Open the Radix Select popover, then click the second repository's option.
+      await user.click(screen.getByTestId("repository-select"));
+      await user.click(
+        await screen.findByRole("option", { name: /Development Deployments/ })
+      );
 
       expect(onRepositoryChange).toHaveBeenCalledWith("repo-2");
     });

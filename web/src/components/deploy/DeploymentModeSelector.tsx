@@ -12,6 +12,13 @@ import {
   FolderOpen,
 } from "@/lib/icons";
 import { cn } from "@/lib/utils";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import type { DeploymentMode } from "@/types/deployment";
 import { DEPLOYMENT_MODE_INFO } from "@/types/deployment";
 import type { RepositoryConfig } from "@/types/repository";
@@ -166,20 +173,25 @@ export function DeploymentModeSelector({
             </div>
           ) : (
             <>
-              <select
-                id="repository"
+              <Select
                 value={repositoryId}
-                onChange={(e) => onRepositoryChange(e.target.value)}
-                data-testid="repository-select"
-                className="w-full px-3 py-2 text-sm rounded-md border border-border bg-background focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
+                onValueChange={onRepositoryChange}
               >
-                <option value="">Select a repository...</option>
-                {repositories.map((repo) => (
-                  <option key={repo.id} value={repo.id}>
-                    {repo.name} ({getRepositoryDisplayURL(repo)})
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger
+                  id="repository"
+                  data-testid="repository-select"
+                  className="h-10"
+                >
+                  <SelectValue placeholder="Select a repository..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {repositories.map((repo) => (
+                    <SelectItem key={repo.id} value={repo.id}>
+                      {repo.name} ({getRepositoryDisplayURL(repo)})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
 
               {/* Selected Repository Details */}
               {selectedRepository && (

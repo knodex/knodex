@@ -8,6 +8,7 @@ import {
   mockMicroservicesPlatformSchema,
   API_PATHS,
 } from '../fixture/mock-data'
+import { selectShadcnOption } from './fixtures/select'
 
 /**
  * Minimal API mocks needed to reach the Review step of the deploy wizard.
@@ -169,7 +170,7 @@ async function navigateToReviewStep(page: Page) {
 
   const nsSelect = page.getByTestId('namespace-select')
   await expect(nsSelect).toBeEnabled({ timeout: 5000 })
-  await nsSelect.selectOption('default')
+  await selectShadcnOption(nsSelect, 'default')
 
   await page.getByTestId('deploy-footer-next').click()
 

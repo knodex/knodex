@@ -3,6 +3,7 @@
 
 import { test, expect, TestUserRole, TEST_USERS, setupPermissionMocking } from '../fixture'
 import { API_PATHS } from '../fixture/mock-data'
+import { selectShadcnOption } from './fixtures/select'
 
 /**
  * Mock RGD for multi-controller conditional visibility testing.
@@ -249,7 +250,7 @@ async function navigateToDeployForm(page: import('@playwright/test').Page) {
   // Project auto-selects when only one exists; select namespace
   const nsSelect = page.getByTestId('namespace-select')
   await expect(nsSelect).toBeEnabled({ timeout: 5000 })
-  await nsSelect.selectOption('default')
+  await selectShadcnOption(nsSelect, 'default')
 
   // Advance to Configure step
   await page.getByTestId('deploy-footer-next').click()

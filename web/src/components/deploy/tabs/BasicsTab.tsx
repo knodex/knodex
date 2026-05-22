@@ -5,6 +5,13 @@ import { memo, useEffect, useId, useMemo } from "react";
 import { Controller, useFormContext, useWatch } from "react-hook-form";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useProjects } from "@/hooks/useProjects";
 import { useProjectNamespaces } from "@/hooks/useNamespaces";
 import { useRepositories } from "@/hooks/useRepositories";
@@ -18,9 +25,6 @@ interface BasicsTabProps {
   /** Allowed deployment modes (from RGD annotations). */
   allowedDeploymentModes?: DeploymentMode[];
 }
-
-const nativeSelectClass =
-  "h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50";
 
 export const BasicsTab = memo(function BasicsTab({ schema, allowedDeploymentModes }: BasicsTabProps) {
   const form = useFormContext();
@@ -80,6 +84,29 @@ export const BasicsTab = memo(function BasicsTab({ schema, allowedDeploymentMode
     }
   }, [deploymentMode, unregister]);
 
+  // Validate the current namespace against the fetched list whenever either
+  // changes. zodResolver owns validation, so a Controller `rules.validate`
+  // would be ignored — this useEffect restores the cross-field check that
+  // existed when these were native <select> elements with RHF register().
+  const currentNamespace = useWatch({ control: form.control, name: "namespace" }) as string | undefined;
+  const { setError, clearErrors } = form;
+  useEffect(() => {
+    if (isClusterScoped) return;
+    if (!currentNamespace) {
+      clearErrors("namespace");
+      return;
+    }
+    if (namespaces.length === 0) return; // not loaded yet
+    if (!namespaces.includes(currentNamespace)) {
+      setError("namespace", {
+        type: "validate",
+        message: "Namespace is not available in this project",
+      });
+    } else {
+      clearErrors("namespace");
+    }
+  }, [currentNamespace, namespaces, isClusterScoped, setError, clearErrors]);
+
   const instanceNameError =
     form.formState.errors.instanceName?.message?.toString();
   const projectError = form.formState.errors.project?.message?.toString();
@@ -123,27 +150,41 @@ export const BasicsTab = memo(function BasicsTab({ schema, allowedDeploymentMode
         )}
       </div>
 
-      {/* Project — native select avoids Radix SlotClone ref-composition loop */}
+      {/* Project — shadcn Select via Controller (RHF register would cause Radix ref-composition loop) */}
       <div className="space-y-1.5">
         <Label htmlFor={projectId}>
           Project <span className="text-[var(--brand-primary)]">*</span>
         </Label>
-        <select
-          id={projectId}
-          data-testid="project-select"
-          className={nativeSelectClass}
-          {...form.register("project", {
-            required: "Project is required",
-            onChange: () => form.setValue("namespace", ""),
-          })}
-        >
-          <option value="">Select a project</option>
-          {projects.map((p) => (
-            <option key={p.name} value={p.name}>
-              {p.name}{p.description ? ` — ${p.description}` : ""}
-            </option>
-          ))}
-        </select>
+        <Controller
+          control={form.control}
+          name="project"
+          render={({ field }) => (
+            <Select
+              value={(field.value as string) ?? ""}
+              onValueChange={(value) => {
+                field.onChange(value);
+                form.setValue("namespace", "");
+                // setValue alone leaves the stale "required" error visible
+                // until the user touches the namespace field again.
+                form.clearErrors("namespace");
+              }}
+              onOpenChange={(open) => {
+                if (!open) field.onBlur();
+              }}
+            >
+              <SelectTrigger id={projectId} data-testid="project-select" className="h-9">
+                <SelectValue placeholder="Select a project" />
+              </SelectTrigger>
+              <SelectContent>
+                {projects.map((p) => (
+                  <SelectItem key={p.name} value={p.name}>
+                    {p.name}{p.description ? ` — ${p.description}` : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+        />
         {projectError ? (
           <p className="text-xs text-[var(--status-error)]">{projectError}</p>
         ) : (
@@ -153,36 +194,37 @@ export const BasicsTab = memo(function BasicsTab({ schema, allowedDeploymentMode
         )}
       </div>
 
-      {/* Namespace — hidden when cluster-scoped; native select avoids Radix SlotClone ref-composition loop */}
+      {/* Namespace — hidden when cluster-scoped */}
       {!isClusterScoped && (
         <div className="space-y-1.5">
           <Label htmlFor={nsId}>
             Namespace <span className="text-[var(--brand-primary)]">*</span>
           </Label>
-          <select
-            id={nsId}
-            data-testid="namespace-select"
-            disabled={!selectedProject}
-            className={nativeSelectClass}
-            {...form.register("namespace", {
-              required: "Namespace is required",
-              validate: (value: unknown) => {
-                if (typeof value !== "string" || value === "") return true;
-                if (namespaces.length === 0) return true;
-                return (
-                  namespaces.includes(value) ||
-                  "Namespace is not available in this project"
-                );
-              },
-            })}
-          >
-            <option value="">{nsPlaceholder}</option>
-            {namespaces.map((ns) => (
-              <option key={ns} value={ns}>
-                {ns}
-              </option>
-            ))}
-          </select>
+          <Controller
+            control={form.control}
+            name="namespace"
+            render={({ field }) => (
+              <Select
+                value={(field.value as string) ?? ""}
+                onValueChange={field.onChange}
+                onOpenChange={(open) => {
+                  if (!open) field.onBlur();
+                }}
+                disabled={!selectedProject || namespaces.length === 0}
+              >
+                <SelectTrigger id={nsId} data-testid="namespace-select" className="h-9">
+                  <SelectValue placeholder={nsPlaceholder} />
+                </SelectTrigger>
+                <SelectContent>
+                  {namespaces.map((ns) => (
+                    <SelectItem key={ns} value={ns}>
+                      {ns}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          />
           {namespaceError ? (
             <p className="text-xs text-[var(--status-error)]">{namespaceError}</p>
           ) : (

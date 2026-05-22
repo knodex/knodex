@@ -13,6 +13,7 @@
 import { test, expect, TestUserRole } from '../fixture'
 import type { CatalogRGD, SchemaResponse } from '../../src/types/rgd'
 import { API_PATHS } from '../fixture/mock-data'
+import { selectShadcnOption } from './fixtures/select'
 
 // Base mock RGD with all modes allowed (no restriction)
 const createMockRGD = (
@@ -174,7 +175,7 @@ test.describe('Deploy Wizard Flow', () => {
     await page.getByTestId('instance-name-input').fill('test-instance')
     const nsSelect = page.getByTestId('namespace-select')
     await expect(nsSelect).toBeEnabled({ timeout: 5000 })
-    await nsSelect.selectOption('default')
+    await selectShadcnOption(nsSelect, 'default')
 
     // Advance to Configure step
     await page.getByTestId('deploy-footer-next').click()

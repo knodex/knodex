@@ -3,6 +3,7 @@
 
 import { test, expect, TestUserRole } from '../fixture'
 import type { Page } from '@playwright/test'
+import { selectShadcnOption } from './fixtures/select'
 
 /**
  * E2E coverage for the full-page tabbed deploy experience at /deploy/:rgdName.
@@ -296,10 +297,10 @@ test.describe('Tabbed deploy navigation', () => {
     await setupMocks(page, { compliance: 'warning' })
     await gotoBasics(page)
 
-    // Fill required Basics fields. namespace-select is a native <select>
-    // (avoids the Radix SlotClone ref-composition loop) — use selectOption().
+    // Fill required Basics fields. namespace-select is a shadcn Select —
+    // open the trigger, then click the option by accessible name.
     await page.getByTestId('instance-name-input').fill('e2e-instance')
-    await page.getByTestId('namespace-select').selectOption('alpha-dev')
+    await selectShadcnOption(page.getByTestId('namespace-select'), 'alpha-dev')
 
     // Jump to Review — compliance returns warning
     await page.getByTestId('deploy-tab-review').click()

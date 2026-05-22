@@ -6,6 +6,7 @@ import type { Page } from '@playwright/test'
 import {
   API_PATHS,
 } from '../fixture/mock-data'
+import { selectShadcnOption } from './fixtures/select'
 
 /**
  * Secrets Deploy Flow E2E Tests
@@ -481,7 +482,7 @@ test.describe('Secrets Deploy Flow', () => {
     await page.getByTestId('instance-name-input').fill('test-deploy')
     const nsSelect = page.getByTestId('namespace-select')
     await expect(nsSelect).toBeEnabled({ timeout: 5000 })
-    await nsSelect.selectOption('default')
+    await selectShadcnOption(nsSelect, 'default')
     await page.getByTestId('deploy-footer-next').click()
     await expect(page.getByTestId('deploy-tab-general')).toHaveAttribute('data-state', 'active')
 
@@ -540,7 +541,7 @@ test.describe('Secrets Deploy Flow', () => {
     await page.getByTestId('instance-name-input').fill('test-deploy')
     const nsSelect2 = page.getByTestId('namespace-select')
     await expect(nsSelect2).toBeEnabled({ timeout: 5000 })
-    await nsSelect2.selectOption('default')
+    await selectShadcnOption(nsSelect2, 'default')
     await page.getByTestId('deploy-footer-next').click()
     await expect(page.getByTestId('deploy-tab-general')).toHaveAttribute('data-state', 'active')
 
