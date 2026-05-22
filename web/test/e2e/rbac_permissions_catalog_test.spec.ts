@@ -186,14 +186,13 @@ test.describe("RBAC: Catalog Feature Tests", () => {
           await deployButton.click();
           await page.waitForLoadState("load");
 
-          // Check namespace dropdown - should only contain org-alpha-team namespace
-          const namespaceSelect = page.locator(
-            'select[name="namespace"], [data-testid="namespace-select"], input[name="namespace"]'
-          );
+          // Check namespace dropdown - should only contain org-alpha-team namespace.
+          // shadcn Select renders options in a portal only after the trigger is opened.
+          const namespaceSelect = page.getByTestId("namespace-select");
           if ((await namespaceSelect.count()) > 0) {
-            // Get available namespace options
+            await namespaceSelect.click();
             const options = await page
-              .locator('option, [role="option"]')
+              .locator('[role="option"]')
               .allTextContents();
             console.log(
               `Alpha Developer available namespaces: ${options.join(", ")}`
@@ -234,13 +233,13 @@ test.describe("RBAC: Catalog Feature Tests", () => {
           await deployButton.click();
           await page.waitForLoadState("load");
 
-          // Platform admin should only see namespaces from their organization
-          const namespaceSelect = page.locator(
-            'select[name="namespace"], [data-testid="namespace-select"]'
-          );
+          // Platform admin should only see namespaces from their organization.
+          // shadcn Select renders options in a portal only after the trigger is opened.
+          const namespaceSelect = page.getByTestId("namespace-select");
           if ((await namespaceSelect.count()) > 0) {
+            await namespaceSelect.click();
             const options = await page
-              .locator('option, [role="option"]')
+              .locator('[role="option"]')
               .allTextContents();
             console.log(
               `Alpha Admin available namespaces: ${options.join(", ")}`
@@ -278,13 +277,13 @@ test.describe("RBAC: Catalog Feature Tests", () => {
       await deployButton.click();
       await page.waitForLoadState("load");
 
-      // Global admin should have access to all namespaces
-      const namespaceSelect = page.locator(
-        'select[name="namespace"], [data-testid="namespace-select"]'
-      );
+      // Global admin should have access to all namespaces.
+      // shadcn Select renders options in a portal only after the trigger is opened.
+      const namespaceSelect = page.getByTestId("namespace-select");
       if ((await namespaceSelect.count()) > 0) {
+        await namespaceSelect.click();
         const options = await page
-          .locator('option, [role="option"]')
+          .locator('[role="option"]')
           .allTextContents();
         console.log(`Global Admin available namespaces: ${options.join(", ")}`);
 

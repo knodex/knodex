@@ -29,6 +29,7 @@
 import { test, expect, TestUserRole } from '../fixture'
 import type { Page } from '@playwright/test'
 import type { CatalogRGD, SchemaResponse } from '../../src/types/rgd'
+import { selectShadcnOption, selectShadcnOptionByIndex } from './fixtures/select'
 
 const BASE_URL = process.env.E2E_BASE_URL || 'http://localhost:8080'
 
@@ -389,12 +390,12 @@ test.describe('Full Deployment Flow with Mode Restrictions', () => {
     // Select project and namespace
     const nsSelect = page.getByTestId('namespace-select')
     await expect(nsSelect).toBeEnabled({ timeout: 5000 })
-    await nsSelect.selectOption('default')
+    await selectShadcnOption(nsSelect, 'default')
 
     // Deployment mode: gitops-only RGD auto-selects gitops; select a repository
-    const repoSelect = page.locator('select#repository')
+    const repoSelect = page.getByTestId('repository-select')
     if (await repoSelect.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await repoSelect.selectOption({ index: 1 }) // Select first repository
+      await selectShadcnOptionByIndex(repoSelect, 0) // Select first repository
     }
 
     // Advance to Configure step
@@ -701,7 +702,7 @@ test.describe('Full Deployment Flow with Mode Restrictions', () => {
 
     const nsSelect = page.getByTestId('namespace-select')
     await expect(nsSelect).toBeEnabled({ timeout: 5000 })
-    await nsSelect.selectOption('default')
+    await selectShadcnOption(nsSelect, 'default')
 
     // Advance to Configure step
     await page.getByTestId('deploy-footer-next').click()

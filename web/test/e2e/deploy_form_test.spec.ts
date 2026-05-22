@@ -18,6 +18,7 @@ import {
   fillField,
   captureFormSubmission,
 } from '../fixture/conditional-fields-helpers'
+import { selectShadcnOption } from './fixtures/select'
 
 /**
  * Shared setup for deploy form E2E tests: mocks all API endpoints and navigates
@@ -185,7 +186,7 @@ async function navigateToDeployForm(page: Page) {
   // Project auto-selects when only one exists; select namespace
   const nsSelect = page.getByTestId('namespace-select')
   await expect(nsSelect).toBeEnabled({ timeout: 5000 })
-  await nsSelect.selectOption('default')
+  await selectShadcnOption(nsSelect, 'default')
 
   // Advance to Configure step
   await page.getByTestId('deploy-footer-next').click()
@@ -708,7 +709,7 @@ async function navigateToCompositeDeployForm(page: Page) {
 
   const nsSelect = page.getByTestId('namespace-select')
   await expect(nsSelect).toBeEnabled({ timeout: 5000 })
-  await nsSelect.selectOption('default')
+  await selectShadcnOption(nsSelect, 'default')
 
   // Advance to Configure step
   await page.getByTestId('deploy-footer-next').click()

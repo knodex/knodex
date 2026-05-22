@@ -25,12 +25,13 @@ Object.defineProperty(window, 'matchMedia', {
   })),
 })
 
-// Mock ResizeObserver
-globalThis.ResizeObserver = vi.fn().mockImplementation(() => ({
-  observe: vi.fn(),
-  unobserve: vi.fn(),
-  disconnect: vi.fn(),
-})) as unknown as typeof ResizeObserver
+// Mock ResizeObserver (class form is needed by @floating-ui/dom which uses `new`)
+class MockResizeObserver {
+  observe = vi.fn();
+  unobserve = vi.fn();
+  disconnect = vi.fn();
+}
+globalThis.ResizeObserver = MockResizeObserver as unknown as typeof ResizeObserver
 
 // Mock IntersectionObserver (vi.fn() is not constructable; use a class)
 class MockIntersectionObserver {
@@ -40,3 +41,16 @@ class MockIntersectionObserver {
   takeRecords = vi.fn(() => []);
 }
 globalThis.IntersectionObserver = MockIntersectionObserver as unknown as typeof IntersectionObserver
+
+// Polyfills for Radix UI components in JSDOM (Select, Dialog, etc.)
+// JSDOM does not implement these — without polyfills, opening a Radix popover
+// throws "scrollIntoView is not a function" / "hasPointerCapture is not a function".
+if (!Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = vi.fn() as unknown as Element['scrollIntoView']
+}
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = vi.fn(() => false) as unknown as Element['hasPointerCapture']
+}
+if (!Element.prototype.releasePointerCapture) {
+  Element.prototype.releasePointerCapture = vi.fn() as unknown as Element['releasePointerCapture']
+}

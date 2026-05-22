@@ -3,6 +3,7 @@
 
 import { test, expect, TestUserRole } from '../fixture';
 import { setupPermissionMocking } from '../fixture/auth-helper';
+import { selectShadcnOptionByIndex } from './fixtures/select';
 
 /**
  * Global Admin - Instance Deployment & Management Tests
@@ -160,10 +161,12 @@ test.describe('Global Admin - Instance Deployment & Management', () => {
     const instanceNameInput = page.getByRole('textbox', { name: /instance name/i });
     await instanceNameInput.fill(instanceName);
 
-    // Select namespace for deployment
-    const nsSelector = page.locator('select#namespace');
+    // Select namespace for deployment.
+    // Wait for the trigger to be enabled — Select is disabled until namespaces load.
+    const nsSelector = page.getByTestId('namespace-select');
     if (await nsSelector.isVisible({ timeout: 2000 })) {
-      await nsSelector.selectOption({ index: 0 });
+      await expect(nsSelector).toBeEnabled({ timeout: 5000 });
+      await selectShadcnOptionByIndex(nsSelector, 0);
     }
 
     // Fill in the appName field (required by SharedWebApp CRD)
@@ -351,10 +354,12 @@ test.describe('Global Admin - Instance Deployment & Management', () => {
     const instanceNameInput = page.getByRole('textbox', { name: /instance name/i });
     await instanceNameInput.fill(instanceName);
 
-    // Select namespace for deployment
-    const nsSelector = page.locator('select#namespace');
+    // Select namespace for deployment.
+    // Wait for the trigger to be enabled — Select is disabled until namespaces load.
+    const nsSelector = page.getByTestId('namespace-select');
     if (await nsSelector.isVisible({ timeout: 2000 })) {
-      await nsSelector.selectOption({ index: 0 });
+      await expect(nsSelector).toBeEnabled({ timeout: 5000 });
+      await selectShadcnOptionByIndex(nsSelector, 0);
     }
 
     const appNameInput = page.getByRole('textbox', { name: /app name/i });

@@ -9,6 +9,7 @@ import {
   mockMicroservicesPlatformSchema,
   API_PATHS,
 } from '../fixture/mock-data'
+import { selectShadcnOption } from './fixtures/select'
 
 /**
  * Schema Collection E2E Tests
@@ -561,7 +562,7 @@ test.describe('Schema Collection — Conditional Sections and SecretRefs', () =>
     await page.getByTestId('instance-name-input').fill('test-deploy')
     const nsSelect = page.getByTestId('namespace-select')
     await expect(nsSelect).toBeEnabled({ timeout: 5000 })
-    await nsSelect.selectOption('default')
+    await selectShadcnOption(nsSelect, 'default')
     await page.getByTestId('deploy-footer-next').click()
     await expect(page.getByTestId('deploy-tab-general')).toHaveAttribute('data-state', 'active')
 
