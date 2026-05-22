@@ -12,7 +12,6 @@ import type {
   InstanceUpdateData,
   RGDUpdateData,
   DriftUpdateData,
-  CountsUpdateData,
   RevisionUpdateData,
   ResourceEventData,
 } from "@/types/websocket";
@@ -112,12 +111,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
               });
             }
 
-            // Invalidate instance list to trigger refetch, but exclude count queries
-            // (counts are pushed via WebSocket counts_update, not HTTP polling)
-            queryClient.invalidateQueries({
-              queryKey: ["instances"],
-              predicate: (query) => !query.queryKey.includes("count"),
-            });
+            queryClient.invalidateQueries({ queryKey: ["instances"] });
             break;
           }
 
@@ -128,10 +122,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
               queryKey: ["instance", data.group, data.namespace, data.kind, data.name],
             });
             // Invalidate instance list so drift badges update on the list view
-            queryClient.invalidateQueries({
-              queryKey: ["instances"],
-              predicate: (query) => !query.queryKey.includes("count"),
-            });
+            queryClient.invalidateQueries({ queryKey: ["instances"] });
             break;
           }
 
@@ -139,12 +130,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
             const data = message.data as RGDUpdateData;
             log("RGD update:", data.action, data.name);
 
-            // Invalidate RGD queries, but exclude count queries
-            // (counts are pushed via WebSocket counts_update, not HTTP polling)
-            queryClient.invalidateQueries({
-              queryKey: ["rgds"],
-              predicate: (query) => !query.queryKey.includes("count"),
-            });
+            queryClient.invalidateQueries({ queryKey: ["rgds"] });
             if (data.name) {
               queryClient.invalidateQueries({
                 queryKey: ["rgd", data.name],
@@ -158,14 +144,6 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
               });
               queryClient.invalidateQueries({ queryKey: ["rgd-schema", data.name] });
             }
-            break;
-          }
-
-          case "counts_update": {
-            const data = message.data as CountsUpdateData;
-            log("Counts update:", data.rgdCount, "RGDs,", data.instanceCount, "instances");
-            queryClient.setQueryData(["rgds", "count"], { count: data.rgdCount });
-            queryClient.setQueryData(["instances", "count"], { count: data.instanceCount });
             break;
           }
 
@@ -219,7 +197,9 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
           }
 
           default:
-            log("Unknown message type:", message.type);
+            // Surface unhandled types in production — silent drop hides
+            // backend/frontend version drift.
+            logger.warn("[WebSocket] Unknown message type:", message.type);
         }
       } catch (err) {
         logger.error("[WebSocket] Failed to parse message:", err);

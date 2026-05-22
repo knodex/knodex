@@ -27,10 +27,6 @@ const (
 	CleanupInterval = 5 * time.Second
 )
 
-// CountFunc computes RBAC-filtered RGD and instance counts for a specific user.
-// Returns (rgdCount, instanceCount). Called per-client with their context.
-type CountFunc func(ctx context.Context, userID string, projects []string, groups []string) (int, int)
-
 // Hub manages all WebSocket client connections and message broadcasting
 type Hub struct {
 	// Registered clients
@@ -45,14 +41,9 @@ type Hub struct {
 	// Unregister requests from clients
 	unregister chan *Client
 
-	// countRequest receives clients that need an initial counts push.
-	// Processed within the Run() event loop to avoid unmanaged goroutines.
-	countRequest chan *Client
-
-	// ctxMu protects ctx from concurrent read/write between Run() and SendCountsToClients().
-	ctxMu sync.RWMutex
-	// ctx is the hub's lifecycle context, set when Run() is called.
-	// Used to derive contexts for RBAC checks and count computations.
+	// ctx is the hub's lifecycle context, set when Run() is called before the
+	// event loop starts. All reads happen inside the event-loop goroutine after
+	// the write, so no synchronization is required.
 	ctx context.Context
 
 	// logger is the hub's structured logger. Set via NewHub; nil falls back to slog.Default().
@@ -64,9 +55,6 @@ type Hub struct {
 	// Debounce tracking for updates
 	lastUpdate     map[string]time.Time
 	lastUpdateLock sync.Mutex
-
-	// Count function for initial-connect push
-	countFn CountFunc
 
 	// maxConnections is the maximum number of concurrent WebSocket connections.
 	// Configurable via WEBSOCKET_MAX_CONNECTIONS env var; defaults to MaxConnections (100).
@@ -91,7 +79,6 @@ func NewHub(logger *slog.Logger) *Hub {
 		broadcast:      make(chan *Message, BroadcastBufferSize),
 		register:       make(chan *Client),
 		unregister:     make(chan *Client),
-		countRequest:   make(chan *Client, 16),
 		ctx:            context.Background(),
 		logger:         logger,
 		lastUpdate:     make(map[string]time.Time),
@@ -116,9 +103,7 @@ func validatedMaxConnections(logger *slog.Logger, n int) int {
 // lifecycle: when ctx is canceled, the hub closes all clients and returns.
 // Callers use the context's cancel function instead of a separate Stop method.
 func (h *Hub) Run(ctx context.Context) {
-	h.ctxMu.Lock()
 	h.ctx = ctx
-	h.ctxMu.Unlock()
 	h.logger.Info("WebSocket hub started")
 	cleanupTicker := time.NewTicker(CleanupInterval)
 	defer cleanupTicker.Stop()
@@ -138,9 +123,6 @@ func (h *Hub) Run(ctx context.Context) {
 
 		case message := <-h.broadcast:
 			h.handleBroadcast(message)
-
-		case client := <-h.countRequest:
-			h.handleCountRequest(client)
 
 		case <-cleanupTicker.C:
 			h.cleanLastUpdate()
@@ -203,50 +185,6 @@ func (h *Hub) handleRegister(client *Client) {
 	h.logger.Info("WebSocket client registered",
 		"clientAddr", clientAddr(client),
 		"activeConnections", len(h.clients))
-
-	// Queue initial counts push to be processed within the event loop.
-	// Non-blocking: if the channel is full, skip (client will get counts on next broadcast).
-	if h.countFn != nil {
-		select {
-		case h.countRequest <- client:
-		default:
-			h.logger.Warn("Count request buffer full, skipping initial counts",
-				"clientAddr", clientAddr(client))
-		}
-	}
-}
-
-// handleCountRequest computes and sends initial RBAC-filtered counts to a newly
-// registered client. Runs within the event loop — no goroutine or panic recovery needed.
-func (h *Hub) handleCountRequest(client *Client) {
-	// Verify client is still registered (may have disconnected between register and now)
-	h.mu.RLock()
-	registered := h.clients[client]
-	h.mu.RUnlock()
-	if !registered {
-		return
-	}
-
-	ctx := h.ctx
-	userID, projects, groups := client.GetUserContext()
-
-	if client.CachedHasGlobalAccess(ctx) {
-		projects = nil
-	}
-
-	rgdCount, instanceCount := h.countFn(ctx, userID, projects, groups)
-
-	msg, err := NewCountsUpdateMessage(rgdCount, instanceCount)
-	if err != nil {
-		h.logger.Error("Failed to create initial counts message", "error", err, "userID", userID)
-		return
-	}
-
-	select {
-	case client.send <- msg:
-	default:
-		h.logger.Warn("Client send buffer full, skipping initial counts", "userID", userID)
-	}
 }
 
 // handleUnregister handles client unregistration
@@ -558,107 +496,6 @@ func (h *Hub) BroadcastRevisionUpdate(action Action, rgdName string, revision in
 	}
 
 	h.enqueue(msg, "type", "revision", "rgdName", rgdName, "revision", revision)
-}
-
-// SetCountFunc sets the function used to compute per-user counts on initial connect.
-func (h *Hub) SetCountFunc(fn CountFunc) {
-	h.countFn = fn
-}
-
-// clientSnapshot holds the data needed to compute and send counts to a single client.
-// Collected under h.mu.RLock() so the lock can be released before count computation.
-type clientSnapshot struct {
-	client        *Client
-	userID        string
-	projects      []string
-	groups        []string
-	isGlobalAdmin bool
-}
-
-// SendCountsToClients computes RBAC-filtered counts per-client and sends personalized
-// counts_update messages. Unlike standard broadcasts that send the same message to all,
-// each client receives different counts based on their project access.
-// Called from watcher goroutines (outside Hub event loop). Client references and their
-// cached admin status are collected under RLock, then the lock is released before count
-// computation begins.
-func (h *Hub) SendCountsToClients(countFn CountFunc) {
-	// Debounce rapid changes (e.g., 10 instances created in 500ms)
-	if !h.shouldBroadcast("counts") {
-		return
-	}
-
-	h.ctxMu.RLock()
-	ctx := h.ctx
-	h.ctxMu.RUnlock()
-
-	// Collect client snapshots under read lock, then release before computation.
-	h.mu.RLock()
-	snapshots := make([]clientSnapshot, 0, len(h.clients))
-	for client := range h.clients {
-		// Check subscription - must have resource subscription
-		client.subMu.RLock()
-		hasSubscription := client.subscriptions["all"] ||
-			client.subscriptions["instance"] || client.subscriptions["instances"] ||
-			client.subscriptions["rgd"] || client.subscriptions["rgds"]
-		client.subMu.RUnlock()
-
-		if !hasSubscription {
-			continue
-		}
-
-		userID, projects, groups := client.GetUserContext()
-		isAdmin := client.CachedHasGlobalAccess(ctx)
-
-		snapshots = append(snapshots, clientSnapshot{
-			client:        client,
-			userID:        userID,
-			projects:      projects,
-			groups:        groups,
-			isGlobalAdmin: isAdmin,
-		})
-	}
-	h.mu.RUnlock()
-
-	// Compute counts and send outside the lock.
-	for _, snap := range snapshots {
-		projects := snap.projects
-		if snap.isGlobalAdmin {
-			projects = nil
-		}
-
-		rgdCount, instanceCount := countFn(ctx, snap.userID, projects, snap.groups)
-
-		msg, err := NewCountsUpdateMessage(rgdCount, instanceCount)
-		if err != nil {
-			h.logger.Error("Failed to create counts update message", "error", err, "userID", snap.userID)
-			continue
-		}
-
-		// Safe non-blocking send: client may have been unregistered after snapshot,
-		// which closes client.send. trySend recovers from the closed-channel panic.
-		if !trySend(snap.client, msg) {
-			h.logger.Warn("Client send buffer full or disconnected, skipping counts update",
-				"userID", snap.userID)
-		}
-	}
-}
-
-// trySend attempts a non-blocking send on the client's send channel.
-// Returns true if sent, false if the buffer was full or channel was closed.
-// Safe to call after releasing h.mu.RLock() — handles the race where
-// handleUnregister closes client.send between snapshot and send.
-func trySend(client *Client, msg *Message) (sent bool) {
-	defer func() {
-		if r := recover(); r != nil {
-			sent = false
-		}
-	}()
-	select {
-	case client.send <- msg:
-		return true
-	default:
-		return false
-	}
 }
 
 // cleanLastUpdate removes stale entries from the lastUpdate debounce map.

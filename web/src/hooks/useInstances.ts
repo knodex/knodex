@@ -7,7 +7,6 @@ import {
   getInstance,
   deleteInstance,
   updateInstanceSpec,
-  getInstanceCount,
   getInstanceChildren,
 } from "@/api/rgd";
 import type { InstanceListParams, UpdateInstanceRequest } from "@/types/rgd";
@@ -22,20 +21,6 @@ export function useInstanceList(params?: InstanceListParams) {
     queryFn: () => listInstances(params),
     placeholderData: keepPreviousData,
     staleTime: STALE_TIME.FREQUENT, // instances change frequently
-  });
-}
-
-/**
- * Hook for fetching instance count (for sidebar badge)
- * Uses lightweight count endpoint to avoid fetching full list
- */
-export function useInstanceCount() {
-  return useQuery({
-    queryKey: ["instances", "count"],
-    queryFn: getInstanceCount,
-    staleTime: Infinity, // Counts pushed via WebSocket - no polling needed
-    refetchOnWindowFocus: false,
-    refetchOnMount: false,
   });
 }
 

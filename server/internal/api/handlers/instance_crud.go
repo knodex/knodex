@@ -390,9 +390,6 @@ func (h *InstanceCRUDHandler) GetCount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// CountInstancesByNamespaces with ["*"] matches all namespace-scoped instances.
-	// Non-admin: CountInstancesByNamespaces incorrectly includes all cluster-scoped
-	// instances regardless of project access (pre-STORY-301 behavior in cache).
 	// Use the shared access filter to match ListInstances behavior (STORY-301, STORY-309).
 	userProjects, projErr := h.getAccessibleProjects(r.Context(), userCtx)
 	if projErr != nil {

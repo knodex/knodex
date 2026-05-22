@@ -977,61 +977,6 @@ func (a *App) Run(ctx context.Context) error { //nolint:gocyclo // orchestration
 		}()
 	}
 
-	// Wire WebSocket count push for sidebar badge updates (AC: #2, #3, #4)
-	// Uses in-memory caches only - no Redis/HTTP/K8s API calls
-	if rgdWatcher != nil && instanceTracker != nil {
-		catalogService := routerResult.CatalogService
-		countPushFn := func(ctx context.Context, userID string, projects []string, groups []string) (int, int) {
-			// RGD count: delegate to CatalogService.GetCount so the same per-RGD Casbin
-			// filter that runs on /api/v1/rgds and /api/v1/rgds/count is applied here.
-			// Without this, the WebSocket-pushed sidebar badge could exceed the catalog
-			// list count for users who pass the project/org cache filter but lack
-			// rgds/{category}/{name} get policies.
-			var rgdCount int
-			if catalogService != nil {
-				authCtx := &services.UserAuthContext{
-					UserID:             userID,
-					Groups:             groups,
-					AccessibleProjects: projects,
-				}
-				// Hub passes projects=nil for global admins (CachedHasGlobalAccess).
-				// Mark AccessibleNamespaces=["*"] so any future tier-resolver path treats
-				// this as global admin instead of "no projects → universal-only" tiers.
-				if projects == nil {
-					authCtx.AccessibleNamespaces = []string{"*"}
-				}
-				count, err := catalogService.GetCount(ctx, authCtx)
-				if err != nil {
-					slog.Warn("WebSocket RGD count failed; reporting 0", "userID", userID, "error", err)
-				} else {
-					rgdCount = count
-				}
-			}
-
-			// Instance count via tracker cache (in-memory).
-			// Resolve project names to their destination namespaces — instances live in
-			// destination namespaces, not namespaces named after the project.
-			namespaces := resolveProjectDestinationNamespaces(ctx, projectService, projects)
-			instanceCount := instanceTracker.CountInstancesByNamespaces(namespaces, rbac.MatchNamespaceInList)
-			return rgdCount, instanceCount
-		}
-
-		// Register on RGD changes for count push
-		rgdWatcher.SetOnChangeCallback(func() {
-			wsHub.SendCountsToClients(countPushFn)
-		})
-
-		// Register on instance changes for count push
-		instanceTracker.SetOnChangeCallback(func() {
-			wsHub.SendCountsToClients(countPushFn)
-		})
-
-		// Set count function for initial-connect push (AC: #1, #6)
-		wsHub.SetCountFunc(countPushFn)
-
-		slog.Info("WebSocket count push wired to RGD and instance watchers")
-	}
-
 	// Start server in goroutine
 	go func() {
 		slog.Info("starting server", "address", cfg.Server.Address)
@@ -1424,51 +1369,6 @@ func hasGraphRevisionAPI(k8sClient kubernetes.Interface) bool {
 		}
 	}
 	return false
-}
-
-// resolveProjectDestinationNamespaces collects all destination namespace patterns
-// from the given projects. For admin (projects == nil), returns all destinations
-// from all projects. This is used for sidebar count filtering — instances only
-// appear in counts if they belong to a project's destination namespace.
-func resolveProjectDestinationNamespaces(ctx context.Context, ps *rbac.ProjectService, projects []string) []string {
-	if ps == nil {
-		return []string{"*"}
-	}
-
-	allProjects, err := ps.ListProjects(ctx)
-	if err != nil {
-		slog.Warn("failed to list projects for namespace resolution, falling back to wildcard", "error", err)
-		return []string{"*"}
-	}
-
-	seen := make(map[string]bool)
-	var namespaces []string
-	for _, p := range allProjects.Items {
-		// If projects list is non-nil, only include matching projects
-		if projects != nil {
-			found := false
-			for _, name := range projects {
-				if p.Name == name {
-					found = true
-					break
-				}
-			}
-			if !found {
-				continue
-			}
-		}
-		for _, dest := range p.Spec.Destinations {
-			if dest.Namespace != "" && !seen[dest.Namespace] {
-				seen[dest.Namespace] = true
-				namespaces = append(namespaces, dest.Namespace)
-			}
-		}
-	}
-
-	if len(namespaces) == 0 {
-		return []string{} // No projects or no destinations — count will be 0
-	}
-	return namespaces
 }
 
 // updateAllRGDInstanceCounts updates instance counts for all RGDs.

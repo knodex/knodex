@@ -8,13 +8,7 @@ import { SidebarDrawer } from './SidebarDrawer';
 
 // Mock hooks used by SidebarNav
 vi.mock('@/hooks/useRGDs', () => ({
-  useRGDCount: () => ({ data: { count: 3 } }),
   useRGDList: () => ({ data: undefined }),
-}));
-
-vi.mock('@/hooks/useInstances', () => ({
-  useInstanceCount: () => ({ data: { count: 5 } }),
-  useInstanceList: () => ({ data: undefined }),
 }));
 
 vi.mock('@/hooks/useCompliance', () => ({
@@ -28,14 +22,6 @@ vi.mock('@/hooks/useCategories', () => ({
 
 vi.mock('@/hooks/useCanI', () => ({
   useCanI: () => ({ allowed: false }),
-}));
-
-vi.mock('@/hooks/useAuth', () => ({
-  useCurrentProject: () => null,
-}));
-
-vi.mock('@/hooks/useProjects', () => ({
-  useProjects: () => ({ data: undefined }),
 }));
 
 vi.mock('@/lib/route-preloads', () => ({
@@ -84,6 +70,20 @@ describe('SidebarDrawer', () => {
     renderDrawer(true);
 
     expect(screen.getByText('Navigation menu')).toBeInTheDocument();
+  });
+
+  // Guards against accidentally re-adding count badges on the main Catalog
+  // and Instances nav entries. Badges render as a sibling <span> with an
+  // aria-label like "5 items"; absence of any such span on these links proves
+  // no badge is rendered.
+  it('does not render count badges on Catalog or Instances nav items', () => {
+    renderDrawer(true);
+
+    const catalogLink = screen.getByRole('link', { name: 'Catalog' });
+    const instancesLink = screen.getByRole('link', { name: 'Instances' });
+
+    expect(catalogLink.querySelector('span[aria-label$="items"]')).toBeNull();
+    expect(instancesLink.querySelector('span[aria-label$="items"]')).toBeNull();
   });
 
   it('closes on nav item click', () => {

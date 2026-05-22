@@ -18,7 +18,6 @@ const (
 	MessageTypeViolationUpdate  MessageType = "violation_update"
 	MessageTypeTemplateUpdate   MessageType = "template_update"   // Enterprise: ConstraintTemplate changes
 	MessageTypeConstraintUpdate MessageType = "constraint_update" // Enterprise: Constraint changes
-	MessageTypeCountsUpdate     MessageType = "counts_update"     // Sidebar badge count push
 	MessageTypeDriftUpdate      MessageType = "drift_update"      // Drift state change (reconciled/drifted)
 	MessageTypeResourceEvent    MessageType = "resource_event"    // Per-resource deploy event (creating/created/failed)
 	MessageTypeDeployProgress   MessageType = "deploy_progress"   // Aggregate deploy progress (in_progress/complete/failed)
@@ -132,12 +131,6 @@ type ConstraintUpdateData struct {
 
 	// ViolationCount is the current number of violations
 	ViolationCount int `json:"violationCount"`
-}
-
-// CountsUpdateData contains sidebar badge count data pushed to clients
-type CountsUpdateData struct {
-	RGDCount      int `json:"rgdCount"`
-	InstanceCount int `json:"instanceCount"`
 }
 
 // DriftUpdateData contains drift state change information
@@ -284,15 +277,6 @@ func NewConstraintUpdateMessage(action Action, kind, name, enforcementAction str
 		ViolationCount:    violationCount,
 	}
 	return NewMessage(MessageTypeConstraintUpdate, data)
-}
-
-// NewCountsUpdateMessage creates a counts update message for sidebar badge push
-func NewCountsUpdateMessage(rgdCount, instanceCount int) (*Message, error) {
-	data := CountsUpdateData{
-		RGDCount:      rgdCount,
-		InstanceCount: instanceCount,
-	}
-	return NewMessage(MessageTypeCountsUpdate, data)
 }
 
 // NewDriftUpdateMessage creates a drift update message.

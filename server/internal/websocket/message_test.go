@@ -172,67 +172,6 @@ func TestMessage_Bytes(t *testing.T) {
 	}
 }
 
-func TestNewCountsUpdateMessage(t *testing.T) {
-	msg, err := NewCountsUpdateMessage(42, 17)
-	if err != nil {
-		t.Fatalf("NewCountsUpdateMessage failed: %v", err)
-	}
-
-	if msg.Type != MessageTypeCountsUpdate {
-		t.Errorf("expected type %s, got %s", MessageTypeCountsUpdate, msg.Type)
-	}
-
-	if msg.Timestamp.IsZero() {
-		t.Error("expected non-zero timestamp")
-	}
-
-	var data CountsUpdateData
-	if err := json.Unmarshal(msg.Data, &data); err != nil {
-		t.Fatalf("failed to unmarshal counts data: %v", err)
-	}
-
-	if data.RGDCount != 42 {
-		t.Errorf("expected rgdCount 42, got %d", data.RGDCount)
-	}
-	if data.InstanceCount != 17 {
-		t.Errorf("expected instanceCount 17, got %d", data.InstanceCount)
-	}
-}
-
-func TestCountsUpdateMessage_Deserialization(t *testing.T) {
-	// Create message, serialize, then deserialize
-	msg, err := NewCountsUpdateMessage(5, 10)
-	if err != nil {
-		t.Fatalf("NewCountsUpdateMessage failed: %v", err)
-	}
-
-	bytes, err := msg.Bytes()
-	if err != nil {
-		t.Fatalf("Bytes failed: %v", err)
-	}
-
-	var decoded Message
-	if err := json.Unmarshal(bytes, &decoded); err != nil {
-		t.Fatalf("failed to unmarshal message: %v", err)
-	}
-
-	if decoded.Type != MessageTypeCountsUpdate {
-		t.Errorf("expected type %s, got %s", MessageTypeCountsUpdate, decoded.Type)
-	}
-
-	var data CountsUpdateData
-	if err := json.Unmarshal(decoded.Data, &data); err != nil {
-		t.Fatalf("failed to unmarshal counts data: %v", err)
-	}
-
-	if data.RGDCount != 5 {
-		t.Errorf("expected rgdCount 5, got %d", data.RGDCount)
-	}
-	if data.InstanceCount != 10 {
-		t.Errorf("expected instanceCount 10, got %d", data.InstanceCount)
-	}
-}
-
 func TestNewViolationUpdateMessage(t *testing.T) {
 	resource := ViolationResourceData{
 		Kind:      "Pod",

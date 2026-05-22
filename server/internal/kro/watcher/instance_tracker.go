@@ -938,13 +938,6 @@ func (t *InstanceTracker) CountInstancesByRGD(rgdNamespace, rgdName string) int 
 	return t.cache.CountByRGD(rgdNamespace, rgdName)
 }
 
-// CountInstancesByNamespaces returns the count of instances accessible to the user.
-// namespaces: list of namespace patterns (["*"] = all, empty = none)
-// matchFunc: function to match a namespace against patterns (e.g., rbac.MatchNamespaceInList)
-func (t *InstanceTracker) CountInstancesByNamespaces(namespaces []string, matchFunc func(namespace string, patterns []string) bool) int {
-	return t.cache.CountByNamespaces(namespaces, matchFunc)
-}
-
 // CountInstancesByRGDAndNamespaces returns the count of instances for a specific RGD
 // filtered by the user's accessible namespaces.
 // namespaces: list of namespace patterns (["*"] = all, empty = none)

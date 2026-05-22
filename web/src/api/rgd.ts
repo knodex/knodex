@@ -18,7 +18,6 @@ import type {
   ResourceGraph,
   PendingInstancesResponse,
   StuckInstancesResponse,
-  CountResponse,
   GraphRevision,
   GraphRevisionList,
   RevisionDiff,
@@ -322,24 +321,6 @@ export async function getStuckInstances(): Promise<StuckInstancesResponse> {
   const response = await apiClient.get<StuckInstancesResponse>(
     "/v1/instances/stuck"
   );
-  return response.data;
-}
-
-/**
- * Get total count of RGDs accessible to the user
- * Lightweight endpoint for displaying badge counts without fetching full list
- */
-export async function getRGDCount(): Promise<CountResponse> {
-  const response = await apiClient.get<CountResponse>("/v1/rgds/count");
-  return response.data;
-}
-
-/**
- * Get total count of instances accessible to the user
- * Lightweight endpoint for displaying badge counts without fetching full list
- */
-export async function getInstanceCount(): Promise<CountResponse> {
-  const response = await apiClient.get<CountResponse>("/v1/instances/count");
   return response.data;
 }
 

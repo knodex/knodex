@@ -557,13 +557,10 @@ func TestE2E_InstanceCount_RegressionSTORY138_NonAdminGets200NotForbidden(t *tes
 }
 
 func TestE2E_InstanceCount_RegressionSTORY138_CountMatchesListTotal(t *testing.T) {
-	// REGRESSION TEST for this feature count logic bug
-	//
-	// Bug: The GetCount handler used PageSize:1 then tried to iterate over result.Items
-	// to filter by namespace. Since Items only had 1 item max due to pagination,
-	// count was always 0 or 1.
-	//
-	// Fix: Added CountByNamespaces() method that counts directly without pagination.
+	// Regression: GetCount once used PageSize:1 then iterated result.Items to
+	// filter by namespace, so the count was always 0 or 1. The handler now uses
+	// CountFilteredInstances against the in-memory cache, with the same
+	// access filter as ListInstances (buildInstanceAccessFilter).
 
 	setupInstanceCountTestFixtures(t)
 
