@@ -1,0 +1,26 @@
+{{/*
+Resource-wrapper registry ConfigMap.
+
+Rendered unconditionally (empty array fallback) so the in-process watcher
+never needs to handle a "ConfigMap missing" state machine. Operators may
+manage entries either through Helm values or at runtime via the
+/api/v1/settings/wrappers HTTP API; both paths converge on this ConfigMap.
+
+Schema: data.wrappers.json is a JSON array of `{ "kind", "rgdName" }`.
+v1 exposes one Helm value per supported Kind (currently Project only).
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: knodex-resource-wrappers
+  labels:
+    {{- include "knodex.labels" . | nindent 4 }}
+    app.kubernetes.io/component: resource-wrappers
+    knodex.io/config-type: resource-wrappers
+data:
+  wrappers.json: |
+    [
+      {{- if .Values.server.project.wrapperRGD }}
+      {"kind": "Project", "rgdName": {{ .Values.server.project.wrapperRGD | quote }}}
+      {{- end }}
+    ]

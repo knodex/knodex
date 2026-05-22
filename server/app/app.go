@@ -60,6 +60,7 @@ import (
 	"github.com/knodex/knodex/server/internal/rbac"
 	"github.com/knodex/knodex/server/internal/repository"
 	"github.com/knodex/knodex/server/internal/services"
+	"github.com/knodex/knodex/server/internal/services/wrapper"
 	"github.com/knodex/knodex/server/internal/sso"
 	"github.com/knodex/knodex/server/internal/static"
 	oldwatcher "github.com/knodex/knodex/server/internal/watcher"
@@ -276,6 +277,12 @@ func (a *App) Run(ctx context.Context) error { //nolint:gocyclo // orchestration
 	var ssoWatcher *sso.SSOWatcher
 	var ssoProviders []auth.OIDCProviderConfig
 
+	// Wrapper registry: ConfigMap-backed Kind→RGD mapping that the project handler
+	// consults to route Project creation through an operator-defined wrapper RGD.
+	var wrapperStore *wrapper.Store
+	var wrapperWatcher *wrapper.Watcher
+	var wrapperHelpers *wrapper.Helpers
+
 	if k8sClient != nil && dynamicClient != nil {
 		// Create audit logger for RBAC operations
 		auditLogger := rbac.NewAuditLogger(slog.Default())
@@ -319,6 +326,12 @@ func (a *App) Run(ctx context.Context) error { //nolint:gocyclo // orchestration
 		} else {
 			slog.Warn("no SSO ConfigMap found, starting with zero OIDC providers")
 		}
+
+		// Wrapper registry: same namespace as Projects (KnodexNamespace). Watcher
+		// is started later alongside the other watchers; helpers are wired after
+		// the InstanceTracker is constructed so the GVRResolver dependency is satisfied.
+		wrapperStore = wrapper.NewStore(k8sClient, cfg.KnodexNamespace)
+		wrapperWatcher = wrapper.NewWatcher(k8sClient, cfg.KnodexNamespace, slog.Default())
 	}
 
 	// Initialize Casbin policy enforcer for RBAC
@@ -566,6 +579,13 @@ func (a *App) Run(ctx context.Context) error { //nolint:gocyclo // orchestration
 		instanceTracker = watcher.NewInstanceTracker(dynamicClient, k8sClient.Discovery(), instanceFactory, rgdWatcher)
 	}
 
+	// Wire wrapper helpers now that the RGD watcher and instance tracker (GVR resolver)
+	// are available. Wrapper instances live in the same namespace as Projects.
+	if wrapperWatcher != nil && rgdWatcher != nil && instanceTracker != nil && dynamicClient != nil {
+		wrapperHelpers = wrapper.NewHelpers(wrapperWatcher, rgdWatcher, instanceTracker, dynamicClient, cfg.KnodexNamespace)
+		slog.Info("wrapper helpers initialized", "namespace", cfg.KnodexNamespace)
+	}
+
 	// Create GraphRevision watcher (feature-gated: only if internal.kro.run API group is available)
 	var graphRevisionWatcher *watcher.GraphRevisionWatcher
 	if instanceFactory != nil && k8sClient != nil {
@@ -713,6 +733,8 @@ func (a *App) Run(ctx context.Context) error { //nolint:gocyclo // orchestration
 		ViolationHistoryService: a.violationHistoryService,
 		CategoryService:         a.categoryService,
 		SSOStore:                ssoStore,
+		WrapperStore:            wrapperStore,
+		WrapperHelpers:          wrapperHelpers,
 		AllowedRedirectOrigins:  cfg.Auth.AllowedRedirectOrigins,
 		CookieConfig:            cookie.Config{Secure: cfg.Cookie.Secure, Domain: cfg.Cookie.Domain},
 		OrganizationFilter:      a.organizationFilter,     // EE catalog filtering (empty = no filter)
@@ -813,6 +835,16 @@ func (a *App) Run(ctx context.Context) error { //nolint:gocyclo // orchestration
 			}
 		}()
 		slog.Info("SSO ConfigMap/Secret watcher started")
+	}
+
+	// Start wrapper watcher (watches ConfigMap for resource-wrapper registry changes)
+	if wrapperWatcher != nil {
+		go func() {
+			if err := wrapperWatcher.Start(runCtx); err != nil {
+				slog.Error("wrapper watcher stopped with error", "error", err)
+			}
+		}()
+		slog.Info("wrapper ConfigMap watcher started")
 	}
 
 	// Start RGD watcher
@@ -1026,7 +1058,7 @@ func (a *App) Run(ctx context.Context) error { //nolint:gocyclo // orchestration
 	}
 
 	shutdownServices(server, wsHubCancel, wsHandler, policyCacheManager, auditRecorder,
-		ssoWatcher, repoWatcher, graphRevisionWatcher, remoteWatcher, instanceTracker, rgdWatcher, routerResult.UserRateLimiters, redisClient, logger)
+		ssoWatcher, wrapperWatcher, repoWatcher, graphRevisionWatcher, remoteWatcher, instanceTracker, rgdWatcher, routerResult.UserRateLimiters, redisClient, logger)
 
 	slog.Info("server stopped gracefully")
 	return nil
@@ -1179,6 +1211,7 @@ func shutdownServices(
 	policyCacheManager *rbac.PolicyCacheManager,
 	auditRecorder audit.Recorder,
 	ssoWatcher *sso.SSOWatcher,
+	wrapperWatcher *wrapper.Watcher,
 	repoWatcher *oldwatcher.RepositoryWatcher,
 	graphRevisionWatcher *watcher.GraphRevisionWatcher,
 	remoteWatcher *watcher.RemoteWatcher,
@@ -1238,6 +1271,12 @@ func shutdownServices(
 	if ssoWatcher != nil {
 		ssoWatcher.Stop()
 		slog.Info("SSO watcher stopped")
+	}
+
+	// Stop wrapper watcher
+	if wrapperWatcher != nil {
+		wrapperWatcher.Stop()
+		slog.Info("wrapper watcher stopped")
 	}
 
 	// Stop GraphRevision watcher

@@ -1,0 +1,77 @@
+# Wrapped Project example — demonstrates the wrapper-RGD authoring contract.
+#
+# When the wrapper registry maps `Project → wrapped-project-v1`, the Knodex
+# /api/v1/projects POST handler creates an instance of this RGD instead of a
+# Project CRD directly. The kro controller then materializes the Project plus
+# any operator-defined bootstrap extras (here: a per-project namespace and a
+# defaults ConfigMap inside it).
+#
+# Authoring contract (validated by docs, not by lint in v1):
+#   1. spec.schema must accept the Project spec payload as a superset
+#      (description, destinations, sourceRepos, roles).
+#   2. spec.resources MUST include a Project resource pinned to the Knodex
+#      install namespace.
+#   3. The Project resource template MUST stamp the
+#      `knodex.io/wrapper-rgd-instance` marker annotation onto the Project so
+#      subsequent PATCH/DELETE routes back through the wrapper instance.
+#
+# Register via Helm:
+#   server:
+#     resourceWrappers:
+#       entries:
+#         - kind: Project
+#           rgdName: wrapped-project-v1
+#
+# …or at runtime (admin-only):
+#   curl -X PUT -H 'Content-Type: application/json' \
+#     -d '{"rgdName":"wrapped-project-v1"}' \
+#     http://knodex/api/v1/settings/wrappers/Project
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: wrapped-project-v1
+  namespace: knodex-system
+  annotations:
+    knodex.io/description: "Wrapped Project that also bootstraps a per-project namespace and defaults ConfigMap."
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: WrappedProject
+    spec:
+      description: string | default=""
+      destinations: "[]map[string]string | default=[]"
+      sourceRepos: "[]string | default=[]"
+      roles: "[]map[string]any | default=[]"
+  resources:
+    - id: project
+      template:
+        apiVersion: knodex.io/v1alpha1
+        kind: Project
+        metadata:
+          name: ${schema.metadata.name}
+          namespace: knodex-system
+          annotations:
+            # REQUIRED: marker pins subsequent PATCH/DELETE to this wrapper instance.
+            knodex.io/wrapper-rgd-instance: ${schema.metadata.name}
+        spec:
+          description: ${schema.spec.description}
+          destinations: ${schema.spec.destinations}
+          sourceRepos: ${schema.spec.sourceRepos}
+          roles: ${schema.spec.roles}
+    - id: bootstrapNamespace
+      template:
+        apiVersion: v1
+        kind: Namespace
+        metadata:
+          name: proj-${schema.metadata.name}
+          labels:
+            knodex.io/project: ${schema.metadata.name}
+    - id: bootstrapConfig
+      template:
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: project-defaults
+          namespace: proj-${schema.metadata.name}
+        data:
+          owner: ${schema.metadata.name}

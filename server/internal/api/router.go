@@ -41,6 +41,7 @@ import (
 	"github.com/knodex/knodex/server/internal/rbac"
 	"github.com/knodex/knodex/server/internal/repository"
 	"github.com/knodex/knodex/server/internal/services"
+	"github.com/knodex/knodex/server/internal/services/wrapper"
 	"github.com/knodex/knodex/server/internal/sso"
 	"github.com/knodex/knodex/server/internal/userprefs"
 	"github.com/knodex/knodex/server/internal/websocket"
@@ -97,6 +98,8 @@ type RouterConfig struct {
 	ViolationHistoryService services.ViolationHistoryService // Enterprise feature: Violation history & CSV export
 	CategoryService         services.CategoryService         // OSS feature: Auto-discovered category sidebar
 	SSOStore                *sso.ProviderStore               // SSO provider management store
+	WrapperStore            *wrapper.Store                   // Resource-wrapper registry store (CRUD)
+	WrapperHelpers          *wrapper.Helpers                 // Resource-wrapper hot-path helpers (lookup + instance CRUD)
 	AuditRecorder           audit.Recorder                   // Audit event recorder (nil in OSS builds)
 	AuditLoginMiddleware    func(http.Handler) http.Handler  // Enterprise feature: Wraps login routes to record audit events (nil in OSS builds)
 	AuditMiddleware         func(http.Handler) http.Handler  // Enterprise feature: Records 401/403 audit events on protected routes (nil in OSS builds)
@@ -532,6 +535,9 @@ func NewRouterWithConfig(healthChecker *health.Checker, rgdWatcher *watcher.RGDW
 	// Protected API v1 routes - Project management (require authentication)
 	if cfg.ProjectService != nil && cfg.PolicyEnforcer != nil {
 		projectHandler := handlers.NewProjectHandler(cfg.ProjectService, cfg.PolicyEnforcer, cfg.AuditRecorder)
+		if cfg.WrapperHelpers != nil {
+			projectHandler.SetWrapperHelpers(cfg.WrapperHelpers)
+		}
 		protectedMux.HandleFunc("GET /api/v1/projects", projectHandler.ListProjects)
 		protectedMux.HandleFunc("GET /api/v1/projects/{name}", projectHandler.GetProject)
 		protectedMux.HandleFunc("POST /api/v1/projects", projectHandler.CreateProject)
@@ -712,6 +718,32 @@ func NewRouterWithConfig(healthChecker *health.Checker, rgdWatcher *watcher.RGDW
 			ssoMutationLimiter(http.HandlerFunc(ssoHandler.UpdateProvider)))
 		protectedMux.Handle("DELETE /api/v1/settings/sso/providers/{name}",
 			ssoMutationLimiter(http.HandlerFunc(ssoHandler.DeleteProvider)))
+	}
+
+	// Protected API v1 routes - Resource-wrapper registry management (admin-only)
+	if cfg.WrapperStore != nil {
+		wrapperHandler := handlers.NewWrapperSettingsHandler(cfg.WrapperStore, cfg.AuditRecorder, cfg.PolicyEnforcer)
+
+		// Wrapper mutation rate limiter: same shape as SSO settings (burst 5, sustained 1/min).
+		// AC11: this wiring is the authoritative enforcement point for the rate-limit
+		// requirement; the middleware itself is unit-tested in internal/api/middleware.
+		wrapperMutationLimiter, wrapperRateLimiter := middleware.UserRateLimit(middleware.UserRateLimitConfig{
+			RequestsPerMinute: 1,
+			BurstSize:         5,
+			FallbackToIP:      false,
+			RetryAfterSeconds: 60,
+		})
+		userRateLimiters = append(userRateLimiters, wrapperRateLimiter)
+
+		// GET endpoints (no extra rate limit).
+		protectedMux.HandleFunc("GET /api/v1/settings/wrappers", wrapperHandler.ListWrappers)
+		protectedMux.HandleFunc("GET /api/v1/settings/wrappers/{kind}", wrapperHandler.GetWrapper)
+
+		// Mutation endpoints with per-route rate limit.
+		protectedMux.Handle("PUT /api/v1/settings/wrappers/{kind}",
+			wrapperMutationLimiter(http.HandlerFunc(wrapperHandler.PutWrapper)))
+		protectedMux.Handle("DELETE /api/v1/settings/wrappers/{kind}",
+			wrapperMutationLimiter(http.HandlerFunc(wrapperHandler.DeleteWrapper)))
 	}
 
 	// Protected API v1 routes - Audit trail management (enterprise feature, require authentication + settings access)
