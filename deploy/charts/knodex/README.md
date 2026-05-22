@@ -194,6 +194,7 @@ kubectl get secret knodex-initial-admin-password -n knodex -o jsonpath='{.data.p
 | server.readinessProbe.periodSeconds | int | `10` |  |
 | server.readinessProbe.timeoutSeconds | int | `5` |  |
 | server.replicaCount | int | `1` |  |
+| server.project.wrapperRGD | string | `""` | Name of the kro `ResourceGraphDefinition` to use as a wrapper for Project creation. When set, `POST /api/v1/projects` creates a kro RGD instance instead of a `Project` CRD directly; the wrapper RGD materializes the full bundle (Project + any operator-defined bootstrap extras). Leave empty to use direct Project creation. Can also be managed at runtime via `PUT /api/v1/settings/wrappers/Project` (requires server-admin). See `deploy/examples/rgds/wrapped-project-example.yaml`. |
 | server.resources.limits | object | `{}` |  |
 | server.resources.requests.cpu | string | `"100m"` |  |
 | server.resources.requests.memory | string | `"128Mi"` |  |

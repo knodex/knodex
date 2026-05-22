@@ -1,0 +1,51 @@
+# Minimal wrapper RGD fixture for server E2E tests (server/test/e2e/wrapper_project_test.go).
+#
+# Kept small (Project + 1 ConfigMap) for fastest kro reconciliation.
+# The deploy/examples/rgds/wrapped-project-example.yaml has the full operator-facing
+# example with a bootstrap namespace included.
+#
+# The `knodex.io/wrapper-rgd-instance: ${schema.metadata.name}` annotation on the
+# Project template is the critical authoring requirement — it stamps the marker annotation
+# that wrapper routing reads for PATCH/DELETE.
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: wrapped-project-e2e
+  namespace: knodex-system
+  annotations:
+    knodex.io/description: "Minimal wrapper RGD fixture for E2E testing"
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: WrappedProjectE2E
+    spec:
+      description: "string | default=\"\""
+      destinations: "[]map[string]string | default=[]"
+      sourceRepos: "[]string | default=[]"
+      roles: "[]map[string]any | default=[]"
+  resources:
+    - id: project
+      template:
+        apiVersion: knodex.io/v1alpha1
+        kind: Project
+        metadata:
+          name: ${schema.metadata.name}
+          namespace: knodex-system
+          annotations:
+            # CRITICAL authoring requirement: this annotation is read by Knodex to
+            # route PATCH/DELETE through the wrapper instance rather than directly.
+            knodex.io/wrapper-rgd-instance: ${schema.metadata.name}
+        spec:
+          description: ${schema.spec.description}
+          destinations: ${schema.spec.destinations}
+          sourceRepos: ${schema.spec.sourceRepos}
+          roles: ${schema.spec.roles}
+    - id: bootstrapConfig
+      template:
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: wrapped-defaults-${schema.metadata.name}
+          namespace: knodex-system
+        data:
+          project: ${schema.metadata.name}

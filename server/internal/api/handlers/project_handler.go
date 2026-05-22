@@ -16,6 +16,7 @@ import (
 	"github.com/knodex/knodex/server/internal/api/response"
 	"github.com/knodex/knodex/server/internal/audit"
 	"github.com/knodex/knodex/server/internal/rbac"
+	"github.com/knodex/knodex/server/internal/services/wrapper"
 	"github.com/knodex/knodex/server/internal/util/collection"
 )
 
@@ -32,15 +33,25 @@ type ProjectHandler struct {
 	projectService rbac.ProjectServiceInterface
 	policyEnforcer ProjectHandlerEnforcer
 	recorder       audit.Recorder
+	wrapperHelpers *wrapper.Helpers // optional: wrapper-RGD routing for CRUD
 }
 
-// NewProjectHandler creates a new project handler
+// NewProjectHandler creates a new project handler.
+// wrapperHelpers may be nil; when nil, all CRUD operations use the direct
+// (non-wrapper) path. This preserves OSS-build behavior when the wrapper
+// services have not been initialized.
 func NewProjectHandler(projectService rbac.ProjectServiceInterface, policyEnforcer ProjectHandlerEnforcer, recorder audit.Recorder) *ProjectHandler {
 	return &ProjectHandler{
 		projectService: projectService,
 		policyEnforcer: policyEnforcer,
 		recorder:       recorder,
 	}
+}
+
+// SetWrapperHelpers installs the wrapper-routing helper.
+// Optional — when unset, ProjectHandler operates as if no wrappers were registered.
+func (h *ProjectHandler) SetWrapperHelpers(wh *wrapper.Helpers) {
+	h.wrapperHelpers = wh
 }
 
 // ListProjects handles GET /api/v1/projects
@@ -278,6 +289,18 @@ func (h *ProjectHandler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Wrapper-RGD routing: if an operator has registered a wrapper RGD for Kind=Project,
+	// create the wrapper instance instead of the Project CRD directly. The wrapper RGD's
+	// resources list owns Project materialization (kro controller stamps everything,
+	// including the marker annotation on the resulting Project).
+	if h.wrapperHelpers != nil {
+		if rgdName, ok := h.wrapperHelpers.LookupWrapper(wrapper.KindProject); ok {
+			if handled := h.createProjectViaWrapper(w, r, ctx, req, userCtx, rgdName, requestID); handled {
+				return
+			}
+		}
+	}
+
 	// Convert request to ProjectSpec
 	spec := toProjectSpec(req)
 
@@ -465,6 +488,16 @@ func (h *ProjectHandler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Wrapper-RGD routing for UPDATE: when the Project carries the marker annotation,
+	// route the PATCH at the wrapper-instance spec. kro reconciles the bundle from there.
+	if h.wrapperHelpers != nil && wrapper.IsWrapped(project.ObjectMeta.Annotations) {
+		if handled := h.updateProjectViaWrapper(w, r, ctx, name, req, userCtx, project.ObjectMeta.Annotations, requestID); handled {
+			return
+		}
+		// Self-heal fallback: marker present but registry entry was removed.
+		// Continue with direct project update so callers don't see a hard failure.
+	}
+
 	// Capture old state BEFORE mutation for audit change tracking
 	oldDescription := project.Spec.Description
 	oldDestinations := make([]string, len(project.Spec.Destinations))
@@ -628,8 +661,10 @@ func (h *ProjectHandler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// STORY-414: Reap namespaces on bound clusters before project deletion.
-	// Never blocks deletion — failures are logged and project proceeds to deletion.
-	// Remove project policies from enforcer before deletion
+	// Runs unconditionally before wrapper routing so Casbin policies are removed
+	// eagerly regardless of whether kro or the direct path handles the actual
+	// resource deletion. Never blocks deletion — failures are logged and the
+	// delete continues.
 	if h.policyEnforcer != nil {
 		if err := h.policyEnforcer.RemoveProjectPolicies(ctx, name); err != nil {
 			slog.Warn("failed to remove project policies",
@@ -639,6 +674,16 @@ func (h *ProjectHandler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 			)
 			// Continue with deletion
 		}
+	}
+
+	// Wrapper-RGD routing for DELETE: when the Project carries the marker annotation,
+	// delete the owning wrapper-RGD instance. kro garbage-collects the rest of the bundle.
+	if h.wrapperHelpers != nil && projectSnapshot != nil && wrapper.IsWrapped(projectSnapshot.ObjectMeta.Annotations) {
+		if handled := h.deleteProjectViaWrapper(w, r, ctx, name, userCtx, projectSnapshot, requestID,
+			deleteDescription, deleteDestsCount, deleteRolesCount); handled {
+			return
+		}
+		// Self-heal fallback: continue with direct delete.
 	}
 
 	// Delete the project

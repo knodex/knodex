@@ -56,6 +56,35 @@ jobs:
           helm dependency build deploy/charts/knodex
           helm template knodex deploy/charts/knodex --values deploy/charts/knodex/values.yaml > /dev/null
 
+      - name: Verify resource-wrappers ConfigMap renders
+        run: |
+          set -euo pipefail
+          # Default values: ConfigMap rendered unconditionally with empty array.
+          rendered_default=$(helm template knodex deploy/charts/knodex --show-only templates/resource-wrappers-configmap.yaml)
+          if ! echo "$rendered_default" | grep -q "name: knodex-resource-wrappers"; then
+            echo "::error::default render did not produce the knodex-resource-wrappers ConfigMap"
+            echo "$rendered_default"
+            exit 1
+          fi
+          if ! echo "$rendered_default" | grep -q "knodex.io/config-type: resource-wrappers"; then
+            echo "::error::default render missing knodex.io/config-type label"
+            exit 1
+          fi
+          # With a Project wrapper configured, the rendered JSON must contain the rgdName.
+          rendered_with=$(helm template knodex deploy/charts/knodex \
+            --show-only templates/resource-wrappers-configmap.yaml \
+            --set 'server.project.wrapperRGD=wrapped-project-v1')
+          if ! echo "$rendered_with" | grep -q "wrapped-project-v1"; then
+            echo "::error::wrapper render missing wrapped-project-v1"
+            echo "$rendered_with"
+            exit 1
+          fi
+          if ! echo "$rendered_with" | grep -q '"kind"'; then
+            echo "::error::wrapper render missing kind field"
+            echo "$rendered_with"
+            exit 1
+          fi
+
       - name: Verify LOCAL_LOGIN_ENABLED env injection (default + disabled fixture)
         run: |
           set -euo pipefail

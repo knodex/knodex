@@ -206,6 +206,17 @@ server:
         podsValue: 2
         periodSeconds: 15
 
+  project:
+    # -- Name of the kro ResourceGraphDefinition to use as a wrapper for Project
+    # creation. When set, POST /api/v1/projects creates a kro RGD instance
+    # instead of a Project CRD directly; the wrapper RGD materializes the full
+    # bundle (Project + any operator-defined bootstrap extras). Leave empty to
+    # use direct Project creation (default behavior).
+    # Can also be set at runtime via PUT /api/v1/settings/wrappers/Project.
+    # See deploy/examples/rgds/wrapped-project-example.yaml for authoring guide.
+    wrapperRGD: ""
+    # wrapperRGD: wrapped-project-v1
+
   # -- Authentication configuration
   auth:
     # Admin username (password is auto-generated)
