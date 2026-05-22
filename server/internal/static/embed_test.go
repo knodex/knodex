@@ -61,18 +61,54 @@ func TestSPAHandler_FallsBackToIndexHTML(t *testing.T) {
 	}
 }
 
-func TestSPAHandler_ServesGitkeep(t *testing.T) {
+func TestSPAHandler_MissingAssetReturns404(t *testing.T) {
 	t.Parallel()
 
 	handler := SPAHandler()
 
-	// .gitkeep exists as a real file in the dist directory
-	req := httptest.NewRequest("GET", "/.gitkeep", nil)
+	// Requests for missing JS/CSS/etc. assets must NOT fall back to index.html —
+	// the browser would receive HTML where it expects JS, triggering
+	// "'text/html' is not a valid JavaScript MIME type" errors.
+	cases := []string{
+		"/assets/nonexistent-abc123.js",
+		"/assets/nonexistent-abc123.css",
+		"/assets/nonexistent.map",
+		"/missing.svg",
+	}
+
+	for _, path := range cases {
+		t.Run(path, func(t *testing.T) {
+			req := httptest.NewRequest("GET", path, nil)
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, req)
+
+			if w.Code != http.StatusNotFound {
+				t.Errorf("expected status 404 for missing asset %q, got %d", path, w.Code)
+			}
+
+			contentType := w.Header().Get("Content-Type")
+			if strings.Contains(contentType, "text/html") && strings.Contains(w.Body.String(), "<div id=\"root\">") {
+				t.Errorf("expected NOT to serve SPA index.html for missing asset %q (Content-Type=%q)", path, contentType)
+			}
+		})
+	}
+}
+
+func TestSPAHandler_ServesRealFile(t *testing.T) {
+	t.Parallel()
+
+	handler := SPAHandler()
+
+	req := httptest.NewRequest("GET", "/favicon.svg", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected status 200, got %d", w.Code)
+	}
+	contentType := w.Header().Get("Content-Type")
+	if !strings.Contains(contentType, "image/svg") {
+		t.Errorf("expected SVG content type, got %q", contentType)
 	}
 }
 
