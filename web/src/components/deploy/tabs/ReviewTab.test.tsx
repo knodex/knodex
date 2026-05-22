@@ -9,7 +9,7 @@ import type { DeployTab } from "@/lib/build-tabs";
 import type { ComplianceValidateViolation } from "@/api/compliance";
 
 const SAMPLE_TABS: DeployTab[] = [
-  { id: "basics", kind: "basics", label: "Basics" },
+  { id: "general", kind: "general", label: "General" },
   { id: "review", kind: "review", label: "Review + Deploy" },
 ];
 
@@ -101,7 +101,7 @@ describe("ReviewTab", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("omits namespace row in Basics card when cluster-scoped", () => {
+  it("omits namespace row in the General card when cluster-scoped", () => {
     function ClusterScopedHarness() {
       const methods = useForm({
         defaultValues: {
@@ -128,7 +128,7 @@ describe("ReviewTab", () => {
       );
     }
     render(<ClusterScopedHarness />);
-    expect(screen.getByTestId("review-card-basics")).toBeInTheDocument();
+    expect(screen.getByTestId("review-card-general")).toBeInTheDocument();
     expect(screen.queryByText("Namespace")).not.toBeInTheDocument();
   });
 

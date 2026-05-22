@@ -242,19 +242,18 @@ async function navigateToDeployForm(page: import('@playwright/test').Page) {
   await expect(deployButton).toBeVisible({ timeout: 10000 })
   await deployButton.click()
 
-  // Step 1: Basics tab — fill instance name, select project & namespace
+  // General tab (merged plumbing + scalars) — fill instance name + namespace.
+  // Post-refactor there's no separate Basics tab to advance away from; scalars
+  // live on this same tab.
   await page.waitForURL(/\/deploy\//, { timeout: 10000 })
-  await expect(page.getByTestId('deploy-tab-basics')).toBeVisible({ timeout: 15000 })
+  await expect(page.getByTestId('deploy-tab-general')).toBeVisible({ timeout: 15000 })
+  await expect(page.getByTestId('deploy-tab-general')).toHaveAttribute('data-state', 'active')
   await page.getByTestId('instance-name-input').fill('test-deploy')
 
   // Project auto-selects when only one exists; select namespace
   const nsSelect = page.getByTestId('namespace-select')
   await expect(nsSelect).toBeEnabled({ timeout: 5000 })
   await selectShadcnOption(nsSelect, 'default')
-
-  // Advance to Configure step
-  await page.getByTestId('deploy-footer-next').click()
-  await expect(page.getByTestId('deploy-tab-general')).toHaveAttribute('data-state', 'active')
 }
 
 /**

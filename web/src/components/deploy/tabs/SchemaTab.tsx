@@ -5,7 +5,7 @@ import { useMemo } from "react";
 import { useWatch, useFormContext } from "react-hook-form";
 import type { DeployTab } from "@/lib/build-tabs";
 import { orderEntries } from "@/lib/order-properties";
-import { FormField } from "@/components/deploy/FormField";
+import { renderFlattenableField } from "@/components/deploy/tabs/render-flattenable-field";
 
 interface SchemaTabProps {
   tab: DeployTab;
@@ -13,7 +13,8 @@ interface SchemaTabProps {
 
 export function SchemaTab({ tab }: SchemaTabProps) {
   const { control } = useFormContext();
-  const deploymentNamespace = (useWatch({ control, name: "namespace" }) as string | undefined) ?? "";
+  const deploymentNamespace =
+    (useWatch({ control, name: "namespace" }) as string | undefined) ?? "";
   const requiredSet = useMemo(
     () => new Set(tab.required ?? []),
     [tab.required]
@@ -24,21 +25,20 @@ export function SchemaTab({ tab }: SchemaTabProps) {
     [tab.properties, tab.propertyOrder]
   );
 
-  // For the General tab use bare keys; for object-typed tabs nest under tab.id.
-  const fieldName = (key: string) =>
-    tab.kind === "general" ? key : `${tab.id}.${key}`;
+  // General-kind tabs use bare keys (no prefix); object tabs nest under tab.id.
+  const parentName = tab.kind === "general" ? "" : tab.id;
 
   return (
     <div className="space-y-4" data-testid={`schema-tab-${tab.id}`}>
-      {ordered.map(([key, prop]) => (
-        <FormField
-          key={`${tab.id}-${key}`}
-          name={fieldName(key)}
-          property={prop}
-          required={requiredSet.has(key)}
-          deploymentNamespace={deploymentNamespace}
-        />
-      ))}
+      {ordered.flatMap(([key, prop]) =>
+        renderFlattenableField({
+          parentName,
+          key,
+          prop,
+          required: requiredSet.has(key),
+          deploymentNamespace,
+        })
+      )}
     </div>
   );
 }

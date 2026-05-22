@@ -18,21 +18,36 @@ function makeSchema(overrides: Partial<FormSchema>): FormSchema {
 }
 
 describe("buildTabsFromSchema", () => {
-  it("returns [basics, review] for empty/null schema", () => {
+  it("returns [general, review] for empty/null schema", () => {
     expect(buildTabsFromSchema(null).map((t) => t.id)).toEqual([
-      "basics",
+      "general",
       "review",
     ]);
     expect(buildTabsFromSchema(undefined).map((t) => t.id)).toEqual([
-      "basics",
+      "general",
       "review",
     ]);
     expect(
       buildTabsFromSchema(makeSchema({ properties: {} })).map((t) => t.id)
-    ).toEqual(["basics", "review"]);
+    ).toEqual(["general", "review"]);
   });
 
-  it("produces [basics, general, review] for scalars-only schemas", () => {
+  it("General is always the first tab", () => {
+    const schema = makeSchema({
+      properties: {
+        replicas: { type: "integer" },
+        networking: {
+          type: "object",
+          properties: { port: { type: "integer" } },
+        },
+      },
+    });
+    const tabs = buildTabsFromSchema(schema);
+    expect(tabs[0].id).toBe("general");
+    expect(tabs[0].kind).toBe("general");
+  });
+
+  it("sweeps scalars into the General tab", () => {
     const schema = makeSchema({
       properties: {
         name: { type: "string" },
@@ -40,15 +55,14 @@ describe("buildTabsFromSchema", () => {
       },
     });
     const tabs = buildTabsFromSchema(schema);
-    expect(tabs.map((t) => t.id)).toEqual(["basics", "general", "review"]);
-    expect(tabs[1].kind).toBe("general");
-    expect(Object.keys(tabs[1].properties ?? {}).sort()).toEqual([
+    expect(tabs.map((t) => t.id)).toEqual(["general", "review"]);
+    expect(Object.keys(tabs[0].properties ?? {}).sort()).toEqual([
       "name",
       "replicas",
     ]);
   });
 
-  it("emits one tab per object key when no scalars", () => {
+  it("emits one tab per object key alongside an empty General tab", () => {
     const networking: FormProperty = {
       type: "object",
       properties: { port: { type: "integer" } },
@@ -61,14 +75,14 @@ describe("buildTabsFromSchema", () => {
       properties: { networking, storage },
     });
     expect(buildTabsFromSchema(schema).map((t) => t.id)).toEqual([
-      "basics",
+      "general",
       "networking",
       "storage",
       "review",
     ]);
   });
 
-  it("mixes general + object tabs", () => {
+  it("mixes scalars and object tabs", () => {
     const schema = makeSchema({
       properties: {
         name: { type: "string" },
@@ -79,7 +93,6 @@ describe("buildTabsFromSchema", () => {
       },
     });
     expect(buildTabsFromSchema(schema).map((t) => t.id)).toEqual([
-      "basics",
       "general",
       "networking",
       "review",
@@ -96,7 +109,7 @@ describe("buildTabsFromSchema", () => {
       propertyOrder: ["b", "a"],
     });
     expect(buildTabsFromSchema(schema).map((t) => t.id)).toEqual([
-      "basics",
+      "general",
       "b",
       "a",
       "c",
@@ -118,10 +131,10 @@ describe("buildTabsFromSchema", () => {
       },
     });
     const ids = buildTabsFromSchema(schema).map((t) => t.id);
-    expect(ids).toEqual(["basics", "advanced", "networking", "review"]);
+    expect(ids).toEqual(["general", "advanced", "networking", "review"]);
   });
 
-  it("filters reserved Basics keys from the General tab", () => {
+  it("filters reserved Knodex plumbing keys from the General tab properties", () => {
     const schema = makeSchema({
       properties: {
         namespace: { type: "string" },
@@ -143,10 +156,6 @@ describe("buildTabsFromSchema", () => {
   it("prefixes colliding object tab ids with 'rgd-'", () => {
     const schema = makeSchema({
       properties: {
-        basics: {
-          type: "object",
-          properties: { foo: { type: "string" } },
-        },
         general: {
           type: "object",
           properties: { foo: { type: "string" } },
@@ -158,16 +167,10 @@ describe("buildTabsFromSchema", () => {
       },
     });
     const ids = buildTabsFromSchema(schema).map((t) => t.id);
-    expect(ids).toEqual([
-      "basics",
-      "rgd-basics",
-      "rgd-general",
-      "rgd-review",
-      "review",
-    ]);
+    expect(ids).toEqual(["general", "rgd-general", "rgd-review", "review"]);
   });
 
-  it("populates required from prop.required for object tabs and filters scalar required for General", () => {
+  it("populates required from prop.required for object tabs and filters General required to general keys", () => {
     const networking: FormProperty = {
       type: "object",
       properties: {
@@ -200,9 +203,12 @@ describe("buildTabsFromSchema", () => {
       },
     });
     const ids = buildTabsFromSchema(schema).map((t) => t.id);
-    expect(ids).toEqual(["basics", "general", "review"]);
+    expect(ids).toEqual(["general", "review"]);
     const general = buildTabsFromSchema(schema).find((t) => t.id === "general");
-    expect(Object.keys(general?.properties ?? {})).toEqual(["advanced", "replicas"]);
+    expect(Object.keys(general?.properties ?? {})).toEqual([
+      "advanced",
+      "replicas",
+    ]);
   });
 
   it("labels object tabs with prop.title when set, else formatLabel(key)", () => {
@@ -226,5 +232,123 @@ describe("buildTabsFromSchema", () => {
     expect(tabs.find((t) => t.id === "databaseConnection")?.label).toBe(
       "Database Connection"
     );
+  });
+
+  // --- externalRef folding (top-level → General, nested → owning tab) ---
+
+  it("folds top-level externalRef object into the General tab (no separate tab)", () => {
+    const externalRef: FormProperty = {
+      type: "object",
+      properties: {
+        cluster: {
+          type: "object",
+          properties: {
+            name: { type: "string" },
+            namespace: { type: "string" },
+          },
+        },
+      },
+    };
+    const schema = makeSchema({
+      properties: {
+        externalRef,
+        minNodes: { type: "integer" },
+      },
+    });
+    const tabs = buildTabsFromSchema(schema);
+    expect(tabs.map((t) => t.id)).toEqual(["general", "review"]);
+    const general = tabs.find((t) => t.id === "general");
+    expect(general?.properties).toBeDefined();
+    expect(Object.keys(general?.properties ?? {}).sort()).toEqual([
+      "externalRef",
+      "minNodes",
+    ]);
+    expect(general?.properties?.externalRef.type).toBe("object");
+  });
+
+  it("does NOT create an 'externalRef' tab even when it's the only top-level property", () => {
+    const schema = makeSchema({
+      properties: {
+        externalRef: {
+          type: "object",
+          properties: {
+            cluster: {
+              type: "object",
+              properties: {
+                name: { type: "string" },
+                namespace: { type: "string" },
+              },
+            },
+          },
+        },
+      },
+    });
+    expect(buildTabsFromSchema(schema).map((t) => t.id)).toEqual([
+      "general",
+      "review",
+    ]);
+  });
+
+  it("keeps nested externalRef under its owning object tab (not folded into General)", () => {
+    const db: FormProperty = {
+      type: "object",
+      properties: {
+        host: { type: "string" },
+        externalRef: {
+          type: "object",
+          properties: {
+            secret: {
+              type: "object",
+              properties: {
+                name: { type: "string" },
+                namespace: { type: "string" },
+              },
+            },
+          },
+        },
+      },
+    };
+    const schema = makeSchema({
+      properties: { db, replicas: { type: "integer" } },
+    });
+    const tabs = buildTabsFromSchema(schema);
+    expect(tabs.map((t) => t.id)).toEqual(["general", "db", "review"]);
+
+    const general = tabs.find((t) => t.id === "general");
+    // Nested externalRef stays where it is — not surfaced at the General level.
+    expect(Object.keys(general?.properties ?? {})).toEqual(["replicas"]);
+    expect(general?.properties?.externalRef).toBeUndefined();
+
+    // It remains inside the `db` tab's properties.
+    const dbTab = tabs.find((t) => t.id === "db");
+    expect(Object.keys(dbTab?.properties ?? {}).sort()).toEqual([
+      "externalRef",
+      "host",
+    ]);
+  });
+
+  it("respects propertyOrder when externalRef is folded into General", () => {
+    const schema = makeSchema({
+      properties: {
+        externalRef: {
+          type: "object",
+          properties: {
+            cluster: {
+              type: "object",
+              properties: { name: { type: "string" } },
+            },
+          },
+        },
+        minNodes: { type: "integer" },
+        maxNodes: { type: "integer" },
+      },
+      propertyOrder: ["externalRef", "minNodes", "maxNodes"],
+    });
+    const general = buildTabsFromSchema(schema).find((t) => t.id === "general");
+    expect(general?.propertyOrder).toEqual([
+      "externalRef",
+      "minNodes",
+      "maxNodes",
+    ]);
   });
 });

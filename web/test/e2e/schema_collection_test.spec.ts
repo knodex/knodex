@@ -314,7 +314,7 @@ test.describe('Schema Collection — Per-RGD Schema Retrieval', () => {
 
     // Wait for the schema to be fetched (deploy page initialization triggers useRGDSchema)
     await page.waitForURL(/\/deploy\//, { timeout: 10000 })
-    await expect(page.getByTestId('deploy-tab-basics')).toBeVisible({ timeout: 15000 })
+    await expect(page.getByTestId('deploy-tab-general')).toBeVisible({ timeout: 15000 })
 
     // Verify schema was fetched with correct structure
     expect(capturedSchemaResponse).toBeDefined()
@@ -558,7 +558,7 @@ test.describe('Schema Collection — Conditional Sections and SecretRefs', () =>
 
     // Step 1: Basics tab — fill instance name, select project & namespace
     await page.waitForURL(/\/deploy\//, { timeout: 10000 })
-    await expect(page.getByTestId('deploy-tab-basics')).toBeVisible({ timeout: 15000 })
+    await expect(page.getByTestId('deploy-tab-general')).toBeVisible({ timeout: 15000 })
     await page.getByTestId('instance-name-input').fill('test-deploy')
     const nsSelect = page.getByTestId('namespace-select')
     await expect(nsSelect).toBeEnabled({ timeout: 5000 })
@@ -708,7 +708,7 @@ test.describe('Schema Collection — Conditional Sections and SecretRefs', () =>
     await expect(deployBtn1).toBeVisible({ timeout: 10000 })
     await deployBtn1.click()
     await page.waitForURL(/\/deploy\//, { timeout: 10000 })
-    await expect(page.getByTestId('deploy-tab-basics')).toBeVisible({ timeout: 15000 })
+    await expect(page.getByTestId('deploy-tab-general')).toBeVisible({ timeout: 15000 })
 
     // Navigate back to catalog and then to second RGD
     await page.goto('/catalog/redis-cache')
@@ -719,7 +719,7 @@ test.describe('Schema Collection — Conditional Sections and SecretRefs', () =>
     await expect(deployBtn2).toBeVisible({ timeout: 10000 })
     await deployBtn2.click()
     await page.waitForURL(/\/deploy\//, { timeout: 10000 })
-    await expect(page.getByTestId('deploy-tab-basics')).toBeVisible({ timeout: 15000 })
+    await expect(page.getByTestId('deploy-tab-general')).toBeVisible({ timeout: 15000 })
 
     await page.screenshot({
       path: `${SCREENSHOT_DIR}/schema-collection-06-multi-rgd.png`,

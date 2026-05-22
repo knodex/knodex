@@ -16,17 +16,31 @@ import { useProjects } from "@/hooks/useProjects";
 import { useProjectNamespaces } from "@/hooks/useNamespaces";
 import { useRepositories } from "@/hooks/useRepositories";
 import { validateInstanceName } from "@/lib/validate-instance-name";
+import { orderEntries } from "@/lib/order-properties";
+import type { DeployTab } from "@/lib/build-tabs";
 import type { FormSchema } from "@/types/rgd";
 import type { DeploymentMode } from "@/types/deployment";
 import { DeploymentModeSelector } from "@/components/deploy/DeploymentModeSelector";
+import { renderFlattenableField } from "@/components/deploy/tabs/render-flattenable-field";
 
-interface BasicsTabProps {
+interface GeneralTabProps {
   schema: FormSchema;
+  tab: DeployTab;
   /** Allowed deployment modes (from RGD annotations). */
   allowedDeploymentModes?: DeploymentMode[];
 }
 
-export const BasicsTab = memo(function BasicsTab({ schema, allowedDeploymentModes }: BasicsTabProps) {
+/**
+ * The General tab merges what were two tabs in the original spec — "Basics"
+ * (Knodex-owned plumbing) and an auto-generated "General" (RGD top-level
+ * scalars). It also hosts the top-level `externalRef` object (folded in via
+ * `build-tabs.ts`), rendered inline as a nested section.
+ */
+export const GeneralTab = memo(function GeneralTab({
+  schema,
+  tab,
+  allowedDeploymentModes,
+}: GeneralTabProps) {
   const form = useFormContext();
   const nameId = useId();
   const projectId = useId();
@@ -58,25 +72,22 @@ export const BasicsTab = memo(function BasicsTab({ schema, allowedDeploymentMode
     name: "deploymentMode",
   }) as DeploymentMode | undefined;
 
-  const repositoryIdValue = (useWatch({
-    control: form.control,
-    name: "repositoryId",
-  }) as string | undefined) ?? "";
+  const repositoryIdValue =
+    (useWatch({ control: form.control, name: "repositoryId" }) as
+      | string
+      | undefined) ?? "";
 
-  const gitBranchValue = (useWatch({
-    control: form.control,
-    name: "gitBranch",
-  }) as string | undefined) ?? "";
+  const gitBranchValue =
+    (useWatch({ control: form.control, name: "gitBranch" }) as
+      | string
+      | undefined) ?? "";
 
-  const gitPathValue = (useWatch({
-    control: form.control,
-    name: "gitPath",
-  }) as string | undefined) ?? "";
+  const gitPathValue =
+    (useWatch({ control: form.control, name: "gitPath" }) as
+      | string
+      | undefined) ?? "";
 
   // Clear GitOps-only fields when switching to direct mode.
-  // NOTE: `form.unregister` is a stable function reference from RHF — safe dep.
-  // Using the whole `form` object would cause a loop because FormProvider spreads
-  // a new context object on every parent render, while the inner methods stay stable.
   const { unregister } = form;
   useEffect(() => {
     if (deploymentMode === "direct") {
@@ -86,9 +97,11 @@ export const BasicsTab = memo(function BasicsTab({ schema, allowedDeploymentMode
 
   // Validate the current namespace against the fetched list whenever either
   // changes. zodResolver owns validation, so a Controller `rules.validate`
-  // would be ignored — this useEffect restores the cross-field check that
-  // existed when these were native <select> elements with RHF register().
-  const currentNamespace = useWatch({ control: form.control, name: "namespace" }) as string | undefined;
+  // would be ignored.
+  const currentNamespace = useWatch({
+    control: form.control,
+    name: "namespace",
+  }) as string | undefined;
   const { setError, clearErrors } = form;
   useEffect(() => {
     if (isClusterScoped) return;
@@ -118,8 +131,20 @@ export const BasicsTab = memo(function BasicsTab({ schema, allowedDeploymentMode
       ? "No namespaces available"
       : "Select a namespace";
 
+  // Schema-driven properties owned by this tab (scalars + top-level externalRef).
+  const requiredSet = useMemo(
+    () => new Set(tab.required ?? []),
+    [tab.required]
+  );
+  const orderedSchemaEntries = useMemo(
+    () => orderEntries(Object.entries(tab.properties ?? {}), tab.propertyOrder),
+    [tab.properties, tab.propertyOrder]
+  );
+
+  const deploymentNamespace = currentNamespace ?? "";
+
   return (
-    <div className="space-y-5" data-testid="basics-tab">
+    <div className="space-y-5" data-testid="general-tab">
       {/* Instance Name */}
       <div className="space-y-1.5">
         <Label htmlFor={nameId}>
@@ -131,10 +156,14 @@ export const BasicsTab = memo(function BasicsTab({ schema, allowedDeploymentMode
           placeholder="my-instance"
           autoComplete="off"
           spellCheck={false}
-          aria-describedby={instanceNameError ? `${nameId}-error` : `${nameId}-hint`}
+          aria-describedby={
+            instanceNameError ? `${nameId}-error` : `${nameId}-hint`
+          }
           {...form.register("instanceName", {
             validate: (value: unknown) => {
-              const err = validateInstanceName(typeof value === "string" ? value : "");
+              const err = validateInstanceName(
+                typeof value === "string" ? value : ""
+              );
               return err === "" ? true : err;
             },
           })}
@@ -164,21 +193,24 @@ export const BasicsTab = memo(function BasicsTab({ schema, allowedDeploymentMode
               onValueChange={(value) => {
                 field.onChange(value);
                 form.setValue("namespace", "");
-                // setValue alone leaves the stale "required" error visible
-                // until the user touches the namespace field again.
                 form.clearErrors("namespace");
               }}
               onOpenChange={(open) => {
                 if (!open) field.onBlur();
               }}
             >
-              <SelectTrigger id={projectId} data-testid="project-select" className="h-9">
+              <SelectTrigger
+                id={projectId}
+                data-testid="project-select"
+                className="h-9"
+              >
                 <SelectValue placeholder="Select a project" />
               </SelectTrigger>
               <SelectContent>
                 {projects.map((p) => (
                   <SelectItem key={p.name} value={p.name}>
-                    {p.name}{p.description ? ` — ${p.description}` : ""}
+                    {p.name}
+                    {p.description ? ` — ${p.description}` : ""}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -212,7 +244,11 @@ export const BasicsTab = memo(function BasicsTab({ schema, allowedDeploymentMode
                 }}
                 disabled={!selectedProject || namespaces.length === 0}
               >
-                <SelectTrigger id={nsId} data-testid="namespace-select" className="h-9">
+                <SelectTrigger
+                  id={nsId}
+                  data-testid="namespace-select"
+                  className="h-9"
+                >
                   <SelectValue placeholder={nsPlaceholder} />
                 </SelectTrigger>
                 <SelectContent>
@@ -226,7 +262,9 @@ export const BasicsTab = memo(function BasicsTab({ schema, allowedDeploymentMode
             )}
           />
           {namespaceError ? (
-            <p className="text-xs text-[var(--status-error)]">{namespaceError}</p>
+            <p className="text-xs text-[var(--status-error)]">
+              {namespaceError}
+            </p>
           ) : (
             <p className="text-xs text-[var(--text-muted)]">
               Target namespace for this deployment
@@ -236,7 +274,10 @@ export const BasicsTab = memo(function BasicsTab({ schema, allowedDeploymentMode
       )}
 
       {/* Deployment Mode + GitOps fields */}
-      <div className="pt-2 border-t" style={{ borderColor: "rgba(255,255,255,0.06)" }}>
+      <div
+        className="pt-2 border-t"
+        style={{ borderColor: "rgba(255,255,255,0.06)" }}
+      >
         <Controller
           control={form.control}
           name="deploymentMode"
@@ -258,6 +299,30 @@ export const BasicsTab = memo(function BasicsTab({ schema, allowedDeploymentMode
         />
       </div>
 
+      {/* Schema-driven fields (RGD top-level scalars + folded externalRef).
+        * For keys in TOP_LEVEL_GENERAL_OBJECT_KEYS (e.g. `externalRef`), we
+        * flatten one level — render each child directly so the form shows the
+        * child's own label (e.g. "Cluster") + picker without an outer
+        * "External Ref" header or extra indentation. Nested externalRef (under
+        * an object tab) is unaffected because this only applies at General. */}
+      {orderedSchemaEntries.length > 0 && (
+        <div
+          className="pt-4 border-t space-y-4"
+          style={{ borderColor: "rgba(255,255,255,0.06)" }}
+          data-testid="general-tab-schema-fields"
+        >
+          {orderedSchemaEntries.flatMap(([key, prop]) =>
+            renderFlattenableField({
+              parentName: "",
+              key,
+              prop,
+              required: requiredSet.has(key),
+              deploymentNamespace,
+            })
+          )}
+        </div>
+      )}
     </div>
   );
 });
+

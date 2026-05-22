@@ -36,7 +36,7 @@ import type { RGDListItem } from "@/types/rgd";
 import { DiscardDialog } from "@/components/deploy/discard-dialog";
 import { DeployTabs } from "@/components/deploy/DeployTabs";
 import { DeployActionFooter } from "@/components/deploy/DeployActionFooter";
-import { BasicsTab } from "@/components/deploy/tabs/BasicsTab";
+import { GeneralTab } from "@/components/deploy/tabs/GeneralTab";
 import { SchemaTab } from "@/components/deploy/tabs/SchemaTab";
 import { ReviewTab } from "@/components/deploy/tabs/ReviewTab";
 
@@ -184,7 +184,7 @@ function DeployPageContent({
   const activeTabId = useMemo(() => {
     const fromHash = location.hash.replace(/^#/, "");
     if (fromHash && tabs.some((t) => t.id === fromHash)) return fromHash;
-    return tabs[0]?.id ?? "basics";
+    return tabs[0]?.id ?? "general";
   }, [location.hash, tabs]);
 
   const setActiveTab = useCallback(
@@ -224,7 +224,7 @@ function DeployPageContent({
 
   // Re-run compliance + preflight when entering Review tab or when form values change.
   // Using form.watch subscription (non-render) avoids re-rendering DeployPageContent on
-  // every keystroke, which would propagate to BasicsTab and cause Radix Select's SlotClone
+  // every keystroke, which would propagate to GeneralTab and cause Radix Select's SlotClone
   // to create a new composeRefs function every render (triggering an infinite setState loop).
   useEffect(() => {
     if (activeTabId !== "review") return;
@@ -385,13 +385,17 @@ function DeployPageContent({
     let fieldsToValidate: string[] = [];
 
     switch (currentTab.kind) {
-      case "basics":
-        fieldsToValidate = ["instanceName", "project"];
-        if (!isClusterScoped) fieldsToValidate.push("namespace");
+      case "general": {
+        // General owns Knodex plumbing fields PLUS top-level RGD scalars
+        // (and the folded-in top-level `externalRef` object, if present).
+        const knodex = ["instanceName", "project"];
+        if (!isClusterScoped) knodex.push("namespace");
+        fieldsToValidate = [
+          ...knodex,
+          ...Object.keys(currentTab.properties ?? {}),
+        ];
         break;
-      case "general":
-        fieldsToValidate = Object.keys(currentTab.properties ?? {});
-        break;
+      }
       case "schema":
         fieldsToValidate = Object.keys(currentTab.properties ?? {}).map(
           (k) => `${currentTab.id}.${k}`
@@ -465,13 +469,14 @@ function DeployPageContent({
               borderColor: "rgba(255,255,255,0.06)",
             }}
           >
-            {activeTab?.kind === "basics" && (
-              <BasicsTab
+            {activeTab?.kind === "general" && (
+              <GeneralTab
                 schema={schema}
+                tab={activeTab}
                 allowedDeploymentModes={rgd?.allowedDeploymentModes}
               />
             )}
-            {(activeTab?.kind === "general" || activeTab?.kind === "schema") && (
+            {activeTab?.kind === "schema" && (
               <SchemaTab tab={activeTab} />
             )}
             {activeTab?.kind === "review" && (

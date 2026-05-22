@@ -47,14 +47,17 @@ export function ReviewTab({
   const { watch } = useFormContext();
   const values = watch() as Record<string, unknown>;
 
-  const basicsRows = useMemo(() => {
+  const knodexRows = useMemo(() => {
     const rows: Array<[string, unknown]> = [
       ["Instance Name", values.instanceName],
       ["Project", values.project],
     ];
     if (!isClusterScoped) rows.push(["Namespace", values.namespace]);
     rows.push(["Deployment Mode", values.deploymentMode]);
-    if (values.deploymentMode === "gitops" || values.deploymentMode === "hybrid") {
+    if (
+      values.deploymentMode === "gitops" ||
+      values.deploymentMode === "hybrid"
+    ) {
       rows.push(["Repository", values.repositoryId]);
       rows.push(["Branch", values.gitBranch]);
       rows.push(["Path", values.gitPath]);
@@ -63,44 +66,25 @@ export function ReviewTab({
   }, [values, isClusterScoped]);
 
   const schemaCards = useMemo(
-    () =>
-      tabs.filter((t) => t.kind === "general" || t.kind === "schema"),
+    () => tabs.filter((t) => t.kind === "general" || t.kind === "schema"),
     [tabs]
   );
 
   return (
     <div className="space-y-4" data-testid="review-tab">
-      {/* Basics card */}
-      <SectionCard
-        title="Basics"
-        onEdit={() => onEditTab("basics")}
-        testid="review-card-basics"
-      >
-        {basicsRows.map(([label, value]) => (
-          <div
-            key={label}
-            className="flex items-center justify-between text-sm"
-          >
-            <span className="text-[var(--text-secondary)]">{label}</span>
-            <span className="font-mono text-xs text-[var(--text-primary)]">
-              {renderValue(value)}
-            </span>
-          </div>
-        ))}
-      </SectionCard>
-
-      {/* Schema-driven cards */}
+      {/* One card per tab. The General tab card prepends the Knodex plumbing rows. */}
       {schemaCards.map((tab) => {
         const tabValues: Record<string, unknown> =
           tab.kind === "general"
             ? Object.fromEntries(
                 Object.keys(tab.properties ?? {}).map((k) => [k, values[k]])
               )
-            : (values[tab.id] as Record<string, unknown>) ?? {};
+            : ((values[tab.id] as Record<string, unknown>) ?? {});
         const entries = orderEntries(
           Object.entries(tabValues),
           tab.propertyOrder
         );
+        const isGeneral = tab.kind === "general";
         return (
           <SectionCard
             key={tab.id}
@@ -108,10 +92,24 @@ export function ReviewTab({
             onEdit={() => onEditTab(tab.id)}
             testid={`review-card-${tab.id}`}
           >
+            {isGeneral &&
+              knodexRows.map(([label, value]) => (
+                <div
+                  key={`knodex-${label}`}
+                  className="flex items-center justify-between text-sm"
+                >
+                  <span className="text-[var(--text-secondary)]">{label}</span>
+                  <span className="font-mono text-xs text-[var(--text-primary)]">
+                    {renderValue(value)}
+                  </span>
+                </div>
+              ))}
             {entries.length === 0 ? (
-              <p className="text-sm text-[var(--text-muted)]">
-                No values configured
-              </p>
+              !isGeneral && (
+                <p className="text-sm text-[var(--text-muted)]">
+                  No values configured
+                </p>
+              )
             ) : (
               entries.map(([key, value]) => (
                 <div
