@@ -21,7 +21,6 @@ vi.mock('@/context', () => ({
 vi.mock('@/components/layout', () => ({
   Sidebar: () => <div data-testid="sidebar">Sidebar</div>,
   TopBar: () => <div data-testid="topbar">TopBar</div>,
-  Breadcrumbs: () => <div data-testid="breadcrumbs">Breadcrumbs</div>,
 }));
 
 // Mock accessibility components

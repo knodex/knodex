@@ -3,7 +3,7 @@
 
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { Outlet, useLocation } from "react-router-dom";
-import { Sidebar, TopBar, Breadcrumbs } from "@/components/layout";
+import { Sidebar, TopBar } from "@/components/layout";
 import { SidebarDrawer } from "@/components/layout/SidebarDrawer";
 import { ProtectedRoute } from "@/components/auth";
 import { WebSocketProvider, useWebSocketContext } from "@/context";
@@ -12,6 +12,7 @@ import { useAnnouncements } from "@/hooks/useAnnouncements";
 import { usePrefetchAfterIdle } from "@/hooks/usePrefetchAfterIdle";
 import { useIsTablet } from "@/hooks/useIsTablet";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { useSidebarCollapsed } from "@/hooks/useSidebarCollapsed";
 import { BottomNav } from "@/components/layout/BottomNav";
 import { routePreloads } from "@/lib/route-preloads";
 import { useSessionStatus, useSessionError } from "@/hooks/useAuth";
@@ -28,6 +29,7 @@ function DashboardLayoutInner() {
   const [isDrawerOpen, setIsDrawerOpen] = useState<boolean>(false);
   const isTablet = useIsTablet();
   const isMobile = useIsMobile();
+  const { isCollapsed: isSidebarCollapsed, toggle: toggleSidebarCollapsed } = useSidebarCollapsed();
   const { open: commandPaletteOpen, setOpen: setCommandPaletteOpen } = useCommandPaletteShortcut();
 
   // Set data-layout attribute on body for CSS targeting
@@ -146,27 +148,42 @@ function DashboardLayoutInner() {
         Skip to main content
       </a>
 
-      {!isMobile && <Sidebar />}
+      {!isMobile && (
+        <Sidebar
+          isCollapsed={isSidebarCollapsed}
+          onToggleCollapse={toggleSidebarCollapsed}
+        />
+      )}
 
       {!isMobile && <SidebarDrawer open={isDrawerOpen} onOpenChange={setIsDrawerOpen} />}
 
       <CommandPalette open={commandPaletteOpen} onOpenChange={setCommandPaletteOpen} />
 
-      {!isMobile && <TopBar onMobileMenuToggle={() => setIsDrawerOpen(true)} />}
+      {!isMobile && (
+        <TopBar
+          onMobileMenuToggle={() => setIsDrawerOpen(true)}
+          onCommandPaletteOpen={() => setCommandPaletteOpen(true)}
+          isSidebarCollapsed={isSidebarCollapsed}
+        />
+      )}
 
       <div className={cn(
         "transition-all duration-300",
-        isMobile ? "pt-0 pb-16" : "pt-14 ml-0 lg:ml-[260px]"
+        isMobile
+          ? "pt-0 pb-16"
+          : isSidebarCollapsed
+            ? "pt-[52px] ml-0 lg:ml-16"
+            : "pt-[52px] ml-0 lg:ml-[260px]"
       )}>
-        {!isMobile && <Breadcrumbs />}
-
         <main
           key={location.pathname}
           id="main-content"
           tabIndex={-1}
           className={cn(
-            "outline-none",
-            "animate-token-fade-in mx-auto min-h-[calc(100vh-4rem)] max-w-[1280px]",
+            "outline-none animate-token-fade-in mx-auto min-h-[calc(100vh-4rem)]",
+            // When the sidebar is collapsed, drop the readability cap so the
+            // freed space flows into the content area instead of into margins.
+            isSidebarCollapsed ? "max-w-none" : "max-w-[1280px]",
             isMobile ? "px-4 py-4 overflow-x-hidden" : "px-6 pt-4 pb-8 lg:px-10"
           )}
         >

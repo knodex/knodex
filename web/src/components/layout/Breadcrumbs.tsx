@@ -1,158 +1,201 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useMemo } from "react";
-import { ChevronRight, Home } from "@/lib/icons";
+import { useMemo, type ReactNode } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { cn } from "@/lib/utils";
 
 export interface BreadcrumbItem {
   label: string;
   to?: string;
-  icon?: React.ReactNode;
 }
 
 interface BreadcrumbsProps {
   className?: string;
+  /** Rendered as the first crumb (e.g., a project chip). When set, the auto-Home crumb is omitted. */
+  leadingSlot?: ReactNode;
+  /** Suppresses the auto-Home crumb (e.g., when an org name already anchors the root). */
+  hideHome?: boolean;
 }
 
-export function Breadcrumbs({ className }: BreadcrumbsProps) {
+/**
+ * decodeURIComponent throws URIError on malformed percent-encoding
+ * (e.g., "%E0%A4%A"). The breadcrumb must never crash the chrome,
+ * so fall back to the raw segment on failure.
+ */
+function safeDecode(s: string): string {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+}
+
+function buildInstanceLabel(params: ReturnType<typeof useParams>): string {
+  // Cluster-scoped routes have no namespace; filter empty parts so the label
+  // doesn't end up with a stray leading slash like "/Pod/pod1".
+  const parts = [params.namespace, params.kind, params.name].filter(
+    (p): p is string => Boolean(p),
+  );
+  return parts.map(safeDecode).join("/");
+}
+
+function deriveItems(path: string, params: ReturnType<typeof useParams>): BreadcrumbItem[] {
+  const items: BreadcrumbItem[] = [];
+
+  if (path.startsWith("/deploy") && params.rgdName) {
+    items.push({ label: "Catalog", to: "/catalog" });
+    items.push({
+      label: safeDecode(params.rgdName),
+      to: `/catalog/${params.rgdName}`,
+    });
+    items.push({ label: "Deploy" });
+  } else if (path.startsWith("/catalog")) {
+    items.push({ label: "Catalog", to: "/catalog" });
+
+    const categoryMatch = path.match(/^\/catalog\/categories\/([^/]+)/);
+    if (categoryMatch) {
+      items.push({ label: safeDecode(categoryMatch[1]) });
+    } else if (params.rgdName) {
+      items.push({
+        label: safeDecode(params.rgdName),
+        to: `/catalog/${params.rgdName}`,
+      });
+      if (path.includes("/deploy")) {
+        items.push({ label: "Deploy" });
+      }
+    }
+  } else if (path.startsWith("/instances")) {
+    items.push({ label: "Instances", to: "/instances" });
+
+    if (params.name) {
+      items.push({ label: buildInstanceLabel(params) });
+    }
+  } else if (path.startsWith("/audit")) {
+    items.push({ label: "Audit" });
+  } else if (path.startsWith("/compliance")) {
+    items.push({ label: "Compliance", to: "/compliance" });
+
+    if (path.includes("/templates/")) {
+      items.push({ label: "Templates", to: "/compliance/templates" });
+      const templateName = path.split("/templates/")[1];
+      if (templateName) {
+        items.push({ label: safeDecode(templateName) });
+      }
+    } else if (path.includes("/constraints/")) {
+      items.push({ label: "Constraints", to: "/compliance/constraints" });
+      const constraintName = path.split("/constraints/")[1];
+      if (constraintName) {
+        items.push({ label: safeDecode(constraintName) });
+      }
+    }
+  } else if (path.startsWith("/secrets")) {
+    items.push({ label: "Secrets" });
+  } else if (path.startsWith("/settings")) {
+    items.push({ label: "Settings", to: "/settings" });
+
+    if (path.includes("/repositories")) {
+      items.push({ label: "Repositories" });
+    } else if (path.includes("/projects")) {
+      items.push({ label: "Projects" });
+    } else if (path.includes("/audit")) {
+      items.push({ label: "Audit" });
+    } else if (path.includes("/sso")) {
+      items.push({ label: "SSO" });
+    } else if (path.includes("/license")) {
+      items.push({ label: "License" });
+    }
+  } else if (path.startsWith("/repositories")) {
+    // Top-level Repositories route (App.tsx:262), distinct from /settings/repositories.
+    items.push({ label: "Repositories" });
+  } else if (path.startsWith("/projects")) {
+    // Top-level Projects route (App.tsx:272). Handles both /projects and /projects/:name.
+    items.push({ label: "Projects", to: "/projects" });
+    if (params.name) {
+      items.push({ label: safeDecode(params.name) });
+    }
+  } else if (path.startsWith("/user-info")) {
+    items.push({ label: "Account" });
+  } else if (path.startsWith("/views")) {
+    items.push({ label: "Views", to: "/views" });
+
+    const viewSlug = path.match(/^\/views\/([^/]+)/);
+    if (viewSlug) {
+      items.push({ label: safeDecode(viewSlug[1]) });
+    }
+  }
+
+  return items;
+}
+
+export function Breadcrumbs({ className, leadingSlot, hideHome }: BreadcrumbsProps) {
   const location = useLocation();
   const params = useParams();
 
-  const items = useMemo((): BreadcrumbItem[] => {
-    const path = location.pathname;
-    const breadcrumbs: BreadcrumbItem[] = [
-      { label: 'Home', to: '/' },
-    ];
-
-    if (path.startsWith('/deploy') && params.rgdName) {
-      breadcrumbs.push({ label: 'Catalog', to: '/catalog' });
-      breadcrumbs.push({
-        label: decodeURIComponent(params.rgdName),
-        to: `/catalog/${params.rgdName}`
-      });
-      breadcrumbs.push({ label: 'Deploy' });
-    } else if (path.startsWith('/catalog')) {
-      breadcrumbs.push({ label: 'Catalog', to: '/catalog' });
-
-      if (params.rgdName) {
-        breadcrumbs.push({
-          label: decodeURIComponent(params.rgdName),
-          to: `/catalog/${params.rgdName}`
-        });
-
-        if (path.includes('/deploy')) {
-          breadcrumbs.push({ label: 'Deploy' });
-        }
-      }
-    } else if (path.startsWith('/instances')) {
-      breadcrumbs.push({ label: 'Instances', to: '/instances' });
-
-      if (params.name) {
-        const instanceLabel = params.kind
-          ? `${decodeURIComponent(params.namespace || '')}/${decodeURIComponent(params.kind)}/${decodeURIComponent(params.name)}`
-          : `${decodeURIComponent(params.namespace || '')}/${decodeURIComponent(params.name)}`;
-        breadcrumbs.push({
-          label: instanceLabel
-        });
-      }
-    } else if (path.startsWith('/audit')) {
-      breadcrumbs.push({ label: 'Audit' });
-    } else if (path.startsWith('/compliance')) {
-      breadcrumbs.push({ label: 'Compliance', to: '/compliance' });
-
-      if (path.includes('/templates/')) {
-        breadcrumbs.push({ label: 'Templates', to: '/compliance/templates' });
-        const templateName = path.split('/templates/')[1];
-        if (templateName) {
-          breadcrumbs.push({ label: decodeURIComponent(templateName) });
-        }
-      } else if (path.includes('/constraints/')) {
-        breadcrumbs.push({ label: 'Constraints', to: '/compliance/constraints' });
-        const constraintName = path.split('/constraints/')[1];
-        if (constraintName) {
-          breadcrumbs.push({ label: decodeURIComponent(constraintName) });
-        }
-      }
-    } else if (path.startsWith('/secrets')) {
-      breadcrumbs.push({ label: 'Secrets' });
-    } else if (path.startsWith('/settings')) {
-      breadcrumbs.push({ label: 'Settings', to: '/settings' });
-
-      if (path.includes('/repositories')) {
-        breadcrumbs.push({ label: 'Repositories' });
-      } else if (path.includes('/projects')) {
-        breadcrumbs.push({ label: 'Projects' });
-      } else if (path.includes('/audit')) {
-        breadcrumbs.push({ label: 'Audit' });
-      } else if (path.includes('/sso')) {
-        breadcrumbs.push({ label: 'SSO' });
-      }
-    } else if (path.startsWith('/views')) {
-      breadcrumbs.push({ label: 'Views', to: '/views' });
-
-      const viewSlug = path.match(/^\/views\/([^/]+)/);
-      if (viewSlug) {
-        breadcrumbs.push({ label: decodeURIComponent(viewSlug[1]) });
-      }
+  const items = useMemo(() => {
+    const derived = deriveItems(location.pathname, params);
+    // When no leading slot is provided, prepend Home so users have a way back to root.
+    if (!leadingSlot && !hideHome) {
+      return [{ label: "Home", to: "/" } satisfies BreadcrumbItem, ...derived];
     }
-
-    return breadcrumbs;
-  }, [location, params]);
-
-  // Hide breadcrumbs — title is in TopBar, detail pages use back button
-  return null;
+    return derived;
+  }, [location.pathname, params, leadingSlot, hideHome]);
 
   return (
-    <div>
-      <div className="px-6 lg:px-10 max-w-[1280px] mx-auto py-2">
-        <nav
-          aria-label="Breadcrumb"
-          className={cn("flex items-center text-[var(--text-size-sm)]", className)}
-        >
-          <ol className="flex items-center gap-1.5">
-            {items.map((item, index) => {
-              const isLast = index === items.length - 1;
-              const isClickable = !isLast && item.to;
+    <nav
+      aria-label="Breadcrumb"
+      className={cn(
+        "flex items-center min-w-0 text-[var(--text-size-sm)]",
+        className,
+      )}
+      data-testid="breadcrumbs"
+    >
+      <ol className="flex items-center gap-1.5 min-w-0 list-none m-0 p-0">
+        {leadingSlot && (
+          <li className="flex items-center min-w-0">
+            {leadingSlot}
+          </li>
+        )}
+        {items.map((item, index) => {
+          const isLast = index === items.length - 1;
+          const isClickable = !isLast && item.to;
+          const showSeparatorBefore = index > 0 || Boolean(leadingSlot);
 
-              return (
-                <li key={index} className="flex items-center gap-1.5">
-                  {index > 0 && (
-                    <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+          return (
+            <li
+              key={item.to ?? `${item.label}-${index}`}
+              className="flex items-center gap-1.5 min-w-0"
+            >
+              {showSeparatorBefore && (
+                <span
+                  aria-hidden="true"
+                  className="text-muted-foreground/60 select-none"
+                >
+                  /
+                </span>
+              )}
+              {isClickable ? (
+                <Link
+                  to={item.to!}
+                  className="min-w-0 truncate text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  {item.label}
+                </Link>
+              ) : (
+                <span
+                  className={cn(
+                    "min-w-0 truncate",
+                    isLast ? "text-foreground font-medium" : "text-muted-foreground",
                   )}
-                  {isClickable ? (
-                    <Link
-                      to={item.to!}
-                      className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                      {index === 0 && !item.icon && (
-                        <Home className="h-3.5 w-3.5" />
-                      )}
-                      {item.icon}
-                      <span>{item.label}</span>
-                    </Link>
-                  ) : (
-                    <span
-                      className={cn(
-                        "flex items-center gap-1.5",
-                        isLast ? "text-foreground font-medium" : "text-muted-foreground"
-                      )}
-                      aria-current={isLast ? "page" : undefined}
-                    >
-                      {index === 0 && !item.icon && (
-                        <Home className="h-3.5 w-3.5" />
-                      )}
-                      {item.icon}
-                      <span>{item.label}</span>
-                    </span>
-                  )}
-                </li>
-              );
-            })}
-          </ol>
-        </nav>
-      </div>
-    </div>
+                  aria-current={isLast ? "page" : undefined}
+                >
+                  {item.label}
+                </span>
+              )}
+            </li>
+          );
+        })}
+      </ol>
+    </nav>
   );
 }

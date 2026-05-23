@@ -3,7 +3,6 @@
 
 export { Breadcrumbs, type BreadcrumbItem } from "./Breadcrumbs";
 export { NamespaceSelector } from "./NamespaceSelector";
-export { Header } from "./Header";
 export { Sidebar, SidebarNav } from "./Sidebar";
 export { SidebarDrawer } from "./SidebarDrawer";
 export { TopBar } from "./TopBar";
