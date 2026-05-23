@@ -192,6 +192,7 @@ jobs:
     needs: [release-please, docker-build, helm-package]
     if: ${{ needs.release-please.outputs.release_created == 'true' && always() }}
     runs-on: ubuntu-latest
+    permissions: {}
 
     steps:
       - name: Create summary
