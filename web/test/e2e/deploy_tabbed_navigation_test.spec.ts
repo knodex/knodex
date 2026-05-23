@@ -9,12 +9,12 @@ import { selectShadcnOption } from './fixtures/select'
  * E2E coverage for the full-page tabbed deploy experience at /deploy/:rgdName.
  *
  * Covers:
- *   - Tab derivation from RGD schema (Basics → General → object tabs → Review)
+ *   - Tab derivation from RGD schema (General → object tabs → Review)
  *   - Direct-link via URL hash selects the right tab on mount
  *   - Browser back button navigates between visited tabs
  *   - Free-jump tab navigation
  *   - Deploy gated by (form valid) ∧ (compliance ≠ block) ∧ (warning ⇒ acked) ∧ (preflight valid)
- *   - Redeploy via `error-recovery-actions` prefills Basics from location.state
+ *   - Redeploy via `error-recovery-actions` prefills the General tab from location.state
  */
 
 const TEST_RGD_NAME = 'tabbed-test-rgd'
@@ -224,9 +224,9 @@ async function setupMocks(page: Page, opts: SetupOptions = {}) {
   })
 }
 
-async function gotoBasics(page: Page) {
+async function gotoGeneral(page: Page) {
   await page.goto(`/deploy/${TEST_RGD_NAME}`)
-  await expect(page.getByTestId('deploy-tab-basics')).toBeVisible({
+  await expect(page.getByTestId('deploy-tab-general')).toBeVisible({
     timeout: 15000,
   })
 }
@@ -236,9 +236,8 @@ test.describe('Tabbed deploy navigation', () => {
 
   test('renders tabs derived from schema in propertyOrder', async ({ page }) => {
     await setupMocks(page)
-    await gotoBasics(page)
+    await gotoGeneral(page)
 
-    await expect(page.getByTestId('deploy-tab-basics')).toBeVisible()
     await expect(page.getByTestId('deploy-tab-general')).toBeVisible()
     await expect(page.getByTestId('deploy-tab-networking')).toBeVisible()
     await expect(page.getByTestId('deploy-tab-storage')).toBeVisible()
@@ -259,7 +258,7 @@ test.describe('Tabbed deploy navigation', () => {
     page,
   }) => {
     await setupMocks(page)
-    await gotoBasics(page)
+    await gotoGeneral(page)
 
     await page.getByTestId('instance-name-input').fill('e2e-instance')
     await page.getByTestId('deploy-tab-networking').click()
@@ -271,7 +270,7 @@ test.describe('Tabbed deploy navigation', () => {
     await expect(page).toHaveURL(/#networking$/)
 
     await page.goBack()
-    await expect(page).toHaveURL(/#basics$|\/deploy\/[^#]+$/)
+    await expect(page).toHaveURL(/#general$|\/deploy\/[^#]+$/)
     // Form value preserved (not unmounted).
     await expect(page.getByTestId('instance-name-input')).toHaveValue(
       'e2e-instance'
@@ -282,7 +281,7 @@ test.describe('Tabbed deploy navigation', () => {
     page,
   }) => {
     await setupMocks(page)
-    await gotoBasics(page)
+    await gotoGeneral(page)
 
     await page.getByTestId('deploy-tab-review').click()
     await expect(page.getByTestId('deploy-tab-review')).toHaveAttribute(
@@ -295,7 +294,7 @@ test.describe('Tabbed deploy navigation', () => {
     page,
   }) => {
     await setupMocks(page, { compliance: 'warning' })
-    await gotoBasics(page)
+    await gotoGeneral(page)
 
     // Fill required Basics fields. namespace-select is a shadcn Select —
     // open the trigger, then click the option by accessible name.

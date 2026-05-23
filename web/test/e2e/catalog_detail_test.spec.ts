@@ -69,7 +69,7 @@ test.describe('RGD Detail View', () => {
 
     // Mock schema endpoint for the deploy page.
     // The DeployPage renders a "Schema unavailable" error state when schema is null
-    // and never mounts the tabs. Provide a minimal valid schema so deploy-tab-basics
+    // and never mounts the tabs. Provide a minimal valid schema so deploy-tab-general
     // renders for the "clicking deploy navigates to deploy page" test.
     // URL pattern matches the real endpoint /api/v1/rgds/{name}/schema.
     await page.route(/\/api\/v1\/rgds\/postgres-database\/schema/, async (route) => {
@@ -184,6 +184,6 @@ test.describe('RGD Detail View', () => {
     await deployButton.click()
 
     await page.waitForURL(/\/deploy\//, { timeout: 10000 })
-    await expect(page.getByTestId('deploy-tab-basics')).toBeVisible({ timeout: 10000 })
+    await expect(page.getByTestId('deploy-tab-general')).toBeVisible({ timeout: 10000 })
   })
 })

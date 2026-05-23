@@ -3,7 +3,7 @@
 #
 #   Pattern                    | Example                          | UI Behavior
 #   ---------------------------|----------------------------------|-------------------------------
-#   Always-visible field       | name, image, port                | Always shown at top level
+#   Always-visible field       | image, port                      | Always shown at top level
 #   Global advanced            | advanced.logLevel, advanced.cors | Hidden behind global toggle
 #   Per-feature enabled toggle | database.enabled, cache.enabled  | Controls includeWhen resources
 #   Per-feature always-visible | database.name, cache.maxMemory   | Always shown inside feature
@@ -20,14 +20,13 @@ metadata:
     knodex.io/tags: "webapp,fullstack,conditions,per-feature"
     knodex.io/category: "applications"
     knodex.io/docs-url: "https://docs.example.com/webapp"
-    knodex.io/property-order: '{"": ["name", "image", "port", "database", "cache", "advanced"], "database": ["enabled", "name", "advanced"], "cache": ["enabled", "maxMemory", "advanced"]}'
+    knodex.io/property-order: '{"": ["image", "port", "database", "cache", "advanced"], "database": ["enabled", "name", "advanced"], "cache": ["enabled", "maxMemory", "advanced"]}'
 spec:
   schema:
     apiVersion: v1alpha1
     kind: WebApp
     spec:
       # ── Always-visible top-level fields ──
-      name: string
       image: string | default="nginx:latest"
       port: integer | default=8080
 
@@ -76,16 +75,16 @@ spec:
         apiVersion: apps/v1
         kind: Deployment
         metadata:
-          name: ${schema.spec.name}
+          name: ${schema.metadata.name}
         spec:
           replicas: ${schema.spec.advanced.replicas}
           selector:
             matchLabels:
-              app: ${schema.spec.name}
+              app: ${schema.metadata.name}
           template:
             metadata:
               labels:
-                app: ${schema.spec.name}
+                app: ${schema.metadata.name}
             spec:
               containers:
                 - name: app
@@ -114,10 +113,10 @@ spec:
         apiVersion: v1
         kind: Service
         metadata:
-          name: ${schema.spec.name}
+          name: ${schema.metadata.name}
         spec:
           selector:
-            app: ${schema.spec.name}
+            app: ${schema.metadata.name}
           ports:
             - port: 80
               targetPort: ${schema.spec.port}
@@ -130,18 +129,18 @@ spec:
         apiVersion: apps/v1
         kind: StatefulSet
         metadata:
-          name: ${schema.spec.name}-db
+          name: ${schema.metadata.name}-db
         spec:
-          serviceName: ${schema.spec.name}-db
+          serviceName: ${schema.metadata.name}-db
           replicas: 1
           selector:
             matchLabels:
-              app: ${schema.spec.name}
+              app: ${schema.metadata.name}
               component: database
           template:
             metadata:
               labels:
-                app: ${schema.spec.name}
+                app: ${schema.metadata.name}
                 component: database
             spec:
               containers:
@@ -174,10 +173,10 @@ spec:
         apiVersion: v1
         kind: Service
         metadata:
-          name: ${schema.spec.name}-db
+          name: ${schema.metadata.name}-db
         spec:
           selector:
-            app: ${schema.spec.name}
+            app: ${schema.metadata.name}
             component: database
           ports:
             - port: 5432
@@ -191,17 +190,17 @@ spec:
         apiVersion: apps/v1
         kind: Deployment
         metadata:
-          name: ${schema.spec.name}-cache
+          name: ${schema.metadata.name}-cache
         spec:
           replicas: 1
           selector:
             matchLabels:
-              app: ${schema.spec.name}
+              app: ${schema.metadata.name}
               component: cache
           template:
             metadata:
               labels:
-                app: ${schema.spec.name}
+                app: ${schema.metadata.name}
                 component: cache
             spec:
               containers:
@@ -226,10 +225,10 @@ spec:
         apiVersion: v1
         kind: Service
         metadata:
-          name: ${schema.spec.name}-cache
+          name: ${schema.metadata.name}-cache
         spec:
           selector:
-            app: ${schema.spec.name}
+            app: ${schema.metadata.name}
             component: cache
           ports:
             - port: 6379

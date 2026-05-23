@@ -102,8 +102,6 @@ spec:
     apiVersion: v1alpha1
     kind: WebApp
     spec:
-      name:
-        type: string
       databaseSecret:
         type: string
         description: "Name of the Kubernetes secret containing database credentials"
@@ -116,7 +114,7 @@ spec:
         apiVersion: apps/v1
         kind: Deployment
         metadata:
-          name: ${schema.spec.name}
+          name: ${schema.metadata.name}
         spec:
           template:
             spec:

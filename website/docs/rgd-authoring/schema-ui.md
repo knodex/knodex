@@ -26,11 +26,12 @@ spec:
     apiVersion: example.io/v1alpha1
     kind: MyResource
     spec:
-      name: string
       replicas: integer | default=3
       enableHA: boolean | default=false
       memory: string | default="512Mi"
 ```
+
+The instance name is collected on the General tab of the deploy form and is available as `${schema.metadata.name}` (and the target namespace as `${schema.metadata.namespace}`) — don't declare them as schema fields. See [Use `schema.metadata.name` for the Instance Name](./#use-schemametadataname-for-the-instance-name).
 
 ### Type Reference
 
@@ -45,7 +46,7 @@ spec:
 
 ## Resource Templates
 
-Resource templates reference schema fields using `${schema.spec.fieldName}` variable substitution.
+Resource templates reference schema fields using `${schema.spec.fieldName}` for user-supplied schema fields, and `${schema.metadata.name}` / `${schema.metadata.namespace}` for the instance name and namespace.
 
 ```yaml
 resources:
@@ -54,7 +55,7 @@ resources:
       apiVersion: apps/v1
       kind: Deployment
       metadata:
-        name: ${schema.spec.name}
+        name: ${schema.metadata.name}
       spec:
         replicas: ${schema.spec.replicas}
 ```
@@ -72,17 +73,98 @@ resources:
       apiVersion: autoscaling/v2
       kind: HorizontalPodAutoscaler
       metadata:
-        name: ${schema.spec.name}
+        name: ${schema.metadata.name}
       spec:
         scaleTargetRef:
           apiVersion: apps/v1
           kind: Deployment
-          name: ${schema.spec.name}
+          name: ${schema.metadata.name}
         minReplicas: ${schema.spec.minReplicas}
         maxReplicas: ${schema.spec.maxReplicas}
 ```
 
 When `enableHA` is `false`, the HPA resource is not created.
+
+## Per-Feature Enabled Toggle
+
+When an object property contains a boolean child named exactly `enabled`, Knodex treats the object as a **feature group**: the deploy form renders the `enabled` checkbox at the top of the group and **hides the peer fields when it is off**. Turning the checkbox on reveals the rest. This keeps optional sub-systems (a database, a bastion host, monitoring) out of the user's way until they opt in.
+
+The pattern works at any depth — nested under another object, or as a top-level object that becomes its own tab in the deploy form (each top-level object key in `spec.schema.spec` gets its own tab).
+
+### Schema Pattern
+
+```yaml
+spec:
+  schema:
+    apiVersion: example.io/v1alpha1
+    kind: WebApp
+    spec:
+      database:
+        enabled: boolean | default=false
+        name: string | default="mydb"
+        sizeGB: integer | default=10
+      cache:
+        enabled: boolean | default=false
+        maxMemory: string | default="256mb"
+```
+
+### UI Behavior
+
+| State | What the user sees |
+|-------|--------------------|
+| `database.enabled = false` (default) | Only the **Enabled** checkbox under the Database section/tab. Peer fields (`name`, `sizeGB`) are hidden. |
+| `database.enabled = true` | All peer fields appear immediately below the checkbox. |
+| Object has no `enabled` boolean child | All fields render normally (no gating). |
+
+### Pair with includeWhen for Resource Gating
+
+The UI toggle hides input fields, but the **resources still need to be gated** so they aren't created when disabled. Combine the two:
+
+```yaml
+spec:
+  schema:
+    apiVersion: example.io/v1alpha1
+    kind: WebApp
+    spec:
+      database:
+        enabled: boolean | default=false
+        name: string | default="mydb"
+  resources:
+    - id: postgres
+      includeWhen:
+        - ${schema.spec.database.enabled == true}
+      template:
+        apiVersion: apps/v1
+        kind: StatefulSet
+        metadata:
+          name: ${schema.metadata.name}-postgres
+        # ...
+```
+
+When `database.enabled` is `false`: peer inputs are hidden in the form **and** the `postgres` resource is omitted from the rendered manifest.
+
+### Combine with Advanced Sub-Sections
+
+The toggle composes with `advanced` sub-objects — when the feature is disabled, the advanced section is hidden along with the rest of the peers:
+
+```yaml
+spec:
+  schema:
+    spec:
+      bastion:
+        enabled: boolean | default=false
+        subnetPrefix: string | default="10.0.0.64/26"
+        advanced:
+          sshKeyPath: string | default="/home/azureuser/.ssh/authorized_keys"
+          asoCredentialSecretName: string | default="aso-credential"
+```
+
+### Working Examples
+
+See `deploy/examples/rgds/`:
+- `webapp-with-features.yaml` — top-level `database.enabled` and `cache.enabled`
+- `webapp-per-feature-advanced.yaml` — toggle + nested `advanced` sub-section
+- `webapp-full-featured.yaml` — toggle combined with `includeWhen` resource gating
 
 ## Advanced Configuration
 
@@ -164,9 +246,15 @@ resources:
 
 External references (`externalRef`) declare dependencies on existing Kubernetes resources. In the deploy form, they render as resource pickers.
 
-### Paired Pattern with Resource Picker
+### Wiring: Three Things Must Line Up
 
-An `externalRef` is paired with a schema field that captures the reference coordinates:
+The deploy form only renders a picker when **all three** of the following match:
+
+1. **A schema sub-object** declares the `name`/`namespace` input fields.
+2. **The `externalRef` resource's `metadata.name` and `metadata.namespace`** are CEL expressions that point at those schema fields and share the same parent path.
+3. The resource's `id` matches the schema sub-object's key (recommended for clarity, and required for Secret passthrough classification in the catalog UI).
+
+The canonical convention is to nest the schema sub-object under a key called `externalRef`, but the picker wiring itself only depends on rules 1 and 2.
 
 ```yaml
 spec:
@@ -174,39 +262,48 @@ spec:
     apiVersion: example.io/v1alpha1
     kind: AppWithDB
     spec:
-      appName: string
-      dbRef:
-        name: string
-        namespace: string
+      # 1) Schema fields that capture the reference coordinates.
+      externalRef:
+        database:
+          name: string | default="" description="Existing PostgresCluster"
+          namespace: string | default="" description="Namespace of the PostgresCluster"
   resources:
-    - id: database
+    # 2) externalRef resource whose metadata.name/namespace point back at the
+    #    schema sub-object — this is what wires the picker.
+    - id: database                                              # 3) matches schema key
       externalRef:
         apiVersion: db.knodex.io/v1alpha1
         kind: PostgresCluster
+        metadata:
+          name: ${schema.spec.externalRef.database.name}
+          namespace: ${schema.spec.externalRef.database.namespace}
       readyWhen:
         - key: status.ready
           value: "true"
+
     - id: deployment
       template:
         apiVersion: apps/v1
         kind: Deployment
         metadata:
-          name: ${schema.spec.appName}
+          name: ${schema.metadata.name}
         spec:
           template:
             spec:
               containers:
                 - env:
                     - name: DB_HOST
-                      value: ${database.status.host}
+                      value: ${database.status.host}      # status reference resolved by Kro
 ```
 
 ### How It Works
 
-1. Knodex detects the `externalRef` resource definition during catalog discovery
-2. The deploy form renders a resource picker for the paired schema field (`dbRef`)
-3. The picker shows existing instances of `PostgresCluster` that the user has access to
-4. When the user selects an instance, `dbRef.name` and `dbRef.namespace` are populated automatically
+1. The schema enricher walks each `externalRef` resource and extracts the schema paths used in its `metadata.name` and `metadata.namespace` CEL expressions.
+2. It computes the **common parent path** of those two fields (e.g. `externalRef.database`).
+3. The form property at that parent path gets `ExternalRefSelector` metadata attached, including the leaf field names (`name`, `namespace`) used for auto-fill.
+4. At deploy time the picker queries the API for resources of the given `apiVersion`/`Kind`. When the user selects one, the form writes its `name` and `namespace` into the schema fields automatically.
+
+Without the `metadata.name`/`metadata.namespace` CEL expressions in the resource block, **no picker is attached** — the schema fields render as plain text inputs.
 
 ### Namespace Filtering
 
@@ -217,24 +314,38 @@ The resource picker filters instances based on:
 
 ### Multiple External References
 
-An RGD can have multiple `externalRef` resources:
+An RGD can have multiple `externalRef` resources — give each its own schema sub-object so each gets its own picker:
 
 ```yaml
-resources:
-  - id: database
-    externalRef:
-      apiVersion: db.knodex.io/v1alpha1
-      kind: PostgresCluster
-  - id: cache
-    externalRef:
-      apiVersion: cache.knodex.io/v1alpha1
-      kind: RedisCluster
-  - id: deployment
-    template:
-      # uses ${database.status.host} and ${cache.status.host}
+spec:
+  schema:
+    spec:
+      externalRef:
+        database:
+          name: string | default=""
+          namespace: string | default=""
+        cache:
+          name: string | default=""
+          namespace: string | default=""
+  resources:
+    - id: database
+      externalRef:
+        apiVersion: db.knodex.io/v1alpha1
+        kind: PostgresCluster
+        metadata:
+          name: ${schema.spec.externalRef.database.name}
+          namespace: ${schema.spec.externalRef.database.namespace}
+    - id: cache
+      externalRef:
+        apiVersion: cache.knodex.io/v1alpha1
+        kind: RedisCluster
+        metadata:
+          name: ${schema.spec.externalRef.cache.name}
+          namespace: ${schema.spec.externalRef.cache.namespace}
+    - id: deployment
+      template:
+        # uses ${database.status.host} and ${cache.status.host}
 ```
-
-Each `externalRef` gets its own resource picker in the form.
 
 ### Nested References for Composite RGDs
 
@@ -242,17 +353,31 @@ External references can chain across RGDs. If RGD-A produces `KindA` and RGD-B h
 
 ### Combining with Conditional Resources
 
+Nest the externalRef sub-object inside the same parent that owns the `enabled` toggle, so the picker hides and the resource skips together:
+
 ```yaml
-resources:
-  - id: cache
-    includeWhen:
-      - ${schema.spec.cacheEnabled == true}
-    externalRef:
-      apiVersion: cache.knodex.io/v1alpha1
-      kind: RedisCluster
+spec:
+  schema:
+    spec:
+      cache:
+        enabled: boolean | default=false
+        externalRef:
+          redis:
+            name: string | default=""
+            namespace: string | default=""
+  resources:
+    - id: redis
+      includeWhen:
+        - ${schema.spec.cache.enabled == true}
+      externalRef:
+        apiVersion: cache.knodex.io/v1alpha1
+        kind: RedisCluster
+        metadata:
+          name: ${schema.spec.cache.externalRef.redis.name}
+          namespace: ${schema.spec.cache.externalRef.redis.namespace}
 ```
 
-The resource picker for `cache` only appears when `cacheEnabled` is `true`.
+The cache tab's `enabled` checkbox hides the picker (and the rest of the `cache` fields) until ticked, and `includeWhen` skips the resource itself when the feature is off. See [Per-Feature Enabled Toggle](#per-feature-enabled-toggle).
 
 ## Secret Reference Descriptions
 
@@ -268,15 +393,18 @@ spec:
     apiVersion: example.io/v1alpha1
     kind: MyApp
     spec:
-      name: string
-      dbSecret:
-        name: string
-        namespace: string
+      externalRef:
+        dbSecret:
+          name: string | default="" description="Existing Secret holding database credentials"
+          namespace: string | default=""
   resources:
-    - id: db-credentials
+    - id: dbSecret
       externalRef:
         apiVersion: v1
         kind: Secret
+        metadata:
+          name: ${schema.spec.externalRef.dbSecret.name}
+          namespace: ${schema.spec.externalRef.dbSecret.namespace}
       readyWhen:
         - key: data.password
           exists: true
@@ -332,6 +460,7 @@ Always include `readyWhen` conditions on secret references to ensure the secret 
 - Fields paired with `externalRef` resources show picker UI instead of plain text inputs
 - Boolean fields always render as toggles, never as text inputs
 - Nested objects render as grouped sections with a header derived from the field name
+- An object with an `enabled: boolean` child renders its peer fields only when `enabled` is `true` (see [Per-Feature Enabled Toggle](#per-feature-enabled-toggle))
 
 ## Complete Example RGD
 
@@ -349,7 +478,7 @@ metadata:
     knodex.io/category: "applications"
     knodex.io/icon: "layers"
     knodex.io/extends-kind: "PostgresCluster,RedisCluster"
-    knodex.io/property-order: '["appName","image","dbRef.name","dbRef.namespace","cacheRef.name"]'
+    knodex.io/property-order: '["appName","image","externalRef.database.name","externalRef.cache.name"]'
     knodex.io/deployment-modes: "gitops,hybrid"
 spec:
   schema:
@@ -360,13 +489,14 @@ spec:
       appName: string
       image: string
 
-      # External reference fields (render as pickers)
-      dbRef:
-        name: string
-        namespace: string
-      cacheRef:
-        name: string
-        namespace: string
+      # External reference fields (render as pickers — see "Wiring" above)
+      externalRef:
+        database:
+          name: string | default=""
+          namespace: string | default=""
+        cache:
+          name: string | default=""
+          namespace: string | default=""
 
       # Optional top-level fields
       replicas: integer | default=2
@@ -391,6 +521,9 @@ spec:
       externalRef:
         apiVersion: db.knodex.io/v1alpha1
         kind: PostgresCluster
+        metadata:
+          name: ${schema.spec.externalRef.database.name}
+          namespace: ${schema.spec.externalRef.database.namespace}
       readyWhen:
         - key: status.ready
           value: "true"
@@ -399,6 +532,9 @@ spec:
       externalRef:
         apiVersion: cache.knodex.io/v1alpha1
         kind: RedisCluster
+        metadata:
+          name: ${schema.spec.externalRef.cache.name}
+          namespace: ${schema.spec.externalRef.cache.namespace}
       readyWhen:
         - key: status.ready
           value: "true"

@@ -43,7 +43,6 @@ spec:
     apiVersion: example.io/v1alpha1
     kind: MyResource
     spec:
-      name: string
       replicas: integer | default=1
   resources:
     - id: deployment
@@ -51,7 +50,7 @@ spec:
         apiVersion: apps/v1
         kind: Deployment
         metadata:
-          name: ${schema.spec.name}
+          name: ${schema.metadata.name}
         spec:
           replicas: ${schema.spec.replicas}
 ```
@@ -141,7 +140,6 @@ spec:
     apiVersion: apps.knodex.io/v1alpha1
     kind: ProductionAPI
     spec:
-      name: string
       image: string
       minReplicas: integer | default=3
       maxReplicas: integer | default=10
@@ -151,7 +149,7 @@ spec:
         apiVersion: apps/v1
         kind: Deployment
         metadata:
-          name: ${schema.spec.name}
+          name: ${schema.metadata.name}
         spec:
           replicas: ${schema.spec.minReplicas}
           # ... deployment spec
@@ -160,12 +158,12 @@ spec:
         apiVersion: autoscaling/v2
         kind: HorizontalPodAutoscaler
         metadata:
-          name: ${schema.spec.name}
+          name: ${schema.metadata.name}
         spec:
           scaleTargetRef:
             apiVersion: apps/v1
             kind: Deployment
-            name: ${schema.spec.name}
+            name: ${schema.metadata.name}
           minReplicas: ${schema.spec.minReplicas}
           maxReplicas: ${schema.spec.maxReplicas}
     - id: pdb
@@ -173,12 +171,12 @@ spec:
         apiVersion: policy/v1
         kind: PodDisruptionBudget
         metadata:
-          name: ${schema.spec.name}
+          name: ${schema.metadata.name}
         spec:
           minAvailable: 1
           selector:
             matchLabels:
-              app: ${schema.spec.name}
+              app: ${schema.metadata.name}
 ```
 
 ### Advanced RGD with Hidden Fields
@@ -198,17 +196,17 @@ metadata:
     knodex.io/tags: "microservice,production,monitoring"
     knodex.io/icon: "box"
     knodex.io/extends-kind: "PostgresCluster"
-    knodex.io/property-order: '{"": ["name","image","dbRef.name","dbRef.namespace"]}'
+    knodex.io/property-order: '{"": ["image","externalRef.database.name","externalRef.database.namespace"]}'
 spec:
   schema:
     apiVersion: apps.knodex.io/v1alpha1
     kind: Microservice
     spec:
-      name: string
       image: string
-      dbRef:
-        name: string
-        namespace: string
+      externalRef:
+        database:
+          name: string | default=""
+          namespace: string | default=""
       advanced:
         logLevel: string | default="info"
         metricsEnabled: boolean | default=true
@@ -220,6 +218,9 @@ spec:
       externalRef:
         apiVersion: db.knodex.io/v1alpha1
         kind: PostgresCluster
+        metadata:
+          name: ${schema.spec.externalRef.database.name}
+          namespace: ${schema.spec.externalRef.database.namespace}
       readyWhen:
         - key: status.ready
           value: "true"
@@ -228,7 +229,7 @@ spec:
         apiVersion: apps/v1
         kind: Deployment
         metadata:
-          name: ${schema.spec.name}
+          name: ${schema.metadata.name}
         spec:
           replicas: 2
           template:
@@ -242,6 +243,49 @@ spec:
                     - name: LOG_LEVEL
                       value: ${schema.spec.advanced.logLevel}
 ```
+
+## Best Practices
+
+### Use `schema.metadata.name` for the Instance Name
+
+The deploy form always asks the user for an instance name on the General tab. That value lands in the Instance's `metadata.name` and is available to resource templates as `${schema.metadata.name}`. **Do not** declare a top-level `name: string` schema field that mirrors it — that creates two separate inputs ("Name" on the General tab plus a "Name" field in the schema), and the user has to type the same value twice.
+
+**Don't:**
+
+```yaml
+spec:
+  schema:
+    apiVersion: example.io/v1alpha1
+    kind: MyApp
+    spec:
+      name: string         # ← duplicates the deploy-form Name field
+      image: string
+  resources:
+    - id: deployment
+      template:
+        metadata:
+          name: ${schema.spec.name}     # ← reads the duplicate
+```
+
+**Do:**
+
+```yaml
+spec:
+  schema:
+    apiVersion: example.io/v1alpha1
+    kind: MyApp
+    spec:
+      image: string
+  resources:
+    - id: deployment
+      template:
+        metadata:
+          name: ${schema.metadata.name}  # ← reads the deploy-form Name field
+```
+
+`${schema.metadata.namespace}` is the analogous reference for the target namespace (also collected on the General tab — don't declare a `namespace: string` schema field either).
+
+Reach for a schema field name only when you genuinely need a *second* identifier separate from the instance name (e.g. `siteName`, `dbName`, `appName` for a multi-app RGD) — in which case give it a distinct name that signals the intent.
 
 ## Documentation Links
 

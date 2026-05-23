@@ -419,7 +419,7 @@ test.describe('Secrets Deploy Flow', () => {
 
     // Wait for the deploy page to open (deploy page initialized)
     await page.waitForURL(/\/deploy\//, { timeout: 10000 })
-    await expect(page.getByTestId('deploy-tab-basics')).toBeVisible({ timeout: 15000 })
+    await expect(page.getByTestId('deploy-tab-general')).toBeVisible({ timeout: 15000 })
 
     // Verify the schema response includes secretRefs
     expect(schemaResponse).toBeDefined()
@@ -478,7 +478,7 @@ test.describe('Secrets Deploy Flow', () => {
 
     // Step 1: Basics tab — fill instance name, select project & namespace
     await page.waitForURL(/\/deploy\//, { timeout: 10000 })
-    await expect(page.getByTestId('deploy-tab-basics')).toBeVisible({ timeout: 15000 })
+    await expect(page.getByTestId('deploy-tab-general')).toBeVisible({ timeout: 15000 })
     await page.getByTestId('instance-name-input').fill('test-deploy')
     const nsSelect = page.getByTestId('namespace-select')
     await expect(nsSelect).toBeEnabled({ timeout: 5000 })
@@ -537,7 +537,7 @@ test.describe('Secrets Deploy Flow', () => {
 
     // Step 1: Basics tab — fill instance name, select project & namespace
     await page.waitForURL(/\/deploy\//, { timeout: 10000 })
-    await expect(page.getByTestId('deploy-tab-basics')).toBeVisible({ timeout: 15000 })
+    await expect(page.getByTestId('deploy-tab-general')).toBeVisible({ timeout: 15000 })
     await page.getByTestId('instance-name-input').fill('test-deploy')
     const nsSelect2 = page.getByTestId('namespace-select')
     await expect(nsSelect2).toBeEnabled({ timeout: 5000 })

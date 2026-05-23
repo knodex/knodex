@@ -163,23 +163,22 @@ async function navigateToReviewStep(page: Page) {
   await expect(deployButton).toBeVisible({ timeout: 15000 })
   await deployButton.click()
 
-  // Step 1: Basics tab
+  // General tab (merged plumbing + scalars) — fill instance name, namespace
+  // and the required scalar `platformName` all in one pass. Post-refactor
+  // there's no separate Basics tab to advance away from.
   await page.waitForURL(/\/deploy\//, { timeout: 10000 })
-  await expect(page.getByTestId('deploy-tab-basics')).toBeVisible({ timeout: 15000 })
+  await expect(page.getByTestId('deploy-tab-general')).toBeVisible({ timeout: 15000 })
+  await expect(page.getByTestId('deploy-tab-general')).toHaveAttribute('data-state', 'active')
   await page.getByTestId('instance-name-input').fill('test-preflight')
 
   const nsSelect = page.getByTestId('namespace-select')
   await expect(nsSelect).toBeEnabled({ timeout: 5000 })
   await selectShadcnOption(nsSelect, 'default')
 
-  await page.getByTestId('deploy-footer-next').click()
-
-  // Step 2: General tab (Configure) — fill the required scalar field
-  await expect(page.getByTestId('deploy-tab-general')).toHaveAttribute('data-state', 'active')
   await page.getByTestId('input-platformName').fill('my-platform')
 
-  // Step 3: jump directly to Review (bypasses the externalRef object tab,
-  // whose fields are optional and gated by useExistingDatabase).
+  // Jump directly to Review (microservices-platform's externalRef object is
+  // folded into General — there's no longer a separate object tab to skip).
   await page.getByTestId('deploy-tab-review').click()
 
   await expect(page.getByTestId('review-tab')).toBeVisible({ timeout: 15000 })

@@ -43,18 +43,17 @@ function Harness({
 }
 
 const SAMPLE_TABS: DeployTab[] = [
-  { id: "basics", kind: "basics", label: "Basics" },
-  {
-    id: "networking",
-    kind: "schema",
-    label: "Networking",
-    properties: { port: { type: "integer" } },
-  },
   {
     id: "general",
     kind: "general",
     label: "General",
     properties: { replicas: { type: "integer" } },
+  },
+  {
+    id: "networking",
+    kind: "schema",
+    label: "Networking",
+    properties: { port: { type: "integer" } },
   },
   { id: "review", kind: "review", label: "Review + Deploy" },
 ];
@@ -65,31 +64,42 @@ function badgeState(tabId: string): string | null {
 }
 
 describe("DeployTabs", () => {
-  it("renders gray badges when no errors and no visits (review aside)", () => {
+  it("renders gray badges when no errors and no visits", () => {
     render(
       <Harness
         tabs={SAMPLE_TABS}
-        activeId="basics"
+        activeId="general"
         visitedIds={new Set()}
         errors={{}}
       />
     );
-    expect(badgeState("basics")).toBe("untouched");
-    expect(badgeState("networking")).toBe("untouched");
     expect(badgeState("general")).toBe("untouched");
+    expect(badgeState("networking")).toBe("untouched");
     expect(badgeState("review")).toBe("untouched");
   });
 
-  it("lights the Basics badge red when instanceName has an error", () => {
+  it("lights the General badge red when instanceName has an error (Knodex plumbing owned by General)", () => {
     render(
       <Harness
         tabs={SAMPLE_TABS}
-        activeId="basics"
-        visitedIds={new Set(["basics"])}
+        activeId="general"
+        visitedIds={new Set(["general"])}
         errors={{ instanceName: { message: "required" } }}
       />
     );
-    expect(badgeState("basics")).toBe("error");
+    expect(badgeState("general")).toBe("error");
+  });
+
+  it("lights the General badge red when a top-level schema scalar has an error", () => {
+    render(
+      <Harness
+        tabs={SAMPLE_TABS}
+        activeId="general"
+        visitedIds={new Set(["general"])}
+        errors={{ replicas: { message: "required" } }}
+      />
+    );
+    expect(badgeState("general")).toBe("error");
   });
 
   it("error overrides green on visited tabs", () => {
@@ -97,7 +107,7 @@ describe("DeployTabs", () => {
       <Harness
         tabs={SAMPLE_TABS}
         activeId="networking"
-        visitedIds={new Set(["basics", "networking"])}
+        visitedIds={new Set(["general", "networking"])}
         errors={{ networking: { message: "port required" } }}
       />
     );
@@ -109,11 +119,10 @@ describe("DeployTabs", () => {
       <Harness
         tabs={SAMPLE_TABS}
         activeId="general"
-        visitedIds={new Set(["basics", "general"])}
+        visitedIds={new Set(["general"])}
         errors={{}}
       />
     );
-    expect(badgeState("basics")).toBe("valid");
     expect(badgeState("general")).toBe("valid");
     expect(badgeState("networking")).toBe("untouched");
   });
@@ -123,7 +132,7 @@ describe("DeployTabs", () => {
       <Harness
         tabs={SAMPLE_TABS}
         activeId="review"
-        visitedIds={new Set(["basics", "review"])}
+        visitedIds={new Set(["general", "review"])}
         errors={{
           instanceName: { message: "required" },
           networking: { message: "port required" },

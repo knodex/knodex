@@ -1,0 +1,110 @@
+# Example RGD: Multi-Tab externalRef Demo
+# Demonstrates the deploy-page tab derivation rules end-to-end:
+#   * Top-level spec.externalRef.cluster        → folded into the General tab
+#   * spec.networking object                    → its own Networking tab (no externalRef)
+#   * spec.database.externalRef.dbSecret        → nested, stays under the Database tab
+#   * spec.monitoring.externalRef.grafanaCreds  → nested, stays under the Monitoring tab
+#
+# After the 2026-05-22 tab refactor, deploying an instance of this RGD should
+# render exactly these tabs in this order:
+#   [ General | networking | database | monitoring | Review + Deploy ]
+# with no separate "externalRef" tab.
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: multi-tab-externalref-demo
+  namespace: default
+  annotations:
+    knodex.io/catalog: "true"
+    knodex.io/title: "Multi-Tab externalRef Demo"
+    knodex.io/description: "Demo RGD exercising every tab-derivation rule: top-level externalRef folded into General, plus nested externalRef under per-feature tabs."
+    knodex.io/tags: "demo,external-ref,tabs,multi-tab"
+    knodex.io/category: "examples"
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: MultiTabExternalRefDemo
+    spec:
+      # ── Top-level scalars (General tab) ──
+      appName: string | default="demo-app" description="Application name"
+      appVersion: string | default="v1.0.0" description="Application version"
+
+      # ── Top-level externalRef → folded into General tab ──
+      externalRef:
+        cluster:
+          name: string | default="" description="Name of the target SimpleAKSCluster instance"
+          namespace: string | default="" description="Namespace of the target SimpleAKSCluster instance"
+
+      # ── Networking object tab (no externalRef) ──
+      networking:
+        ingressEnabled: boolean | default=true description="Expose the app via an Ingress"
+        port: integer | default=80 description="Service port"
+        domainName: string | default="example.com" description="External hostname"
+
+      # ── Database object tab with NESTED externalRef → stays under Database ──
+      database:
+        enabled: boolean | default=false description="Provision database connectivity"
+        engine: string | default="postgres" description="Database engine"
+        externalRef:
+          dbSecret:
+            name: string | default="" description="Existing Secret holding database credentials"
+            namespace: string | default="" description="Namespace of the Secret"
+
+      # ── Monitoring object tab with NESTED externalRef → stays under Monitoring ──
+      monitoring:
+        enabled: boolean | default=false description="Enable Grafana monitoring"
+        scrapeIntervalSeconds: integer | default=30 description="Prometheus scrape interval"
+        externalRef:
+          grafanaCreds:
+            name: string | default="" description="Existing Secret holding Grafana credentials"
+            namespace: string | default="" description="Namespace of the Secret"
+
+  resources:
+    # Top-level externalRef target (already exists in the cluster).
+    - id: cluster
+      externalRef:
+        apiVersion: kro.run/v1alpha1
+        kind: SimpleAKSCluster
+        metadata:
+          name: ${schema.spec.externalRef.cluster.name}
+          namespace: ${schema.spec.externalRef.cluster.namespace}
+
+    # Nested externalRef under `database`.
+    - id: dbSecret
+      externalRef:
+        apiVersion: v1
+        kind: Secret
+        metadata:
+          name: ${schema.spec.database.externalRef.dbSecret.name}
+          namespace: ${schema.spec.database.externalRef.dbSecret.namespace}
+
+    # Nested externalRef under `monitoring`.
+    - id: grafanaCreds
+      externalRef:
+        apiVersion: v1
+        kind: Secret
+        metadata:
+          name: ${schema.spec.monitoring.externalRef.grafanaCreds.name}
+          namespace: ${schema.spec.monitoring.externalRef.grafanaCreds.namespace}
+
+    # A trivial owned resource so KRO has something concrete to materialize.
+    # The ConfigMap captures every schema field so the demo round-trips end-to-end.
+    - id: marker
+      template:
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: ${schema.spec.appName}-marker
+        data:
+          appName: ${schema.spec.appName}
+          appVersion: ${schema.spec.appVersion}
+          ingressEnabled: ${string(schema.spec.networking.ingressEnabled)}
+          port: ${string(schema.spec.networking.port)}
+          domainName: ${schema.spec.networking.domainName}
+          databaseEnabled: ${string(schema.spec.database.enabled)}
+          databaseEngine: ${schema.spec.database.engine}
+          monitoringEnabled: ${string(schema.spec.monitoring.enabled)}
+          scrapeIntervalSeconds: ${string(schema.spec.monitoring.scrapeIntervalSeconds)}
+          clusterName: ${schema.spec.externalRef.cluster.name}
+          dbSecretName: ${schema.spec.database.externalRef.dbSecret.name}
+          grafanaCredsName: ${schema.spec.monitoring.externalRef.grafanaCreds.name}

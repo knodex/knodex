@@ -18,10 +18,9 @@ type BadgeState = "error" | "valid" | "untouched";
 
 function ownedRootKeys(tab: DeployTab): string[] {
   switch (tab.kind) {
-    case "basics":
-      return [...RESERVED_BASICS_KEYS];
     case "general":
-      return Object.keys(tab.properties ?? {});
+      // General owns Knodex plumbing PLUS top-level schema scalars / folded-in externalRef.
+      return [...RESERVED_BASICS_KEYS, ...Object.keys(tab.properties ?? {})];
     case "schema":
       return [tab.id.startsWith("rgd-") ? tab.id.slice(4) : tab.id];
     case "review":

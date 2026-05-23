@@ -57,7 +57,7 @@ test.describe('Global Admin - Instance Deployment & Management', () => {
 
     // Step 1: Basics tab — fill instance name, select project & namespace
     await page.waitForURL(/\/deploy\//, { timeout: 10000 });
-    await expect(page.getByTestId('deploy-tab-basics')).toBeVisible({ timeout: 15000 });
+    await expect(page.getByTestId('deploy-tab-general')).toBeVisible({ timeout: 15000 });
     await page.getByTestId('instance-name-input').fill(`test-instance-alpha-${Date.now()}`);
 
     // Select namespace (auto-selects project when only one)

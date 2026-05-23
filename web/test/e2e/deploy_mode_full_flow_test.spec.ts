@@ -382,9 +382,12 @@ test.describe('Full Deployment Flow with Mode Restrictions', () => {
     await expect(deployBtn).toBeVisible({ timeout: 15000 })
     await deployBtn.click()
 
-    // Step 1: Basics tab — fill instance name, select project & namespace
+    // General tab (merged plumbing + scalars) — fill instance name, namespace
+    // and the deployment-mode/repository plumbing. Post-refactor there's no
+    // separate Basics tab to advance away from.
     await page.waitForURL(/\/deploy\//, { timeout: 10000 })
-    await expect(page.getByTestId('deploy-tab-basics')).toBeVisible({ timeout: 15000 })
+    await expect(page.getByTestId('deploy-tab-general')).toBeVisible({ timeout: 15000 })
+    await expect(page.getByTestId('deploy-tab-general')).toHaveAttribute('data-state', 'active')
     await page.getByTestId('instance-name-input').fill('my-test-instance')
 
     // Select project and namespace
@@ -398,13 +401,8 @@ test.describe('Full Deployment Flow with Mode Restrictions', () => {
       await selectShadcnOptionByIndex(repoSelect, 0) // Select first repository
     }
 
-    // Advance to Configure step
-    const continueBtn = page.getByTestId('deploy-footer-next')
-    await expect(continueBtn).toBeEnabled({ timeout: 5000 })
-    await continueBtn.click()
-    await expect(page.getByTestId('deploy-tab-general')).toHaveAttribute('data-state', 'active')
-
-    // Wait for form validation (trigger() runs on mount) then advance to Review step
+    // Advance directly to Review (no separate scalar tab on this RGD; the
+    // merged General tab already owns both plumbing and any scalars).
     const reviewContinueBtn = page.getByTestId('deploy-footer-next')
     await expect(reviewContinueBtn).toBeEnabled({ timeout: 10000 })
     await reviewContinueBtn.click()
@@ -623,7 +621,7 @@ test.describe('Full Deployment Flow with Mode Restrictions', () => {
 
     // Deploy page should open with Basics tab
     await page.waitForURL(/\/deploy\//, { timeout: 10000 })
-    await expect(page.getByTestId('deploy-tab-basics')).toBeVisible({ timeout: 15000 })
+    await expect(page.getByTestId('deploy-tab-general')).toBeVisible({ timeout: 15000 })
     await expect(page.getByTestId('instance-name-input')).toBeVisible()
   })
 
@@ -695,20 +693,18 @@ test.describe('Full Deployment Flow with Mode Restrictions', () => {
     await expect(deployBtn).toBeVisible({ timeout: 15000 })
     await deployBtn.click()
 
-    // Step 1: Basics tab — fill instance name, select project & namespace
+    // General tab (merged plumbing + scalars) — fill instance name + namespace.
+    // Post-refactor there's no separate Basics tab to advance away from.
     await page.waitForURL(/\/deploy\//, { timeout: 10000 })
-    await expect(page.getByTestId('deploy-tab-basics')).toBeVisible({ timeout: 15000 })
+    await expect(page.getByTestId('deploy-tab-general')).toBeVisible({ timeout: 15000 })
+    await expect(page.getByTestId('deploy-tab-general')).toHaveAttribute('data-state', 'active')
     await page.getByTestId('instance-name-input').fill('my-deployed-instance')
 
     const nsSelect = page.getByTestId('namespace-select')
     await expect(nsSelect).toBeEnabled({ timeout: 5000 })
     await selectShadcnOption(nsSelect, 'default')
 
-    // Advance to Configure step
-    await page.getByTestId('deploy-footer-next').click()
-    await expect(page.getByTestId('deploy-tab-general')).toHaveAttribute('data-state', 'active')
-
-    // Advance to Review
+    // Advance directly to Review (single tab owns plumbing + scalars).
     const reviewBtn = page.getByTestId('deploy-footer-next')
     await expect(reviewBtn).toBeEnabled({ timeout: 10000 })
     await reviewBtn.click()

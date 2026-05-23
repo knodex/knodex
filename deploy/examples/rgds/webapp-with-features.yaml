@@ -17,7 +17,6 @@ spec:
     apiVersion: v1alpha1
     kind: SimpleWebApp
     spec:
-      name: string
       replicas: integer | default=1
       database:
         enabled: boolean | default=false
@@ -33,18 +32,18 @@ spec:
         apiVersion: apps/v1
         kind: Deployment
         metadata:
-          name: ${schema.spec.name}
+          name: ${schema.metadata.name}
           labels:
-            app: ${schema.spec.name}
+            app: ${schema.metadata.name}
         spec:
           replicas: ${schema.spec.replicas}
           selector:
             matchLabels:
-              app: ${schema.spec.name}
+              app: ${schema.metadata.name}
           template:
             metadata:
               labels:
-                app: ${schema.spec.name}
+                app: ${schema.metadata.name}
             spec:
               containers:
                 - name: webapp
@@ -58,10 +57,10 @@ spec:
         apiVersion: v1
         kind: Service
         metadata:
-          name: ${schema.spec.name}-svc
+          name: ${schema.metadata.name}-svc
         spec:
           selector:
-            app: ${schema.spec.name}
+            app: ${schema.metadata.name}
           ports:
             - port: 80
               targetPort: 80
@@ -74,21 +73,21 @@ spec:
         apiVersion: apps/v1
         kind: StatefulSet
         metadata:
-          name: ${schema.spec.name}-postgres
+          name: ${schema.metadata.name}-postgres
           labels:
-            app: ${schema.spec.name}
+            app: ${schema.metadata.name}
             component: database
         spec:
-          serviceName: ${schema.spec.name}-postgres
+          serviceName: ${schema.metadata.name}-postgres
           replicas: 1
           selector:
             matchLabels:
-              app: ${schema.spec.name}
+              app: ${schema.metadata.name}
               component: database
           template:
             metadata:
               labels:
-                app: ${schema.spec.name}
+                app: ${schema.metadata.name}
                 component: database
             spec:
               containers:
@@ -110,11 +109,11 @@ spec:
         apiVersion: v1
         kind: Service
         metadata:
-          name: ${schema.spec.name}-postgres
+          name: ${schema.metadata.name}-postgres
         spec:
           clusterIP: None
           selector:
-            app: ${schema.spec.name}
+            app: ${schema.metadata.name}
             component: database
           ports:
             - port: 5432
@@ -127,20 +126,20 @@ spec:
         apiVersion: apps/v1
         kind: Deployment
         metadata:
-          name: ${schema.spec.name}-redis
+          name: ${schema.metadata.name}-redis
           labels:
-            app: ${schema.spec.name}
+            app: ${schema.metadata.name}
             component: cache
         spec:
           replicas: 1
           selector:
             matchLabels:
-              app: ${schema.spec.name}
+              app: ${schema.metadata.name}
               component: cache
           template:
             metadata:
               labels:
-                app: ${schema.spec.name}
+                app: ${schema.metadata.name}
                 component: cache
             spec:
               containers:
@@ -161,10 +160,10 @@ spec:
         apiVersion: v1
         kind: Service
         metadata:
-          name: ${schema.spec.name}-redis
+          name: ${schema.metadata.name}-redis
         spec:
           selector:
-            app: ${schema.spec.name}
+            app: ${schema.metadata.name}
             component: cache
           ports:
             - port: 6379
