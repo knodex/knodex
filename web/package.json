@@ -52,6 +52,8 @@
     "ajv": "^6.14.0",
     "flatted": "^3.4.2",
     "follow-redirects": "^1.16.0",
+    "lodash": "^4.18.0",
+    "lodash-es": "^4.18.0",
     "picomatch": "^4.0.4",
     "undici": "^7.24.5",
     "eslint": {
