@@ -126,11 +126,16 @@ test.describe('Catalog View', () => {
   })
 
   test('shows Documentation link in sidebar', async ({ page }) => {
-    // On the catalog route the sidebar shows category sub-navigation.
-    // Navigate to a non-catalog route (e.g., instances) to see the main sidebar
-    // which contains the Documentation link.
+    // Documentation now lives inside the UserMenu dropdown anchored at the
+    // bottom of the sidebar. Radix's `asChild` puts the data-testid on the
+    // anchor itself, so we assert the href directly on that element.
     await page.goto('/instances')
     await page.waitForLoadState('networkidle')
-    await expect(page.locator('a[href="https://knodex.io/docs"]')).toBeVisible()
+    const sidebar = page.locator('aside')
+    await sidebar.hover()
+    await sidebar.getByTestId('user-menu-trigger').click()
+    const docsLink = page.getByTestId('user-menu-documentation')
+    await expect(docsLink).toBeVisible()
+    await expect(docsLink).toHaveAttribute('href', 'https://knodex.io/docs')
   })
 })
