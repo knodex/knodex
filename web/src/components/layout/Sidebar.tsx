@@ -1,15 +1,26 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import React, { useCallback, useMemo } from "react";
-import { Link, useLocation } from "react-router-dom";
+import React, { useCallback, useEffect, useMemo, useRef } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
-  ExternalLink,
   ChevronLeft,
+  ChevronDown,
   FileText,
   Shield,
   AlertTriangle,
+  User,
+  Settings,
+  ExternalLink,
+  LogOut,
+  PanelLeft,
 } from "@/lib/icons";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import type { LucideProps } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { getLucideIcon } from "@/lib/icons";
@@ -19,12 +30,134 @@ import { useRGDList } from "@/hooks/useRGDs";
 import { useViolationCount, isEnterprise } from "@/hooks/useCompliance";
 import { useCategoriesEnabled } from "@/hooks/useCategories";
 import { useCanI } from "@/hooks/useCanI";
+import { useAuth } from "@/hooks/useAuth";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
-type NavTab = "catalog" | "instances" | "compliance" | "settings" | "projects" | "repositories" | string;
+type NavTab = "catalog" | "instances" | "compliance" | "projects" | "repositories" | string;
 
 interface SidebarNavProps {
   onNavItemClick?: () => void;
+  /** Optional toggle for collapse/expand — renders a PanelLeft button next to the Knodex logo when provided. */
+  onToggleCollapse?: () => void;
+  /** When true, render the compact icon-rail layout. */
+  isCollapsed?: boolean;
 }
+
+function LogoHeader({
+  onToggleCollapse,
+  isCollapsed,
+}: {
+  onToggleCollapse?: () => void;
+  isCollapsed?: boolean;
+}) {
+  const toggleRef = useRef<HTMLButtonElement | null>(null);
+  const prevCollapsed = useRef(isCollapsed);
+
+  // Restore focus to the toggle button on collapse-state change so keyboard
+  // users don't lose position when a focused nav item is unmounted by the
+  // expanded ↔ rail switch.
+  useEffect(() => {
+    if (prevCollapsed.current !== isCollapsed) {
+      prevCollapsed.current = isCollapsed;
+      const active = document.activeElement;
+      if (!active || active === document.body) {
+        toggleRef.current?.focus();
+      }
+    }
+  }, [isCollapsed]);
+
+  const toggleButton = onToggleCollapse && (
+    <button
+      ref={toggleRef}
+      type="button"
+      onClick={onToggleCollapse}
+      aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+      aria-expanded={!isCollapsed}
+      data-testid="sidebar-collapse-trigger"
+      className={cn(
+        "flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-[var(--radius-token-md)]",
+        "text-[var(--text-secondary)] hover:bg-[rgba(255,255,255,0.04)] hover:text-[var(--text-primary)]",
+        "transition-colors duration-150 outline-none focus-visible:ring-1 focus-visible:ring-[var(--brand-primary)]/30"
+      )}
+    >
+      <PanelLeft className="h-4 w-4" aria-hidden="true" />
+    </button>
+  );
+
+  if (isCollapsed) {
+    // Collapsed rail: just the toggle button, centered.
+    return (
+      <div className="flex h-16 items-center justify-center px-2">
+        {toggleButton}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-16 items-center justify-between px-4">
+      <div className="flex items-center gap-3 min-w-0">
+        <img src="/logo.svg" alt="Knodex" className="h-10 w-10 shrink-0" />
+        <span className="text-sm font-semibold text-[var(--text-primary)] whitespace-nowrap overflow-hidden">
+          Knodex
+        </span>
+      </div>
+      {toggleButton}
+    </div>
+  );
+}
+
+function CollapsedNavIcon({
+  item,
+  isActive,
+  onClick,
+  onPreload,
+}: {
+  item: NavItem;
+  isActive: boolean;
+  onClick: () => void;
+  onPreload: (to: string) => void;
+}) {
+  const Icon = item.icon;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Link
+          to={item.to}
+          onClick={onClick}
+          onMouseEnter={() => onPreload(item.to)}
+          onFocus={() => onPreload(item.to)}
+          className={cn(
+            "relative flex h-10 w-10 items-center justify-center rounded-[var(--radius-token-md)]",
+            "transition-colors duration-150 outline-none focus-visible:ring-1 focus-visible:ring-[var(--brand-primary)]/30",
+            isActive
+              ? "bg-[rgba(255,255,255,0.1)] text-[var(--text-primary)]"
+              : "text-[var(--text-secondary)] hover:bg-[rgba(255,255,255,0.04)] hover:text-[var(--text-primary)]"
+          )}
+          aria-label={item.label}
+          aria-current={isActive ? "page" : undefined}
+        >
+          <Icon className="h-5 w-5" aria-hidden="true" />
+          {item.badge !== undefined && item.badge > 0 && (
+            <span
+              className="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--brand-primary)] px-1 text-[10px] font-medium text-white"
+              aria-label={`${item.badge} items`}
+            >
+              {item.badge}
+            </span>
+          )}
+        </Link>
+      </TooltipTrigger>
+      <TooltipContent side="right">{item.label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 
 interface NavItem {
   id: NavTab;
@@ -88,12 +221,132 @@ const NavItemLink = React.memo(function NavItemLink({
 });
 
 /**
+ * UserMenu — avatar trigger at the bottom of the sidebar opening a dropdown
+ * with Profile, Documentation, Settings, and Logout.
+ */
+const UserMenu = React.memo(function UserMenu({
+  onNavItemClick,
+  isCollapsed,
+}: {
+  onNavItemClick?: () => void;
+  isCollapsed?: boolean;
+}) {
+  const navigate = useNavigate();
+  const { user, logout } = useAuth();
+
+  const handleProfile = useCallback(() => {
+    navigate("/user-info");
+    onNavItemClick?.();
+  }, [navigate, onNavItemClick]);
+
+  const handleSettings = useCallback(() => {
+    navigate("/settings");
+    onNavItemClick?.();
+  }, [navigate, onNavItemClick]);
+
+  const handleLogout = useCallback(() => {
+    logout();
+    onNavItemClick?.();
+  }, [logout, onNavItemClick]);
+
+  if (!user) {
+    if (isCollapsed) {
+      return (
+        <div
+          className="h-10 w-10 mx-auto rounded-full bg-[rgba(255,255,255,0.06)] animate-pulse"
+          aria-busy="true"
+        />
+      );
+    }
+    return (
+      <div
+        className="w-full flex items-center gap-3 px-3 py-[9px] rounded-[var(--radius-token-md)] text-[14px] font-medium text-[var(--text-muted)]"
+        aria-busy="true"
+      >
+        <div className="h-6 w-6 flex-shrink-0 rounded-full bg-[rgba(255,255,255,0.06)] animate-pulse" />
+        <div className="flex-1 h-3 rounded bg-[rgba(255,255,255,0.06)] animate-pulse" />
+      </div>
+    );
+  }
+
+  const displayName = user.email?.split("@")[0] ?? "User";
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        className={cn(
+          "rounded-[var(--radius-token-md)] text-[var(--text-secondary)]",
+          "hover:bg-[rgba(255,255,255,0.04)] hover:text-[var(--text-primary)]",
+          "data-[state=open]:bg-[rgba(255,255,255,0.06)] data-[state=open]:text-[var(--text-primary)]",
+          "transition-all duration-150 outline-none focus-visible:ring-1 focus-visible:ring-[var(--brand-primary)]/30",
+          isCollapsed
+            ? "flex h-10 w-10 mx-auto items-center justify-center rounded-full bg-[rgba(255,255,255,0.08)]"
+            : "w-full flex items-center gap-3 px-3 py-[9px] text-[14px] font-medium"
+        )}
+        aria-label={isCollapsed ? `Account: ${displayName}` : "Open user menu"}
+        data-testid="user-menu-trigger"
+      >
+        {isCollapsed ? (
+          <User className="h-4 w-4" aria-hidden="true" />
+        ) : (
+          <>
+            <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-[rgba(255,255,255,0.08)]">
+              <User className="h-3.5 w-3.5" aria-hidden="true" />
+            </div>
+            <span className="flex-1 text-left whitespace-nowrap overflow-hidden text-ellipsis">
+              {displayName}
+            </span>
+            <ChevronDown className="h-4 w-4 flex-shrink-0 opacity-70" aria-hidden="true" />
+          </>
+        )}
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        side={isCollapsed ? "right" : "top"}
+        align={isCollapsed ? "end" : "start"}
+        sideOffset={8}
+        className="w-[244px]"
+      >
+        <DropdownMenuItem onSelect={handleProfile} data-testid="user-menu-profile">
+          <User className="h-4 w-4" aria-hidden="true" />
+          <div className="flex flex-col min-w-0">
+            <span className="truncate text-sm font-medium">{displayName}</span>
+            {user.email && (
+              <span className="truncate text-xs text-muted-foreground">{user.email}</span>
+            )}
+          </div>
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={handleSettings} data-testid="user-menu-settings">
+          <Settings className="h-4 w-4" aria-hidden="true" />
+          Settings
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem asChild data-testid="user-menu-documentation">
+          <a
+            href="https://knodex.io/docs"
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={onNavItemClick}
+          >
+            <ExternalLink className="h-4 w-4" aria-hidden="true" />
+            Documentation
+          </a>
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={handleLogout} data-testid="user-menu-logout">
+          <LogOut className="h-4 w-4" aria-hidden="true" />
+          Logout
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+});
+
+/**
  * SidebarNav renders the sidebar navigation content (logo, nav sections, footer).
  * Used by both the desktop Sidebar and the tablet/mobile SidebarDrawer.
  */
-const SettingsIcon = NAV_ITEMS.settings.icon;
-
-export function SidebarNav({ onNavItemClick }: SidebarNavProps) {
+export function SidebarNav({ onNavItemClick, onToggleCollapse, isCollapsed }: SidebarNavProps) {
   const location = useLocation();
 
   // Get categories (OSS feature — Casbin-filtered per user)
@@ -104,7 +357,6 @@ export function SidebarNav({ onNavItemClick }: SidebarNavProps) {
   const activeTab: NavTab =
     location.pathname.startsWith('/projects') ? 'projects' :
     location.pathname.startsWith('/repositories') ? 'repositories' :
-    location.pathname.startsWith('/settings') ? 'settings' :
     location.pathname.startsWith('/audit') ? 'audit' :
     location.pathname.startsWith('/compliance') ? 'compliance' :
     location.pathname.startsWith('/secrets') ? 'secrets' :
@@ -265,18 +517,52 @@ export function SidebarNav({ onNavItemClick }: SidebarNavProps) {
     return "compliance-overview";
   }, [location.pathname]);
 
+  // Collapsed icon rail — overrides catalog/compliance sub-navs when collapsed.
+  if (isCollapsed) {
+    const railItems: NavItem[] = [
+      ...infrastructureItems,
+      ...manageItems,
+      ...enterpriseItems,
+    ];
+    return (
+      <TooltipProvider delayDuration={150}>
+        <div className="flex h-full flex-col">
+          <LogoHeader onToggleCollapse={onToggleCollapse} isCollapsed={isCollapsed} />
+
+          <nav
+            className="flex-1 overflow-y-auto py-4 flex flex-col items-center gap-1.5"
+            aria-label="Main navigation (collapsed)"
+          >
+            {railItems.map((item) => (
+              <CollapsedNavIcon
+                key={item.id}
+                item={item}
+                isActive={activeTab === item.id}
+                onClick={handleNavItemClick}
+                onPreload={handlePreload}
+              />
+            ))}
+          </nav>
+
+          <div className="pb-4 pt-2 border-t border-[rgba(255,255,255,0.06)]">
+            <UserMenu onNavItemClick={handleNavItemClick} isCollapsed={isCollapsed} />
+          </div>
+        </div>
+      </TooltipProvider>
+    );
+  }
+
+  const renderUserMenuFooter = () => (
+    <div className="px-2 pb-4 pt-2 border-t border-[rgba(255,255,255,0.06)]">
+      <UserMenu onNavItemClick={handleNavItemClick} />
+    </div>
+  );
+
   // Catalog sub-sidebar — shown when navigating within /catalog/*
   if (isOnCatalogRoute && catalogSubNav.length > 1) {
     return (
       <div className="flex h-full flex-col">
-        <div className="flex h-16 items-center px-4">
-          <div className="flex items-center gap-3 min-w-0">
-            <img src="/logo.svg" alt="Knodex" className="h-10 w-10 shrink-0" />
-            <span className="text-sm font-semibold text-[var(--text-primary)] whitespace-nowrap overflow-hidden">
-              Knodex
-            </span>
-          </div>
-        </div>
+        <LogoHeader onToggleCollapse={onToggleCollapse} isCollapsed={isCollapsed} />
 
         <nav className="flex-1 overflow-y-auto px-2 py-2" aria-label="Catalog navigation">
           <Link
@@ -328,6 +614,8 @@ export function SidebarNav({ onNavItemClick }: SidebarNavProps) {
             })}
           </div>
         </nav>
+
+        {renderUserMenuFooter()}
       </div>
     );
   }
@@ -335,14 +623,7 @@ export function SidebarNav({ onNavItemClick }: SidebarNavProps) {
   if (isOnComplianceRoute && isEnterprise()) {
     return (
       <div className="flex h-full flex-col">
-        <div className="flex h-16 items-center px-4">
-          <div className="flex items-center gap-3 min-w-0">
-            <img src="/logo.svg" alt="Knodex" className="h-10 w-10 shrink-0" />
-            <span className="text-sm font-semibold text-[var(--text-primary)] whitespace-nowrap overflow-hidden">
-              Knodex
-            </span>
-          </div>
-        </div>
+        <LogoHeader onToggleCollapse={onToggleCollapse} isCollapsed={isCollapsed} />
 
         <nav className="flex-1 overflow-y-auto px-2 py-2" aria-label="Compliance navigation">
           <Link
@@ -392,21 +673,15 @@ export function SidebarNav({ onNavItemClick }: SidebarNavProps) {
             })}
           </div>
         </nav>
+
+        {renderUserMenuFooter()}
       </div>
     );
   }
 
   return (
     <div className="flex h-full flex-col">
-      {/* Logo */}
-      <div className="flex h-16 items-center px-4">
-        <div className="flex items-center gap-3 min-w-0">
-          <img src="/logo.svg" alt="Knodex" className="h-10 w-10 shrink-0" />
-          <span className="text-sm font-semibold text-[var(--text-primary)] whitespace-nowrap overflow-hidden">
-            Knodex
-          </span>
-        </div>
-      </div>
+      <LogoHeader onToggleCollapse={onToggleCollapse} isCollapsed={isCollapsed} />
 
       {/* Primary Navigation */}
       <nav className="flex-1 overflow-y-auto px-2 py-4" aria-label="Main navigation">
@@ -420,52 +695,32 @@ export function SidebarNav({ onNavItemClick }: SidebarNavProps) {
         {isEnterprise() && renderSection("nav-section-enterprise", "Enterprise", enterpriseItems, true)}
       </nav>
 
-      {/* Footer — Settings + Documentation (bottom-pinned) */}
-      <div className="px-2 py-2">
-        <Link
-          to="/settings"
-          onClick={handleNavItemClick}
-          onMouseEnter={() => handlePreload("/settings")}
-          onFocus={() => handlePreload("/settings")}
-          className={cn(
-            "w-full flex items-center gap-3 px-3 py-[9px] rounded-[var(--radius-token-md)] text-[14px] font-medium transition-all duration-150",
-            activeTab === "settings"
-              ? "bg-[rgba(255,255,255,0.1)] text-[var(--text-primary)]"
-              : "text-[var(--text-secondary)] hover:bg-[rgba(255,255,255,0.04)] hover:text-[var(--text-primary)]"
-          )}
-          aria-label="Settings"
-          aria-current={activeTab === "settings" ? "page" : undefined}
-        >
-          <SettingsIcon className="h-5 w-5 flex-shrink-0" aria-hidden="true" />
-          <span className="flex-1 text-left whitespace-nowrap overflow-hidden">
-            Settings
-          </span>
-        </Link>
-      </div>
-
-      <div className="px-2 pb-4">
-        <a
-          href="https://knodex.io/docs"
-          target="_blank"
-          rel="noopener noreferrer"
-          aria-label="Documentation"
-          className="flex items-center gap-3 px-3 py-[9px] rounded-[var(--radius-token-md)] text-sm text-[var(--text-secondary)] hover:bg-[rgba(255,255,255,0.04)] hover:text-[var(--text-primary)] transition-colors"
-        >
-          <ExternalLink className="h-5 w-5 flex-shrink-0" aria-hidden="true" />
-          <span className="whitespace-nowrap overflow-hidden">Documentation</span>
-        </a>
-      </div>
+      {renderUserMenuFooter()}
     </div>
   );
 }
 
+interface SidebarProps {
+  isCollapsed?: boolean;
+  onToggleCollapse?: () => void;
+}
+
 /**
- * Desktop sidebar — fixed, always visible at lg+ (1024px and above).
+ * Desktop sidebar — fixed at lg+ (1024px and above). When collapsed, renders
+ * a 64px icon rail (still visible, with the PanelLeft toggle to re-expand).
  */
-export function Sidebar() {
+export function Sidebar({ isCollapsed, onToggleCollapse }: SidebarProps = {}) {
   return (
-    <aside className="hidden lg:block fixed left-0 top-0 z-50 h-screen w-[260px] bg-background border-r border-[var(--border-default)]">
-      <SidebarNav />
+    <aside
+      className={cn(
+        "hidden lg:block fixed left-0 top-0 z-50 h-screen bg-background border-r border-[var(--border-default)]",
+        "transition-[width] duration-200",
+        isCollapsed ? "w-16" : "w-[260px]"
+      )}
+      data-testid="desktop-sidebar"
+      data-collapsed={isCollapsed ? "true" : "false"}
+    >
+      <SidebarNav onToggleCollapse={onToggleCollapse} isCollapsed={isCollapsed} />
     </aside>
   );
 }

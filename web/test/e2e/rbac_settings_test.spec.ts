@@ -27,7 +27,18 @@ import { expect, test, TestUserRole, setupPermissionMocking } from "../fixture";
 
 test.describe("Settings Access RBAC", () => {
   test.describe("Sidebar Visibility - All Users See Settings", () => {
-    test("Global Admin sees Settings link in sidebar", async ({
+    // Settings now lives inside the UserMenu dropdown anchored at the bottom
+    // of the sidebar (data-testid="user-menu-trigger"). Each role test below
+    // opens the dropdown and asserts the Settings menu item is reachable.
+    async function assertSettingsReachableInUserMenu(page: import("@playwright/test").Page) {
+      const sidebar = page.locator("aside");
+      await sidebar.hover();
+      await sidebar.getByTestId("user-menu-trigger").click();
+      const settingsItem = page.getByTestId("user-menu-settings");
+      await expect(settingsItem).toBeVisible();
+    }
+
+    test("Global Admin sees Settings in user menu", async ({
       page,
       auth,
     }) => {
@@ -35,13 +46,7 @@ test.describe("Settings Access RBAC", () => {
       await page.goto("/instances");
       await page.waitForLoadState("domcontentloaded");
 
-      // Hover over sidebar to expand it and show labels
-      const sidebar = page.locator('aside');
-      await sidebar.hover();
-
-      // Global Admin should see Settings in sidebar
-      const settingsLink = sidebar.getByRole("link", { name: /settings/i });
-      await expect(settingsLink).toBeVisible();
+      await assertSettingsReachableInUserMenu(page);
 
       await page.screenshot({
         path: "../test-results/e2e/screenshots/rbac/settings-sidebar-global-admin.png",
@@ -49,7 +54,7 @@ test.describe("Settings Access RBAC", () => {
       });
     });
 
-    test("Project Admin sees Settings link in sidebar ", async ({
+    test("Project Admin sees Settings in user menu", async ({
       page,
       auth,
     }) => {
@@ -57,13 +62,7 @@ test.describe("Settings Access RBAC", () => {
       await page.goto("/instances");
       await page.waitForLoadState("domcontentloaded");
 
-      // Hover over sidebar to expand it and show labels
-      const sidebar = page.locator('aside');
-      await sidebar.hover();
-
-      // Project Admin should also see Settings (authorization happens at API layer)
-      const settingsLink = sidebar.getByRole("link", { name: /settings/i });
-      await expect(settingsLink).toBeVisible();
+      await assertSettingsReachableInUserMenu(page);
 
       await page.screenshot({
         path: "../test-results/e2e/screenshots/rbac/settings-sidebar-project-admin-visible.png",
@@ -71,18 +70,12 @@ test.describe("Settings Access RBAC", () => {
       });
     });
 
-    test("Developer sees Settings link in sidebar ", async ({ page, auth }) => {
+    test("Developer sees Settings in user menu", async ({ page, auth }) => {
       await auth.setupAs(TestUserRole.ORG_DEVELOPER);
       await page.goto("/instances");
       await page.waitForLoadState("domcontentloaded");
 
-      // Hover over sidebar to expand it and show labels
-      const sidebar = page.locator('aside');
-      await sidebar.hover();
-
-      // Developer should also see Settings (authorization happens at API layer)
-      const settingsLink = sidebar.getByRole("link", { name: /settings/i });
-      await expect(settingsLink).toBeVisible();
+      await assertSettingsReachableInUserMenu(page);
 
       await page.screenshot({
         path: "../test-results/e2e/screenshots/rbac/settings-sidebar-developer-visible.png",
@@ -90,18 +83,12 @@ test.describe("Settings Access RBAC", () => {
       });
     });
 
-    test("Viewer sees Settings link in sidebar ", async ({ page, auth }) => {
+    test("Viewer sees Settings in user menu", async ({ page, auth }) => {
       await auth.setupAs(TestUserRole.ORG_VIEWER);
       await page.goto("/instances");
       await page.waitForLoadState("domcontentloaded");
 
-      // Hover over sidebar to expand it and show labels
-      const sidebar = page.locator('aside');
-      await sidebar.hover();
-
-      // Viewer should also see Settings (authorization happens at API layer)
-      const settingsLink = sidebar.getByRole("link", { name: /settings/i });
-      await expect(settingsLink).toBeVisible();
+      await assertSettingsReachableInUserMenu(page);
 
       await page.screenshot({
         path: "../test-results/e2e/screenshots/rbac/settings-sidebar-viewer-visible.png",
@@ -491,14 +478,12 @@ test.describe("Authorization State Persistence", () => {
     await page.reload();
     await page.waitForLoadState("networkidle");
 
-    // Hover over sidebar to expand it and show labels
-    const sidebar = page.locator('aside');
+    // Settings should still be reachable via the user menu after reload.
+    // Permission is checked via useCanI() hook, not isGlobalAdmin boolean.
+    const sidebar = page.locator("aside");
     await sidebar.hover();
-
-    // Settings link should still be visible after reload
-    // Permission is checked via useCanI() hook, not isGlobalAdmin boolean
-    const settingsLink = sidebar.getByRole("link", { name: /settings/i });
-    await expect(settingsLink).toBeVisible();
+    await sidebar.getByTestId("user-menu-trigger").click();
+    await expect(page.getByTestId("user-menu-settings")).toBeVisible();
   });
 
   test("Auth token persists across reload", async ({ page, auth }) => {

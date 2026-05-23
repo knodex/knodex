@@ -91,8 +91,8 @@ test.describe.skip('OIDC Authentication Flow', () => {
       fullPage: true
     });
 
-    // Verify user is authenticated (check for logout button or user menu)
-    const userMenu = page.locator('[data-testid="user-menu"], button:has-text("Logout"), [aria-label*="user menu"]');
+    // Verify user is authenticated (user menu trigger anchors the sidebar footer)
+    const userMenu = page.locator('[data-testid="user-menu-trigger"], [aria-label*="user menu"]');
     await expect(userMenu.first()).toBeVisible({ timeout: 10000 });
   });
 
@@ -151,7 +151,7 @@ test.describe.skip('OIDC Authentication Flow', () => {
     await expect(page).not.toHaveURL(`${BASE_URL}/login`);
 
     // Navigate to user profile or settings to see project memberships
-    const userMenu = page.locator('[data-testid="user-menu"], button:has-text("Profile"), [aria-label*="user menu"]');
+    const userMenu = page.locator('[data-testid="user-menu-trigger"], [aria-label*="user menu"]');
     if (await userMenu.isVisible({ timeout: 5000 })) {
       await userMenu.click();
 
@@ -304,8 +304,8 @@ test.describe.skip('OIDC Authentication Flow', () => {
     // Find and click logout button
     const logoutButton = page.locator('button:has-text("Logout"), button:has-text("Sign out"), a:has-text("Logout")');
 
-    // May need to open user menu first
-    const userMenu = page.locator('[data-testid="user-menu"], [aria-label*="user menu"], button:has([data-testid="user-avatar"])');
+    // May need to open user menu first (logout lives inside the dropdown)
+    const userMenu = page.locator('[data-testid="user-menu-trigger"], [aria-label*="user menu"]');
     if (await userMenu.isVisible({ timeout: 5000 })) {
       await userMenu.click();
       await page.waitForTimeout(500);
