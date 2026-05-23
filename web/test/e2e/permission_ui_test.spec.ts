@@ -524,8 +524,10 @@ test.describe(' Catalog - Deploy Button Permission Checks', () => {
     const titleVisible = await pageTitle.isVisible({ timeout: 5000 }).catch(() => false);
 
     if (titleVisible) {
-      // Viewer should NOT see Deploy buttons
-      const deployButton = page.locator('button:has-text("Deploy")').first();
+      // Viewer should NOT see Deploy buttons.
+      // Use exact accessible-name match so we don't false-positive on chrome
+      // elements that mention "deploy" (e.g. cmd-k trigger placeholder).
+      const deployButton = page.getByRole('button', { name: 'Deploy', exact: true }).first();
       const isVisible = await deployButton.isVisible({ timeout: 3000 }).catch(() => false);
       expect(isVisible).toBe(false);
       console.log('✓ AC7: Viewer does NOT see Deploy button');
@@ -678,7 +680,9 @@ test.describe(' useCanI Hook Verification', () => {
     await authenticateWithCustomUser(page, VIEWER_USER, '/catalog');
     await page.waitForTimeout(2000);
 
-    const viewerDeployVisible = await page.locator('button:has-text("Deploy")').first().isVisible({ timeout: 3000 }).catch(() => false);
+    // Exact accessible-name match — avoids chrome buttons that contain the
+    // word "deploy" in their label (e.g. cmd-k trigger placeholder).
+    const viewerDeployVisible = await page.getByRole('button', { name: 'Deploy', exact: true }).first().isVisible({ timeout: 3000 }).catch(() => false);
 
     console.log(`✓ Viewer Deploy visible: ${viewerDeployVisible}`);
     expect(viewerDeployVisible).toBe(false);
@@ -723,10 +727,13 @@ test.describe(' Edge Cases', () => {
       fullPage: true,
     });
 
-    // Should not see any action buttons
-    const createButton = page.locator('button:has-text("Create")').first();
-    const deployButton = page.locator('button:has-text("Deploy")').first();
-    const deleteButton = page.locator('button:has-text("Delete")').first();
+    // Should not see any action buttons.
+    // Use exact accessible-name match so chrome elements that *contain* the
+    // word (e.g. cmd-k trigger placeholder "Search, deploy, jump…") don't
+    // cause false positives.
+    const createButton = page.getByRole('button', { name: 'Create', exact: true }).first();
+    const deployButton = page.getByRole('button', { name: 'Deploy', exact: true }).first();
+    const deleteButton = page.getByRole('button', { name: 'Delete', exact: true }).first();
 
     const createVisible = await createButton.isVisible({ timeout: 2000 }).catch(() => false);
     const deployVisible = await deployButton.isVisible({ timeout: 2000 }).catch(() => false);
