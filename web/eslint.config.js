@@ -36,6 +36,9 @@ export default defineConfig([
         }],
       }],
       // Downgrade React Compiler issues to warnings (experimental features)
+      'react-hooks/globals': 'warn',
+      'react-hooks/immutability': 'warn',
+      'react-hooks/refs': 'warn',
       'react-hooks/set-state-in-effect': 'warn',
       'react-hooks/static-components': 'warn',
       'react-hooks/incompatible-library': 'warn',
