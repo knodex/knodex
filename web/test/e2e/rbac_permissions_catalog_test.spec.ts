@@ -43,10 +43,9 @@ test.describe("RBAC: Catalog Feature Tests", () => {
       await page.waitForLoadState('networkidle', { timeout: 10000 });
 
       // Global Admin should see all RGDs (including test data)
-      // RGDCard renders as <div role="button" aria-label="View details for {name}">
-      const rgdCards = page.locator(
-        'div[role="button"][aria-label^="View details for"]'
-      );
+      // Catalog defaults to list (table) view, rows render as <tr role="button">.
+      // Use getByRole to match regardless of the underlying element tag.
+      const rgdCards = page.getByRole('button', { name: /^View details for/i });
       const rgdCount = await rgdCards.count();
 
       // Get the count text from the header (short timeout — text may not be present)

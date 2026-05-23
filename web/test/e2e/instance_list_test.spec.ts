@@ -79,13 +79,17 @@ test.describe('Instance List View', () => {
     // Wait for instances to load
     await expect(page.getByText('prod-db-1')).toBeVisible()
 
-    // Switch to list view where health labels are always visible
-    const listViewButton = page.getByRole('button', { name: /list/i }).or(page.locator('[data-testid="view-list"]'))
-    if (await listViewButton.isVisible()) {
-      await listViewButton.click()
+    // Default view is table — health badges are always visible.
+    // If somehow in grid view, switch to table view.
+    const tableViewButton = page.getByRole('button', { name: 'Table view' })
+    if (await tableViewButton.isVisible()) {
+      const isPressed = await tableViewButton.getAttribute('aria-pressed')
+      if (isPressed !== 'true') {
+        await tableViewButton.click()
+      }
     }
 
-    // Health status badge should be visible in list view
+    // Health status badge should be visible in table view
     await expect(page.getByText('Healthy').first()).toBeVisible({ timeout: 10000 })
   })
 
