@@ -390,6 +390,18 @@ func (f *fakeController) RunWithContext(ctx context.Context) {
 func (f *fakeController) HasSynced() bool                 { return f.synced }
 func (f *fakeController) LastSyncResourceVersion() string { return "" }
 
+// HasSyncedChecker satisfies the cache.Controller interface added in
+// client-go v0.36 (DoneChecker-based wait). The fake never closes Done,
+// matching the unsynced default.
+func (f *fakeController) HasSyncedChecker() cache.DoneChecker {
+	return fakeDoneChecker{}
+}
+
+type fakeDoneChecker struct{}
+
+func (fakeDoneChecker) Name() string          { return "fakeController" }
+func (fakeDoneChecker) Done() <-chan struct{} { return nil }
+
 func TestRepositoryWatcher_StartStopLifecycle(t *testing.T) {
 	client := fake.NewSimpleClientset()
 	rec := &mockRecorder{}
