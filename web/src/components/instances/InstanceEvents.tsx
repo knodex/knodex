@@ -9,9 +9,9 @@ import {
   TableBody,
   TableCell,
   TableHead,
-  TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { ListTableHeader } from "@/components/ui/list-table";
 import {
   Tooltip,
   TooltipContent,
@@ -203,7 +203,7 @@ export function InstanceEvents({ group, namespace, kind, name }: InstanceEventsP
         </div>
       ) : (
         <Table>
-          <TableHeader>
+          <ListTableHeader>
             <TableRow>
               <TableHead className="w-[100px]">Last Seen</TableHead>
               <TableHead className="w-[70px]">Type</TableHead>
@@ -211,7 +211,7 @@ export function InstanceEvents({ group, namespace, kind, name }: InstanceEventsP
               <TableHead className="w-[200px]">Object</TableHead>
               <TableHead>Message</TableHead>
             </TableRow>
-          </TableHeader>
+          </ListTableHeader>
           <TableBody>
             {filteredEvents.map((event, index) => (
               <EventRow key={`${event.lastSeen}-${event.object}-${event.reason}-${index}`} event={event} />

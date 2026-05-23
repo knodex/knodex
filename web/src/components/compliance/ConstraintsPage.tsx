@@ -8,9 +8,9 @@ import {
   Table,
   TableBody,
   TableCell,
-  TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { ListTableHeader, ListTableShell } from "@/components/ui/list-table";
 import { SortableHead } from "@/components/ui/sortable-table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -182,9 +182,9 @@ export function ConstraintsPage() {
 
       {!isLoading && !isError && data && data.items.length > 0 && (
         <>
-          <div className="rounded-lg border border-border overflow-hidden">
+          <ListTableShell noAnimation>
             <Table className="table-fixed">
-              <TableHeader>
+              <ListTableHeader>
                 <TableRow>
                   <SortableHead field="name" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="w-[25%]">Name</SortableHead>
                   <SortableHead field="kind" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="w-[15%]">Kind</SortableHead>
@@ -193,7 +193,7 @@ export function ConstraintsPage() {
                   <SortableHead field="name" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="w-[25%] hidden md:table-cell">Match Scope</SortableHead>
                   <SortableHead field="createdAt" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="w-[13%] hidden md:table-cell">Created</SortableHead>
                 </TableRow>
-              </TableHeader>
+              </ListTableHeader>
               <TableBody>
                 {data.items.map((constraint) => (
                   <TableRow
@@ -241,7 +241,7 @@ export function ConstraintsPage() {
                 ))}
               </TableBody>
             </Table>
-          </div>
+          </ListTableShell>
 
           <CompliancePagination
             page={page}

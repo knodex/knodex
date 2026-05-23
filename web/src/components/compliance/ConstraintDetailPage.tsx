@@ -20,9 +20,9 @@ import {
   TableBody,
   TableCell,
   TableHead,
-  TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { ListTableHeader } from "@/components/ui/list-table";
 import { useConstraint, useUpdateConstraintEnforcement, isEnterprise } from "@/hooks/useCompliance";
 import { isEnterpriseRequired } from "@/api/compliance";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -313,13 +313,13 @@ export function ConstraintDetailPage() {
               </CardHeader>
               <CardContent>
                 <Table>
-                  <TableHeader>
+                  <ListTableHeader>
                     <TableRow>
                       <TableHead style={{ width: "30%" }}>Resource</TableHead>
                       <TableHead style={{ width: "15%" }}>Namespace</TableHead>
                       <TableHead style={{ width: "55%" }}>Message</TableHead>
                     </TableRow>
-                  </TableHeader>
+                  </ListTableHeader>
                   <TableBody>
                     {violations.map((violation, index) => (
                       <TableRow key={index}>

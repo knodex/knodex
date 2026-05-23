@@ -24,9 +24,9 @@ import {
   TableBody,
   TableCell,
   TableHead,
-  TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { ListTableHeader } from "@/components/ui/list-table";
 import {
   Select,
   SelectContent,
@@ -163,7 +163,7 @@ export function PolicyRulesTable({
   return (
     <div className="space-y-4">
       <Table>
-        <TableHeader>
+        <ListTableHeader>
           <TableRow>
             <TableHead className="w-[140px]">Resource</TableHead>
             <TableHead className="w-[120px]">Action</TableHead>
@@ -171,7 +171,7 @@ export function PolicyRulesTable({
             <TableHead className="w-[100px]">Permission</TableHead>
             {canEdit && <TableHead className="w-[80px]">Actions</TableHead>}
           </TableRow>
-        </TableHeader>
+        </ListTableHeader>
         <TableBody>
           {rules.length === 0 ? (
             <TableRow>

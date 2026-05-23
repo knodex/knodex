@@ -10,6 +10,7 @@ import { useCurrentProject } from "@/hooks/useAuth";
 import type { Instance, InstanceListParams, InstanceHealth } from "@/types/rgd";
 import { StatusCard } from "./StatusCard";
 import { InstancesListView } from "./InstancesListView";
+import { InstancesListSkeleton } from "./InstancesListSkeleton";
 import { EmptyState } from "./EmptyState";
 import { Pagination } from "@/components/catalog/Pagination";
 import { InstanceFilters, type InstanceFilterState } from "./InstanceFilters";
@@ -24,11 +25,27 @@ import { useIsMobile } from "@/hooks/useIsMobile";
 import { MobileInstanceCard } from "./MobileInstanceCard";
 
 const PAGE_SIZE = 20;
-const INSTANCES_VIEW_KEY = "instances-view-mode";
+const INSTANCES_VIEW_KEY = "knodex.instances.view";
+// TODO(pre-release): drop LEGACY_VIEW_KEY + the migration branch in readInitialViewMode
+// once 0.8.0-rc.1 ships — no users have the legacy key in production.
+const LEGACY_VIEW_KEY = "instances-view-mode";
 type ViewMode = "grid" | "list";
 
 interface InstancesPageProps {
   onInstanceClick?: (instance: Instance) => void;
+}
+
+/** Resolve initial view mode: new key wins, legacy key migrates, otherwise default to `list` (AC #1). */
+function readInitialViewMode(): ViewMode {
+  const fresh = localStorage.getItem(INSTANCES_VIEW_KEY);
+  if (fresh === "grid" || fresh === "list") return fresh;
+  const legacy = localStorage.getItem(LEGACY_VIEW_KEY);
+  if (legacy === "grid" || legacy === "list") {
+    localStorage.setItem(INSTANCES_VIEW_KEY, legacy);
+    localStorage.removeItem(LEGACY_VIEW_KEY);
+    return legacy;
+  }
+  return "list";
 }
 
 export function InstancesPage({ onInstanceClick }: InstancesPageProps) {
@@ -45,11 +62,11 @@ export function InstancesPage({ onInstanceClick }: InstancesPageProps) {
   });
   const [page, setPage] = useState(1);
 
-  // View mode: grid or list, persisted to localStorage
-  const [viewMode, setViewMode] = useState<ViewMode>(() => {
-    const stored = localStorage.getItem(INSTANCES_VIEW_KEY);
-    return stored === "list" ? "list" : "grid";
-  });
+  // Mobile ignores the view toggle entirely (renders MobileInstanceCard), so we
+  // skip the localStorage read/migration on mobile to avoid spurious side-effects.
+  const [viewMode, setViewMode] = useState<ViewMode>(() =>
+    isMobile ? "list" : readInitialViewMode()
+  );
 
   const handleViewModeChange = useCallback((mode: ViewMode) => {
     setViewMode(mode);
@@ -144,6 +161,29 @@ export function InstancesPage({ onInstanceClick }: InstancesPageProps) {
     return Array.from(rgds).sort();
   }, [dataItems]);
 
+  // Summary breakdown for the table footer — counts pull from the same
+  // filtered list so they always match what the user is looking at.
+  const healthCounts = useMemo(() => {
+    const counts: Record<InstanceHealth, number> = {
+      Healthy: 0,
+      Degraded: 0,
+      Unhealthy: 0,
+      Progressing: 0,
+      Unknown: 0,
+    };
+    for (const instance of filteredItems) {
+      // Guard against stale/unknown health strings from a forward-incompatible API:
+      // they'd otherwise silently widen the Record and make the breakdown not add up
+      // to `total` in the footer.
+      if (instance.health in counts) {
+        counts[instance.health] += 1;
+      } else {
+        counts.Unknown += 1;
+      }
+    }
+    return counts;
+  }, [filteredItems]);
+
   const hasActiveFilters =
     !!filters.search ||
     !!filters.rgd ||
@@ -189,6 +229,19 @@ export function InstancesPage({ onInstanceClick }: InstancesPageProps) {
             )}
             <div className="flex items-center h-9 border border-[var(--border-default)] rounded-[var(--radius-token-md)] p-0.5" role="group" aria-label="View mode">
               <button
+                onClick={() => handleViewModeChange("list")}
+                className={cn(
+                  "h-full px-2 rounded-[var(--radius-token-sm)] transition-colors",
+                  viewMode === "list"
+                    ? "bg-[var(--brand-primary)] text-black"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+                aria-label="Table view"
+                aria-pressed={viewMode === "list"}
+              >
+                <List className="h-3.5 w-3.5" />
+              </button>
+              <button
                 onClick={() => handleViewModeChange("grid")}
                 className={cn(
                   "h-full px-2 rounded-[var(--radius-token-sm)] transition-colors",
@@ -200,19 +253,6 @@ export function InstancesPage({ onInstanceClick }: InstancesPageProps) {
                 aria-pressed={viewMode === "grid"}
               >
                 <LayoutGrid className="h-3.5 w-3.5" />
-              </button>
-              <button
-                onClick={() => handleViewModeChange("list")}
-                className={cn(
-                  "h-full px-2 rounded-[var(--radius-token-sm)] transition-colors",
-                  viewMode === "list"
-                    ? "bg-[var(--brand-primary)] text-black"
-                    : "text-muted-foreground hover:text-foreground"
-                )}
-                aria-label="List view"
-                aria-pressed={viewMode === "list"}
-              >
-                <List className="h-3.5 w-3.5" />
               </button>
             </div>
             <Link
@@ -229,11 +269,15 @@ export function InstancesPage({ onInstanceClick }: InstancesPageProps) {
 
       {/* Grid or List view */}
       {isLoading ? (
-        <div className="grid gap-3" style={{ gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill, minmax(300px, 1fr))" }}>
-          {Array.from({ length: isMobile ? 4 : 8 }).map((_, i) => (
-            <StatusCardSkeleton key={i} />
-          ))}
-        </div>
+        !isMobile && viewMode === "list" ? (
+          <InstancesListSkeleton />
+        ) : (
+          <div className="grid gap-3" style={{ gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill, minmax(300px, 1fr))" }}>
+            {Array.from({ length: isMobile ? 4 : 8 }).map((_, i) => (
+              <StatusCardSkeleton key={i} />
+            ))}
+          </div>
+        )
       ) : filteredItems.length === 0 ? (
         <EmptyState
           hasFilters={hasActiveFilters}
@@ -260,6 +304,7 @@ export function InstancesPage({ onInstanceClick }: InstancesPageProps) {
       ) : viewMode === "list" ? (
         <>
           <InstancesListView items={filteredItems} onInstanceClick={handleInstanceClick} />
+          <SummaryFooter counts={healthCounts} total={filteredItems.length} />
           {data && (
             <Pagination
               page={data.page}
@@ -296,5 +341,41 @@ export function InstancesPage({ onInstanceClick }: InstancesPageProps) {
         </>
       )}
     </section>
+  );
+}
+
+interface SummaryFooterProps {
+  counts: Record<InstanceHealth, number>;
+  total: number;
+}
+
+/** Mini breakdown rendered at the foot of the table view. */
+function SummaryFooter({ counts, total }: SummaryFooterProps) {
+  if (total === 0) return null;
+  const items: { health: InstanceHealth; label: string }[] = [
+    { health: "Healthy", label: "healthy" },
+    { health: "Progressing", label: "progressing" },
+    { health: "Degraded", label: "degraded" },
+    { health: "Unhealthy", label: "unhealthy" },
+    { health: "Unknown", label: "unknown" },
+  ];
+  const visible = items.filter((i) => counts[i.health] > 0);
+
+  return (
+    <div
+      data-testid="instances-summary-footer"
+      className="flex items-center gap-2 text-xs text-muted-foreground"
+    >
+      <span className="text-foreground/80 font-medium">{total} total</span>
+      {visible.map((item) => (
+        <span key={item.health} className="inline-flex items-center gap-1">
+          <span aria-hidden>·</span>
+          <span>
+            <span className="text-foreground/90 font-medium">{counts[item.health]}</span>{" "}
+            {item.label}
+          </span>
+        </span>
+      ))}
+    </div>
   );
 }

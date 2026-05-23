@@ -8,9 +8,9 @@ import {
   Table,
   TableBody,
   TableCell,
-  TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { ListTableHeader, ListTableShell } from "@/components/ui/list-table";
 import { SortableHead } from "@/components/ui/sortable-table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -249,9 +249,9 @@ export function ViolationsPage() {
 
       {!isLoading && !isError && projectFilteredData && projectFilteredData.items.length > 0 && (
         <>
-          <div className="rounded-lg border border-border overflow-hidden">
+          <ListTableShell noAnimation>
             <Table className="table-fixed">
-              <TableHeader>
+              <ListTableHeader>
                 <TableRow>
                   <SortableHead field="resource" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="w-[25%]">Resource</SortableHead>
                   <SortableHead field="namespace" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="w-[12%]">Namespace</SortableHead>
@@ -259,7 +259,7 @@ export function ViolationsPage() {
                   <SortableHead field="enforcement" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="w-[10%]">Enforcement</SortableHead>
                   <SortableHead field="resource" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="w-[35%] hidden md:table-cell">Message</SortableHead>
                 </TableRow>
-              </TableHeader>
+              </ListTableHeader>
               <TableBody>
                 {projectFilteredData.items.map((violation) => (
                   <TableRow key={`${violation.constraintKind}/${violation.constraintName}/${violation.resource.namespace ?? ""}/${violation.resource.kind}/${violation.resource.name}`}>
@@ -295,7 +295,7 @@ export function ViolationsPage() {
                 ))}
               </TableBody>
             </Table>
-          </div>
+          </ListTableShell>
 
           <CompliancePagination
             page={page}

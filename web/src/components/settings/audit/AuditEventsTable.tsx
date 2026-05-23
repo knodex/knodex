@@ -8,9 +8,9 @@ import {
   TableBody,
   TableCell,
   TableHead,
-  TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { ListTableHeader, ListTableShell } from "@/components/ui/list-table";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -208,9 +208,9 @@ export function AuditEventsTable({
 
   return (
     <div>
-      <div className="rounded-lg border border-border overflow-hidden">
+      <ListTableShell noAnimation>
         <Table>
-          <TableHeader>
+          <ListTableHeader>
             <TableRow>
               {COLUMNS.map((col) => (
                 <TableHead
@@ -226,14 +226,14 @@ export function AuditEventsTable({
                 </TableHead>
               ))}
             </TableRow>
-          </TableHeader>
+          </ListTableHeader>
           <TableBody>
             {sortedEvents.map((event) => (
               <AuditEventRow key={event.id} event={event} onRowClick={onRowClick} />
             ))}
           </TableBody>
         </Table>
-      </div>
+      </ListTableShell>
 
       {/* Pagination */}
       <div className="flex items-center justify-between mt-4">

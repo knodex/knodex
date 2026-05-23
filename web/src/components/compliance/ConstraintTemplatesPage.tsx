@@ -8,9 +8,9 @@ import {
   Table,
   TableBody,
   TableCell,
-  TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { ListTableHeader, ListTableShell } from "@/components/ui/list-table";
 import { SortableHead } from "@/components/ui/sortable-table";
 import { useConstraintTemplates, isEnterprise } from "@/hooks/useCompliance";
 import { isEnterpriseRequired } from "@/api/compliance";
@@ -84,16 +84,16 @@ export function ConstraintTemplatesPage() {
 
       {!isLoading && !isError && data && data.items.length > 0 && (
         <>
-          <div className="rounded-lg border border-border overflow-hidden">
+          <ListTableShell noAnimation>
             <Table className="table-fixed">
-              <TableHeader>
+              <ListTableHeader>
                 <TableRow>
                   <SortableHead field="name" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="w-[30%]">Name</SortableHead>
                   <SortableHead field="kind" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="w-[20%]">Kind</SortableHead>
                   <SortableHead field="createdAt" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="w-[35%] hidden md:table-cell">Description</SortableHead>
                   <SortableHead field="createdAt" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="w-[15%] hidden md:table-cell">Created</SortableHead>
                 </TableRow>
-              </TableHeader>
+              </ListTableHeader>
               <TableBody>
                 {data.items.map((template) => (
                   <TableRow
@@ -126,7 +126,7 @@ export function ConstraintTemplatesPage() {
                 ))}
               </TableBody>
             </Table>
-          </div>
+          </ListTableShell>
 
           <CompliancePagination
             page={page}

@@ -7,11 +7,11 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
   Table,
-  TableHeader,
   TableBody,
   TableCell,
   TableRow,
 } from "@/components/ui/table";
+import { ListTableHeader, ListTableShell } from "@/components/ui/list-table";
 import { SortableHead } from "@/components/ui/sortable-table";
 import {
   filterSearchClasses,
@@ -106,16 +106,16 @@ export function ProjectList({
           <Skeleton className="h-9 flex-1" />
           <Skeleton className="h-8 w-20" />
         </div>
-        <div className="rounded-lg border border-border overflow-hidden">
+        <ListTableShell noAnimation>
           <Table>
-            <TableHeader>
+            <ListTableHeader>
               <TableRow>
                 <th className="pl-4 w-[35%] p-3"><Skeleton className="h-4 w-12" /></th>
                 <th className="w-[10%] p-3"><Skeleton className="h-4 w-10" /></th>
                 <th className="w-[15%] p-3"><Skeleton className="h-4 w-16" /></th>
                 <th className="w-[20%] p-3 text-right"><Skeleton className="h-4 w-14 ml-auto" /></th>
               </TableRow>
-            </TableHeader>
+            </ListTableHeader>
             <TableBody>
               {Array.from({ length: 3 }).map((_, i) => (
                 <TableRow key={i}>
@@ -135,7 +135,7 @@ export function ProjectList({
               ))}
             </TableBody>
           </Table>
-        </div>
+        </ListTableShell>
       </div>
     );
   }
@@ -209,9 +209,9 @@ export function ProjectList({
           </p>
         </div>
       ) : (
-        <div className="rounded-lg border border-border overflow-hidden animate-fade-in-up">
+        <ListTableShell>
           <Table className="table-fixed">
-            <TableHeader>
+            <ListTableHeader>
               <TableRow>
                 <SortableHead field="name" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="w-[40%]">Name</SortableHead>
                 <SortableHead field="roles" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="w-[12%]">Roles</SortableHead>
@@ -219,7 +219,7 @@ export function ProjectList({
                 <SortableHead field="createdAt" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="w-[20%]">Created</SortableHead>
                 {canManage && <th className="w-[5%]" />}
               </TableRow>
-            </TableHeader>
+            </ListTableHeader>
             <TableBody>
               {sorted.map((project) => (
                 <TableRow
@@ -275,7 +275,7 @@ export function ProjectList({
               ))}
             </TableBody>
           </Table>
-        </div>
+        </ListTableShell>
       )}
     </div>
   );

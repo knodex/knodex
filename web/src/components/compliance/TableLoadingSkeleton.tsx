@@ -6,9 +6,9 @@ import {
   TableBody,
   TableCell,
   TableHead,
-  TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { ListTableHeader } from "@/components/ui/list-table";
 import { Skeleton } from "@/components/ui/skeleton";
 
 interface TableLoadingSkeletonProps {
@@ -35,7 +35,7 @@ export function TableLoadingSkeleton({
 }: TableLoadingSkeletonProps) {
   return (
     <Table>
-      <TableHeader>
+      <ListTableHeader>
         <TableRow>
           {columns.map((col, index) => (
             <TableHead
@@ -47,7 +47,7 @@ export function TableLoadingSkeleton({
             </TableHead>
           ))}
         </TableRow>
-      </TableHeader>
+      </ListTableHeader>
       <TableBody>
         {Array.from({ length: rows }).map((_, rowIndex) => (
           <TableRow key={rowIndex}>

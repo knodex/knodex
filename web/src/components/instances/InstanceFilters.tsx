@@ -9,17 +9,15 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue,
 } from "@/components/ui/select";
 import type { InstanceHealth } from "@/types/rgd";
-import { ScopeIndicator } from "@/components/shared/ScopeIndicator";
 import { cn } from "@/lib/utils";
 import {
   filterSearchClasses,
   filterSearchIconClasses,
   filterClearButtonClasses,
-  filterSelectClasses,
 } from "@/components/ui/filter-bar";
+import { FilterChip, FilterChipDot, filterChipClasses } from "@/components/ui/filter-chip";
 
 export interface InstanceFilterState {
   search: string;
@@ -46,6 +44,11 @@ const HEALTH_OPTIONS: { value: InstanceHealth | ""; label: string }[] = [
   { value: "Progressing", label: "Progressing" },
   { value: "Unknown", label: "Unknown" },
 ];
+
+const SCOPE_LABEL: Record<string, string> = {
+  namespaced: "Namespaced",
+  cluster: "Cluster-Scoped",
+};
 
 export function InstanceFilters({
   filters,
@@ -140,18 +143,24 @@ export function InstanceFilters({
           )}
         </div>
 
-        {/* Compact Filters */}
+        {/* Linear-style filter chips */}
         <div className="flex flex-wrap gap-2 sm:flex-nowrap">
-          {/* RGD Selector */}
+          {/* RGD chip */}
           <Select
             value={filters.rgd || ALL_VALUE}
             onValueChange={handleRgdChange}
           >
             <SelectTrigger
-              className={cn(filterSelectClasses(!!filters.rgd), "min-w-[140px]")}
+              className={cn(
+                filterChipClasses(filters.rgd ? "active" : "idle"),
+                "min-w-[140px]"
+              )}
               aria-label="Filter by RGD"
             >
-              <SelectValue placeholder="All RGDs" />
+              <span className="inline-flex items-center gap-1.5 truncate">
+                {filters.rgd && <FilterChipDot />}
+                <span className="truncate">{filters.rgd || "All RGDs"}</span>
+              </span>
             </SelectTrigger>
             <SelectContent>
               <SelectItem value={ALL_VALUE}>All RGDs</SelectItem>
@@ -163,16 +172,22 @@ export function InstanceFilters({
             </SelectContent>
           </Select>
 
-          {/* Health Selector */}
+          {/* Health chip */}
           <Select
             value={filters.health || ALL_VALUE}
             onValueChange={handleHealthChange}
           >
             <SelectTrigger
-              className={cn(filterSelectClasses(!!filters.health), "min-w-[120px]")}
+              className={cn(
+                filterChipClasses(filters.health ? "active" : "idle"),
+                "min-w-[120px]"
+              )}
               aria-label="Filter by health"
             >
-              <SelectValue placeholder="All health" />
+              <span className="inline-flex items-center gap-1.5 truncate">
+                {filters.health && <FilterChipDot />}
+                <span className="truncate">{filters.health || "All health"}</span>
+              </span>
             </SelectTrigger>
             <SelectContent>
               {HEALTH_OPTIONS.map((opt) => (
@@ -187,16 +202,24 @@ export function InstanceFilters({
             </SelectContent>
           </Select>
 
-          {/* Scope Selector */}
+          {/* Scope chip */}
           <Select
             value={filters.scope || ALL_SCOPE_VALUE}
             onValueChange={handleScopeChange}
           >
             <SelectTrigger
-              className={cn(filterSelectClasses(!!filters.scope), "min-w-[140px]")}
+              className={cn(
+                filterChipClasses(filters.scope ? "active" : "idle"),
+                "min-w-[140px]"
+              )}
               aria-label="Filter by scope"
             >
-              <SelectValue placeholder="All scopes" />
+              <span className="inline-flex items-center gap-1.5 truncate">
+                {filters.scope && <FilterChipDot />}
+                <span className="truncate">
+                  {SCOPE_LABEL[filters.scope] || "All scopes"}
+                </span>
+              </span>
             </SelectTrigger>
             <SelectContent>
               <SelectItem value={ALL_SCOPE_VALUE}>All scopes</SelectItem>
@@ -214,63 +237,59 @@ export function InstanceFilters({
             <span>Filters:</span>
             <div className="flex flex-wrap gap-1.5">
               {filters.search && (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-muted/40 text-foreground/80">
-                  {filters.search}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSearchValue("");
-                      onFiltersChange({ ...filters, search: "" });
-                    }}
-                    className="ml-0.5 text-muted-foreground/50 hover:text-foreground transition-colors duration-150"
-                    aria-label={`Remove ${filters.search} filter`}
-                    data-testid="remove-search-filter"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </span>
+                <FilterChip
+                  state="active"
+                  showDot
+                  onClick={() => {
+                    setSearchValue("");
+                    onFiltersChange({ ...filters, search: "" });
+                  }}
+                  aria-label={`Remove ${filters.search} filter`}
+                  data-testid="remove-search-filter"
+                  className="h-6 px-2 text-[11px]"
+                >
+                  <span>{filters.search}</span>
+                  <X className="h-3 w-3 text-muted-foreground/70" />
+                </FilterChip>
               )}
               {filters.rgd && (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-muted/40 text-foreground/80">
-                  {filters.rgd}
-                  <button
-                    type="button"
-                    onClick={() => onFiltersChange({ ...filters, rgd: "" })}
-                    className="ml-0.5 text-muted-foreground/50 hover:text-foreground transition-colors duration-150"
-                    aria-label={`Remove ${filters.rgd} filter`}
-                    data-testid="remove-rgd-filter"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </span>
+                <FilterChip
+                  state="active"
+                  showDot
+                  onClick={() => onFiltersChange({ ...filters, rgd: "" })}
+                  aria-label={`Remove ${filters.rgd} filter`}
+                  data-testid="remove-rgd-filter"
+                  className="h-6 px-2 text-[11px]"
+                >
+                  <span>{filters.rgd}</span>
+                  <X className="h-3 w-3 text-muted-foreground/70" />
+                </FilterChip>
               )}
               {filters.health && (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-muted/40 text-foreground/80">
-                  {filters.health}
-                  <button
-                    type="button"
-                    onClick={() => onFiltersChange({ ...filters, health: "" })}
-                    className="ml-0.5 text-muted-foreground/50 hover:text-foreground transition-colors duration-150"
-                    aria-label={`Remove ${filters.health} filter`}
-                    data-testid="remove-health-filter"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </span>
+                <FilterChip
+                  state="active"
+                  showDot
+                  onClick={() => onFiltersChange({ ...filters, health: "" })}
+                  aria-label={`Remove ${filters.health} filter`}
+                  data-testid="remove-health-filter"
+                  className="h-6 px-2 text-[11px]"
+                >
+                  <span>{filters.health}</span>
+                  <X className="h-3 w-3 text-muted-foreground/70" />
+                </FilterChip>
               )}
               {filters.scope && (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-muted/40 text-foreground/80">
-                  <ScopeIndicator isClusterScoped={filters.scope === "cluster"} variant="text" />
-                  <button
-                    type="button"
-                    onClick={() => onFiltersChange({ ...filters, scope: "" })}
-                    className="ml-0.5 text-muted-foreground/50 hover:text-foreground transition-colors duration-150"
-                    aria-label="Remove scope filter"
-                    data-testid="remove-scope-filter"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </span>
+                <FilterChip
+                  state="active"
+                  showDot
+                  onClick={() => onFiltersChange({ ...filters, scope: "" })}
+                  aria-label="Remove scope filter"
+                  data-testid="remove-scope-filter"
+                  className="h-6 px-2 text-[11px]"
+                >
+                  <span>{SCOPE_LABEL[filters.scope] ?? filters.scope}</span>
+                  <X className="h-3 w-3 text-muted-foreground/70" />
+                </FilterChip>
               )}
             </div>
           </div>

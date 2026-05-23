@@ -45,10 +45,10 @@ describe("InstancesListView", () => {
     expect(rows[2]).toHaveAttribute("aria-label", "View details for charlie-instance");
   });
 
-  it("sorts by health using severity order", () => {
+  it("sorts by health using severity order via the Status column", () => {
     render(<InstancesListView items={items} />);
-    const healthHeader = screen.getByRole("button", { name: /Health/ });
-    fireEvent.click(healthHeader);
+    const statusHeader = screen.getByRole("button", { name: /Status/ });
+    fireEvent.click(statusHeader);
 
     const rows = screen.getAllByRole("button", { name: /View details for/ });
     // ascending health order: Healthy(0) < Degraded(2) < Unhealthy(4)
@@ -90,17 +90,21 @@ describe("InstancesListView", () => {
     expect(screen.getByText("Cluster-Scoped")).toBeInTheDocument();
   });
 
-  it("shows conditions count", () => {
-    const withConditions = [
-      createTestInstance({
-        conditions: [
-          { type: "Ready", status: "True", reason: "OK", message: "", lastTransitionTime: "" },
-          { type: "Synced", status: "False", reason: "Pending", message: "", lastTransitionTime: "" },
-        ],
-      }),
-    ];
-    render(<InstancesListView items={withConditions} />);
-    expect(screen.getByText("1/2")).toBeInTheDocument();
+  it("renders the Status column header", () => {
+    render(<InstancesListView items={items} />);
+    expect(screen.getByRole("columnheader", { name: /Status/ })).toBeInTheDocument();
+  });
+
+  it("renders actor microcopy under the Updated timestamp", () => {
+    const gitopsItem = [createTestInstance({ name: "gitops-instance", deploymentMode: "gitops" })];
+    render(<InstancesListView items={gitopsItem} />);
+    expect(screen.getByText("via GitOps")).toBeInTheDocument();
+  });
+
+  it("shows 'manual edit' actor label when instance has drifted", () => {
+    const driftedItem = [createTestInstance({ name: "drifted", deploymentMode: "gitops", gitopsDrift: true })];
+    render(<InstancesListView items={driftedItem} />);
+    expect(screen.getByText("manual edit")).toBeInTheDocument();
   });
 
   it("sets aria-sort on active column header", () => {

@@ -41,3 +41,20 @@ export function safeHostname(url: string): string {
     return url;
   }
 }
+
+/**
+ * Short, human-readable label describing who/what last touched the instance.
+ * Derived from existing fields on the Instance — no schema changes.
+ *
+ * Returns one of:
+ *   - "manual edit"  → live spec drifted from desired (out-of-band write)
+ *   - "via GitOps"   → deployment mode is gitops or hybrid
+ *   - "via Knodex"   → direct (or unspecified) deployment mode
+ */
+export function deriveActorLabel(instance: Pick<Instance, "deploymentMode" | "gitopsDrift">): string {
+  if (instance.gitopsDrift) return "manual edit";
+  if (instance.deploymentMode === "gitops" || instance.deploymentMode === "hybrid") {
+    return "via GitOps";
+  }
+  return "via Knodex";
+}

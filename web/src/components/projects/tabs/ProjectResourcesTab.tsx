@@ -13,9 +13,9 @@ import {
   TableBody,
   TableCell,
   TableHead,
-  TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { ListTableHeader } from "@/components/ui/list-table";
 import {
   Sheet,
   SheetContent,
@@ -165,7 +165,7 @@ export function ProjectResourcesTab({ project, active = true }: ProjectResources
         <Card>
           <CardContent className="p-0">
             <Table>
-              <TableHeader>
+              <ListTableHeader>
                 <TableRow>
                   {RESOURCE_COLUMNS.map((col) => (
                     <TableHead
@@ -176,7 +176,7 @@ export function ProjectResourcesTab({ project, active = true }: ProjectResources
                     </TableHead>
                   ))}
                 </TableRow>
-              </TableHeader>
+              </ListTableHeader>
               <TableBody>
                 {data.items.map((resource) => (
                   <TableRow

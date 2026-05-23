@@ -8,11 +8,11 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
   Table,
-  TableHeader,
   TableBody,
   TableCell,
   TableRow,
 } from "@/components/ui/table";
+import { ListTableHeader, ListTableShell } from "@/components/ui/list-table";
 import { SortableHead } from "@/components/ui/sortable-table";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -120,9 +120,9 @@ export function RepositoryList({
           <Skeleton className="h-9 flex-1" />
           <Skeleton className="h-8 w-20" />
         </div>
-        <div className="rounded-lg border border-border overflow-hidden">
+        <ListTableShell noAnimation>
           <Table>
-            <TableHeader>
+            <ListTableHeader>
               <TableRow>
                 <th className="pl-4 w-[25%] p-3"><Skeleton className="h-4 w-12" /></th>
                 <th className="w-[30%] p-3"><Skeleton className="h-4 w-10" /></th>
@@ -130,7 +130,7 @@ export function RepositoryList({
                 <th className="w-[15%] p-3"><Skeleton className="h-4 w-12" /></th>
                 <th className="w-[10%] p-3"><Skeleton className="h-4 w-10" /></th>
               </TableRow>
-            </TableHeader>
+            </ListTableHeader>
             <TableBody>
               {Array.from({ length: 3 }).map((_, i) => (
                 <TableRow key={i}>
@@ -148,7 +148,7 @@ export function RepositoryList({
               ))}
             </TableBody>
           </Table>
-        </div>
+        </ListTableShell>
       </div>
     );
   }
@@ -222,9 +222,9 @@ export function RepositoryList({
           </p>
         </div>
       ) : (
-        <div className="rounded-lg border border-border overflow-hidden animate-fade-in-up">
+        <ListTableShell>
           <Table className="table-fixed">
-            <TableHeader>
+            <ListTableHeader>
               <TableRow>
                 <SortableHead field="name" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="w-[22%]">Name</SortableHead>
                 <SortableHead field="url" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="w-[32%]">URL</SortableHead>
@@ -233,7 +233,7 @@ export function RepositoryList({
                 <SortableHead field="status" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="w-[10%]">Status</SortableHead>
                 {canManage && <th className="w-[5%]" />}
               </TableRow>
-            </TableHeader>
+            </ListTableHeader>
             <TableBody>
               {sorted.map((repo) => (
                 <TableRow
@@ -287,7 +287,7 @@ export function RepositoryList({
               ))}
             </TableBody>
           </Table>
-        </div>
+        </ListTableShell>
       )}
     </div>
   );

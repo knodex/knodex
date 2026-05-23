@@ -15,9 +15,9 @@ import {
   TableBody,
   TableCell,
   TableHead,
-  TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { ListTableHeader } from "@/components/ui/list-table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -70,14 +70,14 @@ function ConstraintLink({ violation }: { violation: Violation }) {
 function LoadingSkeleton() {
   return (
     <Table>
-      <TableHeader>
+      <ListTableHeader>
         <TableRow>
           <TableHead>Resource</TableHead>
           <TableHead>Constraint</TableHead>
           <TableHead>Enforcement</TableHead>
           <TableHead className="hidden md:table-cell">Message</TableHead>
         </TableRow>
-      </TableHeader>
+      </ListTableHeader>
       <TableBody>
         {[1, 2, 3, 4, 5].map((i) => (
           <TableRow key={i}>
@@ -174,7 +174,7 @@ export function RecentViolations({ limit = 10 }: RecentViolationsProps) {
           <EmptyState />
         ) : (
           <Table>
-            <TableHeader>
+            <ListTableHeader>
               <TableRow>
                 <TableHead>Resource</TableHead>
                 <TableHead>Constraint</TableHead>
@@ -183,7 +183,7 @@ export function RecentViolations({ limit = 10 }: RecentViolationsProps) {
                   Message
                 </TableHead>
               </TableRow>
-            </TableHeader>
+            </ListTableHeader>
             <TableBody>
               {violations.map((violation, index) => (
                 <TableRow key={`${violation.constraintKind}-${violation.constraintName}-${violation.resource.name}-${index}`}>

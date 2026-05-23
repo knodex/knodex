@@ -11,9 +11,9 @@ import {
   Table,
   TableBody,
   TableCell,
-  TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { ListTableHeader, ListTableShell } from "@/components/ui/list-table";
 
 type SortField = "name" | "category" | "instances";
 type SortDir = "asc" | "desc";
@@ -67,15 +67,15 @@ export function CatalogListView({ items, onRGDClick, compact = false }: CatalogL
   }, [items, sortField, sortDir]);
 
   return (
-    <div className="rounded-lg border border-border overflow-hidden animate-fade-in-up">
+    <ListTableShell>
       <Table className="table-fixed">
-        <TableHeader>
+        <ListTableHeader>
           <TableRow>
             <SortableHead field="name" sortField={sortField} sortDir={sortDir} onSort={handleSort} className={compact ? "w-[60%]" : "w-[50%]"}>Name</SortableHead>
             {!compact && <SortableHead field="category" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="w-[20%]">Category</SortableHead>}
             <SortableHead field="instances" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="w-[20%]">Instances</SortableHead>
           </TableRow>
-        </TableHeader>
+        </ListTableHeader>
         <TableBody>
           {sorted.map((rgd) => {
             return (
@@ -119,6 +119,6 @@ export function CatalogListView({ items, onRGDClick, compact = false }: CatalogL
           })}
         </TableBody>
       </Table>
-    </div>
+    </ListTableShell>
   );
 }

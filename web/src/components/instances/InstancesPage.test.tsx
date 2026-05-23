@@ -42,6 +42,10 @@ vi.mock("./InstancesListView", () => ({
   InstancesListView: () => <div data-testid="instances-list-view" />,
 }));
 
+vi.mock("./InstancesListSkeleton", () => ({
+  InstancesListSkeleton: () => <div data-testid="instances-list-skeleton" />,
+}));
+
 vi.mock("./EmptyState", () => ({
   EmptyState: ({ hasFilters }: { hasFilters: boolean }) => (
     <div data-testid="empty-state" data-has-filters={hasFilters} />
@@ -96,8 +100,24 @@ beforeEach(() => {
 });
 
 describe("InstancesPage", () => {
-  describe("loading state (AC #1, #6)", () => {
-    it("renders StatusCardSkeleton grid with matching auto-fill CSS while loading", () => {
+  describe("loading state", () => {
+    it("renders the list skeleton while loading in default (table) view", () => {
+      mockUseInstanceList.mockReturnValue({
+        data: undefined,
+        isLoading: true,
+        isError: false,
+        error: null,
+        isFetching: true,
+        refetch: vi.fn(),
+      });
+
+      renderPage();
+
+      expect(screen.getByTestId("instances-list-skeleton")).toBeInTheDocument();
+    });
+
+    it("renders card skeletons when grid view is selected", () => {
+      localStorage.setItem("knodex.instances.view", "grid");
       mockUseInstanceList.mockReturnValue({
         data: undefined,
         isLoading: true,
@@ -111,13 +131,10 @@ describe("InstancesPage", () => {
 
       const skeletons = screen.getAllByTestId("status-card-skeleton");
       expect(skeletons).toHaveLength(8);
-      const grid = skeletons[0].parentElement!;
-      expect(grid.style.gridTemplateColumns).toBe("repeat(auto-fill, minmax(300px, 1fr))");
-      expect(grid).toHaveClass("grid");
     });
   });
 
-  describe("page header (AC #2)", () => {
+  describe("page header", () => {
     it("renders title 'Instances'", () => {
       mockUseInstanceList.mockReturnValue({
         data: { items: [], totalCount: 0, page: 1, pageSize: 20 },
@@ -133,10 +150,9 @@ describe("InstancesPage", () => {
       const header = screen.getByTestId("page-header");
       expect(header).toHaveAttribute("data-title", "Instances");
     });
-
   });
 
-  describe("Deploy button (AC #3)", () => {
+  describe("Deploy button", () => {
     it("renders Deploy button linking to /catalog", () => {
       mockUseInstanceList.mockReturnValue({
         data: { items: [], totalCount: 0, page: 1, pageSize: 20 },
@@ -172,32 +188,9 @@ describe("InstancesPage", () => {
     });
   });
 
-  describe("StatusCard grid (AC #1)", () => {
-    it("renders StatusCard for each instance in grid view", () => {
-      const instances = [
-        createTestInstance({ name: "inst-1" }),
-        createTestInstance({ name: "inst-2" }),
-      ];
-
-      mockUseInstanceList.mockReturnValue({
-        data: { items: instances, totalCount: 2, page: 1, pageSize: 20 },
-        isLoading: false,
-        isError: false,
-        error: null,
-        isFetching: false,
-        refetch: vi.fn(),
-      });
-
-      renderPage();
-
-      const cards = screen.getAllByTestId("status-card");
-      expect(cards).toHaveLength(2);
-      expect(screen.getByText("inst-1")).toBeInTheDocument();
-      expect(screen.getByText("inst-2")).toBeInTheDocument();
-    });
-
-    it("uses auto-fill grid CSS with minmax(340px, 1fr)", () => {
-      const instances = [createTestInstance()];
+  describe("default view (AC #1)", () => {
+    it("renders the table (list) view by default on first visit", () => {
+      const instances = [createTestInstance({ name: "inst-1" })];
 
       mockUseInstanceList.mockReturnValue({
         data: { items: instances, totalCount: 1, page: 1, pageSize: 20 },
@@ -210,15 +203,12 @@ describe("InstancesPage", () => {
 
       renderPage();
 
-      // StatusCard is wrapped in an animation div, grid is its grandparent
-      const animWrapper = screen.getAllByTestId("status-card")[0].parentElement!;
-      const grid = animWrapper.parentElement!;
-      expect(grid.style.gridTemplateColumns).toBe("repeat(auto-fill, minmax(300px, 1fr))");
-      expect(grid).toHaveClass("grid");
+      expect(screen.getByTestId("instances-list-view")).toBeInTheDocument();
+      expect(screen.queryByTestId("status-card")).not.toBeInTheDocument();
     });
   });
 
-  describe("empty state (AC #5)", () => {
+  describe("empty state", () => {
     it("renders EmptyState when no instances exist", () => {
       mockUseInstanceList.mockReturnValue({
         data: { items: [], totalCount: 0, page: 1, pageSize: 20 },
@@ -254,77 +244,127 @@ describe("InstancesPage", () => {
     });
   });
 
-  describe("view mode toggle", () => {
-    it("renders InstancesListView when view mode is list", () => {
-      localStorage.setItem("instances-view-mode", "list");
-
-      const instances = [createTestInstance()];
-
+  describe("view mode toggle + persistence (AC #2)", () => {
+    function withInstance() {
       mockUseInstanceList.mockReturnValue({
-        data: { items: instances, totalCount: 1, page: 1, pageSize: 20 },
+        data: { items: [createTestInstance()], totalCount: 1, page: 1, pageSize: 20 },
         isLoading: false,
         isError: false,
         error: null,
         isFetching: false,
         refetch: vi.fn(),
       });
+    }
 
+    it("respects 'grid' from the new localStorage key", () => {
+      localStorage.setItem("knodex.instances.view", "grid");
+      withInstance();
       renderPage();
-
-      expect(screen.getByTestId("instances-list-view")).toBeInTheDocument();
-      expect(screen.queryByTestId("status-card")).not.toBeInTheDocument();
-    });
-
-    it("switches to list view when list toggle button is clicked", () => {
-      const instances = [createTestInstance()];
-
-      mockUseInstanceList.mockReturnValue({
-        data: { items: instances, totalCount: 1, page: 1, pageSize: 20 },
-        isLoading: false,
-        isError: false,
-        error: null,
-        isFetching: false,
-        refetch: vi.fn(),
-      });
-
-      renderPage();
-
-      // Initially in grid view
-      expect(screen.getByTestId("status-card")).toBeInTheDocument();
-
-      // Click list view toggle
-      fireEvent.click(screen.getByLabelText("List view"));
-
-      // Should now show list view
-      expect(screen.getByTestId("instances-list-view")).toBeInTheDocument();
-      expect(screen.queryByTestId("status-card")).not.toBeInTheDocument();
-    });
-
-    it("switches back to grid view when grid toggle button is clicked", () => {
-      localStorage.setItem("instances-view-mode", "list");
-
-      const instances = [createTestInstance()];
-
-      mockUseInstanceList.mockReturnValue({
-        data: { items: instances, totalCount: 1, page: 1, pageSize: 20 },
-        isLoading: false,
-        isError: false,
-        error: null,
-        isFetching: false,
-        refetch: vi.fn(),
-      });
-
-      renderPage();
-
-      // Initially in list view
-      expect(screen.getByTestId("instances-list-view")).toBeInTheDocument();
-
-      // Click grid view toggle
-      fireEvent.click(screen.getByLabelText("Grid view"));
-
-      // Should now show grid view
       expect(screen.getByTestId("status-card")).toBeInTheDocument();
       expect(screen.queryByTestId("instances-list-view")).not.toBeInTheDocument();
+    });
+
+    it("migrates the legacy localStorage key on read", () => {
+      localStorage.setItem("instances-view-mode", "grid");
+      withInstance();
+      renderPage();
+      // Legacy preference honored
+      expect(screen.getByTestId("status-card")).toBeInTheDocument();
+      // Legacy key cleared, new key written
+      expect(localStorage.getItem("instances-view-mode")).toBeNull();
+      expect(localStorage.getItem("knodex.instances.view")).toBe("grid");
+    });
+
+    it("switches to grid view when grid toggle is clicked and persists the choice", () => {
+      withInstance();
+      renderPage();
+
+      // Default is table
+      expect(screen.getByTestId("instances-list-view")).toBeInTheDocument();
+
+      fireEvent.click(screen.getByLabelText("Grid view"));
+
+      expect(screen.getByTestId("status-card")).toBeInTheDocument();
+      expect(localStorage.getItem("knodex.instances.view")).toBe("grid");
+    });
+
+    it("switches back to table view when table toggle is clicked", () => {
+      localStorage.setItem("knodex.instances.view", "grid");
+      withInstance();
+      renderPage();
+
+      expect(screen.getByTestId("status-card")).toBeInTheDocument();
+
+      fireEvent.click(screen.getByLabelText("Table view"));
+
+      expect(screen.getByTestId("instances-list-view")).toBeInTheDocument();
+      expect(localStorage.getItem("knodex.instances.view")).toBe("list");
+    });
+  });
+
+  describe("summary footer (AC #5)", () => {
+    it("renders the breakdown chip strip in table view", () => {
+      const items = [
+        createTestInstance({ name: "a", health: "Healthy" }),
+        createTestInstance({ name: "b", health: "Healthy" }),
+        createTestInstance({ name: "c", health: "Degraded" }),
+      ];
+      mockUseInstanceList.mockReturnValue({
+        data: { items, totalCount: 3, page: 1, pageSize: 20 },
+        isLoading: false,
+        isError: false,
+        error: null,
+        isFetching: false,
+        refetch: vi.fn(),
+      });
+
+      renderPage();
+
+      const footer = screen.getByTestId("instances-summary-footer");
+      expect(footer).toHaveTextContent("3 total");
+      // Exact-text assertions: catch any future refactor that capitalizes or rewords the label.
+      expect(footer).toHaveTextContent("2 healthy");
+      expect(footer).toHaveTextContent("1 degraded");
+    });
+
+    it("counts unknown health strings into the Unknown bucket (forward-compat guard)", () => {
+      const items = [
+        // @ts-expect-error -- simulating a future API value not in the InstanceHealth enum.
+        createTestInstance({ name: "future", health: "Suspended" }),
+        createTestInstance({ name: "ok", health: "Healthy" }),
+      ];
+      mockUseInstanceList.mockReturnValue({
+        data: { items, totalCount: 2, page: 1, pageSize: 20 },
+        isLoading: false,
+        isError: false,
+        error: null,
+        isFetching: false,
+        refetch: vi.fn(),
+      });
+
+      renderPage();
+
+      const footer = screen.getByTestId("instances-summary-footer");
+      expect(footer).toHaveTextContent("2 total");
+      // 1 Healthy + 1 unknown bucket — totals add up.
+      expect(footer).toHaveTextContent("1 healthy");
+      expect(footer).toHaveTextContent("1 unknown");
+    });
+
+    it("does not render the footer in grid view", () => {
+      localStorage.setItem("knodex.instances.view", "grid");
+      mockUseInstanceList.mockReturnValue({
+        data: { items: [createTestInstance()], totalCount: 1, page: 1, pageSize: 20 },
+        isLoading: false,
+        isError: false,
+        error: null,
+        isFetching: false,
+        refetch: vi.fn(),
+      });
+
+      renderPage();
+
+      expect(screen.queryByTestId("instances-summary-footer")).not.toBeInTheDocument();
     });
   });
 });

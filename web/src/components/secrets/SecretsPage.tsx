@@ -15,11 +15,11 @@ import { formatDistanceToNow } from "@/lib/date";
 import { getSafeErrorMessage } from "@/lib/errors";
 import {
   Table,
-  TableHeader,
   TableBody,
   TableCell,
   TableRow,
 } from "@/components/ui/table";
+import { ListTableHeader, ListTableShell } from "@/components/ui/list-table";
 import { Input } from "@/components/ui/input";
 import { SortableHead } from "@/components/ui/sortable-table";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -299,9 +299,9 @@ function SecretsListView({
   onDeleteClick,
 }: SecretsListViewProps) {
   return (
-    <div className="rounded-lg border border-border overflow-hidden animate-fade-in-up">
+    <ListTableShell>
       <Table className="table-fixed">
-        <TableHeader>
+        <ListTableHeader>
           <TableRow>
             <SortableHead field="name" sortField={sortField} sortDir={sortDir} onSort={onSort} className="w-[30%]">Name</SortableHead>
             <SortableHead field="namespace" sortField={sortField} sortDir={sortDir} onSort={onSort} className="w-[20%]">Namespace</SortableHead>
@@ -309,7 +309,7 @@ function SecretsListView({
             <SortableHead field="createdAt" sortField={sortField} sortDir={sortDir} onSort={onSort} className="w-[15%]">Created</SortableHead>
             {canDelete && <th className="w-[5%]" />}
           </TableRow>
-        </TableHeader>
+        </ListTableHeader>
         <TableBody>
           {items.map((secret) => (
             <TableRow
@@ -354,7 +354,7 @@ function SecretsListView({
           ))}
         </TableBody>
       </Table>
-    </div>
+    </ListTableShell>
   );
 }
 
@@ -362,16 +362,16 @@ function SecretsListView({
 
 function ListSkeleton() {
   return (
-    <div className="rounded-lg border border-border overflow-hidden">
+    <ListTableShell noAnimation>
       <Table>
-        <TableHeader>
+        <ListTableHeader>
           <TableRow>
             <th className="pl-4 w-[30%] p-3"><Skeleton className="h-4 w-12" /></th>
             <th className="w-[20%] p-3"><Skeleton className="h-4 w-16" /></th>
             <th className="w-[25%] p-3"><Skeleton className="h-4 w-10" /></th>
             <th className="w-[20%] p-3 text-right"><Skeleton className="h-4 w-14 ml-auto" /></th>
           </TableRow>
-        </TableHeader>
+        </ListTableHeader>
         <TableBody>
           {Array.from({ length: 5 }).map((_, i) => (
             <TableRow key={i}>
@@ -388,6 +388,6 @@ function ListSkeleton() {
           ))}
         </TableBody>
       </Table>
-    </div>
+    </ListTableShell>
   );
 }
