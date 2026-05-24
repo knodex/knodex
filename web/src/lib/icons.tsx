@@ -124,6 +124,7 @@ export {
   ArrowUp,
   ArrowUpDown,
   BarChart3,
+  BookOpen,
   Box,
   Boxes,
   Calendar,

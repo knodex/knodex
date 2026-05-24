@@ -31,10 +31,10 @@ import {
 } from "@/api/compliance";
 import type { CreateInstanceRequest } from "@/types/rgd";
 import type { DeploymentMode } from "@/types/deployment";
-import type { FormSchema } from "@/types/rgd";
-import type { RGDListItem } from "@/types/rgd";
+import type { CatalogRGD, FormSchema } from "@/types/rgd";
 import { DiscardDialog } from "@/components/deploy/discard-dialog";
 import { DeployTabs } from "@/components/deploy/DeployTabs";
+import { DocsButton } from "@/components/shared/DocsButton";
 import { DeployActionFooter } from "@/components/deploy/DeployActionFooter";
 import { GeneralTab } from "@/components/deploy/tabs/GeneralTab";
 import { SchemaTab } from "@/components/deploy/tabs/SchemaTab";
@@ -138,7 +138,7 @@ export function DeployPage({ rgdName }: DeployPageProps) {
 interface DeployPageContentProps {
   rgdName: string;
   schema: FormSchema;
-  rgd: RGDListItem | null;
+  rgd: CatalogRGD | null;
   defaultValues: Record<string, unknown>;
 }
 
@@ -298,6 +298,7 @@ function DeployPageContent({
     runChecks();
 
     // Subscribe to form value changes while on Review tab (non-render subscription).
+    // eslint-disable-next-line react-hooks/incompatible-library -- intentional: subscribing without re-rendering, see comment above
     const subscription = form.watch(() => {
       if (!ac.signal.aborted) runChecks();
     });
@@ -440,17 +441,23 @@ function DeployPageContent({
           </h2>
         }
         actions={
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            onClick={handleCancel}
-            disabled={isSubmitting}
-            aria-label="Close"
-            data-testid="deploy-header-close"
-          >
-            <X className="h-5 w-5" />
-          </Button>
+          <div className="flex items-center gap-2">
+            <DocsButton
+              docsUrl={rgd?.docsUrl}
+              rgdLabel={rgd?.title ?? rgdName}
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={handleCancel}
+              disabled={isSubmitting}
+              aria-label="Close"
+              data-testid="deploy-header-close"
+            >
+              <X className="h-5 w-5" />
+            </Button>
+          </div>
         }
       />
       <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-4 pb-24">

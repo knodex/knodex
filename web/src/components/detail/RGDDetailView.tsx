@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/button";
 import { AddOnsTab } from "./AddOnsTab";
 import { DependsOnTab } from "./DependsOnTab";
 import { ScopeIndicator } from "@/components/shared/ScopeIndicator";
+import { DocsButton } from "@/components/shared/DocsButton";
 import { useDynamicTabs } from "@/hooks/useDynamicTabs";
 import type { Tab, ConditionalTab } from "@/hooks/useDynamicTabs";
 import { TabBar } from "@/components/shared/TabBar";
@@ -166,15 +167,18 @@ export function RGDDetailView({ rgd, onDeploy, initialTab }: RGDDetailViewProps)
             </div>
           </div>
 
-          {onDeploy && (
-            <Button
-              onClick={onDeploy}
-              className="gap-2 shrink-0"
-            >
-              <ExternalLink className="h-4 w-4" />
-              Deploy
-            </Button>
-          )}
+          <div className="flex items-center gap-2 shrink-0">
+            <DocsButton
+              docsUrl={displayRGD.docsUrl}
+              rgdLabel={displayRGD.title || displayRGD.name}
+            />
+            {onDeploy && (
+              <Button onClick={onDeploy} className="gap-2">
+                <ExternalLink className="h-4 w-4" />
+                Deploy
+              </Button>
+            )}
+          </div>
         </div>
 
         {/* Description */}

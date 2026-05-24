@@ -39,6 +39,25 @@ const RGD_WITHOUT_DOCS = {
 function setupDetailMocks(page: Parameters<typeof setupPermissionMocking>[0], rgd: typeof RGD_WITH_DOCS | typeof RGD_WITHOUT_DOCS) {
   return Promise.all([
     setupPermissionMocking(page, { '*:*': true }),
+    // Mock account/info so session restore succeeds (prevents "Connection Error" state)
+    page.route('**/api/v1/account/info', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          userID: 'user-global-admin',
+          email: 'admin@e2e-test.local',
+          displayName: 'Global Administrator',
+          groups: [],
+          casbinRoles: ['role:serveradmin'],
+          projects: [],
+          roles: {},
+          issuer: 'knodex',
+          tokenExpiresAt: Math.floor(Date.now() / 1000) + 3600,
+          tokenIssuedAt: Math.floor(Date.now() / 1000) - 60,
+        }),
+      })
+    ),
     page.route(/\/api\/v1\/rgds(\?|$)/, (route) =>
       route.fulfill({
         status: 200,
@@ -61,26 +80,23 @@ function setupDetailMocks(page: Parameters<typeof setupPermissionMocking>[0], rg
 test.describe('RGD Catalog Documentation URL', () => {
   test.use({ authenticateAs: TestUserRole.GLOBAL_ADMIN })
 
-  // Skipped: docsUrl was rendered on the Overview tab which was replaced by Instances tab.
-  // Re-enable once docsUrl display is re-added to the detail view.
-  test.skip('shows Documentation link when docsUrl annotation is set', async ({ page }) => {
+  test('shows Documentation link when docsUrl annotation is set', async ({ page }) => {
     await setupDetailMocks(page, RGD_WITH_DOCS)
     await page.goto('/catalog/webapp-with-docs')
     await expect(page.locator('h1').first()).toBeVisible({ timeout: 10000 })
 
-    const docsLink = page.getByRole('link', { name: /view docs/i })
+    const docsLink = page.getByRole('link', { name: /open documentation/i })
     await expect(docsLink).toBeVisible()
     await expect(docsLink).toHaveAttribute('href', 'https://docs.example.com/webapp')
     await expect(docsLink).toHaveAttribute('target', '_blank')
     await expect(docsLink).toHaveAttribute('rel', 'noopener noreferrer')
   })
 
-  // Skipped: docsUrl was rendered on the Overview tab which was replaced by Instances tab.
-  test.skip('hides Documentation row when docsUrl annotation is absent', async ({ page }) => {
+  test('hides Documentation link when docsUrl annotation is absent', async ({ page }) => {
     await setupDetailMocks(page, RGD_WITHOUT_DOCS)
     await page.goto('/catalog/webapp-no-docs')
     await expect(page.locator('h1').first()).toBeVisible({ timeout: 10000 })
 
-    await expect(page.getByRole('link', { name: /view docs/i })).not.toBeVisible()
+    await expect(page.getByRole('link', { name: /open documentation/i })).toHaveCount(0)
   })
 })
