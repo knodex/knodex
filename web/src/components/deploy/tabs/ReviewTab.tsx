@@ -31,6 +31,34 @@ function renderValue(value: unknown): string {
   return String(value);
 }
 
+function ReviewRow({ label, value }: { label: string; value: unknown }) {
+  const isObject =
+    value !== null && value !== undefined && typeof value === "object";
+
+  if (isObject) {
+    return (
+      <div className="text-sm">
+        <div className="mb-1 text-[var(--text-secondary)]">{label}</div>
+        <pre
+          className="overflow-x-auto whitespace-pre-wrap break-all rounded-md p-2 font-mono text-xs text-[var(--text-primary)]"
+          style={{ backgroundColor: "rgba(255,255,255,0.04)" }}
+        >
+          {JSON.stringify(value, null, 2)}
+        </pre>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-start justify-between gap-3 text-sm">
+      <span className="shrink-0 text-[var(--text-secondary)]">{label}</span>
+      <span className="min-w-0 break-all text-right font-mono text-xs text-[var(--text-primary)]">
+        {renderValue(value)}
+      </span>
+    </div>
+  );
+}
+
 export function ReviewTab({
   tabs,
   onEditTab,
@@ -94,35 +122,21 @@ export function ReviewTab({
           >
             {isGeneral &&
               knodexRows.map(([label, value]) => (
-                <div
+                <ReviewRow
                   key={`knodex-${label}`}
-                  className="flex items-center justify-between text-sm"
-                >
-                  <span className="text-[var(--text-secondary)]">{label}</span>
-                  <span className="font-mono text-xs text-[var(--text-primary)]">
-                    {renderValue(value)}
-                  </span>
-                </div>
+                  label={label as string}
+                  value={value}
+                />
               ))}
-            {entries.length === 0 ? (
-              !isGeneral && (
-                <p className="text-sm text-[var(--text-muted)]">
-                  No values configured
-                </p>
-              )
-            ) : (
-              entries.map(([key, value]) => (
-                <div
-                  key={key}
-                  className="flex items-center justify-between text-sm"
-                >
-                  <span className="text-[var(--text-secondary)]">{key}</span>
-                  <span className="font-mono text-xs text-[var(--text-primary)]">
-                    {renderValue(value)}
-                  </span>
-                </div>
-              ))
-            )}
+            {entries.length === 0
+              ? !isGeneral && (
+                  <p className="text-sm text-[var(--text-muted)]">
+                    No values configured
+                  </p>
+                )
+              : entries.map(([key, value]) => (
+                  <ReviewRow key={key} label={key} value={value} />
+                ))}
           </SectionCard>
         );
       })}

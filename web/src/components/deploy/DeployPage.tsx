@@ -416,22 +416,12 @@ function DeployPageContent({
     navigate(`/catalog/${encodeURIComponent(rgdName)}`);
   }, [navigate, rgdName]);
 
-  const breadcrumbs = [
-    { label: "Catalog", href: "/catalog" },
-    {
-      label: rgd?.title ?? rgdName,
-      href: `/catalog/${encodeURIComponent(rgdName)}`,
-    },
-    { label: "Deploy" },
-  ];
-
   const activeTab = tabs[activeIndex];
 
   return (
     <FormProvider {...form}>
       <PageHeader
         title={schema.title ?? rgd?.title ?? rgdName}
-        breadcrumbs={breadcrumbs}
         leftActions={
           <h2 className="text-lg font-semibold leading-none">
             Deploy{" "}
