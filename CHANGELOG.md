@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.8.0](https://github.com/knodex/knodex/compare/v0.7.0...v0.8.0) (2026-05-31)
+
+
+### Features
+
+* **catalog:** surface knodex.io/docs-url annotation in UI ([339fce5](https://github.com/knodex/knodex/commit/339fce5b4d01881d31b8fe4a203ece37ac2e0782))
+* **projects:** add wrapper-RGD routing for project creation ([#79](https://github.com/knodex/knodex/issues/79)) ([22a81a3](https://github.com/knodex/knodex/commit/22a81a3e2b0fdf0f2b66598cbec365c17026b3d2))
+* table-default /instances + shared table primitive ([3624603](https://github.com/knodex/knodex/commit/3624603c3a07ca8a24d9f424d9a31b7722ae6807))
+* **web:** collapsible sidebar with user menu dropdown ([26f7a53](https://github.com/knodex/knodex/commit/26f7a539514a219824c18bad09cf6cb08330efa5))
+* **web:** redesign top bar with breadcrumb and search trigger ([dee213e](https://github.com/knodex/knodex/commit/dee213e5caf6361677b7a1824c89b41a8b1a0786))
+
+
+### Bug Fixes
+
+* **ci:** add least-privilege permissions to release-summary job ([#87](https://github.com/knodex/knodex/issues/87)) ([554bb07](https://github.com/knodex/knodex/commit/554bb07005bed677755a6f7c5c02e955e3e1abf2))
+* **deploy:** prevent review tab overflow and remove duplicate breadcrumb ([4e10c6e](https://github.com/knodex/knodex/commit/4e10c6e8406a1f80da16deea866facb98cdf4562))
+* **deps:** apply Dependabot security updates ([6be17ef](https://github.com/knodex/knodex/commit/6be17ef6ddabe4603260b80c9a06c8fec1fb4675))
+* **deps:** bump mermaid ≥11.15.0 to fix XSS and Gantt DoS ([197e9aa](https://github.com/knodex/knodex/commit/197e9aa4d76febb3f7231e31bb771ff3021e64aa))
+* **deps:** bump vulnerable npm dependencies across root/web/website ([41840c2](https://github.com/knodex/knodex/commit/41840c23efd2c58b567e5f923ec70981f309562c))
+* **deps:** pin lodash and lodash-es to &gt;=4.18.0 to fix code injection ([93c0351](https://github.com/knodex/knodex/commit/93c03513bf21f8e2ec3b6bcd08f7a1159e083798))
+* **deps:** pin picomatch ≥4.0.4 to patch two GHSA advisories ([8a28ba7](https://github.com/knodex/knodex/commit/8a28ba73c22158bcaf46dee5cf148977d1e381bb))
+* **server/static:** return 404 for missing assets to prevent MIME errors ([#81](https://github.com/knodex/knodex/issues/81)) ([e0b3985](https://github.com/knodex/knodex/commit/e0b39858ac7de46c7caeaa84774ecadf1929e604))
+* **test/e2e:** tighten Deploy button selectors to exact accessible name ([eccaa5c](https://github.com/knodex/knodex/commit/eccaa5cf76da6523d747c229b5d1717389089fb1))
+
 ## [0.7.0](https://github.com/knodex/knodex/compare/v0.6.0...v0.7.0) (2026-05-21)
 
 
