@@ -8,8 +8,6 @@ import {
   AlertCircle,
   GitCommit,
   Download,
-  ChevronDown,
-  ChevronUp,
   User,
   RefreshCw,
   Loader2,
@@ -242,7 +240,7 @@ function DetailCard({ entry }: { entry: TimelineEntry }) {
   const colorClass = EVENT_COLORS[entry.eventType] || EVENT_COLORS.StatusChanged;
 
   return (
-    <div className="mt-3 mx-4 rounded-lg border border-border bg-secondary/30 p-3 animate-in fade-in-0 slide-in-from-top-1 duration-150">
+    <div className="mt-3 mx-4 rounded-lg border border-[var(--border-subtle)] bg-[var(--surface-bg)] p-3 animate-in fade-in-0 slide-in-from-top-1 duration-150">
       <div className="flex items-center gap-3">
         <div
           className={cn(
@@ -254,19 +252,19 @@ function DetailCard({ entry }: { entry: TimelineEntry }) {
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-medium text-sm text-foreground">
+            <span className="font-medium text-sm text-[var(--text-primary)]">
               {getEventLabel(entry.eventType)}
             </span>
             {entry.isCompleted && (
-              <CheckCircle2 className="h-3.5 w-3.5 text-muted-foreground" />
+              <CheckCircle2 className="h-3.5 w-3.5 text-[var(--text-muted)]" />
             )}
           </div>
-          <div className="flex items-center gap-2 mt-0.5 text-xs text-muted-foreground">
+          <div className="flex items-center gap-2 mt-0.5 text-xs text-[var(--text-muted)]">
             <Clock className="h-3 w-3" />
             <span>{formatTimestamp(entry.timestamp)}</span>
             {entry.user && (
               <>
-                <span className="text-border">|</span>
+                <span className="text-[var(--border-active)]">|</span>
                 <User className="h-3 w-3" />
                 <span>{entry.user}</span>
               </>
@@ -276,7 +274,7 @@ function DetailCard({ entry }: { entry: TimelineEntry }) {
       </div>
 
       {entry.message && (
-        <p className="mt-2 text-sm text-muted-foreground pl-10">
+        <p className="mt-2 text-sm text-[var(--text-secondary)] pl-10">
           {entry.message}
         </p>
       )}
@@ -298,7 +296,6 @@ function DetailCard({ entry }: { entry: TimelineEntry }) {
 }
 
 export function DeploymentTimeline({ group, namespace, kind, name }: DeploymentTimelineProps) {
-  const [isExpanded, setIsExpanded] = useState(true);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [exportFormat, setExportFormat] = useState<HistoryExportFormat>("json");
 
@@ -346,12 +343,13 @@ export function DeploymentTimeline({ group, namespace, kind, name }: DeploymentT
 
   if (isLoading) {
     return (
-      <div className="rounded-lg border border-border bg-card">
-        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-          <h3 className="text-sm font-medium text-foreground">Deployment History</h3>
+      <div className="rounded-lg border border-[var(--border-default)] bg-[var(--surface-primary)] overflow-hidden">
+        <div className="flex items-center gap-2.5 px-4 py-3 border-b border-[var(--border-subtle)]">
+          <Clock className="h-4 w-4 text-[var(--text-muted)]" />
+          <h3 className="text-sm font-medium text-[var(--text-primary)]">Deployment History</h3>
         </div>
         <div className="p-8 flex items-center justify-center">
-          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          <Loader2 className="h-5 w-5 animate-spin text-[var(--text-muted)]" />
         </div>
       </div>
     );
@@ -359,15 +357,16 @@ export function DeploymentTimeline({ group, namespace, kind, name }: DeploymentT
 
   if (error) {
     return (
-      <div className="rounded-lg border border-border bg-card">
-        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-          <h3 className="text-sm font-medium text-foreground">Deployment History</h3>
+      <div className="rounded-lg border border-[var(--border-default)] bg-[var(--surface-primary)] overflow-hidden">
+        <div className="flex items-center gap-2.5 px-4 py-3 border-b border-[var(--border-subtle)]">
+          <Clock className="h-4 w-4 text-[var(--text-muted)]" />
+          <h3 className="text-sm font-medium text-[var(--text-primary)]">Deployment History</h3>
         </div>
-        <div className="p-6 flex items-center gap-3 text-muted-foreground">
-          <AlertCircle className="h-5 w-5" />
+        <div className="p-6 flex items-center gap-3 text-[var(--text-secondary)]">
+          <AlertCircle className="h-5 w-5 text-[var(--status-error)]" />
           <div>
             <p className="text-sm">Failed to load deployment history</p>
-            <p className="text-xs mt-1">
+            <p className="text-xs mt-1 text-[var(--text-muted)]">
               {error instanceof Error ? error.message : "An unexpected error occurred"}
             </p>
           </div>
@@ -383,106 +382,87 @@ export function DeploymentTimeline({ group, namespace, kind, name }: DeploymentT
   const selectedEntry = resolvedIndex !== null ? timeline[resolvedIndex] : null;
 
   return (
-    <div className="rounded-lg border border-border bg-card overflow-hidden">
-      {/* Header */}
-      <button
-        onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full px-4 py-3 border-b border-border flex items-center justify-between hover:bg-secondary/50 transition-colors"
-      >
-        <div className="flex items-center gap-2">
-          <h3 className="text-sm font-medium text-foreground">Deployment History</h3>
-          <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-secondary text-muted-foreground">
-            {timeline.length} events
+    <div className="rounded-lg border border-[var(--border-default)] bg-[var(--surface-primary)] overflow-hidden">
+      {/* Header: title + count + inline export controls */}
+      <div className="px-4 py-3 border-b border-[var(--border-subtle)] flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5">
+          <Clock className="h-4 w-4 text-[var(--text-muted)]" />
+          <h3 className="text-sm font-medium text-[var(--text-primary)]">Deployment History</h3>
+          <span className="text-xs text-[var(--text-muted)]">{timeline.length} events</span>
+        </div>
+        {timeline.length > 0 && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-[var(--text-muted)]">Export</span>
+            <select
+              value={exportFormat}
+              onChange={(e) => setExportFormat(e.target.value as HistoryExportFormat)}
+              className="text-xs rounded border border-[var(--border-subtle)] bg-[var(--surface-bg)] px-2 py-1 text-[var(--text-secondary)]"
+            >
+              <option value="json">JSON</option>
+              <option value="csv">CSV</option>
+            </select>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleExport}
+              disabled={exportHistory.isPending}
+              className="gap-1.5 h-7"
+            >
+              {exportHistory.isPending ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Download className="h-3.5 w-3.5" />
+              )}
+              Download
+            </Button>
+          </div>
+        )}
+      </div>
+
+      {timeline.length === 0 ? (
+        <div className="text-center py-8 text-[var(--text-muted)]">
+          <Clock className="h-8 w-8 mx-auto mb-2 opacity-50" />
+          <p className="text-sm">No deployment history available</p>
+        </div>
+      ) : (
+        <>
+          {/* Horizontal timeline rail */}
+          <div ref={scrollContainerRef} className="overflow-x-auto py-4">
+            <div className="flex items-start px-6" style={{ minWidth: "min-content" }}>
+              {timeline.map((entry, index) => (
+                <Fragment key={`${entry.timestamp}-${entry.eventType}-${index}`}>
+                  <TimelineNode
+                    entry={entry}
+                    index={index}
+                    isSelected={resolvedIndex === index}
+                    onSelect={setSelectedIndex}
+                    nodeRef={resolvedIndex === index ? selectedNodeRef : undefined}
+                  />
+                  {index < timeline.length - 1 && (
+                    <TimelineConnector weight={gapWeights[index]} />
+                  )}
+                </Fragment>
+              ))}
+              {/* "Now" marker at the end of the rail */}
+              <TimelineConnector weight={nowWeight} dashed />
+              <NowMarker />
+            </div>
+          </div>
+
+          {/* Detail card for selected event */}
+          {selectedEntry && <DetailCard entry={selectedEntry} />}
+          <div className="pb-3" />
+        </>
+      )}
+
+      {/* Export error */}
+      {exportHistory.isError && (
+        <div className="px-4 py-2 border-t border-[var(--status-error)]/20 bg-[var(--status-error)]/5 flex items-center gap-2">
+          <AlertCircle className="h-4 w-4 text-[var(--status-error)]" />
+          <span className="text-xs text-[var(--status-error)]">
+            Failed to export history
           </span>
         </div>
-        {isExpanded ? (
-          <ChevronUp className="h-4 w-4 text-muted-foreground" />
-        ) : (
-          <ChevronDown className="h-4 w-4 text-muted-foreground" />
-        )}
-      </button>
-
-      {isExpanded && (
-        <>
-          {timeline.length === 0 ? (
-            <div className="text-center py-6 text-muted-foreground">
-              <Clock className="h-8 w-8 mx-auto mb-2 opacity-50" />
-              <p className="text-sm">No deployment history available</p>
-            </div>
-          ) : (
-            <>
-              {/* Horizontal timeline rail */}
-              <div
-                ref={scrollContainerRef}
-                className="overflow-x-auto py-4"
-              >
-                <div className="flex items-start px-6" style={{ minWidth: "min-content" }}>
-                  {timeline.map((entry, index) => (
-                    <Fragment key={`${entry.timestamp}-${entry.eventType}-${index}`}>
-                      <TimelineNode
-                        entry={entry}
-                        index={index}
-                        isSelected={resolvedIndex === index}
-                        onSelect={setSelectedIndex}
-                        nodeRef={resolvedIndex === index ? selectedNodeRef : undefined}
-                      />
-                      {index < timeline.length - 1 && (
-                        <TimelineConnector weight={gapWeights[index]} />
-                      )}
-                    </Fragment>
-                  ))}
-                  {/* "Now" marker at the end of the rail */}
-                  <TimelineConnector weight={nowWeight} dashed />
-                  <NowMarker />
-                </div>
-              </div>
-
-              {/* Detail card for selected event */}
-              {selectedEntry && <DetailCard entry={selectedEntry} />}
-            </>
-          )}
-
-          {/* Export section */}
-          {timeline.length > 0 && (
-            <div className="px-4 py-3 mt-2 border-t border-border bg-secondary/30 flex items-center justify-between gap-4">
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground">Export as:</span>
-                <select
-                  value={exportFormat}
-                  onChange={(e) => setExportFormat(e.target.value as HistoryExportFormat)}
-                  className="text-xs border border-border rounded px-2 py-1 bg-background text-foreground"
-                >
-                  <option value="json">JSON</option>
-                  <option value="csv">CSV</option>
-                </select>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleExport}
-                disabled={exportHistory.isPending}
-                className="gap-1.5"
-              >
-                {exportHistory.isPending ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Download className="h-3.5 w-3.5" />
-                )}
-                Download
-              </Button>
-            </div>
-          )}
-
-          {/* Export error */}
-          {exportHistory.isError && (
-            <div className="px-4 py-2 border-t border-destructive/20 bg-destructive/5 flex items-center gap-2">
-              <AlertCircle className="h-4 w-4 text-destructive" />
-              <span className="text-xs text-destructive">
-                Failed to export history
-              </span>
-            </div>
-          )}
-        </>
       )}
     </div>
   );

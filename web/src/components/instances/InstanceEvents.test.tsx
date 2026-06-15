@@ -126,9 +126,9 @@ describe("InstanceEvents", () => {
     const warningText = screen.getByText("Warning");
     expect(warningText).toHaveClass("text-status-warning");
 
-    // Normal text should be rendered with muted class
+    // Normal text should be rendered with the muted design-token class
     const normalText = screen.getByText("Normal");
-    expect(normalText).toHaveClass("text-muted-foreground");
+    expect(normalText).toHaveClass("text-[var(--text-muted)]");
   });
 
   it("filter buttons exist and are clickable", () => {
