@@ -4,3 +4,4 @@ kind: Kustomization
 # CRDs are cluster-scoped and should be installed before the application
 resources:
   - project.yaml
+  - team.yaml

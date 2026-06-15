@@ -2,3 +2,4 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 export { RGDDetailView } from "./RGDDetailView";
+export { RGDDetailSkeleton } from "./RGDDetailSkeleton";

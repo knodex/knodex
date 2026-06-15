@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import {
+  Bot,
   Box,
   FolderOpen,
   GitBranch,
@@ -14,6 +15,7 @@ import {
 import type { LucideIcon } from "@/lib/icons";
 
 export type NavItemId =
+  | "agents"
   | "catalog"
   | "instances"
   | "projects"
@@ -31,6 +33,7 @@ export interface NavItemMeta {
 }
 
 export const NAV_ITEMS: Record<NavItemId, NavItemMeta> = {
+  agents: { id: "agents", label: "Agents", path: "/agents", icon: Bot },
   catalog: { id: "catalog", label: "Catalog", path: "/catalog", icon: LayoutGrid },
   instances: { id: "instances", label: "Instances", path: "/instances", icon: Box },
   projects: { id: "projects", label: "Projects", path: "/projects", icon: FolderOpen },

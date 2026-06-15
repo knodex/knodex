@@ -37,9 +37,10 @@ test.describe('Global Admin - Repository Configuration', () => {
       fullPage: true
     });
 
-    // Verify page loaded - should see "Repositories" heading
-    const pageTitle = page.locator('h1:has-text("Repositories")');
-    await expect(pageTitle).toBeVisible({ timeout: 10000 });
+    // Verify page loaded — page identity is now on the TopBar breadcrumb leaf
+    // (Story 48.12 removed the per-page sr-only h1).
+    const pageTitle = page.getByTestId('topbar-breadcrumb-leaf');
+    await expect(pageTitle).toHaveText('Repositories', { timeout: 10000 });
 
     // Click Add Repository button (Global Admin should see it)
     const addRepoButton = page.locator('button:has-text("Add Repository")');

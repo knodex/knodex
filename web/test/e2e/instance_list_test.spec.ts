@@ -89,8 +89,9 @@ test.describe('Instance List View', () => {
       }
     }
 
-    // Health status badge should be visible in table view
-    await expect(page.getByText('Healthy').first()).toBeVisible({ timeout: 10000 })
+    // Health is now a colored stripe on the first cell; the row exposes it via
+    // an aria-label ("Health: Healthy") rather than visible badge text (story 48.3).
+    await expect(page.getByLabel(/Health: Healthy/).first()).toBeVisible({ timeout: 10000 })
   })
 
   test('shows RGD name for each instance', async ({ page }) => {

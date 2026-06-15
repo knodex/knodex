@@ -1,0 +1,29 @@
+# Teams for production-project.yaml
+# Apply with: kubectl apply -f <this-file> -n <knodex-namespace>
+---
+apiVersion: knodex.io/v1alpha1
+kind: Team
+metadata:
+  name: release-managers
+spec:
+  description: "Release management team"
+  oidcGroups:
+    - release-managers
+---
+apiVersion: knodex.io/v1alpha1
+kind: Team
+metadata:
+  name: sre-team
+spec:
+  description: "Site Reliability Engineering team"
+  oidcGroups:
+    - sre-team
+---
+apiVersion: knodex.io/v1alpha1
+kind: Team
+metadata:
+  name: oncall-engineers
+spec:
+  description: "On-call engineering team"
+  oidcGroups:
+    - oncall-engineers

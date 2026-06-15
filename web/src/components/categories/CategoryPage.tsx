@@ -17,7 +17,6 @@ import { EmptyState } from "@/components/catalog/EmptyState";
 import { Pagination } from "@/components/catalog/Pagination";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { PageHeader } from "@/components/layout/PageHeader";
 import { cn } from "@/lib/utils";
 import { getSafeErrorMessage } from "@/lib/errors";
 import { getLucideIcon } from "@/lib/icons";
@@ -190,9 +189,6 @@ export function CategoryPage({ onRGDClick }: CategoryPageProps) {
 
   return (
     <section className="space-y-6">
-      {/* Page header (sr-only title) */}
-      <PageHeader title={category.name} />
-
       {/* Header + View Toggle */}
       <div className="flex items-start gap-3">
         <div className="flex items-center gap-2.5 flex-1 min-w-0">

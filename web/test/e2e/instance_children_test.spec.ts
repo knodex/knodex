@@ -160,12 +160,12 @@ test.describe('Instance Child Resources Tab', () => {
   })
 
   test('shows Resources tab on instance detail page', async ({ page }) => {
-    await page.goto('/instances/group/kro.run/ns/default/TestPodPair/demo-app')
+    await page.goto('/instances/kro.run/v1alpha1/default/TestPodPair/demo-app')
     await expect(page.getByRole('tab', { name: /Resources/ })).toBeVisible()
   })
 
   test('displays child resource groups when Resources tab clicked', async ({ page }) => {
-    await page.goto('/instances/group/kro.run/ns/default/TestPodPair/demo-app')
+    await page.goto('/instances/kro.run/v1alpha1/default/TestPodPair/demo-app')
 
     // Click Resources tab
     await page.getByRole('tab', { name: /Resources/ }).click()
@@ -176,7 +176,7 @@ test.describe('Instance Child Resources Tab', () => {
   })
 
   test('shows ready count per group', async ({ page }) => {
-    await page.goto('/instances/group/kro.run/ns/default/TestPodPair/demo-app')
+    await page.goto('/instances/kro.run/v1alpha1/default/TestPodPair/demo-app')
     await page.getByRole('tab', { name: /Resources/ }).click()
 
     await expect(page.getByText('2/2 ready')).toBeVisible()
@@ -184,7 +184,7 @@ test.describe('Instance Child Resources Tab', () => {
   })
 
   test('expands group to show individual resources', async ({ page }) => {
-    await page.goto('/instances/group/kro.run/ns/default/TestPodPair/demo-app')
+    await page.goto('/instances/kro.run/v1alpha1/default/TestPodPair/demo-app')
     await page.getByRole('tab', { name: /Resources/ }).click()
 
     // Click frontend group to expand
@@ -201,7 +201,7 @@ test.describe('Instance Child Resources Tab', () => {
       route.fulfill({ json: { ...mockChildrenResponse, totalCount: 0, groups: [] } })
     )
 
-    await page.goto('/instances/group/kro.run/ns/default/TestPodPair/demo-app')
+    await page.goto('/instances/kro.run/v1alpha1/default/TestPodPair/demo-app')
     await page.getByRole('tab', { name: /Resources/ }).click()
 
     await expect(page.getByText('No child resources found for this instance.')).toBeVisible()

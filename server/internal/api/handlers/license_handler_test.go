@@ -34,6 +34,7 @@ type mockLicenseService struct {
 	info        *services.LicenseInfo
 	updateErr   error
 	updateToken string
+	seatUsage   services.SeatUsage
 }
 
 var _ services.LicenseService = (*mockLicenseService)(nil)
@@ -48,6 +49,9 @@ func (m *mockLicenseService) GetStatus() *services.LicenseStatus { return m.stat
 func (m *mockLicenseService) UpdateLicense(token string) error {
 	m.updateToken = token
 	return m.updateErr
+}
+func (m *mockLicenseService) GetSeatUsage(_ context.Context) services.SeatUsage {
+	return m.seatUsage
 }
 
 // mockLicenseAccessChecker implements licenseAccessChecker for testing.
@@ -81,6 +85,75 @@ func TestLicenseHandler_GetStatus_Licensed(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.True(t, resp.Licensed)
 	assert.Equal(t, "valid", resp.Status)
+}
+
+// TestLicenseHandler_GetStatus_EnterpriseIncludesSeats verifies STORY-465
+// AC #11: when the status reports Enterprise=true, GetStatus attaches the
+// SeatUsage object (regardless of license validity — seat counting is
+// observability and runs even in grace/expired states).
+func TestLicenseHandler_GetStatus_EnterpriseIncludesSeats(t *testing.T) {
+	status := &services.LicenseStatus{
+		Licensed:   true,
+		Enterprise: true,
+		Status:     "valid",
+		Message:    "Licensed to test-customer",
+		License:    &services.LicenseInfo{MaxUsers: 50},
+	}
+	svc := &mockLicenseService{
+		licensed: true,
+		status:   status,
+		seatUsage: services.SeatUsage{
+			Used: 42, Allowed: 50, WindowDays: 30,
+			Percent: 0.84, Threshold: services.SeatThresholdWarn,
+			LastUpdated: "2026-05-30T11:05:00Z",
+		},
+	}
+	handler := NewLicenseHandler(svc, nil, slog.Default())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/license", nil)
+	w := httptest.NewRecorder()
+	handler.GetStatus(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp services.LicenseStatus
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.NotNil(t, resp.Seats, "EE response MUST include seats object (AC #11)")
+	assert.Equal(t, int64(42), resp.Seats.Used)
+	assert.Equal(t, 50, resp.Seats.Allowed)
+	assert.Equal(t, 30, resp.Seats.WindowDays)
+	assert.Equal(t, services.SeatThresholdWarn, resp.Seats.Threshold)
+	assert.Equal(t, "2026-05-30T11:05:00Z", resp.Seats.LastUpdated)
+	// AC #12: legacy maxUsers field must still be present at its original path.
+	assert.Equal(t, 50, resp.License.MaxUsers)
+}
+
+// TestLicenseHandler_GetStatus_OSSOmitsSeats verifies the OSS-build expectation:
+// when Enterprise=false the seats object is omitted entirely (not zeroed),
+// per STORY-465 AC #11 "OSS builds omit the seats field".
+func TestLicenseHandler_GetStatus_OSSOmitsSeats(t *testing.T) {
+	status := &services.LicenseStatus{
+		Licensed:   false,
+		Enterprise: false,
+		Status:     "oss",
+		Message:    "Open source edition",
+	}
+	svc := &mockLicenseService{status: status} // seatUsage left zero-value
+	handler := NewLicenseHandler(svc, nil, slog.Default())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/license", nil)
+	w := httptest.NewRecorder()
+	handler.GetStatus(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp services.LicenseStatus
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Nil(t, resp.Seats, "OSS response MUST omit seats object (AC #11)")
+
+	// Belt-and-braces: the raw JSON must not even contain a "seats" key, so
+	// API consumers can use its presence as a feature probe.
+	assert.NotContains(t, string(w.Body.Bytes()), `"seats"`)
 }
 
 func TestLicenseHandler_GetStatus_Unlicensed(t *testing.T) {

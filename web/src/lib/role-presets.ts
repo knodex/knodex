@@ -2,77 +2,45 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 /**
- * Role preset templates for quick role creation
- * Used in ProjectRolesTab (add role) and ProjectForm (create project)
+ * Role preset resolution for quick project-role creation.
+ *
+ * As of Story 18.1 the preset *catalog* is server-backed: templates are fetched
+ * via useRoleTemplates() (GET /v1/settings/role-templates) instead of the
+ * former static ROLE_PRESETS array. This module keeps only the RESOLUTION
+ * logic — placeholder substitution and the enterprise-only compliance-policy
+ * injection — which operates on the fetched RoleTemplate objects.
+ *
+ * A preset is a UI seed: resolvePreset() copies it into a ProjectRole that the
+ * project create/edit path persists into Project.spec.roles[]. The single
+ * Casbin enforcement layer is unchanged (NFR-T1).
  */
 import type { ProjectRole } from '@/types/project';
+import type { RoleTemplate } from '@/api/role-templates';
 import { isEnterprise } from '@/hooks/useCompliance';
 
-export interface RolePreset {
-  name: string;
-  description: string;
-  label: string;
-  policies: string[];
-}
-
-const ADMIN_POLICIES = [
-  'p, proj:{project}:{role}, projects, *, {project}, allow',
-  'p, proj:{project}:{role}, instances, *, */{project}/*, allow',
-  'p, proj:{project}:{role}, rgds, get, *, allow',
-  'p, proj:{project}:{role}, rgds, list, *, allow',
-  'p, proj:{project}:{role}, repositories, *, {project}/*, allow',
-];
+/**
+ * RolePreset is the shape consumed by the resolvers. It is structurally the
+ * server-backed RoleTemplate; the alias is kept so existing call sites keep
+ * reading naturally.
+ */
+export type RolePreset = RoleTemplate;
 
 /**
- * Enterprise-only admin policies injected at resolution time via resolvePresetPolicies.
- * Kept separate so isEnterprise() is evaluated per-call, not frozen at module load.
+ * Enterprise-only admin policies injected at resolution time via
+ * resolvePresetPolicies. Kept OUT of the stored catalog default (OSS operators
+ * shouldn't see/store an enterprise-only policy) and evaluated per-call so
+ * isEnterprise() reflects current runtime state, not module-load state.
  */
 const ENTERPRISE_ADMIN_POLICIES = [
   'p, proj:{project}:{role}, compliance, get, {project}/*, allow',
 ];
 
 /**
- * Preset role templates with {project} and {role} placeholders.
- * Each policy is a full Casbin string: p, proj:{project}:{role}, {resource}, {action}, {object}, {effect}
- *
- * IMPORTANT: Instance policies use category-scoped paths (e.g. instances, *, {cat}/{project}/*, allow).
- * This requires the server-side Casbin model to support mid-pattern wildcards (EPIC-047b server changes).
- * With the default keyMatch, the first wildcard matches greedily — deploy only alongside server RBAC updates.
+ * Enterprise-only developer policies: read-only compliance access.
+ * Not stored in the catalog default for the same OSS-isolation reason as admin.
  */
-export const ROLE_PRESETS: RolePreset[] = [
-  {
-    name: 'admin',
-    label: 'Admin',
-    description: 'Full project management access',
-    policies: ADMIN_POLICIES,
-  },
-  {
-    name: 'developer',
-    label: 'Developer',
-    description: 'Deploy and manage instances',
-    policies: [
-      'p, proj:{project}:{role}, projects, get, {project}, allow',
-      'p, proj:{project}:{role}, instances, *, */{project}/*, allow',
-      'p, proj:{project}:{role}, rgds, get, *, allow',
-      'p, proj:{project}:{role}, rgds, list, *, allow',
-      'p, proj:{project}:{role}, repositories, get, {project}/*, allow',
-      'p, proj:{project}:{role}, repositories, list, {project}/*, allow',
-    ],
-  },
-  {
-    name: 'readonly',
-    label: 'Readonly',
-    description: 'View-only access to project resources',
-    policies: [
-      'p, proj:{project}:{role}, projects, get, {project}, allow',
-      'p, proj:{project}:{role}, instances, get, */{project}/*, allow',
-      'p, proj:{project}:{role}, instances, list, */{project}/*, allow',
-      'p, proj:{project}:{role}, rgds, get, *, allow',
-      'p, proj:{project}:{role}, rgds, list, *, allow',
-      'p, proj:{project}:{role}, repositories, get, {project}/*, allow',
-      'p, proj:{project}:{role}, repositories, list, {project}/*, allow',
-    ],
-  },
+const ENTERPRISE_DEVELOPER_POLICIES = [
+  'p, proj:{project}:{role}, compliance, get, {project}/*, allow',
 ];
 
 /**
@@ -84,6 +52,7 @@ export function resolvePresetPolicies(preset: RolePreset, projectName: string): 
   const policies = [
     ...preset.policies,
     ...(preset.name === 'admin' && isEnterprise() ? ENTERPRISE_ADMIN_POLICIES : []),
+    ...(preset.name === 'developer' && isEnterprise() ? ENTERPRISE_DEVELOPER_POLICIES : []),
   ];
   return policies.map((p) =>
     p.replaceAll('{project}', projectName).replaceAll('{role}', preset.name)
@@ -91,13 +60,16 @@ export function resolvePresetPolicies(preset: RolePreset, projectName: string): 
 }
 
 /**
- * Resolve a preset into a complete ProjectRole with policies resolved for a project
+ * Resolve a preset into a complete ProjectRole with policies resolved for a project.
+ *
+ * Roles bind OIDC groups exclusively through named Teams now (epic-10, teams-only
+ * binding) — the legacy roles[].groups[] field was removed, so resolvePreset no
+ * longer seeds a groups array. Team binding is added separately via TeamPicker.
  */
 export function resolvePreset(preset: RolePreset, projectName: string): ProjectRole {
   return {
     name: preset.name,
     description: preset.description,
     policies: resolvePresetPolicies(preset, projectName),
-    groups: [],
   };
 }

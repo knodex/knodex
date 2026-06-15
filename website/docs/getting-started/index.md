@@ -18,9 +18,14 @@ This guide walks you through installing Knodex, verifying the deployment, and de
 - [KRO](https://kro.run) — or let the chart install it (see compatibility matrix below)
 - kubectl configured
 - Helm 3.x
+- A **PostgreSQL** database — required for **all editions** (see callout below)
 
-:::note[Enterprise Edition]
-Enterprise builds additionally require a **PostgreSQL 16+** database for audit trails, compliance violation storage, and organization isolation. The Helm chart can provision an embedded PostgreSQL instance automatically. See [PostgreSQL Configuration](../administration/configuration#postgresql-configuration) for details.
+:::note[PostgreSQL is required for all editions]
+As of the user-identity-persistence release, **every edition (OSS, Enterprise, and Cloud) requires PostgreSQL.** Each edition persists a canonical user roster on every SSO login, so the server opens a database connection at startup and **fails fast if `DATABASE_URL` is unset or PostgreSQL is unreachable**. (Enterprise additionally uses the database for audit trails, compliance violation storage, and organization isolation.)
+
+The Helm chart **bundles an embedded PostgreSQL instance by default**, so a fresh `helm install` of any edition comes up healthy with no extra configuration. The chart also **auto-detects an existing `DATABASE_URL`/external database** and steps the bundled instance aside on upgrade, so it won't spin up an unwanted PostgreSQL pod. To use your own database, set `externalPostgresql.host` (or `externalPostgresql.existingSecret`) and `postgresql.enabled: false`.
+
+The bundled PostgreSQL is intended for demos, development, and CI only — it uses ephemeral storage and the chart configures **no backups; backup and restore are the operator's responsibility**. Production deployments should point at a managed database via `externalPostgresql`. See [PostgreSQL Configuration](../administration/configuration#postgresql-configuration) for details.
 :::
 
 ## Version Compatibility
@@ -53,15 +58,7 @@ Check that all pods are running:
 kubectl get pods -n knodex
 ```
 
-Expected output (OSS):
-
-```
-NAME                              READY   STATUS    RESTARTS   AGE
-knodex-server-6f8b9c7d4-x2k9m    1/1     Running   0          2m
-knodex-redis-59ddd568d9-xxxxx     1/1     Running   0          2m
-```
-
-For Enterprise with the embedded PostgreSQL subchart enabled:
+Expected output (any edition, with the bundled PostgreSQL subchart enabled by default):
 
 ```
 NAME                              READY   STATUS    RESTARTS   AGE
@@ -69,6 +66,8 @@ knodex-server-6f8b9c7d4-x2k9m    1/1     Running   0          2m
 knodex-redis-59ddd568d9-xxxxx     1/1     Running   0          2m
 knodex-postgresql-0               1/1     Running   0          2m
 ```
+
+When you point at an external database (`externalPostgresql` + `postgresql.enabled: false`), the `knodex-postgresql-0` pod is not created — the server connects to your managed database instead.
 
 Verify the server is healthy:
 
@@ -147,7 +146,7 @@ kubectl delete namespace knodex
 ```
 
 :::warning[Data Loss]
-Deleting the namespace removes all data, including Redis state and any PostgreSQL data (audit events, compliance violations) for Enterprise deployments. Ensure you have backups if needed.
+Deleting the namespace removes all data, including Redis state and — when using the bundled PostgreSQL — the user roster (all editions) plus audit events and compliance violations (Enterprise). Back up an external database out-of-band; the bundled PostgreSQL has no backups. Ensure you have backups if needed.
 :::
 
 ## Next Steps

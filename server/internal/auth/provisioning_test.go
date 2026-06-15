@@ -139,7 +139,7 @@ func TestEvaluateOIDCUser_DefaultRoleAssignedWhenNoGroups(t *testing.T) {
 
 	svc := NewOIDCProvisioningService(nil, nil, casbinEnforcer, "role:test-default")
 
-	result, err := svc.EvaluateOIDCUser(context.Background(), "oidc-sub-1", "user@example.com", "Test User", []string{})
+	result, err := svc.EvaluateOIDCUser(context.Background(), "oidc-sub-1", "user@example.com", "Test User", []string{}, "https://idp.example.com", true)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -159,7 +159,7 @@ func TestEvaluateOIDCUser_DefaultRoleAssignedWhenNoMappingsMatch(t *testing.T) {
 
 	svc := NewOIDCProvisioningService(nil, mapper, casbinEnforcer, "role:test-default")
 
-	result, err := svc.EvaluateOIDCUser(context.Background(), "oidc-sub-2", "user2@example.com", "Test User 2", []string{"marketing"})
+	result, err := svc.EvaluateOIDCUser(context.Background(), "oidc-sub-2", "user2@example.com", "Test User 2", []string{"marketing"}, "https://idp.example.com", true)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -178,7 +178,7 @@ func TestEvaluateOIDCUser_DefaultRoleNotAssignedWhenMappingsMatch(t *testing.T) 
 
 	svc := NewOIDCProvisioningService(nil, mapper, casbinEnforcer, "role:test-default")
 
-	result, err := svc.EvaluateOIDCUser(context.Background(), "oidc-sub-3", "engineer@example.com", "Engineer", []string{"engineering"})
+	result, err := svc.EvaluateOIDCUser(context.Background(), "oidc-sub-3", "engineer@example.com", "Engineer", []string{"engineering"}, "https://idp.example.com", true)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 
@@ -193,7 +193,7 @@ func TestEvaluateOIDCUser_EmptyDefaultRoleDisablesDefault(t *testing.T) {
 
 	svc := NewOIDCProvisioningService(nil, nil, casbinEnforcer, "")
 
-	result, err := svc.EvaluateOIDCUser(context.Background(), "oidc-sub-4", "nogroup@example.com", "No Group User", []string{})
+	result, err := svc.EvaluateOIDCUser(context.Background(), "oidc-sub-4", "nogroup@example.com", "No Group User", []string{}, "https://idp.example.com", true)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 

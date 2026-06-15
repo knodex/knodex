@@ -14,6 +14,7 @@ import type {
   DriftUpdateData,
   RevisionUpdateData,
   ResourceEventData,
+  AgentRunUpdateData,
 } from "@/types/websocket";
 
 // Re-export ConnectionStatus for existing consumers
@@ -174,6 +175,16 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
                 });
               }
             }
+            break;
+          }
+
+          case "agent_run_update": {
+            const data = message.data as AgentRunUpdateData;
+            log("Agent run update:", data.action, data.runId, data.status);
+            // Prefix invalidation covers every params variant of the runs
+            // table AND the running-indicator query (both live under
+            // ["agents", "runs"]).
+            queryClient.invalidateQueries({ queryKey: ["agents", "runs"] });
             break;
           }
 
@@ -340,6 +351,9 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
             reconnectTimeoutRef.current = setTimeout(() => {
               reconnectAttemptsRef.current = attempts + 1;
               setReconnectAttempts(attempts + 1);
+              // Self-recursive reconnect: `connect` is defined further down and
+              // is in scope at the time setTimeout fires.
+              // eslint-disable-next-line react-hooks/immutability
               connect();
             }, delay);
           } else if (attempts >= MAX_RECONNECT_ATTEMPTS) {

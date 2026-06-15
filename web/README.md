@@ -1,6 +1,22 @@
-# React + TypeScript + Vite
+# Knodex Web (React + TypeScript + Vite)
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+## Running unit tests
+
+Run the full suite with `npm test` (or `make test` from the repo root).
+
+For **targeted runs**, invoke the vitest binary directly instead of `npx vitest` —
+the RTK command-rewriting hook mangles `npx` invocations:
+
+```bash
+node_modules/.bin/vitest run src/components/agents/SpecPreview.test.tsx --reporter=dot
+```
+
+Playwright E2E specs live in `test/e2e/` and run via `npm run test:e2e`
+(they expect a deployed app — see `make qa` at the repo root).
+
+---
+
+This project was bootstrapped from the Vite React template; the original template notes follow.
 
 Currently, two official plugins are available:
 

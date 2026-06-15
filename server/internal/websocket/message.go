@@ -22,6 +22,7 @@ const (
 	MessageTypeResourceEvent    MessageType = "resource_event"    // Per-resource deploy event (creating/created/failed)
 	MessageTypeDeployProgress   MessageType = "deploy_progress"   // Aggregate deploy progress (in_progress/complete/failed)
 	MessageTypeRevisionUpdate   MessageType = "revision_update"   // GraphRevision change
+	MessageTypeAgentRunUpdate   MessageType = "agent_run_update"  // Agent run lifecycle transition (Story 49.4)
 	MessageTypeError            MessageType = "error"
 	MessageTypePong             MessageType = "pong"
 	MessageTypeSubscribed       MessageType = "subscribed"
@@ -172,6 +173,24 @@ type RevisionUpdateData struct {
 	ProjectID string `json:"projectId,omitempty"`
 }
 
+// AgentRunUpdateData contains an agent run lifecycle transition (Story 49.4).
+// Delivery is actor-or-global-admin (see Hub.shouldSendToClient): a run has
+// no projectID, so project-based filtering does not apply.
+type AgentRunUpdateData struct {
+	Action         Action `json:"action"`
+	RunID          string `json:"runId"`
+	AgentType      string `json:"agentType"`
+	AgentNamespace string `json:"agentNamespace"`
+	Status         string `json:"status"`
+	// ActorID is UserContext.UserID — used ONLY for hub-side delivery
+	// filtering, because Client.userID stores the UserID (client.go).
+	// Matching on email would silently fail.
+	ActorID string `json:"actorId"`
+	// Actor is the display identity (email).
+	Actor     string    `json:"actor"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
 // ErrorData contains error information
 type ErrorData struct {
 	Code    string `json:"code"`
@@ -316,6 +335,14 @@ func NewRevisionUpdateMessage(action Action, rgdName string, revision int, proje
 		ProjectID: projectID,
 	}
 	return NewMessage(MessageTypeRevisionUpdate, data)
+}
+
+// NewAgentRunUpdateMessage creates an agent run lifecycle message (Story 49.4).
+// action should be ActionAdd when the run record is created and ActionUpdate
+// when the A2A response completes or fails it.
+func NewAgentRunUpdateMessage(action Action, data AgentRunUpdateData) (*Message, error) {
+	data.Action = action
+	return NewMessage(MessageTypeAgentRunUpdate, data)
 }
 
 // NewErrorMessage creates an error message

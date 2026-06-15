@@ -35,16 +35,21 @@ import (
 // secretsOperationTimeout is the maximum duration for any K8s operation in secrets handlers.
 const secretsOperationTimeout = 15 * time.Second
 
-// SecretsHandlerEnforcer is a type alias for rbac.Authorizer, required because
-// helpers.RequireAccess accepts rbac.Authorizer. The full interface is needed to
-// satisfy the dependency; only CanAccessWithGroups is exercised at runtime.
-type SecretsHandlerEnforcer = rbac.Authorizer
+// auditProjectHeader is the request header that carries the caller's "current
+// project" lens for audit recording. Web sets it from useUserStore.currentProject;
+// CLI/API clients may omit it (the audit Project field is then empty). The lens
+// is informational only — it never participates in authorization decisions.
+const auditProjectHeader = "X-Knodex-Project"
 
-// SecretsHandlerConfig holds configuration for creating a SecretsHandler
+// SecretsHandlerConfig holds configuration for creating a SecretsHandler.
+//
+// Authorization is enforced at the Casbin middleware layer (see
+// CasbinAuthz + inferCasbinObjectAndAction in internal/api/middleware/authz.go).
+// The handler uses NamespaceAccessProvider purely as a defense-in-depth
+// namespace-membership check — it does NOT call Casbin directly.
 type SecretsHandlerConfig struct {
 	K8sClient     kubernetes.Interface
 	DynamicClient dynamic.Interface
-	Enforcer      SecretsHandlerEnforcer
 	Recorder      audit.Recorder
 	NSAccess      NamespaceAccessProvider // Filters results to user's accessible namespaces
 }
@@ -53,7 +58,6 @@ type SecretsHandlerConfig struct {
 type SecretsHandler struct {
 	k8sClient     kubernetes.Interface
 	dynamicClient dynamic.Interface
-	enforcer      SecretsHandlerEnforcer
 	recorder      audit.Recorder
 	nsAccess      NamespaceAccessProvider
 }
@@ -63,52 +67,74 @@ func NewSecretsHandler(cfg SecretsHandlerConfig) *SecretsHandler {
 	return &SecretsHandler{
 		k8sClient:     cfg.K8sClient,
 		dynamicClient: cfg.DynamicClient,
-		enforcer:      cfg.Enforcer,
 		recorder:      cfg.Recorder,
 		nsAccess:      cfg.NSAccess,
 	}
 }
 
-// checkNamespaceAccess verifies the user has access to the specified namespace.
-// Returns true if the user has access, false if denied (403 already written).
-// For admin users (nil accessible namespaces), always returns true.
-func (h *SecretsHandler) checkNamespaceAccess(w http.ResponseWriter, ctx context.Context, userCtx *middleware.UserContext, namespace string) bool {
-	if h.nsAccess == nil {
-		return true // No namespace access provider configured
+// auditLensMaxLen caps the X-Knodex-Project audit-lens header length. 253
+// matches the DNS-1123 subdomain max (the same upper bound used for project
+// name validation throughout the codebase). The lens is informational and
+// caller-controlled; truncation defends the audit row + downstream consumers
+// against oversized values without changing the URL contract.
+const auditLensMaxLen = 253
+
+// auditLens returns the caller's current-project lens for audit recording.
+// Empty when the X-Knodex-Project header is absent (e.g., "All Projects" view,
+// CLI/API clients) — the audit UI handles empty values as unscoped.
+//
+// The header value is caller-controlled and never participates in any
+// authorization decision (CLAUDE.md "Authorization Resources and Actions"
+// note on secrets). To prevent audit-row log injection / oversize attacks,
+// we strip ASCII control characters and cap at auditLensMaxLen.
+func auditLens(r *http.Request) string {
+	raw := r.Header.Get(auditProjectHeader)
+	if raw == "" {
+		return ""
 	}
-	accessibleNS, err := h.nsAccess.GetAccessibleNamespaces(ctx, userCtx)
-	if err != nil {
-		// Fail closed on error
-		response.Forbidden(w, "failed to determine namespace access")
-		return false
+	cleaned := sanitize.RemoveControlChars(raw)
+	if len(cleaned) > auditLensMaxLen {
+		cleaned = cleaned[:auditLensMaxLen]
 	}
-	if accessibleNS == nil {
-		return true // Global admin
-	}
-	for _, ns := range accessibleNS {
-		if ns == namespace {
-			return true
-		}
-	}
-	response.Forbidden(w, "no access to namespace "+namespace)
-	return false
+	return cleaned
 }
 
-// getAccessibleNamespaces returns the user's accessible namespaces for filtering.
-// Returns nil for admins (no filtering needed), or a list of namespaces.
-func (h *SecretsHandler) getAccessibleNamespaces(ctx context.Context, userCtx *middleware.UserContext) []string {
+// getAccessibleNamespaces returns the user's accessible namespace patterns.
+// Returns:
+//   - []string{"*"} when the user is a global admin (matches any namespace).
+//   - empty slice when the user has no namespace access (secure default).
+//   - concrete patterns drawn from roles[].destinations for everyone else.
+//
+// Mirrors InstanceCRUDHandler.getAccessibleNamespaces so the two handlers
+// share identical namespace-access semantics, including the (slice, error)
+// signature that lets the caller surface a 500 when the provider fails.
+func (h *SecretsHandler) getAccessibleNamespaces(ctx context.Context, userCtx *middleware.UserContext) ([]string, error) {
+	if userCtx == nil {
+		return []string{}, nil
+	}
 	if h.nsAccess == nil {
-		return nil // No provider = no filtering
+		return []string{}, nil
 	}
-	accessibleNS, err := h.nsAccess.GetAccessibleNamespaces(ctx, userCtx)
-	if err != nil {
-		// Fail closed on error: empty list
-		return []string{}
-	}
-	return accessibleNS
+	return h.nsAccess.GetAccessibleNamespaces(ctx, userCtx)
 }
 
-// CreateSecret handles POST /api/v1/secrets
+// authorizeSecretAccess reports whether the user is permitted to act on a
+// secret in the given namespace. Pattern-aware via rbac.MatchNamespaceInList
+// so global admins ([]string{"*"}) and wildcard destinations like "staging-*"
+// behave correctly. Mirrors InstanceCRUDHandler.authorizeInstanceAccess's
+// namespaced branch — secrets are always namespaced, so there is no
+// cluster-scoped fallback. An NSAccess provider error surfaces to the caller,
+// which is expected to convert it into a 500 response (matching the instance
+// handler's behavior).
+func (h *SecretsHandler) authorizeSecretAccess(ctx context.Context, userCtx *middleware.UserContext, namespace string) (bool, error) {
+	userNamespaces, err := h.getAccessibleNamespaces(ctx, userCtx)
+	if err != nil {
+		return false, err
+	}
+	return rbac.MatchNamespaceInList(namespace, userNamespaces), nil
+}
+
+// CreateSecret handles POST /api/v1/namespaces/{namespace}/secrets
 func (h *SecretsHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 	requestID := r.Header.Get("X-Request-ID")
 	ctx, cancel := context.WithTimeout(r.Context(), secretsOperationTimeout)
@@ -119,50 +145,57 @@ func (h *SecretsHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	project := r.URL.Query().Get("project")
-	if project == "" {
-		response.BadRequest(w, "project query parameter is required", nil)
+	namespace := r.PathValue("namespace")
+	if namespace == "" {
+		response.BadRequest(w, "namespace path parameter is required", nil)
 		return
 	}
-	if !sanitize.IsValidDNS1123Label(project) {
-		response.BadRequest(w, "project must be a valid DNS-1123 label (lowercase alphanumeric with hyphens, max 63 chars)", nil)
+	if !sanitize.IsValidDNS1123Label(namespace) {
+		response.BadRequest(w, "namespace must be a valid DNS-1123 label (lowercase alphanumeric with hyphens, max 63 chars)", nil)
 		return
 	}
 
-	// Parse request body before Casbin check — need namespace for namespace-scoped policies
 	req, err := helpers.DecodeJSON[CreateSecretRequest](r, w, 0)
 	if err != nil {
 		response.BadRequest(w, err.Error(), nil)
 		return
 	}
 
-	// Check Casbin permission — include namespace for namespace-scoped policies (roles[].destinations)
-	secretCreateObject := fmt.Sprintf("secrets/%s", project)
-	if req.Namespace != "" {
-		secretCreateObject = fmt.Sprintf("secrets/%s/%s/*", project, req.Namespace)
+	// Defense-in-depth: middleware already enforces Casbin at route level
+	// (secrets/{ns}/{...}, action). Repeat the namespace-membership check
+	// in the handler for the same reason instance_crud.go does:
+	// authorizeInstanceAccess at instance_crud.go:222-232.
+	allowed, err := h.authorizeSecretAccess(ctx, userCtx, namespace)
+	if err != nil {
+		slog.Error("failed to determine namespace access",
+			"requestId", requestID,
+			"userId", userCtx.UserID,
+			"namespace", namespace,
+			"error", err,
+		)
+		response.InternalError(w, "failed to determine namespace access")
+		return
 	}
-	if !helpers.RequireAccess(w, ctx, h.enforcer, userCtx, secretCreateObject, "create", requestID) {
+	if !allowed {
+		// Match the instance handler's "not leaking existence" behavior:
+		// users without namespace access get NotFound on namespaces they
+		// cannot see.
+		response.NotFound(w, "namespace", namespace)
 		audit.RecordEvent(h.recorder, ctx, audit.Event{
 			UserID:    userCtx.UserID,
 			UserEmail: userCtx.Email,
 			SourceIP:  audit.SourceIP(r),
 			Action:    "create",
 			Resource:  "secrets",
-			Project:   project,
+			Project:   auditLens(r),
 			RequestID: requestID,
 			Result:    "denied",
+			Details:   map[string]any{"namespace": namespace},
 		})
 		return
 	}
 
-	// Verify user has access to the target namespace
-	if req.Namespace != "" {
-		if !h.checkNamespaceAccess(w, ctx, userCtx, req.Namespace) {
-			return
-		}
-	}
-
-	// Validate request
+	// Validate the secret payload (name, data, metadata).
 	validationErrors := validateCreateSecretRequest(req)
 	if len(validationErrors) > 0 {
 		response.BadRequest(w, "Validation failed", validationErrors)
@@ -172,37 +205,42 @@ func (h *SecretsHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 	slog.Info("creating secret",
 		"requestId", requestID,
 		"userId", userCtx.UserID,
-		"project", project,
 		"secretName", req.Name,
-		"namespace", req.Namespace,
+		"namespace", namespace,
 	)
 
-	// Create K8s secret
+	// Create K8s secret. We stamp ManagedByLabel only — the ProjectLabel
+	// is intentionally NOT set. Namespace alone is the access boundary
+	// for secrets; the project lens is captured in audit, not on the K8s
+	// object (see TD-2 / TD-3 in the spec).
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      req.Name,
-			Namespace: req.Namespace,
+			Namespace: namespace,
 			Labels: map[string]string{
-				models.ProjectLabel:   project,
 				models.ManagedByLabel: models.ManagedByValue,
 			},
 		},
 		StringData: req.Data,
 		Type:       corev1.SecretTypeOpaque,
 	}
+	// Stamp typed metadata (rotation label + docs-url / expires-at
+	// annotations) when supplied. System labels above remain intact —
+	// applyMetadataToSecret only touches the three metadata keys.
+	applyMetadataToSecret(secret, req.Metadata)
 
-	created, err := h.k8sClient.CoreV1().Secrets(req.Namespace).Create(ctx, secret, metav1.CreateOptions{})
+	created, err := h.k8sClient.CoreV1().Secrets(namespace).Create(ctx, secret, metav1.CreateOptions{})
 	if err != nil {
 		if k8serrors.IsAlreadyExists(err) {
 			response.Conflict(w, "secret", req.Name)
 			return
 		}
 		if k8serrors.IsForbidden(err) || k8serrors.IsUnauthorized(err) {
-			response.Forbidden(w, "service account lacks permission to manage secrets in namespace "+req.Namespace)
+			response.Forbidden(w, "service account lacks permission to manage secrets in namespace "+namespace)
 			return
 		}
 		if k8serrors.IsNotFound(err) {
-			response.BadRequest(w, "namespace does not exist: "+req.Namespace, nil)
+			response.BadRequest(w, "namespace does not exist: "+namespace, nil)
 			return
 		}
 		if k8serrors.IsTimeout(err) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
@@ -213,7 +251,7 @@ func (h *SecretsHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 			"requestId", requestID,
 			"userId", userCtx.UserID,
 			"secretName", req.Name,
-			"namespace", req.Namespace,
+			"namespace", namespace,
 			"error", err,
 		)
 		response.InternalError(w, "Failed to create secret")
@@ -227,20 +265,22 @@ func (h *SecretsHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Strings(keys)
 
+	createdMeta := extractSecretMetadata(created)
 	resp := SecretResponse{
 		Name:      created.Name,
 		Namespace: created.Namespace,
 		Keys:      keys,
 		CreatedAt: created.CreationTimestamp.Time,
 		Labels:    created.Labels,
+		Metadata:  createdMeta,
+		Status:    computeSecretStatus(createdMeta, time.Now()),
 	}
 
 	slog.Info("secret created successfully",
 		"requestId", requestID,
 		"userId", userCtx.UserID,
-		"project", project,
 		"secretName", req.Name,
-		"namespace", req.Namespace,
+		"namespace", namespace,
 	)
 
 	audit.RecordEvent(h.recorder, ctx, audit.Event{
@@ -250,11 +290,11 @@ func (h *SecretsHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 		Action:    "create",
 		Resource:  "secrets",
 		Name:      req.Name,
-		Project:   project,
+		Project:   auditLens(r),
 		RequestID: requestID,
 		Result:    "success",
 		Details: map[string]any{
-			"namespace": req.Namespace,
+			"namespace": namespace,
 			"keyCount":  len(keys),
 		},
 	})
@@ -263,6 +303,8 @@ func (h *SecretsHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 }
 
 // ListSecrets handles GET /api/v1/secrets
+// Multi-namespace list filtered to the user's accessible namespaces. Optional
+// ?namespace= narrows to a single namespace (still subject to membership).
 func (h *SecretsHandler) ListSecrets(w http.ResponseWriter, r *http.Request) {
 	requestID := r.Header.Get("X-Request-ID")
 	ctx, cancel := context.WithTimeout(r.Context(), secretsOperationTimeout)
@@ -273,29 +315,12 @@ func (h *SecretsHandler) ListSecrets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	project := r.URL.Query().Get("project")
-	if project == "" {
-		response.BadRequest(w, "project query parameter is required", nil)
-		return
-	}
-	if !sanitize.IsValidDNS1123Label(project) {
-		response.BadRequest(w, "project must be a valid DNS-1123 label (lowercase alphanumeric with hyphens, max 63 chars)", nil)
-		return
-	}
-
-	// Check Casbin permission — use wildcard for list (namespace filtering happens post-query).
-	// CanAccessWithGroups + getProjectScopedWildcards picks up namespace-scoped policies.
-	if !helpers.RequireAccess(w, ctx, h.enforcer, userCtx, "secrets/"+project+"/*", "list", requestID) {
-		audit.RecordEvent(h.recorder, ctx, audit.Event{
-			UserID:    userCtx.UserID,
-			UserEmail: userCtx.Email,
-			SourceIP:  audit.SourceIP(r),
-			Action:    "list",
-			Resource:  "secrets",
-			Project:   project,
-			RequestID: requestID,
-			Result:    "denied",
-		})
+	// Optional namespace filter — when set, list is narrowed to that single
+	// namespace (still gated by membership). Mirrors the optional namespace
+	// filter on /api/v1/instances.
+	filterNamespace := r.URL.Query().Get("namespace")
+	if filterNamespace != "" && !sanitize.IsValidDNS1123Label(filterNamespace) {
+		response.BadRequest(w, "namespace must be a valid DNS-1123 label (lowercase alphanumeric with hyphens, max 63 chars)", nil)
 		return
 	}
 
@@ -314,39 +339,42 @@ func (h *SecretsHandler) ListSecrets(w http.ResponseWriter, r *http.Request) {
 	slog.Info("listing secrets",
 		"requestId", requestID,
 		"userId", userCtx.UserID,
-		"project", project,
+		"namespace", filterNamespace,
 		"limit", limit,
 	)
 
-	labelSelector := models.ProjectLabel + "=" + project + "," + models.ManagedByLabel + "=" + models.ManagedByValue
+	// Filter to ManagedBy=knodex regardless of how the list is bounded — the
+	// handler only surfaces secrets it created.
+	labelSelector := models.ManagedByLabel + "=" + models.ManagedByValue
 
-	// Determine which namespaces to query. Per-namespace queries avoid the
-	// pagination + post-filter anti-pattern where K8s Continue tokens become
-	// semantically incorrect after removing items from a page.
-	accessibleNS := h.getAccessibleNamespaces(ctx, userCtx)
+	userNamespaces, err := h.getAccessibleNamespaces(ctx, userCtx)
+	if err != nil {
+		slog.Error("failed to determine accessible namespaces",
+			"requestId", requestID,
+			"userId", userCtx.UserID,
+			"error", err,
+		)
+		response.InternalError(w, "failed to determine namespace access")
+		return
+	}
+	isAdmin := len(userNamespaces) == 1 && userNamespaces[0] == "*"
+
+	// When ?namespace= is provided, narrow to that one — but the membership
+	// check still applies. AC13 (empty list for unauthorized namespace)
+	// mirrors instance_crud.go:280-289.
+	if filterNamespace != "" {
+		if !isAdmin && !rbac.MatchNamespaceInList(filterNamespace, userNamespaces) {
+			writeEmptySecretList(w, requestID, userCtx.UserID, r, h.recorder, ctx)
+			return
+		}
+		userNamespaces = []string{filterNamespace}
+		isAdmin = false
+	}
 
 	var allSecrets []corev1.Secret
-	if accessibleNS != nil {
-		// Non-admin: query only accessible namespaces (no Continue token support
-		// in per-namespace mode — pagination is applied to the combined result)
-		for _, ns := range accessibleNS {
-			nsList, listErr := h.k8sClient.CoreV1().Secrets(ns).List(ctx, metav1.ListOptions{
-				LabelSelector: labelSelector,
-			})
-			if listErr != nil {
-				if k8serrors.IsForbidden(listErr) {
-					continue // Skip namespaces where SA lacks permissions
-				}
-				if k8serrors.IsTimeout(listErr) || errors.Is(listErr, context.DeadlineExceeded) {
-					continue
-				}
-				slog.Warn("failed to list secrets in namespace",
-					"requestId", requestID, "namespace", ns, "error", listErr)
-				continue
-			}
-			allSecrets = append(allSecrets, nsList.Items...)
-		}
-	} else {
+
+	switch {
+	case isAdmin:
 		// Admin: single cluster-wide query with K8s pagination
 		secretList, err := h.k8sClient.CoreV1().Secrets("").List(ctx, metav1.ListOptions{
 			LabelSelector: labelSelector,
@@ -365,7 +393,6 @@ func (h *SecretsHandler) ListSecrets(w http.ResponseWriter, r *http.Request) {
 			slog.Error("failed to list secrets",
 				"requestId", requestID,
 				"userId", userCtx.UserID,
-				"project", project,
 				"error", err,
 			)
 			response.InternalError(w, "Failed to list secrets")
@@ -373,12 +400,57 @@ func (h *SecretsHandler) ListSecrets(w http.ResponseWriter, r *http.Request) {
 		}
 		allSecrets = secretList.Items
 		continueToken = secretList.Continue
+
+	default:
+		// Non-admin: query each accessible namespace individually. Per-namespace
+		// queries avoid the pagination + post-filter anti-pattern where K8s
+		// Continue tokens become semantically incorrect after removing items
+		// from a page.
+		//
+		// KNOWN LIMITATION (TD-9 follow-up): Pattern destinations (e.g.,
+		// "staging-*") cannot be issued as a K8s LIST directly — they would
+		// require listing every namespace in the cluster and filtering by
+		// pattern. We skip pattern entries silently here. The user's GET /
+		// PUT / DELETE on a concrete matching namespace (e.g., staging-team-a)
+		// STILL succeed because authorizeSecretAccess uses
+		// rbac.MatchNamespaceInList (pattern-aware). The asymmetry is:
+		//   - Single-resource verbs: pattern destinations work normally.
+		//   - List: pattern destinations contribute zero results.
+		// This is acceptable for the initial rollout — pattern destinations
+		// are uncommon, and a future namespace-lister pass can close the
+		// gap without changing the URL contract. The skip is silent (no
+		// log per-request) to avoid spamming logs for the common case where
+		// destinations are all concrete.
+		for _, ns := range userNamespaces {
+			if strings.Contains(ns, "*") {
+				// Skip patterns — see KNOWN LIMITATION above.
+				continue
+			}
+			nsList, listErr := h.k8sClient.CoreV1().Secrets(ns).List(ctx, metav1.ListOptions{
+				LabelSelector: labelSelector,
+			})
+			if listErr != nil {
+				if k8serrors.IsForbidden(listErr) {
+					continue // Skip namespaces where SA lacks permissions
+				}
+				if k8serrors.IsTimeout(listErr) || errors.Is(listErr, context.DeadlineExceeded) || errors.Is(listErr, context.Canceled) {
+					continue
+				}
+				slog.Warn("failed to list secrets in namespace",
+					"requestId", requestID, "namespace", ns, "error", listErr)
+				continue
+			}
+			allSecrets = append(allSecrets, nsList.Items...)
+		}
 	}
 
 	// Apply limit for non-admin queries (admin uses K8s-level pagination)
 	hasMore := false
-	if accessibleNS != nil {
+	if !isAdmin {
 		sort.Slice(allSecrets, func(i, j int) bool {
+			if allSecrets[i].Namespace != allSecrets[j].Namespace {
+				return allSecrets[i].Namespace < allSecrets[j].Namespace
+			}
 			return allSecrets[i].Name < allSecrets[j].Name
 		})
 		if len(allSecrets) > limit {
@@ -389,13 +461,16 @@ func (h *SecretsHandler) ListSecrets(w http.ResponseWriter, r *http.Request) {
 	}
 
 	items := make([]SecretResponse, 0, len(allSecrets))
-	for _, s := range allSecrets {
+	now := time.Now()
+	for i := range allSecrets {
+		s := &allSecrets[i]
 		keys := make([]string, 0, len(s.Data))
 		for k := range s.Data {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
 
+		meta := extractSecretMetadata(s)
 		items = append(items, SecretResponse{
 			Name:      s.Name,
 			Namespace: s.Namespace,
@@ -403,6 +478,8 @@ func (h *SecretsHandler) ListSecrets(w http.ResponseWriter, r *http.Request) {
 			CreatedAt: s.CreationTimestamp.Time,
 			UpdatedAt: parseUpdatedAt(s.Annotations),
 			Labels:    s.Labels,
+			Metadata:  meta,
+			Status:    computeSecretStatus(meta, now),
 		})
 	}
 
@@ -416,7 +493,6 @@ func (h *SecretsHandler) ListSecrets(w http.ResponseWriter, r *http.Request) {
 	slog.Info("secrets listed successfully",
 		"requestId", requestID,
 		"userId", userCtx.UserID,
-		"project", project,
 		"count", resp.PageCount,
 	)
 
@@ -426,18 +502,38 @@ func (h *SecretsHandler) ListSecrets(w http.ResponseWriter, r *http.Request) {
 		SourceIP:  audit.SourceIP(r),
 		Action:    "list",
 		Resource:  "secrets",
-		Project:   project,
+		Project:   auditLens(r),
 		RequestID: requestID,
 		Result:    "success",
 		Details: map[string]any{
-			"count": resp.PageCount,
+			"count":     resp.PageCount,
+			"namespace": filterNamespace,
 		},
 	})
 
 	response.WriteJSON(w, http.StatusOK, resp)
 }
 
-// GetSecret handles GET /api/v1/secrets/{name}
+// writeEmptySecretList returns a 200 OK with an empty list, matching the
+// "no leak" pattern for unauthorized namespace filters on the instance list
+// (instance_crud.go:280-289). Audits as a success with count=0 so the
+// caller's request is still recorded.
+func writeEmptySecretList(w http.ResponseWriter, requestID, userID string, r *http.Request, recorder audit.Recorder, ctx context.Context) {
+	resp := SecretListResponse{Items: []SecretResponse{}, PageCount: 0}
+	audit.RecordEvent(recorder, ctx, audit.Event{
+		UserID:    userID,
+		SourceIP:  audit.SourceIP(r),
+		Action:    "list",
+		Resource:  "secrets",
+		Project:   auditLens(r),
+		RequestID: requestID,
+		Result:    "success",
+		Details:   map[string]any{"count": 0},
+	})
+	response.WriteJSON(w, http.StatusOK, resp)
+}
+
+// GetSecret handles GET /api/v1/namespaces/{namespace}/secrets/{name}
 func (h *SecretsHandler) GetSecret(w http.ResponseWriter, r *http.Request) {
 	requestID := r.Header.Get("X-Request-ID")
 	ctx, cancel := context.WithTimeout(r.Context(), secretsOperationTimeout)
@@ -445,6 +541,16 @@ func (h *SecretsHandler) GetSecret(w http.ResponseWriter, r *http.Request) {
 
 	userCtx := helpers.RequireUserContext(w, r)
 	if userCtx == nil {
+		return
+	}
+
+	namespace := r.PathValue("namespace")
+	if namespace == "" {
+		response.BadRequest(w, "namespace path parameter is required", nil)
+		return
+	}
+	if !sanitize.IsValidDNS1123Label(namespace) {
+		response.BadRequest(w, "namespace must be a valid DNS-1123 label (lowercase alphanumeric with hyphens, max 63 chars)", nil)
 		return
 	}
 
@@ -458,29 +564,21 @@ func (h *SecretsHandler) GetSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	project := r.URL.Query().Get("project")
-	if project == "" {
-		response.BadRequest(w, "project query parameter is required", nil)
+	// Defense-in-depth namespace membership check (middleware already
+	// performed the Casbin enforcement against secrets/{ns}/{name}).
+	allowed, err := h.authorizeSecretAccess(ctx, userCtx, namespace)
+	if err != nil {
+		slog.Error("failed to determine namespace access",
+			"requestId", requestID,
+			"userId", userCtx.UserID,
+			"namespace", namespace,
+			"error", err,
+		)
+		response.InternalError(w, "failed to determine namespace access")
 		return
 	}
-	if !sanitize.IsValidDNS1123Label(project) {
-		response.BadRequest(w, "project must be a valid DNS-1123 label (lowercase alphanumeric with hyphens, max 63 chars)", nil)
-		return
-	}
-
-	namespace := r.URL.Query().Get("namespace")
-	if namespace == "" {
-		response.BadRequest(w, "namespace query parameter is required", nil)
-		return
-	}
-	if !sanitize.IsValidDNS1123Label(namespace) {
-		response.BadRequest(w, "namespace must be a valid DNS-1123 label (lowercase alphanumeric with hyphens, max 63 chars)", nil)
-		return
-	}
-
-	// Check Casbin permission — include namespace for namespace-scoped policies (roles[].destinations)
-	secretObject := fmt.Sprintf("secrets/%s/%s/*", project, namespace)
-	if !helpers.RequireAccess(w, ctx, h.enforcer, userCtx, secretObject, "get", requestID) {
+	if !allowed {
+		response.NotFound(w, "secret", name)
 		audit.RecordEvent(h.recorder, ctx, audit.Event{
 			UserID:    userCtx.UserID,
 			UserEmail: userCtx.Email,
@@ -488,25 +586,17 @@ func (h *SecretsHandler) GetSecret(w http.ResponseWriter, r *http.Request) {
 			Action:    "get",
 			Resource:  "secrets",
 			Name:      name,
-			Project:   project,
+			Project:   auditLens(r),
 			RequestID: requestID,
 			Result:    "denied",
-			Details: map[string]any{
-				"namespace": namespace,
-			},
+			Details:   map[string]any{"namespace": namespace},
 		})
-		return
-	}
-
-	// Verify user has access to the requested namespace
-	if !h.checkNamespaceAccess(w, ctx, userCtx, namespace) {
 		return
 	}
 
 	slog.Info("getting secret",
 		"requestId", requestID,
 		"userId", userCtx.UserID,
-		"project", project,
 		"secretName", name,
 		"namespace", namespace,
 	)
@@ -536,18 +626,13 @@ func (h *SecretsHandler) GetSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify the secret belongs to the requested project (prevent cross-project access)
-	if secret.Labels[models.ProjectLabel] != project {
-		response.NotFound(w, "secret", name)
-		return
-	}
-
 	// Decode secret data (K8s client already base64-decodes Data)
 	data := make(map[string]string, len(secret.Data))
 	for k, v := range secret.Data {
 		data[k] = string(v)
 	}
 
+	getMeta := extractSecretMetadata(secret)
 	resp := SecretDetailResponse{
 		Name:      secret.Name,
 		Namespace: secret.Namespace,
@@ -555,12 +640,13 @@ func (h *SecretsHandler) GetSecret(w http.ResponseWriter, r *http.Request) {
 		CreatedAt: secret.CreationTimestamp.Time,
 		UpdatedAt: parseUpdatedAt(secret.Annotations),
 		Labels:    secret.Labels,
+		Metadata:  getMeta,
+		Status:    computeSecretStatus(getMeta, time.Now()),
 	}
 
 	slog.Info("secret retrieved successfully",
 		"requestId", requestID,
 		"userId", userCtx.UserID,
-		"project", project,
 		"secretName", name,
 		"namespace", namespace,
 	)
@@ -572,22 +658,19 @@ func (h *SecretsHandler) GetSecret(w http.ResponseWriter, r *http.Request) {
 		Action:    "get",
 		Resource:  "secrets",
 		Name:      name,
-		Project:   project,
+		Project:   auditLens(r),
 		RequestID: requestID,
 		Result:    "success",
-		Details: map[string]any{
-			"namespace": namespace,
-		},
+		Details:   map[string]any{"namespace": namespace},
 	})
 
 	response.WriteJSON(w, http.StatusOK, resp)
 }
 
-// CheckSecretExists handles HEAD /api/v1/secrets/{name}
-// Returns 200 if the secret exists and belongs to the project, 404 otherwise.
+// CheckSecretExists handles HEAD /api/v1/namespaces/{namespace}/secrets/{name}
+// Returns 200 if the secret exists in the user's accessible namespace, 404 otherwise.
 // No response body is written — this is a lightweight existence check for the frontend.
 func (h *SecretsHandler) CheckSecretExists(w http.ResponseWriter, r *http.Request) {
-	requestID := r.Header.Get("X-Request-ID")
 	ctx, cancel := context.WithTimeout(r.Context(), secretsOperationTimeout)
 	defer cancel()
 
@@ -596,48 +679,29 @@ func (h *SecretsHandler) CheckSecretExists(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	namespace := r.PathValue("namespace")
+	if namespace == "" || !sanitize.IsValidDNS1123Label(namespace) {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
 	name := r.PathValue("name")
-	if name == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		return
-	}
-	if !sanitize.IsValidDNS1123Subdomain(name) {
+	if name == "" || !sanitize.IsValidDNS1123Subdomain(name) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
-	project := r.URL.Query().Get("project")
-	if project == "" {
-		w.WriteHeader(http.StatusBadRequest)
+	allowed, err := h.authorizeSecretAccess(ctx, userCtx, namespace)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	if !sanitize.IsValidDNS1123Label(project) {
-		w.WriteHeader(http.StatusBadRequest)
-		return
-	}
-
-	namespace := r.URL.Query().Get("namespace")
-	if namespace == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		return
-	}
-	if !sanitize.IsValidDNS1123Label(namespace) {
-		w.WriteHeader(http.StatusBadRequest)
+	if !allowed {
+		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 
-	// Reuse the same Casbin permission as GetSecret — include namespace for roles[].destinations
-	secretExistObject := fmt.Sprintf("secrets/%s/%s/*", project, namespace)
-	if !helpers.RequireAccess(w, ctx, h.enforcer, userCtx, secretExistObject, "get", requestID) {
-		return
-	}
-
-	// Verify user has access to the requested namespace
-	if !h.checkNamespaceAccess(w, ctx, userCtx, namespace) {
-		return
-	}
-
-	secret, err := h.k8sClient.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
+	_, err = h.k8sClient.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
 			w.WriteHeader(http.StatusNotFound)
@@ -652,7 +716,6 @@ func (h *SecretsHandler) CheckSecretExists(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		slog.Error("failed to check secret existence",
-			"requestId", requestID,
 			"userId", userCtx.UserID,
 			"secretName", name,
 			"namespace", namespace,
@@ -662,16 +725,10 @@ func (h *SecretsHandler) CheckSecretExists(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Treat cross-project access as 404 (same as GetSecret) to avoid leaking secret names
-	if secret.Labels[models.ProjectLabel] != project {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-
 	w.WriteHeader(http.StatusOK)
 }
 
-// UpdateSecret handles PUT /api/v1/secrets/{name}
+// UpdateSecret handles PUT /api/v1/namespaces/{namespace}/secrets/{name}
 func (h *SecretsHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 	requestID := r.Header.Get("X-Request-ID")
 	ctx, cancel := context.WithTimeout(r.Context(), secretsOperationTimeout)
@@ -679,6 +736,16 @@ func (h *SecretsHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 
 	userCtx := helpers.RequireUserContext(w, r)
 	if userCtx == nil {
+		return
+	}
+
+	namespace := r.PathValue("namespace")
+	if namespace == "" {
+		response.BadRequest(w, "namespace path parameter is required", nil)
+		return
+	}
+	if !sanitize.IsValidDNS1123Label(namespace) {
+		response.BadRequest(w, "namespace must be a valid DNS-1123 label (lowercase alphanumeric with hyphens, max 63 chars)", nil)
 		return
 	}
 
@@ -692,43 +759,39 @@ func (h *SecretsHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	project := r.URL.Query().Get("project")
-	if project == "" {
-		response.BadRequest(w, "project query parameter is required", nil)
-		return
-	}
-	if !sanitize.IsValidDNS1123Label(project) {
-		response.BadRequest(w, "project must be a valid DNS-1123 label (lowercase alphanumeric with hyphens, max 63 chars)", nil)
-		return
-	}
-
-	// Parse request body before Casbin check — need namespace for namespace-scoped policies
 	req, err := helpers.DecodeJSON[UpdateSecretRequest](r, w, 0)
 	if err != nil {
 		response.BadRequest(w, err.Error(), nil)
 		return
 	}
 
-	// Validate inputs before security checks
+	// Validate payload before security check so callers always get the most
+	// informative error.
 	validationErrors := make(map[string]string)
-	if req.Namespace == "" {
-		validationErrors["namespace"] = "namespace is required"
-	} else if !sanitize.IsValidDNS1123Label(req.Namespace) {
-		validationErrors["namespace"] = "namespace must be a valid DNS-1123 label (lowercase alphanumeric with hyphens, max 63 chars)"
-	}
 	if len(req.Data) == 0 {
 		validationErrors["data"] = "data must contain at least one key-value pair"
 	} else {
 		validationErrors = validateSecretData(req.Data, validationErrors)
 	}
+	validationErrors = validateSecretMetadata(req.Metadata, validationErrors)
 	if len(validationErrors) > 0 {
 		response.BadRequest(w, "Validation failed", validationErrors)
 		return
 	}
 
-	// Check Casbin permission — include namespace for namespace-scoped policies (roles[].destinations)
-	secretUpdateObject := fmt.Sprintf("secrets/%s/%s/*", project, req.Namespace)
-	if !helpers.RequireAccess(w, ctx, h.enforcer, userCtx, secretUpdateObject, "update", requestID) {
+	allowed, err := h.authorizeSecretAccess(ctx, userCtx, namespace)
+	if err != nil {
+		slog.Error("failed to determine namespace access",
+			"requestId", requestID,
+			"userId", userCtx.UserID,
+			"namespace", namespace,
+			"error", err,
+		)
+		response.InternalError(w, "failed to determine namespace access")
+		return
+	}
+	if !allowed {
+		response.NotFound(w, "secret", name)
 		audit.RecordEvent(h.recorder, ctx, audit.Event{
 			UserID:    userCtx.UserID,
 			UserEmail: userCtx.Email,
@@ -736,35 +799,29 @@ func (h *SecretsHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 			Action:    "update",
 			Resource:  "secrets",
 			Name:      name,
-			Project:   project,
+			Project:   auditLens(r),
 			RequestID: requestID,
 			Result:    "denied",
+			Details:   map[string]any{"namespace": namespace},
 		})
-		return
-	}
-
-	// Verify user has access to the target namespace (after validation)
-	if !h.checkNamespaceAccess(w, ctx, userCtx, req.Namespace) {
 		return
 	}
 
 	slog.Info("updating secret",
 		"requestId", requestID,
 		"userId", userCtx.UserID,
-		"project", project,
 		"secretName", name,
-		"namespace", req.Namespace,
+		"namespace", namespace,
 	)
 
-	// Get existing secret
-	existing, err := h.k8sClient.CoreV1().Secrets(req.Namespace).Get(ctx, name, metav1.GetOptions{})
+	existing, err := h.k8sClient.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
 			response.NotFound(w, "secret", name)
 			return
 		}
 		if k8serrors.IsForbidden(err) || k8serrors.IsUnauthorized(err) {
-			response.Forbidden(w, "service account lacks permission to manage secrets in namespace "+req.Namespace)
+			response.Forbidden(w, "service account lacks permission to manage secrets in namespace "+namespace)
 			return
 		}
 		if k8serrors.IsTimeout(err) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
@@ -775,21 +832,20 @@ func (h *SecretsHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 			"requestId", requestID,
 			"userId", userCtx.UserID,
 			"secretName", name,
-			"namespace", req.Namespace,
+			"namespace", namespace,
 			"error", err,
 		)
 		response.InternalError(w, "Failed to update secret")
 		return
 	}
 
-	// Verify the secret belongs to the requested project (prevent cross-project access)
-	if existing.Labels[models.ProjectLabel] != project {
-		response.NotFound(w, "secret", name)
-		return
-	}
-
 	// Update secret with new values via StringData
 	existing.StringData = req.Data
+
+	// Apply typed metadata changes (nil = leave existing untouched).
+	// Runs before updatedAt stamping so metadata changes are part of the
+	// same "modification" the timestamp records.
+	applyMetadataToSecret(existing, req.Metadata)
 
 	// Stamp updatedAt annotation for tracking last rotation time
 	if existing.Annotations == nil {
@@ -797,14 +853,14 @@ func (h *SecretsHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 	}
 	existing.Annotations[updatedAtAnnotation] = time.Now().UTC().Format(time.RFC3339)
 
-	updated, err := h.k8sClient.CoreV1().Secrets(req.Namespace).Update(ctx, existing, metav1.UpdateOptions{})
+	updated, err := h.k8sClient.CoreV1().Secrets(namespace).Update(ctx, existing, metav1.UpdateOptions{})
 	if err != nil {
 		if k8serrors.IsConflict(err) {
 			response.WriteError(w, http.StatusConflict, response.ErrCodeConflict, "secret was modified concurrently, please retry", nil)
 			return
 		}
 		if k8serrors.IsForbidden(err) || k8serrors.IsUnauthorized(err) {
-			response.Forbidden(w, "service account lacks permission to manage secrets in namespace "+req.Namespace)
+			response.Forbidden(w, "service account lacks permission to manage secrets in namespace "+namespace)
 			return
 		}
 		if k8serrors.IsTimeout(err) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
@@ -815,7 +871,7 @@ func (h *SecretsHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 			"requestId", requestID,
 			"userId", userCtx.UserID,
 			"secretName", name,
-			"namespace", req.Namespace,
+			"namespace", namespace,
 			"error", err,
 		)
 		response.InternalError(w, "Failed to update secret")
@@ -838,6 +894,7 @@ func (h *SecretsHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Strings(keys)
 
+	updatedMeta := extractSecretMetadata(updated)
 	resp := SecretResponse{
 		Name:      updated.Name,
 		Namespace: updated.Namespace,
@@ -845,14 +902,15 @@ func (h *SecretsHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 		CreatedAt: updated.CreationTimestamp.Time,
 		UpdatedAt: parseUpdatedAt(updated.Annotations),
 		Labels:    updated.Labels,
+		Metadata:  updatedMeta,
+		Status:    computeSecretStatus(updatedMeta, time.Now()),
 	}
 
 	slog.Info("secret updated successfully",
 		"requestId", requestID,
 		"userId", userCtx.UserID,
-		"project", project,
 		"secretName", name,
-		"namespace", req.Namespace,
+		"namespace", namespace,
 	)
 
 	audit.RecordEvent(h.recorder, ctx, audit.Event{
@@ -862,11 +920,11 @@ func (h *SecretsHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 		Action:    "update",
 		Resource:  "secrets",
 		Name:      name,
-		Project:   project,
+		Project:   auditLens(r),
 		RequestID: requestID,
 		Result:    "success",
 		Details: map[string]any{
-			"namespace": req.Namespace,
+			"namespace": namespace,
 			"keyCount":  len(keys),
 		},
 	})
@@ -874,7 +932,7 @@ func (h *SecretsHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 	response.WriteJSON(w, http.StatusOK, resp)
 }
 
-// DeleteSecret handles DELETE /api/v1/secrets/{name}
+// DeleteSecret handles DELETE /api/v1/namespaces/{namespace}/secrets/{name}
 func (h *SecretsHandler) DeleteSecret(w http.ResponseWriter, r *http.Request) {
 	requestID := r.Header.Get("X-Request-ID")
 	ctx, cancel := context.WithTimeout(r.Context(), secretsOperationTimeout)
@@ -882,6 +940,16 @@ func (h *SecretsHandler) DeleteSecret(w http.ResponseWriter, r *http.Request) {
 
 	userCtx := helpers.RequireUserContext(w, r)
 	if userCtx == nil {
+		return
+	}
+
+	namespace := r.PathValue("namespace")
+	if namespace == "" {
+		response.BadRequest(w, "namespace path parameter is required", nil)
+		return
+	}
+	if !sanitize.IsValidDNS1123Label(namespace) {
+		response.BadRequest(w, "namespace must be a valid DNS-1123 label (lowercase alphanumeric with hyphens, max 63 chars)", nil)
 		return
 	}
 
@@ -895,29 +963,19 @@ func (h *SecretsHandler) DeleteSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	project := r.URL.Query().Get("project")
-	if project == "" {
-		response.BadRequest(w, "project query parameter is required", nil)
+	allowed, err := h.authorizeSecretAccess(ctx, userCtx, namespace)
+	if err != nil {
+		slog.Error("failed to determine namespace access",
+			"requestId", requestID,
+			"userId", userCtx.UserID,
+			"namespace", namespace,
+			"error", err,
+		)
+		response.InternalError(w, "failed to determine namespace access")
 		return
 	}
-	if !sanitize.IsValidDNS1123Label(project) {
-		response.BadRequest(w, "project must be a valid DNS-1123 label (lowercase alphanumeric with hyphens, max 63 chars)", nil)
-		return
-	}
-
-	namespace := r.URL.Query().Get("namespace")
-	if namespace == "" {
-		response.BadRequest(w, "namespace query parameter is required", nil)
-		return
-	}
-	if !sanitize.IsValidDNS1123Label(namespace) {
-		response.BadRequest(w, "namespace must be a valid DNS-1123 label (lowercase alphanumeric with hyphens, max 63 chars)", nil)
-		return
-	}
-
-	// Check Casbin permission — include namespace for namespace-scoped policies (roles[].destinations)
-	secretDelObject := fmt.Sprintf("secrets/%s/%s/*", project, namespace)
-	if !helpers.RequireAccess(w, ctx, h.enforcer, userCtx, secretDelObject, "delete", requestID) {
+	if !allowed {
+		response.NotFound(w, "secret", name)
 		audit.RecordEvent(h.recorder, ctx, audit.Event{
 			UserID:    userCtx.UserID,
 			UserEmail: userCtx.Email,
@@ -925,32 +983,23 @@ func (h *SecretsHandler) DeleteSecret(w http.ResponseWriter, r *http.Request) {
 			Action:    "delete",
 			Resource:  "secrets",
 			Name:      name,
-			Project:   project,
+			Project:   auditLens(r),
 			RequestID: requestID,
 			Result:    "denied",
-			Details: map[string]any{
-				"namespace": namespace,
-			},
+			Details:   map[string]any{"namespace": namespace},
 		})
-		return
-	}
-
-	// Verify user has access to the requested namespace
-	if !h.checkNamespaceAccess(w, ctx, userCtx, namespace) {
 		return
 	}
 
 	slog.Info("deleting secret",
 		"requestId", requestID,
 		"userId", userCtx.UserID,
-		"project", project,
 		"secretName", name,
 		"namespace", namespace,
 	)
 
-	// Check if the secret exists and belongs to the requested project
-	existing, err := h.k8sClient.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
+	// Verify the secret exists before scanning for references / deleting.
+	if _, err := h.k8sClient.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{}); err != nil {
 		if k8serrors.IsNotFound(err) {
 			response.NotFound(w, "secret", name)
 			return
@@ -971,12 +1020,6 @@ func (h *SecretsHandler) DeleteSecret(w http.ResponseWriter, r *http.Request) {
 			"error", err,
 		)
 		response.InternalError(w, "Failed to delete secret")
-		return
-	}
-
-	// Verify the secret belongs to the requested project (prevent cross-project access)
-	if existing.Labels[models.ProjectLabel] != project {
-		response.NotFound(w, "secret", name)
 		return
 	}
 
@@ -1023,7 +1066,6 @@ func (h *SecretsHandler) DeleteSecret(w http.ResponseWriter, r *http.Request) {
 	slog.Info("secret deleted successfully",
 		"requestId", requestID,
 		"userId", userCtx.UserID,
-		"project", project,
 		"secretName", name,
 		"namespace", namespace,
 		"warnings", len(warnings),
@@ -1036,7 +1078,7 @@ func (h *SecretsHandler) DeleteSecret(w http.ResponseWriter, r *http.Request) {
 		Action:    "delete",
 		Resource:  "secrets",
 		Name:      name,
-		Project:   project,
+		Project:   auditLens(r),
 		RequestID: requestID,
 		Result:    "success",
 		Details: map[string]any{
@@ -1173,7 +1215,8 @@ func parseUpdatedAt(annotations map[string]string) *time.Time {
 	return nil
 }
 
-// validateCreateSecretRequest validates the create secret request
+// validateCreateSecretRequest validates the create secret request.
+// Namespace is validated separately at the path-param level — not here.
 func validateCreateSecretRequest(req *CreateSecretRequest) map[string]string {
 	errors := make(map[string]string)
 
@@ -1183,17 +1226,13 @@ func validateCreateSecretRequest(req *CreateSecretRequest) map[string]string {
 		errors["name"] = "name must be a valid DNS-1123 subdomain (lowercase alphanumeric, hyphens, and dots)"
 	}
 
-	if req.Namespace == "" {
-		errors["namespace"] = "namespace is required"
-	} else if !sanitize.IsValidDNS1123Label(req.Namespace) {
-		errors["namespace"] = "namespace must be a valid DNS-1123 label (lowercase alphanumeric with hyphens, max 63 chars)"
-	}
-
 	if len(req.Data) == 0 {
 		errors["data"] = "data must contain at least one key-value pair"
 	} else {
 		errors = validateSecretData(req.Data, errors)
 	}
+
+	errors = validateSecretMetadata(req.Metadata, errors)
 
 	return errors
 }

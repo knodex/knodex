@@ -24,14 +24,14 @@ func TestScopeObjectToProjectWithDestinations(t *testing.T) {
 		expected     []string
 	}{
 		{
-			name:         "wildcard without destinations - project-wide",
+			name:         "wildcard without destinations - project-wide instances, no secrets",
 			projectName:  "alpha",
 			object:       "*",
 			destinations: nil,
 			expected: []string{
 				"projects/alpha",
 				"instances/alpha/*",
-				"secrets/alpha/*",
+				// secrets intentionally absent — TD-7: destinations required
 				"repositories/alpha/*",
 				"compliance/alpha/*",
 				"rgds/*",
@@ -44,11 +44,13 @@ func TestScopeObjectToProjectWithDestinations(t *testing.T) {
 			destinations: []string{"xxx-applications", "xxx-shared"},
 			expected: []string{
 				"projects/alpha",
-				// Namespace-bearing resources: per-destination
+				// Instances: per-destination, project-scoped (existing model)
 				"instances/alpha/xxx-applications/*",
 				"instances/alpha/xxx-shared/*",
-				"secrets/alpha/xxx-applications/*",
-				"secrets/alpha/xxx-shared/*",
+				// Secrets: per-destination, namespace-keyed (no project segment).
+				// Mirrors the URL-inferred Casbin object shape secrets/{ns}/{name}.
+				"secrets/xxx-applications/*",
+				"secrets/xxx-shared/*",
 				// Project-level resources: always project-wide
 				"repositories/alpha/*",
 				"compliance/alpha/*",
@@ -70,11 +72,25 @@ func TestScopeObjectToProjectWithDestinations(t *testing.T) {
 			expected:     []string{"instances/alpha/ns-app/*", "instances/alpha/ns-infra/*"},
 		},
 		{
-			name:         "secrets/* with single destination",
+			name:         "secrets/* with single destination - namespace-keyed",
 			projectName:  "alpha",
 			object:       "secrets/*",
 			destinations: []string{"xxx-shared"},
-			expected:     []string{"secrets/alpha/xxx-shared/*"},
+			expected:     []string{"secrets/xxx-shared/*"},
+		},
+		{
+			name:         "secrets/* with multiple destinations - namespace-keyed",
+			projectName:  "alpha",
+			object:       "secrets/*",
+			destinations: []string{"xxx-shared", "xxx-applications"},
+			expected:     []string{"secrets/xxx-shared/*", "secrets/xxx-applications/*"},
+		},
+		{
+			name:         "secrets/* without destinations - no policies emitted (TD-7)",
+			projectName:  "alpha",
+			object:       "secrets/*",
+			destinations: nil,
+			expected:     nil,
 		},
 		{
 			name:         "rgds/* unchanged regardless of destinations",
@@ -108,12 +124,24 @@ func TestScopeObjectToProjectWithDestinations(t *testing.T) {
 	}
 }
 
+// identityResolver is a TeamResolver where each team name maps to itself as the sole group.
+// Used in tests where the team name and group name can be the same string.
+var identityResolver = fakeTeamResolver{
+	"alpha-devs":         {"alpha-devs"},
+	"platform-engineers": {"platform-engineers"},
+	"viewers":            {"viewers"},
+	"staging-admins":     {"staging-admins"},
+	"readers":            {"readers"},
+	"scoped-devs":        {"scoped-devs"},
+	"all-devs":           {"all-devs"},
+}
+
 // TestPolicyEnforcer_NamespaceScopedPolicies tests that roles with destinations
 // generate namespace-scoped Casbin policies.
 func TestPolicyEnforcer_NamespaceScopedPolicies(t *testing.T) {
 	t.Parallel()
 
-	pe := newTestEnforcer(t)
+	pe := newTestEnforcerWithTeams(t, identityResolver)
 
 	project := &Project{
 		ObjectMeta: metav1.ObjectMeta{
@@ -131,28 +159,28 @@ func TestPolicyEnforcer_NamespaceScopedPolicies(t *testing.T) {
 					Name:         "developer",
 					Description:  "App developer",
 					Policies:     []string{"instances/*, *, allow", "secrets/*, *, allow"},
-					Groups:       []string{"alpha-devs"},
+					Teams:        []string{"alpha-devs"},
 					Destinations: []string{"xxx-applications"},
 				},
 				{
 					Name:         "shared-reader",
 					Description:  "Read secrets in shared",
 					Policies:     []string{"secrets/*, get, allow"},
-					Groups:       []string{"alpha-devs"},
+					Teams:        []string{"alpha-devs"},
 					Destinations: []string{"xxx-shared"},
 				},
 				{
 					Name:         "operator",
 					Description:  "Platform operator",
 					Policies:     []string{"instances/*, *, allow", "secrets/*, *, allow"},
-					Groups:       []string{"platform-engineers"},
+					Teams:        []string{"platform-engineers"},
 					Destinations: []string{"xxx-infra", "xxx-shared"},
 				},
 				{
 					Name:        "project-wide",
 					Description: "Role without destinations - backward compat",
 					Policies:    []string{"instances/*, get, allow"},
-					Groups:      []string{"viewers"},
+					Teams:       []string{"viewers"},
 				},
 			},
 		},
@@ -171,15 +199,28 @@ func TestPolicyEnforcer_NamespaceScopedPolicies(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, canAccess, "developer should NOT access instances in xxx-infra")
 
-	// Test: shared-reader can GET secrets in xxx-shared
-	canAccess, err = pe.CanAccessWithGroups(context.Background(), "reader-user", []string{"alpha-devs"}, "secrets/alpha/xxx-shared/my-secret", "get")
+	// Test: shared-reader can GET secrets in xxx-shared. Secrets are
+	// namespace-keyed (no project segment) — URL middleware emits
+	// secrets/{ns}/{name} directly.
+	canAccess, err = pe.CanAccessWithGroups(context.Background(), "reader-user", []string{"alpha-devs"}, "secrets/xxx-shared/my-secret", "get")
 	require.NoError(t, err)
 	assert.True(t, canAccess, "shared-reader should GET secrets in xxx-shared")
 
 	// Test: shared-reader CANNOT create secrets in xxx-shared
-	canAccess, err = pe.CanAccessWithGroups(context.Background(), "reader-user2", []string{"alpha-devs"}, "secrets/alpha/xxx-shared/my-secret", "create")
+	canAccess, err = pe.CanAccessWithGroups(context.Background(), "reader-user2", []string{"alpha-devs"}, "secrets/xxx-shared/my-secret", "create")
 	require.NoError(t, err)
 	assert.False(t, canAccess, "shared-reader should NOT create secrets in xxx-shared")
+
+	// Test: developer can manage secrets in xxx-applications (the destination
+	// listed on their role). AC1 / AC14: per-destination secrets policies.
+	canAccess, err = pe.CanAccessWithGroups(context.Background(), "dev-user", []string{"alpha-devs"}, "secrets/xxx-applications/api-key", "create")
+	require.NoError(t, err)
+	assert.True(t, canAccess, "developer should manage secrets in xxx-applications")
+
+	// Test: developer CANNOT access secrets in xxx-infra (not in destinations)
+	canAccess, err = pe.CanAccessWithGroups(context.Background(), "dev-user", []string{"alpha-devs"}, "secrets/xxx-infra/api-key", "get")
+	require.NoError(t, err)
+	assert.False(t, canAccess, "developer should NOT access secrets outside their destinations")
 
 	// Test: operator has full access in xxx-infra
 	canAccess, err = pe.CanAccessWithGroups(context.Background(), "ops-user", []string{"platform-engineers"}, "instances/alpha/xxx-infra/Deployment/nginx", "create")
@@ -211,7 +252,7 @@ func TestPolicyEnforcer_NamespaceScopedPolicies(t *testing.T) {
 func TestPolicyEnforcer_NamespaceScopedBuiltInPolicies(t *testing.T) {
 	t.Parallel()
 
-	pe := newTestEnforcer(t)
+	pe := newTestEnforcerWithTeams(t, identityResolver)
 
 	project := &Project{
 		ObjectMeta: metav1.ObjectMeta{
@@ -228,14 +269,14 @@ func TestPolicyEnforcer_NamespaceScopedBuiltInPolicies(t *testing.T) {
 					Name:         "admin",
 					Description:  "Admin scoped to staging only",
 					Policies:     []string{"*, *, allow"},
-					Groups:       []string{"staging-admins"},
+					Teams:        []string{"staging-admins"},
 					Destinations: []string{"ns-staging"},
 				},
 				{
 					Name:        "readonly",
 					Description: "Global readonly within project",
 					Policies:    []string{"*, get, allow"},
-					Groups:      []string{"readers"},
+					Teams:       []string{"readers"},
 				},
 			},
 		},
@@ -319,7 +360,7 @@ func TestPolicyEnforcer_AdminWildcardStillWorks(t *testing.T) {
 func TestPolicyEnforcer_ClusterScopedWithDestinations(t *testing.T) {
 	t.Parallel()
 
-	pe := newTestEnforcer(t)
+	pe := newTestEnforcerWithTeams(t, identityResolver)
 
 	project := &Project{
 		ObjectMeta: metav1.ObjectMeta{
@@ -334,13 +375,13 @@ func TestPolicyEnforcer_ClusterScopedWithDestinations(t *testing.T) {
 				{
 					Name:         "destination-scoped-dev",
 					Policies:     []string{"instances/*, *, allow"},
-					Groups:       []string{"scoped-devs"},
+					Teams:        []string{"scoped-devs"},
 					Destinations: []string{"ns-app"},
 				},
 				{
 					Name:     "project-wide-dev",
 					Policies: []string{"instances/*, *, allow"},
-					Groups:   []string{"all-devs"},
+					Teams:    []string{"all-devs"},
 				},
 			},
 		},

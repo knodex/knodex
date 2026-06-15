@@ -250,13 +250,12 @@ func (ts *TestServer) CreateProjectDirectly(name, description string, roles []rb
 				"policies":    policiesSlice,
 			}
 
-			// Convert groups []string to []interface{}
-			if len(role.Groups) > 0 {
-				groupsSlice := make([]interface{}, 0, len(role.Groups))
-				for _, g := range role.Groups {
-					groupsSlice = append(groupsSlice, g)
+			if len(role.Teams) > 0 {
+				teamsSlice := make([]interface{}, 0, len(role.Teams))
+				for _, t := range role.Teams {
+					teamsSlice = append(teamsSlice, t)
 				}
-				roleMap["groups"] = groupsSlice
+				roleMap["teams"] = teamsSlice
 			}
 			rolesSlice = append(rolesSlice, roleMap)
 		}
@@ -318,10 +317,10 @@ func (ts *TestServer) unstructuredToProject(obj *unstructured.Unstructured) (*rb
 							}
 						}
 					}
-					if g, ok := rm["groups"].([]interface{}); ok {
-						for _, grp := range g {
-							if gs, ok := grp.(string); ok {
-								role.Groups = append(role.Groups, gs)
+					if t, ok := rm["teams"].([]interface{}); ok {
+						for _, tm := range t {
+							if ts, ok := tm.(string); ok {
+								role.Teams = append(role.Teams, ts)
 							}
 						}
 					}
@@ -405,8 +404,8 @@ func ToUnstructured(project *rbac.Project) (*unstructured.Unstructured, error) {
 			"description": role.Description,
 			"policies":    role.Policies,
 		}
-		if len(role.Groups) > 0 {
-			roleMap["groups"] = role.Groups
+		if len(role.Teams) > 0 {
+			roleMap["teams"] = role.Teams
 		}
 		roles = append(roles, roleMap)
 	}

@@ -70,7 +70,7 @@ func BenchmarkCanAccessWithGroups_SingleGroup(b *testing.B) {
 				{
 					Name:     "admin",
 					Policies: []string{"*, *, allow"},
-					Groups:   []string{"alpha-admins"},
+					Teams:    []string{"alpha-admins"},
 				},
 			},
 		},
@@ -153,17 +153,17 @@ func BenchmarkLoadProjectPolicies(b *testing.B) {
 					{
 						Name:     "admin",
 						Policies: []string{"*, *, allow"},
-						Groups:   []string{"admins", "platform-team"},
+						Teams:    []string{"admins-team", "platform-team"},
 					},
 					{
 						Name:     "developer",
 						Policies: []string{"instances/*, create, allow", "instances/*, get, allow", "rgds/*, view, allow"},
-						Groups:   []string{"developers"},
+						Teams:    []string{"developers-team"},
 					},
 					{
 						Name:     "readonly",
 						Policies: []string{"*, view, allow"},
-						Groups:   []string{"viewers", "auditors"},
+						Teams:    []string{"viewers-team", "auditors-team"},
 					},
 				},
 			},

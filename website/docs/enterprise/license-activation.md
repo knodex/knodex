@@ -81,6 +81,29 @@ A valid license returns:
 
 Navigate to **Settings** in the Knodex UI. The license status is displayed in the **License** section showing validity, expiration date, and enabled features.
 
+## Seat counting
+
+License-seat usage is computed from the canonical user roster. The authoritative source is the `identity.users` table: the billed count is `COUNT(*) FROM identity.users WHERE state='active'` — an entitlement-based, per-seat count, identical on every edition.
+
+Seat **enforcement is unchanged**: the `SeatReconciler`, the threshold warnings, the License Settings UI, and the `AllowedSeats` check all behave exactly as before. Only the storage source the count is computed from changed (previously `license.user_seats`). Idle users **still count** toward the billed total — there is no idle auto-decay, so a provisioned user counts until explicitly removed.
+
+### Reclaiming a seat
+
+To remove a user from the billed seat count, soft-delete the user via the Users API:
+
+```bash
+curl -X DELETE http://localhost:8080/api/v1/users/{id} \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+This sets the user's `state` to `removed`, decrements the seat count, and returns a reclaim note: *"Seat reclaimed. Permanent exclusion requires IdP-side revocation."* Reclaiming a seat is not the same as permanent exclusion — if the same federated identity signs in again via SSO, the user is resurrected and counts once more. **Permanent exclusion requires IdP-side revocation** (remove the user's access at your identity provider).
+
+The Users API (`GET /api/v1/users`, `GET /api/v1/users/{id}`, `DELETE /api/v1/users/{id}`) is operator-gated through the existing `settings` permission — list/get require `settings` read, delete requires `settings` update.
+
+:::note[Seat usage drops to zero after upgrading across the storage rebuild]
+When upgrading across the release that re-pointed seat counting at `identity.users`, seat usage drops to zero and re-populates as users log back in via SSO. See the [Upgrade Notes](upgrade-notes#license-seat-counter--storage-rebuild) for the full upgrade procedure.
+:::
+
 ## License Expiration
 
 When a license expires:

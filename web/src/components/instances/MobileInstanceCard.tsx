@@ -1,16 +1,17 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { Clock, Copy, Check } from "@/lib/icons";
 import type { Instance } from "@/types/rgd";
 import { StatusIndicator } from "@/components/ui/status-indicator";
 import { formatDistanceToNow } from "@/lib/date";
+import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { buildInstanceRoute } from "@/lib/instancePath";
-import { HEALTH_TO_STATUS, LEFT_BORDER_COLOR, getInstanceUrl } from "./instance-utils";
+import { HEALTH_TO_STATUS, ALERT_BORDER_COLOR, getInstanceUrl } from "./instance-utils";
 
 interface MobileInstanceCardProps {
   instance: Instance;
@@ -23,19 +24,14 @@ export const MobileInstanceCard = React.memo(function MobileInstanceCard({
 }: MobileInstanceCardProps) {
   const navigate = useNavigate();
   const status = HEALTH_TO_STATUS[instance.health] ?? "unknown";
-  const leftBorderColor = LEFT_BORDER_COLOR[instance.health];
+  const leftBorderColor = ALERT_BORDER_COLOR[instance.health];
   const serviceUrl = getInstanceUrl(instance);
   const projectLabel = instance.labels?.["knodex.io/project"];
   const age = formatDistanceToNow(instance.createdAt);
-  const [copied, setCopied] = useState(false);
-  const copiedTimerRef = useRef<ReturnType<typeof setTimeout>>();
-
-  // Clean up timeout on unmount
-  useEffect(() => {
-    return () => {
-      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
-    };
-  }, []);
+  const { copied, copy } = useCopyToClipboard({
+    onSuccess: () => toast.success("Copied!"),
+    onError: () => toast.error("Failed to copy"),
+  });
 
   const handleClick = useCallback(() => {
     if (onClick) {
@@ -52,14 +48,8 @@ export const MobileInstanceCard = React.memo(function MobileInstanceCard({
       toast.error("Clipboard not available");
       return;
     }
-    navigator.clipboard.writeText(serviceUrl).then(() => {
-      setCopied(true);
-      toast.success("Copied!");
-      copiedTimerRef.current = setTimeout(() => setCopied(false), 2000);
-    }).catch(() => {
-      toast.error("Failed to copy");
-    });
-  }, [serviceUrl]);
+    void copy(serviceUrl);
+  }, [serviceUrl, copy]);
 
   return (
     <div

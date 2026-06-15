@@ -47,7 +47,6 @@ func toWrapperInstanceSpec(req *CreateProjectRequest) map[string]any {
 				"name":        r.Name,
 				"description": r.Description,
 				"policies":    toAnySlice(r.Policies),
-				"groups":      toAnySlice(r.Groups),
 			}
 			if len(r.Destinations) > 0 {
 				role["destinations"] = toAnySlice(r.Destinations)

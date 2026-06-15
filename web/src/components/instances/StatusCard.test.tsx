@@ -122,33 +122,40 @@ describe("StatusCard", () => {
     });
   });
 
-  describe("left-border accent (AC #4)", () => {
+  describe("left-border accent (AC #4 — all four health states, 3px parity with list stripe)", () => {
     it("applies rose left-border for Unhealthy instances", () => {
       renderStatusCard(createTestInstance({ health: "Unhealthy" }));
       const card = screen.getByTestId("status-card");
       expect(card.style.borderLeftColor).toBe("var(--status-error)");
-      expect(card).toHaveClass("border-l-2");
+      expect(card).toHaveClass("border-l-[3px]");
     });
 
     it("applies amber left-border for Degraded instances", () => {
       renderStatusCard(createTestInstance({ health: "Degraded" }));
       const card = screen.getByTestId("status-card");
       expect(card.style.borderLeftColor).toBe("var(--status-warning)");
-      expect(card).toHaveClass("border-l-2");
+      expect(card).toHaveClass("border-l-[3px]");
     });
 
-    it("does not apply left-border accent for Healthy instances", () => {
+    it("applies green left-border for Healthy instances", () => {
       renderStatusCard(createTestInstance({ health: "Healthy" }));
       const card = screen.getByTestId("status-card");
-      expect(card.style.borderLeftColor).toBe("");
-      expect(card).not.toHaveClass("border-l-2");
+      expect(card.style.borderLeftColor).toBe("var(--status-healthy)");
+      expect(card).toHaveClass("border-l-[3px]");
     });
 
-    it("does not apply left-border accent for Progressing instances", () => {
+    it("applies blue left-border for Progressing instances", () => {
       renderStatusCard(createTestInstance({ health: "Progressing" }));
       const card = screen.getByTestId("status-card");
+      expect(card.style.borderLeftColor).toBe("var(--status-info)");
+      expect(card).toHaveClass("border-l-[3px]");
+    });
+
+    it("does not apply a colored left-border for Unknown instances (neutral border preserved)", () => {
+      renderStatusCard(createTestInstance({ health: "Unknown" }));
+      const card = screen.getByTestId("status-card");
       expect(card.style.borderLeftColor).toBe("");
-      expect(card).not.toHaveClass("border-l-2");
+      expect(card).not.toHaveClass("border-l-[3px]");
     });
   });
 
@@ -164,7 +171,7 @@ describe("StatusCard", () => {
       );
       fireEvent.click(screen.getByTestId("status-card"));
       expect(mockNavigate).toHaveBeenCalledWith(
-        "/instances/group/compute.example.com/ns/prod/AKSCluster/cluster-1"
+        "/instances/compute.example.com/v1/prod/AKSCluster/cluster-1"
       );
     });
 
@@ -180,7 +187,7 @@ describe("StatusCard", () => {
       );
       fireEvent.click(screen.getByTestId("status-card"));
       expect(mockNavigate).toHaveBeenCalledWith(
-        "/instances/group/policy.example.com/cluster/GlobalPolicy/my-policy"
+        "/instances/policy.example.com/v1/GlobalPolicy/my-policy"
       );
     });
 
@@ -198,7 +205,7 @@ describe("StatusCard", () => {
         createTestInstance({ apiVersion: "g.example/v1", namespace: "ns", kind: "K", name: "n" })
       );
       fireEvent.keyDown(screen.getByTestId("status-card"), { key: "Enter" });
-      expect(mockNavigate).toHaveBeenCalledWith("/instances/group/g.example/ns/ns/K/n");
+      expect(mockNavigate).toHaveBeenCalledWith("/instances/g.example/v1/ns/K/n");
     });
 
     it("navigates on Space key press", () => {
@@ -206,7 +213,7 @@ describe("StatusCard", () => {
         createTestInstance({ apiVersion: "g.example/v1", namespace: "ns", kind: "K", name: "n" })
       );
       fireEvent.keyDown(screen.getByTestId("status-card"), { key: " " });
-      expect(mockNavigate).toHaveBeenCalledWith("/instances/group/g.example/ns/ns/K/n");
+      expect(mockNavigate).toHaveBeenCalledWith("/instances/g.example/v1/ns/K/n");
     });
   });
 

@@ -1,6 +1,11 @@
 node_modules
 bin
 
+# Web build artifacts embedded into the Go binary — exclude everything except
+# the .gitkeep placeholder that satisfies //go:embed all:dist in clean checkouts.
+server/internal/static/dist/*
+!server/internal/static/dist/.gitkeep
+
 # Test results (all automated test output)
 test-results/
 
@@ -40,3 +45,27 @@ server/ee/license/license_key.pem
 
 # Local dev artifacts
 .DS_Store
+
+.claude/.story-automator-active
+
+# Native dev build output (air, make dev-server)
+server/tmp/
+
+# Local agent tooling — BMAD skill/command framework (installed per-developer, not product code)
+.claude/skills/bmad-*/
+.claude/commands/bmad-*
+
+# Browser-automation debug artifacts (Playwright MCP console/page dumps)
+.playwright-mcp/
+
+# BMAD automator run artifacts (per-run state/logs, not product code)
+_bmad-output/story-automator/
+_bmad-output/implementation-artifacts/
+_bmad-output/brainstorming/
+
+# QA run reports (generated test output)
+qa/reports/
+
+# Claude Code runtime/personal config (machine-specific; use settings.local.json to share)
+.claude/scheduled_tasks.lock
+.claude/settings.json

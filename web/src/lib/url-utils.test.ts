@@ -8,6 +8,7 @@ import {
   setCatalogFiltersToURL,
   getInstanceFiltersFromURL,
   setInstanceFiltersToURL,
+  validateDocsUrl,
 } from "./url-utils";
 
 describe("sanitizeUrlParam", () => {
@@ -400,5 +401,27 @@ describe("setInstanceFiltersToURL", () => {
       health: "",
       scope: "",
     });
+  });
+});
+
+describe("validateDocsUrl", () => {
+  it("returns null for a valid https URL", () => {
+    expect(validateDocsUrl("https://docs.example.com")).toBeNull();
+  });
+
+  it("returns null for a valid http URL", () => {
+    expect(validateDocsUrl("http://docs.example.com")).toBeNull();
+  });
+
+  it("rejects non-http(s) protocols with a protocol message", () => {
+    expect(validateDocsUrl("ftp://docs.example.com")).toBe(
+      "Documentation URL must be http or https",
+    );
+  });
+
+  it("rejects an unparseable string with an invalid-URL message", () => {
+    expect(validateDocsUrl("not a url")).toBe(
+      "Documentation URL is not a valid URL",
+    );
   });
 });

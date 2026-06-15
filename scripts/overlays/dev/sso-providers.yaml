@@ -1,3 +1,15 @@
+# TEST overlay only — registers the in-cluster mock-OIDC server as a REAL SSO
+# provider so the live authorization-code callback path resolves end-to-end
+# (Story 15.5 AC1/AC10). This replaces the placeholder azuread entry the base
+# carries; production SSO config is untouched (this file lives under
+# scripts/overlays/dev and is applied as a strategic-merge patch by the dev
+# kustomization).
+#
+# - issuerURL points at the in-cluster mock-OIDC service; the server discovers
+#   and validates the ID token `iss` against it (mock-OIDC signs iss=this URL).
+# - redirectURL is the host-reachable callback (server is port-forwarded to
+#   localhost:8080 during E2E), so the browser/test round-trips through it.
+# - client-id/secret match deploy/test/mock-oidc/configmap.yaml.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -6,10 +18,10 @@ data:
   providers.json: |
     [
       {
-        "name": "azuread",
-        "issuerURL": "https://login.microsoftonline.com/YOUR_TENANT_ID/v2.0",
+        "name": "mock-oidc",
+        "issuerURL": "http://mock-oidc:8081",
         "redirectURL": "http://localhost:8080/api/v1/auth/oidc/callback",
-        "scopes": ["openid", "email", "profile"]
+        "scopes": ["openid", "email", "profile", "groups"]
       }
     ]
 ---
@@ -19,5 +31,5 @@ metadata:
   name: knodex-sso-secrets
 type: Opaque
 stringData:
-  azuread.client-id: "YOUR_CLIENT_ID"
-  azuread.client-secret: "your-azure-ad-client-secret-here"
+  mock-oidc.client-id: "test-client-id"
+  mock-oidc.client-secret: "test-client-secret"

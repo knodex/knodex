@@ -52,6 +52,31 @@ describe("CatalogCard", () => {
     render(<CatalogCard rgd={createTestRGD({ description: "" })} />);
     expect(screen.getByText("No description available")).toBeInTheDocument();
   });
+
+  it("never renders the kagent branding badge, even for a kagent.dev Agent producer", () => {
+    render(
+      <CatalogCard
+        rgd={createTestRGD({
+          producesKinds: [
+            { group: "kagent.dev", version: "v1alpha2", kind: "Agent" },
+          ],
+        })}
+      />
+    );
+    expect(screen.queryByTestId("agent-ai-badge")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Powered by kagent/i)).not.toBeInTheDocument();
+  });
+
+  it("renders the CardChevron hover affordance (aria-hidden)", () => {
+    // Story 48.2 / AC #4: CardChevron is rendered as an additive hover affordance.
+    // Opacity/hover behavior is owned by the primitive's own test suite — here we
+    // just pin that the chevron is in the DOM and is aria-hidden so it does not
+    // pollute the accessibility tree.
+    const { container } = render(<CatalogCard rgd={createTestRGD()} />);
+    const chevron = container.querySelector("span[aria-hidden='true']");
+    expect(chevron).not.toBeNull();
+    expect(chevron?.querySelector("svg")).not.toBeNull();
+  });
 });
 
 describe("CatalogCardSkeleton", () => {

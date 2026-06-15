@@ -169,6 +169,13 @@ func (h *ComplianceHandler) checkComplianceLicense(w http.ResponseWriter, isWrit
 
 // checkPermission verifies that the user has compliance:get permission.
 // Returns false and writes 403 Forbidden if not permitted.
+//
+// Two paths are checked:
+//  1. Global: "compliance/*" matches serveradmin's wildcard policy.
+//  2. Project-scoped: compliance policies are stored as "compliance/{project}/*"
+//     (see scopeObjectToProjectWithDestinations). We iterate accessible projects
+//     and check each — any match is sufficient; data is filtered to that project
+//     by filterViolationsByAccess.
 func (h *ComplianceHandler) checkPermission(w http.ResponseWriter, r *http.Request) bool {
 	userCtx, ok := middleware.GetUserContext(r)
 	if !ok {
@@ -185,8 +192,7 @@ func (h *ComplianceHandler) checkPermission(w http.ResponseWriter, r *http.Reque
 		return false
 	}
 
-	// Check compliance:get permission using Casbin
-	// Object is "compliance/*" for all compliance resources
+	// 1. Check global compliance access (serveradmin has "compliance/*, *, allow").
 	allowed, err := h.policyEnforcer.CanAccessWithGroups(
 		r.Context(),
 		userCtx.UserID,
@@ -202,17 +208,37 @@ func (h *ComplianceHandler) checkPermission(w http.ResponseWriter, r *http.Reque
 		response.InternalError(w, "Failed to check authorization")
 		return false
 	}
-
-	if !allowed {
-		h.logger.Warn("compliance access denied",
-			"userId", userCtx.UserID,
-			"groups", userCtx.Groups,
-		)
-		response.Forbidden(w, "permission denied")
-		return false
+	if allowed {
+		return true
 	}
 
-	return true
+	// 2. Check project-scoped compliance access ("compliance/{project}/*").
+	// Project policies scope compliance to the project namespace; a developer
+	// or admin role with compliance:get will have "compliance/{project}/*, get, allow".
+	if h.projectService != nil {
+		accessibleProjects, pErr := h.policyEnforcer.GetAccessibleProjects(r.Context(), userCtx.UserID, userCtx.Groups)
+		if pErr == nil {
+			for _, proj := range accessibleProjects {
+				projAllowed, _ := h.policyEnforcer.CanAccessWithGroups(
+					r.Context(),
+					userCtx.UserID,
+					userCtx.Groups,
+					"compliance/"+proj+"/*",
+					"get",
+				)
+				if projAllowed {
+					return true
+				}
+			}
+		}
+	}
+
+	h.logger.Warn("compliance access denied",
+		"userId", userCtx.UserID,
+		"groups", userCtx.Groups,
+	)
+	response.Forbidden(w, "permission denied")
+	return false
 }
 
 // GetStatus handles GET /api/v1/compliance/status
@@ -771,6 +797,53 @@ func (h *ComplianceHandler) filterViolationsByAccess(r *http.Request, userCtx *m
 		"accessibleNamespaces", len(nsSet))
 
 	return filtered
+}
+
+// accessibleNamespaces returns the set of Kubernetes namespaces this user may see
+// in compliance history queries. The semantics mirror filterViolationsByAccess:
+//   - nil  → no namespace restriction (serveradmin / global compliance access)
+//   - []string{} → empty set, user has no accessible project destinations (fail-closed)
+//   - []string{"ns1","ns2",...} → restrict to these namespaces
+//
+// The return value is passed directly to ViolationHistoryListOptions.Namespaces and
+// ViolationHistoryExportFilters.Namespaces so the restriction is enforced at the DB
+// level rather than by post-query filtering (which would break pagination counts).
+func (h *ComplianceHandler) accessibleNamespaces(r *http.Request, userCtx *middleware.UserContext) []string {
+	if h.policyEnforcer == nil || h.projectService == nil {
+		return nil // no enforcer/service: serveradmin path assumed, no filter
+	}
+
+	// Serveradmin has global compliance/* access — no namespace restriction.
+	globalAccess, _ := h.policyEnforcer.CanAccessWithGroups(r.Context(), userCtx.UserID, userCtx.Groups, "compliance/*", "get")
+	if globalAccess {
+		return nil
+	}
+
+	accessibleProjects, err := h.policyEnforcer.GetAccessibleProjects(r.Context(), userCtx.UserID, userCtx.Groups)
+	if err != nil {
+		h.logger.Error("failed to get accessible projects for history namespace filter",
+			"userId", userCtx.UserID, "error", err)
+		return []string{} // fail closed
+	}
+
+	nsSet := make(map[string]struct{})
+	for _, projName := range accessibleProjects {
+		proj, err := h.projectService.GetProject(r.Context(), projName)
+		if err != nil {
+			continue
+		}
+		for _, dest := range proj.Spec.Destinations {
+			if dest.Namespace != "" {
+				nsSet[dest.Namespace] = struct{}{}
+			}
+		}
+	}
+
+	namespaces := make([]string, 0, len(nsSet))
+	for ns := range nsSet {
+		namespaces = append(namespaces, ns)
+	}
+	return namespaces
 }
 
 // filterConstraintsByKind filters constraints by kind.
@@ -1464,6 +1537,7 @@ func (h *ComplianceHandler) ListViolationHistory(w http.ResponseWriter, r *http.
 		pageSize = 100
 	}
 
+	userCtx, _ := middleware.GetUserContext(r)
 	opts := services.ViolationHistoryListOptions{
 		Page:        page,
 		PageSize:    pageSize,
@@ -1471,6 +1545,7 @@ func (h *ComplianceHandler) ListViolationHistory(w http.ResponseWriter, r *http.
 		Constraint:  q.Get("constraint"),
 		Resource:    q.Get("resource"),
 		Status:      q.Get("status"),
+		Namespaces:  h.accessibleNamespaces(r, userCtx),
 	}
 
 	records, total, err := h.historyService.ListByTimeRange(r.Context(), since, until, opts)
@@ -1508,10 +1583,12 @@ func (h *ComplianceHandler) CountViolationHistory(w http.ResponseWriter, r *http
 		return
 	}
 
+	userCtxCount, _ := middleware.GetUserContext(r)
 	filters := services.ViolationHistoryExportFilters{
 		Enforcement: q.Get("enforcement"),
 		Constraint:  q.Get("constraint"),
 		Resource:    q.Get("resource"),
+		Namespaces:  h.accessibleNamespaces(r, userCtxCount),
 	}
 
 	count, err := h.historyService.CountByTimeRange(r.Context(), since, until, filters)
@@ -1554,10 +1631,12 @@ func (h *ComplianceHandler) ExportViolationHistory(w http.ResponseWriter, r *htt
 		return
 	}
 
+	userCtxExport, _ := middleware.GetUserContext(r)
 	filters := services.ViolationHistoryExportFilters{
 		Enforcement: q.Get("enforcement"),
 		Constraint:  q.Get("constraint"),
 		Resource:    q.Get("resource"),
+		Namespaces:  h.accessibleNamespaces(r, userCtxExport),
 	}
 
 	// Build filter-aware filename

@@ -236,6 +236,25 @@ func TestCatalogService_GetRGD_NotFound(t *testing.T) {
 	assert.Nil(t, result)
 }
 
+func TestCatalogService_GetRGD_NoCatalogAnnotation(t *testing.T) {
+	rgd := testutil.NewCatalogRGD("internal-rgd", "kro-system", testutil.WithNoCatalogAnnotation())
+	provider := &mockRGDProvider{
+		getFn: func(namespace, name string) (*models.CatalogRGD, bool) {
+			return &rgd, true
+		},
+	}
+
+	svc := NewCatalogService(CatalogServiceConfig{
+		RGDProvider: provider,
+	})
+
+	result, err := svc.GetRGD(context.Background(), nil, "internal-rgd", "")
+
+	assert.Error(t, err)
+	assert.Equal(t, ErrNotFound, err)
+	assert.Nil(t, result)
+}
+
 func TestCatalogService_GetRGD_WithNamespace(t *testing.T) {
 	testRGD := createTestRGD("test-rgd", "production", nil)
 
@@ -1389,6 +1408,29 @@ func TestListRGDs_CategoryScopedAuthorization(t *testing.T) {
 		require.NoError(t, err)
 
 		assert.Equal(t, 0, result.TotalCount)
+		assert.Empty(t, result.Items)
+	})
+
+	// Story 17.2 invariant lock: catalog visibility is governed SOLELY by
+	// project-role-granted rgds access via canAccessRGD(). After the ghost
+	// role:operator / role:developer built-ins were retired, a member with no
+	// project role (no group->role mapping, no accessible projects) has no
+	// matching rgds/* policy and therefore sees an EMPTY catalog — there is no
+	// ghost-role fallthrough that would surface category RGDs.
+	t.Run("member with no project role sees empty catalog", func(t *testing.T) {
+		svc := NewCatalogService(CatalogServiceConfig{
+			RGDProvider: provider,
+			PolicyEnforcer: &categoryPolicyEnforcer{
+				allowedObjects:     []string{}, // member: no rgds policy granted by any project role
+				accessibleProjects: []string{}, // member: no accessible projects
+			},
+		})
+
+		authCtx := &UserAuthContext{UserID: "user:member", Groups: []string{}}
+		result, err := svc.ListRGDs(context.Background(), authCtx, DefaultRGDFilters())
+		require.NoError(t, err)
+
+		assert.Equal(t, 0, result.TotalCount, "member with no project role must see an empty catalog")
 		assert.Empty(t, result.Items)
 	})
 

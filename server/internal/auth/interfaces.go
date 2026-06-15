@@ -54,9 +54,6 @@ type AuthProjectService interface {
 	// CreateProject creates a new Project CRD
 	CreateProject(ctx context.Context, name string, spec rbac.ProjectSpec, createdBy string) (*rbac.Project, error)
 
-	// AddGroupToRole adds an OIDC group to a project role
-	AddGroupToRole(ctx context.Context, projectName, roleName, groupName, updatedBy string) (*rbac.Project, error)
-
 	// AddRole adds a new role to a project
 	AddRole(ctx context.Context, projectID string, role rbac.ProjectRole, updatedBy string) (*rbac.Project, error)
 

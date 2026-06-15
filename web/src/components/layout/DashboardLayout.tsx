@@ -1,7 +1,7 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo, lazy, Suspense } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 import { Sidebar, TopBar } from "@/components/layout";
 import { SidebarDrawer } from "@/components/layout/SidebarDrawer";
@@ -17,10 +17,13 @@ import { BottomNav } from "@/components/layout/BottomNav";
 import { routePreloads } from "@/lib/route-preloads";
 import { useSessionStatus, useSessionError } from "@/hooks/useAuth";
 import { useUserStore } from "@/stores/userStore";
-import { CommandPalette } from "@/components/command-palette/command-palette";
 import { useCommandPaletteShortcut } from "@/components/command-palette/use-command-palette-shortcut";
 import { Loader2, RefreshCw } from "@/lib/icons";
 import { cn } from "@/lib/utils";
+
+const CommandPalette = lazy(() =>
+  import("@/components/command-palette/command-palette").then((m) => ({ default: m.CommandPalette }))
+);
 
 function DashboardLayoutInner() {
   const sessionStatus = useSessionStatus();
@@ -157,7 +160,9 @@ function DashboardLayoutInner() {
 
       {!isMobile && <SidebarDrawer open={isDrawerOpen} onOpenChange={setIsDrawerOpen} />}
 
-      <CommandPalette open={commandPaletteOpen} onOpenChange={setCommandPaletteOpen} />
+      <Suspense fallback={null}>
+        <CommandPalette open={commandPaletteOpen} onOpenChange={setCommandPaletteOpen} />
+      </Suspense>
 
       {!isMobile && (
         <TopBar

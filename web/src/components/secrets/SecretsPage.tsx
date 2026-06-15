@@ -3,16 +3,12 @@
 
 import { useState, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { useQueries } from "@tanstack/react-query";
-import { KeyRound, Plus, Search, ShieldAlert, Trash2, X } from "@/lib/icons";
+import { ExternalLink, KeyRound, Plus, RefreshCw, Search, ShieldAlert, Trash2, X } from "@/lib/icons";
 import { useSecretList } from "@/hooks/useSecrets";
-import { useProjects } from "@/hooks/useProjects";
-import { listSecrets } from "@/api/secrets";
 import { useCanI } from "@/hooks/useCanI";
-import { STALE_TIME } from "@/lib/query-client";
-import { useCurrentProject } from "@/hooks/useAuth";
 import { formatDistanceToNow } from "@/lib/date";
 import { getSafeErrorMessage } from "@/lib/errors";
+import { expiryHint, statusBadgeClasses, statusLabel } from "@/lib/secret-metadata";
 import {
   Table,
   TableBody,
@@ -20,6 +16,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { ListTableHeader, ListTableShell } from "@/components/ui/list-table";
+import { ListFooter } from "@/components/ui/list-footer";
 import { Input } from "@/components/ui/input";
 import { SortableHead } from "@/components/ui/sortable-table";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -33,62 +30,53 @@ import {
 } from "@/components/ui/filter-bar";
 import { CreateSecretDialog } from "./CreateSecretDialog";
 import { DeleteSecretDialog } from "./DeleteSecretDialog";
-import { PageHeader } from "@/components/layout/PageHeader";
-import type { Secret } from "@/types/secret";
+import type { Secret, SecretRotation, SecretStatus } from "@/types/secret";
 
-type SortField = "name" | "namespace" | "keys" | "createdAt";
+type SortField = "name" | "namespace" | "keys" | "rotation" | "status" | "updatedAt";
 type SortDir = "asc" | "desc";
+
+/**
+ * Rank used to sort the Status column. We sort by *expiry* rather than
+ * by status enum so within a category (e.g. expiring-soon) rows order by
+ * how close they are to expiring. Secrets without an expiration date
+ * sort last in both directions — they are absence, not a value.
+ */
+function statusSortKey(secret: Secret): number {
+  const ts = secret.metadata?.expiresAt;
+  if (!ts) return Number.POSITIVE_INFINITY;
+  const t = Date.parse(ts);
+  return Number.isNaN(t) ? Number.POSITIVE_INFINITY : t;
+}
+
+/**
+ * Updated timestamp falls back to createdAt when the wire payload omits
+ * updatedAt — the production Secret type marks `updatedAt` optional, and
+ * a brand-new secret has no separate update.
+ */
+function getUpdatedTimestamp(secret: Secret): string {
+  return secret.updatedAt && secret.updatedAt.length > 0 ? secret.updatedAt : secret.createdAt;
+}
 
 export function SecretsPage() {
   const navigate = useNavigate();
-  const selectedProject = useCurrentProject() ?? "";
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ name: string; namespace: string } | null>(null);
   const [sortField, setSortField] = useState<SortField>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [searchQuery, setSearchQuery] = useState("");
 
-  const { allowed: canGet, isLoading: permLoading } = useCanI("secrets", "get", selectedProject || "-");
-  // Only check create/delete permissions when a project is selected — on "All Projects",
-  // the Create button is always shown since the dialog has its own project selector.
-  const { allowed: canCreateInProject } = useCanI("secrets", "create", selectedProject || "-");
-  const canCreate = selectedProject ? canCreateInProject : true;
-  const { allowed: canDelete } = useCanI("secrets", "delete", selectedProject || "-");
+  // Secrets are namespace-keyed under the unified Casbin model — the
+  // currently-selected project is only an audit lens, not an access input.
+  // Page-level can-i checks use the wildcard "-" object slot (existence
+  // probe); per-row delete checks pass each row's namespace.
+  const { allowed: canGet, isLoading: permLoading } = useCanI("secrets", "get", "-");
+  const { allowed: canCreate } = useCanI("secrets", "create", "-");
+  const { allowed: canDelete } = useCanI("secrets", "delete", "-");
 
-  // Single-project fetch (when a project is selected)
-  const { data: singleData, isLoading: singleLoading, isError: singleIsError, error: singleError, refetch: singleRefetch } = useSecretList(selectedProject);
-
-  // All-projects fetch (when "All Projects" is selected)
-  const { data: projectsData } = useProjects();
-  const allProjectNames = useMemo(() => projectsData?.items?.map((p) => p.name) ?? [], [projectsData]);
-
-  const allProjectQueries = useQueries({
-    queries: !selectedProject
-      ? allProjectNames.map((proj) => ({
-          queryKey: ["secrets", proj],
-          queryFn: () => listSecrets(proj),
-          staleTime: STALE_TIME.FREQUENT,
-        }))
-      : [],
-  });
-
-  // Merge results
-  const { data, isLoading, isError, error, refetch } = useMemo(() => {
-    if (selectedProject) {
-      return { data: singleData, isLoading: singleLoading, isError: singleIsError, error: singleError, refetch: singleRefetch };
-    }
-    // All projects mode
-    const allLoading = allProjectQueries.some((q) => q.isLoading);
-    const anyError = allProjectQueries.find((q) => q.isError);
-    const mergedItems = allProjectQueries.flatMap((q) => q.data?.items ?? []);
-    return {
-      data: allProjectNames.length > 0 ? { items: mergedItems, pageCount: 1 } : undefined,
-      isLoading: allLoading,
-      isError: !!anyError,
-      error: anyError?.error ?? null,
-      refetch: () => { allProjectQueries.forEach((q) => q.refetch()); },
-    };
-  }, [selectedProject, singleData, singleLoading, singleIsError, singleError, singleRefetch, allProjectQueries, allProjectNames]);
+  // Single namespace-agnostic list. The server filters to the user's
+  // accessible namespaces; the project lens (top-right selector) no
+  // longer participates in the request.
+  const { data, isLoading, isError, error, refetch } = useSecretList();
 
   const handleSort = useCallback((field: SortField) => {
     if (sortField === field) {
@@ -131,9 +119,20 @@ export function SecretsPage() {
           aVal = a.keys.length;
           bVal = b.keys.length;
           break;
-        case "createdAt":
-          aVal = a.createdAt;
-          bVal = b.createdAt;
+        case "rotation":
+          // Empty rotation sorts after "auto"/"manual" in asc, before in desc.
+          // Using the raw string is enough since the enum is alphabetically
+          // ordered the way operators expect (auto, manual).
+          aVal = a.metadata?.rotation ?? "￿";
+          bVal = b.metadata?.rotation ?? "￿";
+          break;
+        case "status":
+          aVal = statusSortKey(a);
+          bVal = statusSortKey(b);
+          break;
+        case "updatedAt":
+          aVal = getUpdatedTimestamp(a);
+          bVal = getUpdatedTimestamp(b);
           break;
         default:
           return 0;
@@ -145,8 +144,21 @@ export function SecretsPage() {
     });
   }, [data?.items, sortField, sortDir, searchQuery]);
 
-  // Access denied state (only when a specific project is selected)
-  if (selectedProject && !permLoading && canGet === false) {
+  // Footer summary computed over the visible (search-filtered) `sorted` array so it
+  // matches the rows on screen (mirrors the 48.2/48.3 ListFooter precedent).
+  // NOTE: the prototype's `vault-backed` / `auto-rotated` breakdown fields don't
+  // exist in the production Secret model (no provider/rotation metadata) and we
+  // do NOT fabricate them. We also don't count "namespaces" — every secret
+  // lives in exactly one namespace so a distinct-namespace count is a
+  // misleading aggregate. `keys` (sum of secret.keys.length) is the only
+  // honest per-secret rollup the wire data carries.
+  const totalKeys = useMemo(
+    () => sorted.reduce((sum, s) => sum + s.keys.length, 0),
+    [sorted]
+  );
+
+  // Access denied state — user has zero accessible namespaces for secrets.
+  if (!permLoading && canGet === false) {
     return (
       <section className="flex flex-col items-center justify-center py-16 text-center">
         <ShieldAlert className="h-12 w-12 text-muted-foreground mb-4" />
@@ -164,12 +176,9 @@ export function SecretsPage() {
 
   return (
     <section className="space-y-6">
-      {/* Header */}
-      <PageHeader title="Secrets" />
-
       {/* Loading */}
       {!doneLoading ? (
-        <ListSkeleton />
+        <ListSkeleton canDelete={canDelete === true} />
       ) : isError ? (
         <div className="flex flex-col items-center justify-center py-12">
           <Alert variant="destructive" showIcon onRetry={() => refetch()} className="max-w-md">
@@ -241,30 +250,40 @@ export function SecretsPage() {
               </p>
             </div>
           ) : (
-            <SecretsListView
-              items={sorted}
-              sortField={sortField}
-              sortDir={sortDir}
-              onSort={handleSort}
-              canDelete={canDelete === true}
-              onSecretClick={(s) =>
-                navigate(`/secrets/${encodeURIComponent(s.namespace)}/${encodeURIComponent(s.name)}`)
-              }
-              onDeleteClick={(s) => setDeleteTarget({ name: s.name, namespace: s.namespace })}
-            />
+            <>
+              <SecretsListView
+                items={sorted}
+                sortField={sortField}
+                sortDir={sortDir}
+                onSort={handleSort}
+                canDelete={canDelete === true}
+                onSecretClick={(s) =>
+                  navigate(`/secrets/${encodeURIComponent(s.namespace)}/${encodeURIComponent(s.name)}`)
+                }
+                onDeleteClick={(s) => setDeleteTarget({ name: s.name, namespace: s.namespace })}
+              />
+              <div data-testid="secrets-list-footer">
+                <ListFooter
+                  total={sorted.length}
+                  totalLabel="secrets"
+                  breakdown={[
+                    ["keys", totalKeys],
+                  ]}
+                />
+              </div>
+            </>
           )}
         </>
       )}
 
-      {/* Create Secret Dialog — key forces remount when global project changes */}
+      {/* Create Secret Dialog — namespace is picked inside the dialog now */}
       <CreateSecretDialog
-        key={selectedProject || "__all__"}
         open={isCreateOpen}
         onOpenChange={setIsCreateOpen}
       />
 
       {/* Delete Secret Dialog */}
-      {deleteTarget && selectedProject && (
+      {deleteTarget && (
         <DeleteSecretDialog
           open={!!deleteTarget}
           onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}
@@ -303,10 +322,16 @@ function SecretsListView({
       <Table className="table-fixed">
         <ListTableHeader>
           <TableRow>
-            <SortableHead field="name" sortField={sortField} sortDir={sortDir} onSort={onSort} className="w-[30%]">Name</SortableHead>
-            <SortableHead field="namespace" sortField={sortField} sortDir={sortDir} onSort={onSort} className="w-[20%]">Namespace</SortableHead>
-            <SortableHead field="keys" sortField={sortField} sortDir={sortDir} onSort={onSort} className="w-[30%]">Keys</SortableHead>
-            <SortableHead field="createdAt" sortField={sortField} sortDir={sortDir} onSort={onSort} className="w-[15%]">Created</SortableHead>
+            {/* Leading icon column — visual key glyph next to every row.
+                Header has no label (decorative), but a hidden one is wired
+                via aria for screen readers. */}
+            <th className="w-12" aria-hidden="true" />
+            <SortableHead field="name" sortField={sortField} sortDir={sortDir} onSort={onSort} className="w-[22%]">Name</SortableHead>
+            <SortableHead field="namespace" sortField={sortField} sortDir={sortDir} onSort={onSort} className="w-[15%]">Namespace</SortableHead>
+            <SortableHead field="keys" sortField={sortField} sortDir={sortDir} onSort={onSort} className="w-[22%]">Keys</SortableHead>
+            <SortableHead field="rotation" sortField={sortField} sortDir={sortDir} onSort={onSort} className="w-[10%]">Rotation</SortableHead>
+            <SortableHead field="status" sortField={sortField} sortDir={sortDir} onSort={onSort} className="w-[16%]">Status</SortableHead>
+            <SortableHead field="updatedAt" sortField={sortField} sortDir={sortDir} onSort={onSort} className="w-[10%]">Updated</SortableHead>
             {canDelete && <th className="w-[5%]" />}
           </TableRow>
         </ListTableHeader>
@@ -326,13 +351,43 @@ function SecretsListView({
                 }
               }}
             >
-              <TableCell className="font-medium text-foreground truncate">{secret.name}</TableCell>
+              <TableCell className="text-[var(--brand-primary)]">
+                <KeyRound className="h-4 w-4" aria-hidden="true" />
+              </TableCell>
+              <TableCell className="font-medium text-foreground truncate">
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="truncate">{secret.name}</span>
+                  {secret.metadata?.docsUrl && (
+                    <a
+                      href={secret.metadata.docsUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className="text-muted-foreground hover:text-foreground shrink-0"
+                      aria-label={`Documentation for ${secret.name}`}
+                      title="Open documentation"
+                      data-testid={`secret-docs-link-${secret.name}`}
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                    </a>
+                  )}
+                </span>
+              </TableCell>
               <TableCell className="font-mono text-xs text-muted-foreground truncate">{secret.namespace}</TableCell>
               <TableCell className="text-sm text-muted-foreground truncate">
                 {secret.keys.length > 0 ? secret.keys.join(", ") : "—"}
               </TableCell>
+              <TableCell data-testid={`secret-rotation-${secret.name}`}>
+                <RotationChip rotation={secret.metadata?.rotation} />
+              </TableCell>
+              <TableCell data-testid={`secret-status-${secret.name}`}>
+                <StatusBadge
+                  status={secret.status}
+                  expiresAt={secret.metadata?.expiresAt}
+                />
+              </TableCell>
               <TableCell className="text-xs text-muted-foreground">
-                {formatDistanceToNow(secret.createdAt)}
+                {formatDistanceToNow(getUpdatedTimestamp(secret))}
               </TableCell>
               {canDelete && (
                 <TableCell>
@@ -360,30 +415,90 @@ function SecretsListView({
 
 /* ---------- Shared sub-components ---------- */
 
-function ListSkeleton() {
+/**
+ * Compact chip showing the rotation policy. Renders an em-dash when no
+ * policy has been declared so the column reads consistently.
+ */
+function RotationChip({ rotation }: { rotation: SecretRotation | undefined }) {
+  if (!rotation) {
+    return <span className="text-xs text-muted-foreground">—</span>;
+  }
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-foreground/80">
+      <RefreshCw className="h-3 w-3" aria-hidden="true" />
+      {rotation === "auto" ? "Auto" : "Manual"}
+    </span>
+  );
+}
+
+/**
+ * Color-coded status badge driven by the server-computed `status` field.
+ * Falls back to an em-dash when no expiration date is set. The expiry
+ * date (when present) is shown as a hint below the badge so operators
+ * see how close to expiry without having to open the detail view.
+ */
+function StatusBadge({ status, expiresAt }: { status: SecretStatus | undefined; expiresAt: string | undefined }) {
+  if (!status) {
+    return <span className="text-xs text-muted-foreground">—</span>;
+  }
+  return (
+    <div className="flex flex-col items-start gap-0.5">
+      <span
+        className={cn(
+          "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium",
+          statusBadgeClasses(status),
+        )}
+        title={expiryHint(expiresAt)}
+      >
+        {statusLabel(status)}
+      </span>
+      {expiresAt && (
+        <span className="text-[10px] text-muted-foreground">
+          {expiryHint(expiresAt)}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function ListSkeleton({ canDelete }: { canDelete: boolean }) {
+  // Column widths + count mirror the real header in SecretsListView (see line
+  // ~360 in this file): leading icon col + Name/Namespace/Keys/Rotation/
+  // Status/Updated, then an optional Actions col gated on canDelete. Keeping
+  // them aligned avoids the layout shift (column-width jump + missing actions
+  // pop-in) the previous version had when the viewer had delete perms.
   return (
     <ListTableShell noAnimation>
       <Table>
         <ListTableHeader>
           <TableRow>
-            <th className="pl-4 w-[30%] p-3"><Skeleton className="h-4 w-12" /></th>
-            <th className="w-[20%] p-3"><Skeleton className="h-4 w-16" /></th>
-            <th className="w-[25%] p-3"><Skeleton className="h-4 w-10" /></th>
-            <th className="w-[20%] p-3 text-right"><Skeleton className="h-4 w-14 ml-auto" /></th>
+            <th className="w-12 p-3" aria-hidden="true" />
+            <th className="w-[22%] p-3"><Skeleton className="h-4 w-12" /></th>
+            <th className="w-[15%] p-3"><Skeleton className="h-4 w-16" /></th>
+            <th className="w-[22%] p-3"><Skeleton className="h-4 w-10" /></th>
+            <th className="w-[10%] p-3"><Skeleton className="h-4 w-12" /></th>
+            <th className="w-[16%] p-3"><Skeleton className="h-4 w-16" /></th>
+            <th className="w-[10%] p-3"><Skeleton className="h-4 w-14" /></th>
+            {canDelete && <th className="w-[5%] p-3" aria-hidden="true" />}
           </TableRow>
         </ListTableHeader>
         <TableBody>
           {Array.from({ length: 5 }).map((_, i) => (
             <TableRow key={i}>
-              <TableCell className="pl-4">
-                <div className="flex items-center gap-3">
-                  <Skeleton className="h-8 w-8 rounded-md" />
-                  <Skeleton className="h-4 w-32" />
-                </div>
+              <TableCell>
+                <Skeleton className="h-4 w-4 rounded" />
               </TableCell>
+              <TableCell><Skeleton className="h-4 w-32" /></TableCell>
               <TableCell><Skeleton className="h-4 w-24" /></TableCell>
               <TableCell><Skeleton className="h-4 w-40" /></TableCell>
-              <TableCell className="text-right"><Skeleton className="h-4 w-20 ml-auto" /></TableCell>
+              <TableCell><Skeleton className="h-4 w-14 rounded-full" /></TableCell>
+              <TableCell><Skeleton className="h-4 w-20 rounded-full" /></TableCell>
+              <TableCell><Skeleton className="h-4 w-16" /></TableCell>
+              {canDelete && (
+                <TableCell>
+                  <Skeleton className="h-4 w-4 rounded ml-auto" />
+                </TableCell>
+              )}
             </TableRow>
           ))}
         </TableBody>

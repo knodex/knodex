@@ -1,6 +1,7 @@
 # Beta Team Project - Wildcard namespace pattern
 # This project allows developers to deploy to any namespace starting with "beta-"
-# Apply with: kubectl apply -f <this-file> -n <knodex-namespace>
+# Apply with: kubectl apply -f beta-team-teams.yaml -n <knodex-namespace>
+#             kubectl apply -f <this-file> -n <knodex-namespace>
 apiVersion: knodex.io/v1alpha1
 kind: Project
 metadata:
@@ -41,7 +42,7 @@ spec:
         - "p, proj:proj-beta-team:admin, project, *, proj-beta-team, allow"
         - "p, proj:proj-beta-team:admin, instance, *, proj-beta-team/*, allow"
         - "p, proj:proj-beta-team:admin, rgd, view, *, allow"
-      groups:
+      teams:
         - beta-admins
 
     - name: developer
@@ -51,5 +52,5 @@ spec:
         - "p, proj:proj-beta-team:developer, instance, deploy, proj-beta-team/*, allow"
         - "p, proj:proj-beta-team:developer, instance, view, proj-beta-team/*, allow"
         - "p, proj:proj-beta-team:developer, rgd, view, *, allow"
-      groups:
+      teams:
         - beta-developers

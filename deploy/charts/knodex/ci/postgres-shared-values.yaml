@@ -1,10 +1,19 @@
-# Helm chart-test fixture for the AC #17 happy path: shared-DB Postgres
-# referencing an externally-managed Secret. Verifies that `helm template`
-# (and chart-testing CI gates) succeed for the most common production shape.
+# Helm chart-test fixture: shared-DB Postgres referencing an externally-managed
+# Secret via the DEPRECATED enterprise.postgres.connectionStringSecret alias.
+# Verifies that `helm template` succeeds for this legacy production shape after
+# the Postgres-on-all-editions reconciliation.
+#
+# postgresql.enabled is set false because the embedded subchart now defaults on:
+# an external-DB deployment disables it to skip the unused embedded StatefulSet
+# (the auto-detect guard already suppresses the embedded DSN). DATABASE_URL
+# resolves to the external Secret.
 #
 # Used in CI via:
 #   helm template knodex ./deploy/charts/knodex \
 #     --values ./deploy/charts/knodex/ci/postgres-shared-values.yaml
+
+postgresql:
+  enabled: false
 
 enterprise:
   enabled: true

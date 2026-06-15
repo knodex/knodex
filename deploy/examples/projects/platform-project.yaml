@@ -1,7 +1,8 @@
 # Platform Project - Cluster-wide access for platform team
 # This project allows platform administrators to deploy to any namespace
 # and manage cluster-scoped resources
-# Apply with: kubectl apply -f <this-file> -n <knodex-namespace>
+# Apply with: kubectl apply -f platform-teams.yaml -n <knodex-namespace>
+#             kubectl apply -f <this-file> -n <knodex-namespace>
 apiVersion: knodex.io/v1alpha1
 kind: Project
 metadata:
@@ -47,7 +48,7 @@ spec:
         - "p, proj:proj-platform:platform-admin, project, *, *, allow"
         - "p, proj:proj-platform:platform-admin, instance, *, */*, allow"
         - "p, proj:proj-platform:platform-admin, rgd, *, *, allow"
-      groups:
+      teams:
         - platform-admins
 
     - name: platform-operator
@@ -57,5 +58,5 @@ spec:
         - "p, proj:proj-platform:platform-operator, instance, deploy, */*, allow"
         - "p, proj:proj-platform:platform-operator, instance, view, */*, allow"
         - "p, proj:proj-platform:platform-operator, rgd, view, *, allow"
-      groups:
+      teams:
         - platform-operators

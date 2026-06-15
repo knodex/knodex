@@ -17,9 +17,10 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { Project, CreateProjectRequest, Destination, ProjectRole } from "@/types/project";
 import { PolicyRulesTable } from "./PolicyRulesTable";
-import { OIDCGroupsManager } from "./OIDCGroupsManager";
+import { TeamPicker } from "@/components/teams/TeamPicker";
 import { DestinationScopeSelector } from "./DestinationScopeSelector";
-import { ROLE_PRESETS, resolvePreset } from "@/lib/role-presets";
+import { resolvePreset } from "@/lib/role-presets";
+import { useRoleTemplates } from "@/hooks/useRoleTemplates";
 
 // DNS-1123 subdomain pattern for project names
 const projectNameRegex = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
@@ -52,6 +53,10 @@ export function ProjectForm({
   isLoading = false,
 }: ProjectFormProps) {
   const isEditing = !!initialData;
+
+  // Presets come from the server-backed catalog (Story 18.1). Absent while the
+  // query loads or for a non-operator (403) — "Custom Role" is always available.
+  const { data: presets = [] } = useRoleTemplates();
 
   // Destinations state
   const [destinations, setDestinations] = useState<Destination[]>(
@@ -254,12 +259,12 @@ export function ProjectForm({
         <div>
           <Label>Roles (Optional)</Label>
           <p className="text-xs text-muted-foreground mt-1 mb-3">
-            Add roles with policies and group mappings. You can also add roles later from the project detail page.
+            Add roles with policies and team bindings. You can also add roles later from the project detail page.
           </p>
 
           {/* Preset buttons */}
           <div className="flex flex-wrap gap-2 mb-3">
-            {ROLE_PRESETS.map((preset) => {
+            {presets.map((preset) => {
               const exists = roles.some(r => r.name === preset.name);
               const disabled = isLoading || !nameValue || exists;
               return (
@@ -294,7 +299,7 @@ export function ProjectForm({
                     size="sm"
                     disabled={isLoading || !nameValue}
                     onClick={() => {
-                      setRoles(prev => [...prev, { name: "", description: "", policies: [], groups: [] }]);
+                      setRoles(prev => [...prev, { name: "", description: "", policies: [] }]);
                     }}
                   >
                     <Plus className="h-4 w-4 mr-1" />
@@ -330,7 +335,7 @@ export function ProjectForm({
                 </div>
 
                 {/* Inline name/description for custom roles */}
-                {!ROLE_PRESETS.some(p => p.name === role.name) && (
+                {!presets.some(p => p.name === role.name) && (
                   <div>
                     <Input
                       value={role.name}
@@ -360,14 +365,17 @@ export function ProjectForm({
                   />
                 </div>
 
-                {/* OIDCGroupsManager */}
-                <OIDCGroupsManager
-                  groups={role.groups || []}
-                  onGroupsChange={(groups) => {
-                    setRoles(prev => prev.map((r, i) => i === index ? { ...r, groups } : r));
+                {/* Teams (resolve to OIDC groups server-side; reusable) */}
+                <TeamPicker
+                  selected={role.teams || []}
+                  onChange={(teams) => {
+                    setRoles(prev => prev.map((r, i) =>
+                      i === index
+                        ? { ...r, teams: teams.length > 0 ? teams : undefined }
+                        : r
+                    ));
                   }}
                   canEdit={true}
-                  isLoading={isLoading}
                 />
 
                 {/* Destination Scope */}

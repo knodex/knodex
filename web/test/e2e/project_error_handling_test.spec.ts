@@ -29,9 +29,10 @@ import type { Page } from "@playwright/test";
  * Fills in minimal required data and clicks through to the "Create Project" button.
  */
 async function openCreateWizardAndSubmit(page: Page, projectName = "my-project") {
-  // Click Create button to open wizard modal.
-  // Empty state shows "Create Project"; non-empty state shows "Create" in the header.
-  const createButton = page.locator('button').filter({ hasText: /^Create(?: Project)?$/i }).first();
+  // Click the open-wizard button. The list CTA was renamed from "Create"/
+  // "Create Project" to "New project" in commit 4471140a; the modal submit
+  // is still "Create Project". This regex matches both list-page variants.
+  const createButton = page.locator('button').filter({ hasText: /^(?:New project|Create(?: Project)?)$/i }).first();
   await expect(createButton).toBeVisible({ timeout: 10000 });
   await createButton.click();
 
@@ -312,9 +313,10 @@ test.describe("Project Creation Error Handling", () => {
       await page.goto("/projects");
       await page.waitForLoadState("networkidle");
 
-      // Open wizard and type an invalid name (underscores not allowed in DNS names)
-      // Empty state shows "Create Project"; non-empty state shows "Create" in the header.
-      const createButton = page.locator('button').filter({ hasText: /^Create(?: Project)?$/i }).first();
+      // Open wizard and type an invalid name (underscores not allowed in DNS names).
+      // The list CTA is now "New project" (commit 4471140a); the modal submit is
+      // still "Create Project". This regex matches both list-page variants.
+      const createButton = page.locator('button').filter({ hasText: /^(?:New project|Create(?: Project)?)$/i }).first();
       await expect(createButton).toBeVisible({ timeout: 10000 });
       await createButton.click();
 

@@ -36,6 +36,32 @@ func TestLoad_Success(t *testing.T) {
 	if cfg.Auth.AdminPasswordGenerated {
 		t.Error("expected AdminPasswordGenerated to be false (set by bootstrap)")
 	}
+
+	// Audit G-15: bootstrap project name/namespace default to "default-project".
+	if cfg.BootstrapProjectName != "default-project" {
+		t.Errorf("expected BootstrapProjectName default %q, got %q", "default-project", cfg.BootstrapProjectName)
+	}
+	if cfg.BootstrapProjectNamespace != "default-project" {
+		t.Errorf("expected BootstrapProjectNamespace default %q, got %q", "default-project", cfg.BootstrapProjectNamespace)
+	}
+}
+
+// TestLoad_BootstrapProjectConfigurable asserts the audit G-15 fix: the default
+// project name/namespace are env-backed and overridable.
+func TestLoad_BootstrapProjectConfigurable(t *testing.T) {
+	t.Setenv("KNODEX_BOOTSTRAP_PROJECT_NAME", "acme-root")
+	t.Setenv("KNODEX_BOOTSTRAP_PROJECT_NAMESPACE", "acme-system")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() failed: %v", err)
+	}
+	if cfg.BootstrapProjectName != "acme-root" {
+		t.Errorf("BootstrapProjectName = %q, want acme-root", cfg.BootstrapProjectName)
+	}
+	if cfg.BootstrapProjectNamespace != "acme-system" {
+		t.Errorf("BootstrapProjectNamespace = %q, want acme-system", cfg.BootstrapProjectNamespace)
+	}
 }
 
 func TestLoad_EnvironmentVariables(t *testing.T) {

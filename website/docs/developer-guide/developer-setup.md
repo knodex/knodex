@@ -34,7 +34,7 @@ Knodex is a Kubernetes Resource Orchestrator (KRO) visualization and management 
                         └─────────────────────────┘
 ```
 
-PostgreSQL is required for Enterprise builds only. OSS builds do not connect to a database.
+PostgreSQL is required for **all editions** (OSS, Enterprise, and Cloud). Every edition persists a canonical user roster, so the server opens a database connection at startup and fails fast if `DATABASE_URL` is unset or PostgreSQL is unreachable. Enterprise additionally uses PostgreSQL for audit trails, compliance violation storage, and organization isolation.
 
 ### Server Technology
 
@@ -579,7 +579,7 @@ make build-enterprise
 The production binary is a single Go executable with the web UI embedded via `go:embed`.
 
 :::note[Enterprise vs OSS binaries]
-The enterprise binary is compiled with `-tags=enterprise`, which includes all `server/ee/` packages. The OSS binary excludes enterprise code entirely — no enterprise symbols, no database imports. This means `DATABASE_URL` is silently ignored by OSS builds; only Enterprise builds connect to PostgreSQL.
+The enterprise binary is compiled with `-tags=enterprise`, which includes all `server/ee/` packages. The OSS binary excludes enterprise code entirely — no enterprise symbols and no audit/compliance/license schemas. **Both editions require PostgreSQL**, however: the shared `identity` schema and user roster are part of the OSS build, so the OSS binary opens a connection pool, runs the `identity` migration, and fails fast if `DATABASE_URL` is unset or unreachable. Enterprise builds additionally migrate and use the audit/compliance/license schemas.
 
 Run both to catch build-tag regressions:
 ```bash

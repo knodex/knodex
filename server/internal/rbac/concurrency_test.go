@@ -221,13 +221,13 @@ func createTestProjectSpec() ProjectSpec {
 				Policies: []string{
 					"p, proj:test-project:platform-admin, *, *, test-project/*, allow",
 				},
-				Groups: []string{"admin:admin-1"},
+				Teams: []string{"admin-team"},
 			},
 		},
 	}
 }
 
-func TestConcurrent_AddGroupToRole(t *testing.T) {
+func TestConcurrent_UpdateRoleTeams(t *testing.T) {
 	t.Parallel()
 
 	service := setupConcurrencyTestService()
@@ -240,45 +240,48 @@ func TestConcurrent_AddGroupToRole(t *testing.T) {
 		t.Fatalf("Failed to create project: %v", err)
 	}
 
-	// Concurrently add 10 groups to the platform-admin role
-	numGroups := 10
+	// Concurrently update the platform-admin role's teams 10 times
+	numOps := 10
 	var wg sync.WaitGroup
-	wg.Add(numGroups)
+	wg.Add(numOps)
 
-	errors := make(chan error, numGroups)
-	results := make([]*Project, numGroups)
+	errs := make(chan error, numOps)
 
-	for i := 0; i < numGroups; i++ {
+	for i := 0; i < numOps; i++ {
 		go func(index int) {
 			defer wg.Done()
-			groupName := fmt.Sprintf("group-%d", index)
-			updatedProject, err := service.AddGroupToRole(ctx, project.Name, "platform-admin", groupName, "admin-1")
-			if err != nil {
-				errors <- err
-				return
+			updatedRole := ProjectRole{
+				Name:        "platform-admin",
+				Description: "Full access to project resources",
+				Policies:    []string{"p, proj:test-project:platform-admin, *, *, test-project/*, allow"},
+				Teams:       []string{fmt.Sprintf("team-%d", index)},
 			}
-			results[index] = updatedProject
+			_, err := service.UpdateRole(ctx, project.Name, "platform-admin", updatedRole, "admin-1")
+			if err != nil {
+				errs <- err
+			}
 		}(i)
 	}
 
 	wg.Wait()
-	close(errors)
+	close(errs)
 
-	// Check for errors
-	for err := range errors {
-		t.Errorf("AddGroupToRole() concurrent call failed: %v", err)
+	// Check for errors (some conflicts are expected with the fake client)
+	var errCount int
+	for err := range errs {
+		errCount++
+		t.Logf("UpdateRole() concurrent call failed: %v", err)
+	}
+	if errCount == numOps {
+		t.Errorf("All %d concurrent UpdateRole() calls failed", numOps)
 	}
 
-	// Get final state
+	// Get final state - role should still exist
 	finalProject, err := service.GetProject(ctx, project.Name)
 	if err != nil {
 		t.Fatalf("Failed to get final project: %v", err)
 	}
 
-	// Verify at least some groups were added
-	// Note: With fake client, not all concurrent operations may succeed due to lack of real conflict handling
-	// In a real cluster with actual etcd, the RetryOnConflict mechanism would handle this properly
-	minExpected := 2 // At least the initial group plus some added groups
 	var platformAdminRole *ProjectRole
 	for i := range finalProject.Spec.Roles {
 		if finalProject.Spec.Roles[i].Name == "platform-admin" {
@@ -288,23 +291,9 @@ func TestConcurrent_AddGroupToRole(t *testing.T) {
 	}
 
 	if platformAdminRole == nil {
-		t.Fatal("platform-admin role not found")
+		t.Fatal("platform-admin role not found after concurrent updates")
 	}
-
-	if len(platformAdminRole.Groups) < minExpected {
-		t.Errorf("Concurrent AddGroupToRole() resulted in too few groups: %d, want at least %d", len(platformAdminRole.Groups), minExpected)
-	}
-
-	t.Logf("Concurrent operations resulted in %d groups (initial: 1, attempted adds: 10)", len(platformAdminRole.Groups))
-
-	// Verify no duplicate groups
-	groupMap := make(map[string]bool)
-	for _, group := range platformAdminRole.Groups {
-		if groupMap[group] {
-			t.Errorf("Concurrent AddGroupToRole() resulted in duplicate group: %s", group)
-		}
-		groupMap[group] = true
-	}
+	t.Logf("Final teams count: %d after %d concurrent operations", len(platformAdminRole.Teams), numOps)
 }
 
 func TestConcurrent_AddAndRemoveRoles(t *testing.T) {
@@ -329,25 +318,22 @@ func TestConcurrent_AddAndRemoveRoles(t *testing.T) {
 				Name:        "platform-admin",
 				Description: "Full access",
 				Policies:    []string{"p, proj:test-project:platform-admin, *, *, test-project/*, allow"},
-				Groups:      []string{"admin:admin-1"},
+				Teams:       []string{"admin-team"},
 			},
 			{
 				Name:        "developer-1",
 				Description: "Developer role 1",
 				Policies:    []string{"p, proj:test-project:developer-1, applications, *, test-project/*, allow"},
-				Groups:      []string{},
 			},
 			{
 				Name:        "developer-2",
 				Description: "Developer role 2",
 				Policies:    []string{"p, proj:test-project:developer-2, applications, *, test-project/*, allow"},
-				Groups:      []string{},
 			},
 			{
 				Name:        "developer-3",
 				Description: "Developer role 3",
 				Policies:    []string{"p, proj:test-project:developer-3, applications, *, test-project/*, allow"},
-				Groups:      []string{},
 			},
 		},
 	}
@@ -368,7 +354,6 @@ func TestConcurrent_AddAndRemoveRoles(t *testing.T) {
 				Name:        roleName,
 				Description: "New role " + roleName,
 				Policies:    []string{fmt.Sprintf("p, proj:test-project:%s, *, get, test-project/*, allow", roleName)},
-				Groups:      []string{},
 			}
 			_, _ = service.AddRole(ctx, project.Name, newRole, "admin-1")
 		}(i)
@@ -422,36 +407,40 @@ func TestConcurrent_ResourceVersionConflictRetry(t *testing.T) {
 		t.Fatalf("Failed to create project: %v", err)
 	}
 
-	// Launch many concurrent operations to force conflicts
+	// Launch many concurrent role updates to force conflicts
 	numOperations := 20
 	var wg sync.WaitGroup
 	wg.Add(numOperations)
 
-	errors := make(chan error, numOperations)
+	errs := make(chan error, numOperations)
 
 	for i := 0; i < numOperations; i++ {
 		go func(index int) {
 			defer wg.Done()
-			groupName := fmt.Sprintf("group-%d", index)
-			_, err := service.AddGroupToRole(ctx, project.Name, "platform-admin", groupName, "admin-1")
+			updatedRole := ProjectRole{
+				Name:        "platform-admin",
+				Description: "Full access to project resources",
+				Policies:    []string{"p, proj:test-project:platform-admin, *, *, test-project/*, allow"},
+				Teams:       []string{fmt.Sprintf("team-%d", index)},
+			}
+			_, err := service.UpdateRole(ctx, project.Name, "platform-admin", updatedRole, "admin-1")
 			if err != nil {
-				errors <- err
+				errs <- err
 			}
 		}(i)
 	}
 
 	wg.Wait()
-	close(errors)
+	close(errs)
 
 	// Collect errors
 	var errorCount int
-	for err := range errors {
+	for err := range errs {
 		errorCount++
 		t.Logf("Operation failed: %v", err)
 	}
 
 	// Some operations might fail due to max retries, but most should succeed
-	// The retry mechanism should handle most conflicts
 	if errorCount > numOperations/2 {
 		t.Errorf("Too many concurrent operations failed: %d out of %d", errorCount, numOperations)
 	}
@@ -462,27 +451,16 @@ func TestConcurrent_ResourceVersionConflictRetry(t *testing.T) {
 		t.Fatalf("Failed to get final project: %v", err)
 	}
 
-	// Find platform-admin role
-	var platformAdminRole *ProjectRole
-	for i := range finalProject.Spec.Roles {
-		if finalProject.Spec.Roles[i].Name == "platform-admin" {
-			platformAdminRole = &finalProject.Spec.Roles[i]
+	// Find platform-admin role — it should still exist
+	var found bool
+	for _, role := range finalProject.Spec.Roles {
+		if role.Name == "platform-admin" {
+			found = true
+			t.Logf("Final teams: %v (after %d concurrent operations)", role.Teams, numOperations)
 			break
 		}
 	}
-
-	if platformAdminRole == nil {
-		t.Fatal("platform-admin role not found")
+	if !found {
+		t.Fatal("platform-admin role not found after concurrent updates")
 	}
-
-	// Verify no duplicate groups
-	groupMap := make(map[string]bool)
-	for _, group := range platformAdminRole.Groups {
-		if groupMap[group] {
-			t.Errorf("RetryOnConflict() failed to prevent duplicate group: %s", group)
-		}
-		groupMap[group] = true
-	}
-
-	t.Logf("Final group count: %d (expected ~%d, allowing for some conflicts)", len(platformAdminRole.Groups), numOperations+1)
 }

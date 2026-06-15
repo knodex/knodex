@@ -313,6 +313,11 @@ func (h *AuthHandler) OIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.redisClient == nil {
+		response.InternalError(w, "authentication service misconfigured: Redis unavailable")
+		return
+	}
+
 	// Retrieve nonce from Redis (keyed on state, consumed atomically via GetDel)
 	nonceKey := fmt.Sprintf("%s%s", auth.NoncePrefix, state)
 	storedNonce, err := h.redisClient.GetDel(r.Context(), nonceKey).Result()

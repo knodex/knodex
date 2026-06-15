@@ -8,8 +8,8 @@ import { useRoleDeletion } from './useRoleDeletion';
 describe('useRoleDeletion', () => {
   const defaultOptions = {
     roles: [
-      { name: 'admin', policies: [], groups: [] },
-      { name: 'viewer', policies: [], groups: [] },
+      { name: 'admin', policies: [] },
+      { name: 'viewer', policies: [] },
     ],
     onUpdate: vi.fn().mockResolvedValue(undefined),
     onSuccess: vi.fn(),
@@ -39,7 +39,7 @@ describe('useRoleDeletion', () => {
     });
 
     expect(defaultOptions.onUpdate).toHaveBeenCalledWith({
-      roles: [{ name: 'admin', policies: [], groups: [] }],
+      roles: [{ name: 'admin', policies: [] }],
     });
     expect(result.current.roleToDelete).toBeNull();
     expect(defaultOptions.onSuccess).toHaveBeenCalled();

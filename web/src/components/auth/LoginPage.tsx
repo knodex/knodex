@@ -57,7 +57,7 @@ export function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-secondary/30 px-4">
+    <div className="min-h-screen flex items-center justify-center bg-radial-login px-4">
       <div className="w-full max-w-md">
         {/* Login Card */}
         <Card className="p-6 space-y-6">

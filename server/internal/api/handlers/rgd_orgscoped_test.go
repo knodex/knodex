@@ -223,9 +223,10 @@ func TestRGDHandler_ListRGDs_RedisCacheBehavior(t *testing.T) {
 	assert.Equal(t, 2, listResp1.TotalCount, "expected 2 RGDs on first request")
 
 	// Verify cache key exists in Redis
-	// Cache key format from catalog_service.listCacheKey():
-	// rgd:list:org=%s:ns=%s:cat=%s:tags=%s:ek=%s:search=%s:dok=%s:pk=%s:pg=%s:projects=%s:public=%t:tiers=%s:status=%s:page=%d:size=%d:sort=%s:%s
-	cacheKey := "rgd:list:org=:ns=project-1-ns:cat=:tags=:ek=:search=:dok=:pk=:pg=:projects=:public=false:tiers=:status=:page=1:size=20:sort=name:asc"
+	// Cache key format from catalog_service.listCacheKey() (the `tiers=` segment
+	// was removed in b434ef6e when the catalog-tier feature was deleted).
+	// rgd:list:org=%s:ns=%s:cat=%s:tags=%s:ek=%s:search=%s:dok=%s:pk=%s:pg=%s:projects=%s:public=%t:status=%s:page=%d:size=%d:sort=%s:%s
+	cacheKey := "rgd:list:org=:ns=project-1-ns:cat=:tags=:ek=:search=:dok=:pk=:pg=:projects=:public=false:status=:page=1:size=20:sort=name:asc"
 	exists, err := redisClient.Exists(ctx, cacheKey).Result()
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), exists, "cache key should exist in Redis after first request")

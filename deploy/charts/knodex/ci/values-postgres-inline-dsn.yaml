@@ -1,0 +1,21 @@
+# CI fixture — AC #2 path (c): inline external DSN via externalPostgresql host/creds.
+#
+# externalPostgresql.host is set WITHOUT an existingSecret, so the chart builds a
+# managed DSN Secret (<fullname>-postgres) from host/port/database/username/
+# password/sslMode. The embedded subchart is disabled; DATABASE_URL resolves to
+# the chart-managed Secret.
+#
+# Used in CI via:
+#   helm template knodex ./deploy/charts/knodex \
+#     --values ./deploy/charts/knodex/ci/values-postgres-inline-dsn.yaml
+
+postgresql:
+  enabled: false
+
+externalPostgresql:
+  host: "db.example.internal"
+  port: 5432
+  database: "knodex"
+  username: "knodex"
+  password: "s3cr3t"
+  sslMode: "require"

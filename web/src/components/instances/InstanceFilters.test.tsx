@@ -24,18 +24,7 @@ describe("InstanceFilters", () => {
     expect(screen.getByPlaceholderText("Filter instances...")).toBeInTheDocument();
   });
 
-  it("renders RGD selector", () => {
-    render(
-      <InstanceFilters
-        filters={defaultFilters}
-        onFiltersChange={vi.fn()}
-        availableRgds={["my-database", "web-app"]}
-      />
-    );
-    expect(screen.getByLabelText("Filter by RGD")).toBeInTheDocument();
-  });
-
-  it("renders health selector", () => {
+  it("renders the Filters dropdown trigger", () => {
     render(
       <InstanceFilters
         filters={defaultFilters}
@@ -43,7 +32,53 @@ describe("InstanceFilters", () => {
         availableRgds={[]}
       />
     );
+    expect(screen.getByLabelText("Filters")).toBeInTheDocument();
+  });
+
+  it("renders RGD selector inside the Filters popover", () => {
+    render(
+      <InstanceFilters
+        filters={defaultFilters}
+        onFiltersChange={vi.fn()}
+        availableRgds={["my-database", "web-app"]}
+      />
+    );
+    fireEvent.click(screen.getByLabelText("Filters"));
+    expect(screen.getByLabelText("Filter by RGD")).toBeInTheDocument();
+  });
+
+  it("renders health selector inside the Filters popover", () => {
+    render(
+      <InstanceFilters
+        filters={defaultFilters}
+        onFiltersChange={vi.fn()}
+        availableRgds={[]}
+      />
+    );
+    fireEvent.click(screen.getByLabelText("Filters"));
     expect(screen.getByLabelText("Filter by health")).toBeInTheDocument();
+  });
+
+  it("shows the active filter count badge for non-search filters", () => {
+    render(
+      <InstanceFilters
+        filters={{ ...defaultFilters, health: "Healthy" }}
+        onFiltersChange={vi.fn()}
+        availableRgds={[]}
+      />
+    );
+    expect(screen.getByTestId("filters-active-count")).toHaveTextContent("1");
+  });
+
+  it("does not count search toward the filter badge", () => {
+    render(
+      <InstanceFilters
+        filters={{ ...defaultFilters, search: "my-app" }}
+        onFiltersChange={vi.fn()}
+        availableRgds={[]}
+      />
+    );
+    expect(screen.queryByTestId("filters-active-count")).not.toBeInTheDocument();
   });
 
   describe("active filters indicator", () => {
@@ -182,7 +217,7 @@ describe("InstanceFilters", () => {
   });
 
   describe("scope filter", () => {
-    it("renders scope selector", () => {
+    it("renders scope selector inside the Filters popover", () => {
       render(
         <InstanceFilters
           filters={defaultFilters}
@@ -190,6 +225,7 @@ describe("InstanceFilters", () => {
           availableRgds={[]}
         />
       );
+      fireEvent.click(screen.getByLabelText("Filters"));
       expect(screen.getByLabelText("Filter by scope")).toBeInTheDocument();
     });
 

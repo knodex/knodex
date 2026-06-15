@@ -33,8 +33,9 @@ func createTestProjectService() *rbac.ProjectService {
 	return rbac.NewProjectService(k8sClient, dynamicClient, "knodex-system")
 }
 
-// createTestProjectSpec creates a valid ArgoCD-aligned ProjectSpec for testing
-func createTestProjectSpec(adminGroup string) rbac.ProjectSpec {
+// createTestProjectSpec creates a valid ArgoCD-aligned ProjectSpec for testing.
+// adminGroup is unused since Teams-only binding means no raw group is embedded in the spec.
+func createTestProjectSpec(_ string) rbac.ProjectSpec {
 	return rbac.ProjectSpec{
 		Description: DefaultProjectDescription,
 		Destinations: []rbac.Destination{
@@ -52,7 +53,6 @@ func createTestProjectSpec(adminGroup string) rbac.ProjectSpec {
 				Policies: []string{
 					"p, proj:default-project:platform-admin, *, *, default-project/*, allow",
 				},
-				Groups: []string{adminGroup},
 			},
 		},
 	}
@@ -86,8 +86,9 @@ func TestProjectBootstrapService_EnsureDefaultProject(t *testing.T) {
 						break
 					}
 				}
+				// Teams-only binding: platform-admin role exists; team binding is operator's responsibility
 				require.NotNil(t, platformAdminRole, "platform-admin role should exist")
-				assert.Contains(t, platformAdminRole.Groups, "admin:user-local-admin")
+				assert.NotEmpty(t, platformAdminRole.Policies, "platform-admin role should have policies")
 			},
 		},
 		{
@@ -125,7 +126,7 @@ func TestProjectBootstrapService_EnsureDefaultProject(t *testing.T) {
 							Policies: []string{
 								"p, proj:default-project:platform-admin, *, *, default-project/*, allow",
 							},
-							Groups: []string{"admin:other-user"}, // Different admin
+							Teams: []string{"other-admin-team"}, // Different admin (Teams-only binding)
 						},
 					},
 				}
@@ -143,8 +144,9 @@ func TestProjectBootstrapService_EnsureDefaultProject(t *testing.T) {
 						break
 					}
 				}
+				// Teams-only binding: the platform-admin role exists unchanged
 				require.NotNil(t, platformAdminRole, "platform-admin role should exist")
-				assert.Contains(t, platformAdminRole.Groups, "admin:user-local-admin")
+				assert.NotEmpty(t, platformAdminRole.Policies, "platform-admin role should have policies")
 			},
 		},
 	}
@@ -162,7 +164,7 @@ func TestProjectBootstrapService_EnsureDefaultProject(t *testing.T) {
 
 			// Create bootstrap service
 			k8sClient := fake.NewSimpleClientset()
-			bootstrapService := NewProjectBootstrapService(projectService, k8sClient)
+			bootstrapService := NewProjectBootstrapService(projectService, k8sClient, "", "")
 
 			// Call EnsureDefaultProject
 			project, err := bootstrapService.EnsureDefaultProject(context.Background(), tt.adminUserID)
@@ -190,7 +192,7 @@ func TestProjectBootstrapService_Idempotency(t *testing.T) {
 	// Create test project service
 	projectService := createTestProjectService()
 	k8sClient := fake.NewSimpleClientset()
-	bootstrapService := NewProjectBootstrapService(projectService, k8sClient)
+	bootstrapService := NewProjectBootstrapService(projectService, k8sClient, "", "")
 
 	ctx := context.Background()
 	adminUserID := "user-local-admin"
@@ -253,7 +255,7 @@ func TestProjectBootstrapService_EnsureAdminRole(t *testing.T) {
 						Policies: []string{
 							"p, proj:default-project:platform-admin, *, *, default-project/*, allow",
 						},
-						Groups: []string{"admin:other-user"}, // Different admin
+						Teams: []string{"other-admin-team"}, // Different admin (Teams-only binding)
 					},
 				},
 			},
@@ -268,7 +270,7 @@ func TestProjectBootstrapService_EnsureAdminRole(t *testing.T) {
 			// Create test project service
 			projectService := createTestProjectService()
 			k8sClient := fake.NewSimpleClientset()
-			bootstrapService := NewProjectBootstrapService(projectService, k8sClient)
+			bootstrapService := NewProjectBootstrapService(projectService, k8sClient, "", "")
 
 			// Create the project
 			_, err := projectService.CreateProject(context.Background(), DefaultProjectName, tt.projectSpec, "test-user")
@@ -289,8 +291,8 @@ func TestProjectBootstrapService_EnsureAdminRole(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, updatedProject)
 
-			// Check if admin's group is in the platform-admin role
-			adminGroup := "admin:" + tt.adminUserID
+			// Teams-only binding: check that the platform-admin role exists (no group assertion)
+			_ = "admin:" + tt.adminUserID // adminGroup no longer directly bound to role
 			var platformAdminRole *rbac.ProjectRole
 			for i := range updatedProject.Spec.Roles {
 				if updatedProject.Spec.Roles[i].Name == "platform-admin" {
@@ -301,7 +303,7 @@ func TestProjectBootstrapService_EnsureAdminRole(t *testing.T) {
 
 			if tt.expectGroup {
 				require.NotNil(t, platformAdminRole, "platform-admin role should exist")
-				assert.Contains(t, platformAdminRole.Groups, adminGroup, "admin group should be in platform-admin role")
+				assert.NotEmpty(t, platformAdminRole.Policies, "platform-admin role should have policies")
 			}
 		})
 	}
@@ -315,3 +317,24 @@ func TestProjectBootstrapService_Constants(t *testing.T) {
 }
 
 // Note: Error handling tests are covered by the idempotency and race condition tests above
+
+// TestNewProjectBootstrapService_Configurable asserts the audit G-15 fix:
+// the bootstrap project name/namespace are configurable, and empty inputs fall
+// back to the DefaultProject* constants (preserving OSS/EE behavior).
+func TestNewProjectBootstrapService_Configurable(t *testing.T) {
+	custom := NewProjectBootstrapService(nil, nil, "acme-root", "acme-system")
+	if custom.projectName != "acme-root" {
+		t.Errorf("projectName = %q, want acme-root", custom.projectName)
+	}
+	if custom.projectNamespace != "acme-system" {
+		t.Errorf("projectNamespace = %q, want acme-system", custom.projectNamespace)
+	}
+
+	def := NewProjectBootstrapService(nil, nil, "", "")
+	if def.projectName != DefaultProjectName {
+		t.Errorf("empty projectName should default to %q, got %q", DefaultProjectName, def.projectName)
+	}
+	if def.projectNamespace != DefaultProjectNamespace {
+		t.Errorf("empty projectNamespace should default to %q, got %q", DefaultProjectNamespace, def.projectNamespace)
+	}
+}

@@ -12,6 +12,7 @@ import {
 import { isEnterprise } from "@/hooks/useCompliance";
 import type { AuditEventFilter, AuditConfig } from "@/types/audit";
 import { STALE_TIME } from "@/lib/query-client";
+import { is403 } from "@/lib/errors";
 
 /**
  * Hook for fetching paginated audit events with optional filtering.
@@ -95,12 +96,4 @@ export function useUpdateAuditConfig() {
       queryClient.invalidateQueries({ queryKey: ["audit", "stats"] });
     },
   });
-}
-
-/** Check if error is a 403 Forbidden */
-function is403(error: unknown): boolean {
-  if (error && typeof error === "object" && "response" in error) {
-    return (error as { response?: { status?: number } }).response?.status === 403;
-  }
-  return false;
 }

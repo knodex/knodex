@@ -12,65 +12,85 @@ import type {
 } from "@/types/secret";
 
 /**
- * List secrets for a project with optional pagination
+ * List secrets across the user's accessible namespaces. The optional
+ * `namespace` filter narrows to a single namespace; the server still
+ * enforces membership and returns an empty list for unauthorized
+ * namespaces (matches Instances). No project param: secrets are
+ * namespace-keyed under the unified Casbin model.
  */
 export async function listSecrets(
-  project: string,
-  options?: { limit?: number; continue?: string },
+  options?: { namespace?: string; limit?: number; continue?: string },
 ): Promise<SecretListResponse> {
   const response = await apiClient.get<SecretListResponse>("/v1/secrets", {
-    params: { project, ...options },
+    params: options,
   });
   return response.data;
 }
 
 /**
- * Create a new secret in a project
+ * Create a new secret in `namespace`. Casbin object emitted by the
+ * server middleware: `secrets/{namespace}/{name}`.
  */
-export async function createSecret(project: string, req: CreateSecretRequest): Promise<Secret> {
-  const response = await apiClient.post<Secret>("/v1/secrets", req, {
-    params: { project },
-  });
+export async function createSecret(namespace: string, req: CreateSecretRequest): Promise<Secret> {
+  const response = await apiClient.post<Secret>(
+    `/v1/namespaces/${encodeURIComponent(namespace)}/secrets`,
+    req,
+  );
   return response.data;
 }
 
 /**
  * Check if a secret exists without fetching its data (HEAD request).
- * Resolves normally on 200, throws on 404 (not found) or other errors.
+ * Resolves normally on 200, rejects on 404 (not found / no namespace access).
  */
-export async function checkSecretExists(name: string, project: string, namespace: string): Promise<void> {
-  await apiClient.head(`/v1/secrets/${encodeURIComponent(name)}`, {
-    params: { project, namespace },
-  });
+export async function checkSecretExists(name: string, namespace: string): Promise<void> {
+  await apiClient.head(
+    `/v1/namespaces/${encodeURIComponent(namespace)}/secrets/${encodeURIComponent(name)}`,
+  );
 }
 
 /**
- * Get a single secret with full data (values included)
+ * Get a single secret with full data (values included).
  */
-export async function getSecret(name: string, project: string, namespace: string): Promise<SecretDetail> {
-  const response = await apiClient.get<SecretDetail>(`/v1/secrets/${encodeURIComponent(name)}`, {
-    params: { project, namespace },
-  });
+export async function getSecret(name: string, namespace: string): Promise<SecretDetail> {
+  const response = await apiClient.get<SecretDetail>(
+    `/v1/namespaces/${encodeURIComponent(namespace)}/secrets/${encodeURIComponent(name)}`,
+  );
   return response.data;
 }
 
 /**
- * Update an existing secret's data
+ * Update an existing secret's data and (optionally) typed metadata.
+ *
+ * `metadata` semantics mirror the server contract: undefined leaves the
+ * existing labels/annotations untouched; a present object is a full
+ * replacement of the three metadata fields, with empty strings clearing
+ * them. The form layer is responsible for sending `metadata` only when
+ * the user actually touched those fields.
  */
-export async function updateSecret(name: string, project: string, req: UpdateSecretRequest): Promise<Secret> {
-  const { namespace, data } = req;
-  const response = await apiClient.put<Secret>(`/v1/secrets/${encodeURIComponent(name)}`, { namespace, data }, {
-    params: { project },
-  });
+export async function updateSecret(
+  name: string,
+  namespace: string,
+  req: UpdateSecretRequest,
+): Promise<Secret> {
+  const body: UpdateSecretRequest =
+    req.metadata !== undefined
+      ? { data: req.data, metadata: req.metadata }
+      : { data: req.data };
+  const response = await apiClient.put<Secret>(
+    `/v1/namespaces/${encodeURIComponent(namespace)}/secrets/${encodeURIComponent(name)}`,
+    body,
+  );
   return response.data;
 }
 
 /**
- * Delete a secret
+ * Delete a secret. The response carries any warnings about Instances
+ * that still reference this secret (best-effort scan).
  */
-export async function deleteSecret(name: string, project: string, namespace: string): Promise<DeleteSecretResponse> {
-  const response = await apiClient.delete<DeleteSecretResponse>(`/v1/secrets/${encodeURIComponent(name)}`, {
-    params: { project, namespace },
-  });
+export async function deleteSecret(name: string, namespace: string): Promise<DeleteSecretResponse> {
+  const response = await apiClient.delete<DeleteSecretResponse>(
+    `/v1/namespaces/${encodeURIComponent(namespace)}/secrets/${encodeURIComponent(name)}`,
+  );
   return response.data;
 }

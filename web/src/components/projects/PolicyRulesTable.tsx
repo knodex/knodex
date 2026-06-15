@@ -10,13 +10,19 @@
  *
  * Where:
  * - subject: proj:{project}:{role}
- * - resource: projects, rgds, instances, applications, repositories, settings
+ * - resource: projects, rgds, instances, repositories, settings
  * - action: get, create, update, delete, list, * (wildcard)
  * - object: Pattern like {project}/* or *
  * - effect: allow or deny
+ *
+ * Editing model: every row is inline-editable at once. Changes commit
+ * immediately to the parent via onPoliciesChange, so the surrounding form's own
+ * Save button persists the whole set — there is no per-row save step. "Add
+ * Policy" appends a row you can edit straight away, and you can add several
+ * before saving.
  */
 import { useState, useCallback } from "react";
-import { Plus, Trash2, Check, X } from "@/lib/icons";
+import { Plus, Trash2 } from "@/lib/icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -40,10 +46,12 @@ import {
   ACTIONS,
   parsePolicyString,
   formatPolicyString,
-  validatePolicyRule,
+  RGDS_ALL_CATEGORIES,
+  rgdsObjectToCategory,
+  categoryToRgdsObject,
 } from "@/lib/policy-utils";
 import type { PolicyRule } from "@/lib/policy-utils";
-import { logger } from "@/lib/logger";
+import { useCategories } from "@/hooks/useCategories";
 
 interface PolicyRulesTableProps {
   /** Project ID for policy subject formatting */
@@ -68,96 +76,85 @@ export function PolicyRulesTable({
   canEdit,
   isLoading = false,
 }: PolicyRulesTableProps) {
-  // Parse policies into editable rules
+  // Local rules are the source of truth once mounted; we push every change up
+  // to the parent but never read `policies` back (the initializer runs once).
+  // Consumers that swap policies wholesale (e.g. applying a template) remount
+  // this component, so the initializer re-runs with the new values.
   const [rules, setRules] = useState<PolicyRule[]>(() =>
     policies
       .map((p) => parsePolicyString(p, projectId, roleName))
       .filter((r): r is PolicyRule => r !== null)
   );
 
-  // Track editing state
-  const [editingIndex, setEditingIndex] = useState<number | null>(null);
-  const [editingRule, setEditingRule] = useState<PolicyRule | null>(null);
+  // Categories drive the friendly RGD object picker. OSS endpoint, always
+  // available; the server filters to the caller's visible categories and the
+  // hook degrades to [] on error, so this never blocks editing.
+  const { data: categories = [] } = useCategories();
 
-  // Handle adding a new rule
-  const handleAddRule = useCallback(() => {
-    const newRule: PolicyRule = {
-      resource: "instances",
-      action: "get",
-      object: `${projectId}/*`,
-      permission: "allow",
-    };
-    setRules([...rules, newRule]);
-    setEditingIndex(rules.length);
-    setEditingRule(newRule);
-  }, [rules, projectId]);
-
-  // Handle editing a rule
-  const handleEditRule = useCallback((index: number) => {
-    setEditingIndex(index);
-    setEditingRule({ ...rules[index] });
-  }, [rules]);
-
-  // Handle saving an edited rule
-  const handleSaveRule = useCallback(() => {
-    if (editingIndex === null || !editingRule) return;
-
-    const error = validatePolicyRule(editingRule);
-    if (error) {
-      logger.warn("[PolicyRulesTable] Validation error:", error);
-      return;
-    }
-
-    const newRules = [...rules];
-    newRules[editingIndex] = editingRule;
-    setRules(newRules);
-    setEditingIndex(null);
-    setEditingRule(null);
-
-    // Convert rules back to policy strings and notify parent
-    const newPolicies = newRules.map((r) =>
-      formatPolicyString(r, projectId, roleName)
-    );
-    onPoliciesChange(newPolicies);
-  }, [editingIndex, editingRule, rules, projectId, roleName, onPoliciesChange]);
-
-  // Handle canceling edit
-  const handleCancelEdit = useCallback(() => {
-    // If we were adding a new rule (last index), remove it
-    if (editingIndex === rules.length - 1 && editingRule) {
-      const originalPolicies = policies
-        .map((p) => parsePolicyString(p, projectId, roleName))
-        .filter((r): r is PolicyRule => r !== null);
-      if (originalPolicies.length < rules.length) {
-        setRules(originalPolicies);
-      }
-    }
-    setEditingIndex(null);
-    setEditingRule(null);
-  }, [editingIndex, editingRule, rules.length, policies, projectId, roleName]);
-
-  // Handle deleting a rule
-  const handleDeleteRule = useCallback(
-    (index: number) => {
-      const newRules = rules.filter((_, i) => i !== index);
-      setRules(newRules);
-
-      // Convert rules back to policy strings and notify parent
-      const newPolicies = newRules.map((r) =>
-        formatPolicyString(r, projectId, roleName)
+  // Commit a new rule set: update local state and notify the parent form.
+  const commit = useCallback(
+    (next: PolicyRule[]) => {
+      setRules(next);
+      onPoliciesChange(
+        next.map((r) => formatPolicyString(r, projectId, roleName))
       );
-      onPoliciesChange(newPolicies);
     },
-    [rules, projectId, roleName, onPoliciesChange]
+    [onPoliciesChange, projectId, roleName]
   );
 
-  // Handle field changes during editing
-  const handleFieldChange = useCallback(
-    (field: keyof PolicyRule, value: string) => {
-      if (!editingRule) return;
-      setEditingRule({ ...editingRule, [field]: value });
+  // Update one field of one row. Changing the resource resets the object
+  // because the object grammar differs per resource: rgds objects are category
+  // scopes ("*" or "{slug}/*"), everything else is "{project}/*"-shaped.
+  const updateField = useCallback(
+    (index: number, field: keyof PolicyRule, value: string) => {
+      commit(
+        rules.map((r, i) => {
+          if (i !== index) return r;
+          if (field === "resource" && value !== r.resource) {
+            return {
+              ...r,
+              resource: value,
+              object: value === "rgds" ? RGDS_ALL_CATEGORIES : `${projectId}/*`,
+            };
+          }
+          return { ...r, [field]: value };
+        })
+      );
     },
-    [editingRule]
+    [commit, rules, projectId]
+  );
+
+  // Append a new editable row (sensible instances/get default).
+  const handleAddRule = useCallback(() => {
+    commit([
+      ...rules,
+      {
+        resource: "instances",
+        action: "get",
+        object: `${projectId}/*`,
+        permission: "allow",
+      },
+    ]);
+  }, [commit, rules, projectId]);
+
+  // Delete a row.
+  const handleDeleteRule = useCallback(
+    (index: number) => {
+      commit(rules.filter((_, i) => i !== index));
+    },
+    [commit, rules]
+  );
+
+  // Render the read-mode object cell. For rgds rows, show the category name
+  // ("All categories" for the wildcard) instead of the raw "{slug}/*" object.
+  const renderObject = useCallback(
+    (rule: PolicyRule): string => {
+      if (rule.resource !== "rgds") return rule.object;
+      const slug = rgdsObjectToCategory(rule.object);
+      if (slug === RGDS_ALL_CATEGORIES) return "All categories";
+      return categories.find((c) => c.slug === slug)?.name ?? slug;
+    },
+    [categories]
   );
 
   return (
@@ -169,7 +166,7 @@ export function PolicyRulesTable({
             <TableHead className="w-[120px]">Action</TableHead>
             <TableHead>Object</TableHead>
             <TableHead className="w-[100px]">Permission</TableHead>
-            {canEdit && <TableHead className="w-[80px]">Actions</TableHead>}
+            {canEdit && <TableHead className="w-[60px]">Actions</TableHead>}
           </TableRow>
         </ListTableHeader>
         <TableBody>
@@ -179,183 +176,188 @@ export function PolicyRulesTable({
                 colSpan={canEdit ? 5 : 4}
                 className="text-center text-muted-foreground py-8"
               >
-                No policy rules defined. {canEdit && "Click \"Add Policy\" to create one."}
+                No policy rules defined.{" "}
+                {canEdit && 'Click "Add Policy" to create one.'}
               </TableCell>
             </TableRow>
           ) : (
-            rules.map((rule, index) => {
-              const isEditing = editingIndex === index;
+            rules.map((rule, index) => (
+              <TableRow key={index}>
+                {/* Resource */}
+                <TableCell>
+                  {canEdit ? (
+                    <Select
+                      value={rule.resource}
+                      onValueChange={(v) => updateField(index, "resource", v)}
+                      disabled={isLoading}
+                    >
+                      <SelectTrigger className="h-8">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {RESOURCES.map((r) => (
+                          <SelectItem key={r} value={r}>
+                            {r}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <span className="font-mono text-sm">{rule.resource}</span>
+                  )}
+                </TableCell>
 
-              return (
-                <TableRow key={index}>
-                  {/* Resource */}
-                  <TableCell>
-                    {isEditing && editingRule ? (
-                      <Select
-                        value={editingRule.resource}
-                        onValueChange={(v) => handleFieldChange("resource", v)}
-                        disabled={isLoading}
-                      >
-                        <SelectTrigger className="h-8">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {RESOURCES.map((r) => (
-                            <SelectItem key={r} value={r}>
-                              {r}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                {/* Action */}
+                <TableCell>
+                  {canEdit ? (
+                    <Select
+                      value={rule.action}
+                      onValueChange={(v) => updateField(index, "action", v)}
+                      disabled={isLoading}
+                    >
+                      <SelectTrigger className="h-8">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {ACTIONS.map((a) => (
+                          <SelectItem key={a} value={a}>
+                            {a === "*" ? "* (all)" : a}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <span className="font-mono text-sm">
+                      {rule.action === "*" ? "* (all)" : rule.action}
+                    </span>
+                  )}
+                </TableCell>
+
+                {/* Object */}
+                <TableCell>
+                  {canEdit ? (
+                    rule.resource === "rgds" ? (
+                      (() => {
+                        // Category scope picker. Preserve an unknown/legacy slug
+                        // (e.g. a category with no visible RGDs) as its own
+                        // option so editing round-trips losslessly.
+                        const current = rgdsObjectToCategory(rule.object);
+                        const extra =
+                          current !== RGDS_ALL_CATEGORIES &&
+                          !categories.some((c) => c.slug === current)
+                            ? current
+                            : null;
+                        return (
+                          <Select
+                            value={current}
+                            onValueChange={(v) =>
+                              updateField(
+                                index,
+                                "object",
+                                categoryToRgdsObject(v)
+                              )
+                            }
+                            disabled={isLoading}
+                          >
+                            <SelectTrigger className="h-8">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value={RGDS_ALL_CATEGORIES}>
+                                All categories
+                              </SelectItem>
+                              {categories.map((c) => (
+                                <SelectItem key={c.slug} value={c.slug}>
+                                  {c.name}
+                                </SelectItem>
+                              ))}
+                              {extra && (
+                                <SelectItem value={extra}>{extra}</SelectItem>
+                              )}
+                            </SelectContent>
+                          </Select>
+                        );
+                      })()
                     ) : (
-                      <span className="font-mono text-sm">{rule.resource}</span>
-                    )}
-                  </TableCell>
-
-                  {/* Action */}
-                  <TableCell>
-                    {isEditing && editingRule ? (
-                      <Select
-                        value={editingRule.action}
-                        onValueChange={(v) => handleFieldChange("action", v)}
-                        disabled={isLoading}
-                      >
-                        <SelectTrigger className="h-8">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {ACTIONS.map((a) => (
-                            <SelectItem key={a} value={a}>
-                              {a === "*" ? "* (all)" : a}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    ) : (
-                      <span className="font-mono text-sm">
-                        {rule.action === "*" ? "* (all)" : rule.action}
-                      </span>
-                    )}
-                  </TableCell>
-
-                  {/* Object */}
-                  <TableCell>
-                    {isEditing && editingRule ? (
                       <Input
-                        value={editingRule.object}
+                        value={rule.object}
                         onChange={(e) =>
-                          handleFieldChange("object", e.target.value)
+                          updateField(index, "object", e.target.value)
                         }
                         placeholder={`${projectId}/*`}
                         className="h-8 font-mono text-sm"
                         disabled={isLoading}
                       />
-                    ) : (
-                      <span className="font-mono text-sm">{rule.object}</span>
-                    )}
-                  </TableCell>
-
-                  {/* Permission */}
-                  <TableCell>
-                    {isEditing && editingRule ? (
-                      <Select
-                        value={editingRule.permission}
-                        onValueChange={(v) =>
-                          handleFieldChange("permission", v)
-                        }
-                        disabled={isLoading}
-                      >
-                        <SelectTrigger className="h-8">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="allow">
-                            <span className="text-status-success">
-                              Allow
-                            </span>
-                          </SelectItem>
-                          <SelectItem value="deny">
-                            <span className="text-status-error">
-                              Deny
-                            </span>
-                          </SelectItem>
-                        </SelectContent>
-                      </Select>
-                    ) : (
-                      <span
-                        className={cn(
-                          "font-medium text-sm px-2 py-0.5 rounded",
-                          rule.permission === "allow"
-                            ? "bg-status-success/10 text-status-success"
-                            : "bg-status-error/10 text-status-error"
-                        )}
-                      >
-                        {rule.permission}
-                      </span>
-                    )}
-                  </TableCell>
-
-                  {/* Actions */}
-                  {canEdit && (
-                    <TableCell>
-                      <div className="flex items-center gap-1">
-                        {isEditing ? (
-                          <>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={handleSaveRule}
-                              disabled={isLoading}
-                              className="h-7 w-7 p-0 text-status-success hover:text-status-success hover:bg-status-success/10"
-                            >
-                              <Check className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={handleCancelEdit}
-                              disabled={isLoading}
-                              className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
-                            >
-                              <X className="h-4 w-4" />
-                            </Button>
-                          </>
-                        ) : (
-                          <>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleEditRule(index)}
-                              disabled={isLoading || editingIndex !== null}
-                              className="h-7 w-7 p-0"
-                            >
-                              <span className="sr-only">Edit</span>
-                              ✎
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleDeleteRule(index)}
-                              disabled={isLoading || editingIndex !== null}
-                              className="h-7 w-7 p-0 text-destructive hover:text-destructive hover:bg-destructive/10"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </>
-                        )}
-                      </div>
-                    </TableCell>
+                    )
+                  ) : (
+                    <span className="font-mono text-sm">
+                      {renderObject(rule)}
+                    </span>
                   )}
-                </TableRow>
-              );
-            })
+                </TableCell>
+
+                {/* Permission */}
+                <TableCell>
+                  {canEdit ? (
+                    <Select
+                      value={rule.permission}
+                      onValueChange={(v) =>
+                        updateField(index, "permission", v)
+                      }
+                      disabled={isLoading}
+                    >
+                      <SelectTrigger className="h-8">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="allow">
+                          <span className="text-status-success">Allow</span>
+                        </SelectItem>
+                        <SelectItem value="deny">
+                          <span className="text-status-error">Deny</span>
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <span
+                      className={cn(
+                        "font-medium text-sm px-2 py-0.5 rounded",
+                        rule.permission === "allow"
+                          ? "bg-status-success/10 text-status-success"
+                          : "bg-status-error/10 text-status-error"
+                      )}
+                    >
+                      {rule.permission}
+                    </span>
+                  )}
+                </TableCell>
+
+                {/* Actions */}
+                {canEdit && (
+                  <TableCell>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleDeleteRule(index)}
+                      disabled={isLoading}
+                      aria-label={`Delete rule ${index + 1}`}
+                      className="h-7 w-7 p-0 text-destructive hover:text-destructive hover:bg-destructive/10"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </TableCell>
+                )}
+              </TableRow>
+            ))
           )}
         </TableBody>
       </Table>
 
       {/* Add Policy Button */}
-      {canEdit && editingIndex === null && (
+      {canEdit && (
         <Button
+          type="button"
           variant="outline"
           size="sm"
           onClick={handleAddRule}

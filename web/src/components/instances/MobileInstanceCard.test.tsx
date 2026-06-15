@@ -112,4 +112,29 @@ describe('MobileInstanceCard', () => {
     fireEvent.keyDown(screen.getByTestId('mobile-instance-card'), { key: 'Enter' });
     expect(handleClick).toHaveBeenCalled();
   });
+
+  // Regression guard (story 48.3): the desktop grid card gained 4-state left
+  // borders, but mobile rendering stays "alert-only" verbatim — Healthy and
+  // Progressing cards must NOT show a colored left border.
+  describe('left border is alert-only (mobile preserved verbatim)', () => {
+    it.each(['Healthy', 'Progressing', 'Unknown'] as const)(
+      'shows no colored left border for %s',
+      (health) => {
+        renderCard({ health });
+        const card = screen.getByTestId('mobile-instance-card');
+        expect(card).not.toHaveClass('border-l-2');
+        expect(card.style.borderLeftColor).toBe('');
+      }
+    );
+
+    it.each([
+      ['Degraded', 'var(--status-warning)'],
+      ['Unhealthy', 'var(--status-error)'],
+    ] as const)('shows a colored left border for %s', (health, color) => {
+      renderCard({ health });
+      const card = screen.getByTestId('mobile-instance-card');
+      expect(card).toHaveClass('border-l-2');
+      expect(card.style.borderLeftColor).toBe(color);
+    });
+  });
 });

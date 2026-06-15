@@ -167,16 +167,16 @@ spec:
                           type: string
                           minLength: 1
                           maxLength: 2048
-                      groups:
+                      destinations:
                         type: array
-                        description: "OIDC group names bound to this role"
+                        description: "Optional namespace patterns from project destinations. When set, policies are scoped to these namespaces only. When empty, role gets project-wide policies."
                         items:
                           type: string
                           minLength: 1
                           maxLength: 253
-                      destinations:
+                      teams:
                         type: array
-                        description: "Optional namespace patterns from project destinations. When set, policies are scoped to these namespaces only. When empty, role gets project-wide policies."
+                        description: "Team names (Team CRD) bound to this role. Each team's spec.oidcGroups is resolved at policy-generation time."
                         items:
                           type: string
                           minLength: 1
@@ -201,6 +201,7 @@ spec:
                           - Ready
                           - ValidationError
                           - SyncError
+                          - RolesResolved
                       status:
                         type: string
                         description: "Condition status"

@@ -64,7 +64,7 @@ func TestPolicyEnforcer_PolicyParsing(t *testing.T) {
 			t.Parallel()
 
 			// Create fresh enforcer for each test
-			pe := newTestEnforcer(t)
+			pe := newTestEnforcerWithTeams(t, identityTeamResolver{})
 
 			project := &Project{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-project"},
@@ -130,7 +130,7 @@ func TestPolicyEnforcer_PolicyParsing_RejectedFormats(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			pe := newTestEnforcer(t)
+			pe := newTestEnforcerWithTeams(t, identityTeamResolver{})
 
 			project := &Project{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-project"},
@@ -155,7 +155,7 @@ func TestPolicyEnforcer_PolicyParsing_RejectedFormats(t *testing.T) {
 func TestPolicyEnforcer_DenyPolicies(t *testing.T) {
 	t.Parallel()
 
-	pe := newTestEnforcer(t)
+	pe := newTestEnforcerWithTeams(t, identityTeamResolver{})
 
 	project := &Project{
 		ObjectMeta: metav1.ObjectMeta{Name: "restricted-project"},
@@ -221,7 +221,7 @@ func TestPolicyEnforcer_ArgoCD_AlignedPolicyFormat(t *testing.T) {
 						// Settings access
 						"p, proj:proj-azuread-staging:admin, settings, get, *, allow",
 					},
-					Groups: []string{azureAdminGroupID},
+					Teams: []string{azureAdminGroupID},
 				},
 				{
 					Name:        "reader",
@@ -236,7 +236,7 @@ func TestPolicyEnforcer_ArgoCD_AlignedPolicyFormat(t *testing.T) {
 						"p, proj:proj-azuread-staging:reader, rgds, get, *, allow",
 						"p, proj:proj-azuread-staging:reader, rgds, list, *, allow",
 					},
-					Groups: []string{azureReaderGroupID},
+					Teams: []string{azureReaderGroupID},
 				},
 			},
 		},
@@ -360,7 +360,7 @@ func TestPolicyEnforcer_BuiltInAdminPolicies(t *testing.T) {
 					Name:        "admin", // Built-in policies will be added for roles named "admin"
 					Description: "Project admin - should get built-in policies",
 					Policies:    []string{}, // Empty - relying on built-in policies
-					Groups:      []string{"alpha-admin-group"},
+					Teams:       []string{"alpha-admin-group"},
 				},
 				{
 					Name:        "developer", // Non-admin role should NOT get built-in policies
@@ -368,7 +368,7 @@ func TestPolicyEnforcer_BuiltInAdminPolicies(t *testing.T) {
 					Policies: []string{
 						"p, proj:alpha:developer, instances, get, alpha/*, allow",
 					},
-					Groups: []string{"alpha-dev-group"},
+					Teams: []string{"alpha-dev-group"},
 				},
 			},
 		},
@@ -559,7 +559,7 @@ func TestPolicyEnforcer_BuiltInAdminPolicies_CaseInsensitive(t *testing.T) {
 						{
 							Name:     tc.roleName,
 							Policies: []string{},
-							Groups:   []string{"test-group"},
+							Teams:    []string{"test-group"},
 						},
 					},
 				},

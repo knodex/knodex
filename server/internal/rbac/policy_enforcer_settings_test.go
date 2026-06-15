@@ -17,7 +17,7 @@ import (
 func TestPolicyEnforcer_Settings_GlobalAdmin(t *testing.T) {
 	t.Parallel()
 
-	pe := newTestEnforcer(t)
+	pe := newTestEnforcerWithTeams(t, identityTeamResolver{})
 	ctx := context.Background()
 
 	// Assign global admin role
@@ -54,7 +54,7 @@ func TestPolicyEnforcer_Settings_GlobalAdmin(t *testing.T) {
 func TestPolicyEnforcer_Settings_GlobalViewer(t *testing.T) {
 	t.Parallel()
 
-	pe := newTestEnforcer(t)
+	pe := newTestEnforcerWithTeams(t, identityTeamResolver{})
 	ctx := context.Background()
 
 	// Assign global viewer role
@@ -108,7 +108,7 @@ func TestPolicyEnforcer_Settings_ProjectAdmin(t *testing.T) {
 						"p, proj:proj-test:admin, projects, update, proj-test, allow",
 						"p, proj:proj-test:admin, settings, get, *, allow",
 					},
-					Groups: []string{"project-admin-group"},
+					Teams: []string{"project-admin-group"},
 				},
 				{
 					Name:        "developer",
@@ -117,7 +117,7 @@ func TestPolicyEnforcer_Settings_ProjectAdmin(t *testing.T) {
 						"p, proj:proj-test:developer, projects, get, proj-test, allow",
 						"p, proj:proj-test:developer, instances, *, proj-test/*, allow",
 					},
-					Groups: []string{"developer-group"},
+					Teams: []string{"developer-group"},
 				},
 			},
 		},
@@ -146,7 +146,7 @@ func TestPolicyEnforcer_Settings_ProjectAdmin(t *testing.T) {
 func TestPolicyEnforcer_Settings_NoRole(t *testing.T) {
 	t.Parallel()
 
-	pe := newTestEnforcer(t)
+	pe := newTestEnforcerWithTeams(t, identityTeamResolver{})
 	ctx := context.Background()
 
 	// User without any role assignment
@@ -171,6 +171,10 @@ func TestScopeObjectToProject(t *testing.T) {
 		expected    []string
 	}{
 		// --- Wildcard expansion ---
+		// NOTE: secrets are namespace-keyed (no project segment in the policy
+		// object). Without destinations, no secret policies are emitted from
+		// wildcard expansion — see TD-7 in the secrets-namespace-keyed-authz
+		// spec. The expansion below reflects the no-destinations case.
 		{
 			name:        "bare wildcard expands to all resource types",
 			projectName: "my-project",
@@ -178,7 +182,7 @@ func TestScopeObjectToProject(t *testing.T) {
 			expected: []string{
 				"projects/my-project",
 				"instances/my-project/*",
-				"secrets/my-project/*",
+				// secrets intentionally absent — destinations required (TD-7)
 				"repositories/my-project/*",
 				"compliance/my-project/*",
 				"rgds/*",
@@ -191,7 +195,7 @@ func TestScopeObjectToProject(t *testing.T) {
 			expected: []string{
 				"projects/my-project",
 				"instances/my-project/*",
-				"secrets/my-project/*",
+				// secrets intentionally absent — destinations required (TD-7)
 				"repositories/my-project/*",
 				"compliance/my-project/*",
 				"rgds/*",
@@ -212,10 +216,10 @@ func TestScopeObjectToProject(t *testing.T) {
 			expected:    []string{"repositories/my-project/*"},
 		},
 		{
-			name:        "secrets wildcard scoped to project",
+			name:        "secrets wildcard without destinations - no policies (TD-7)",
 			projectName: "my-project",
 			object:      "secrets/*",
-			expected:    []string{"secrets/my-project/*"},
+			expected:    nil,
 		},
 		{
 			name:        "projects wildcard scoped to own project",
@@ -252,7 +256,7 @@ func TestScopeObjectToProject(t *testing.T) {
 			expected: []string{
 				"projects/",
 				"instances//*",
-				"secrets//*",
+				// secrets intentionally absent — destinations required (TD-7)
 				"repositories//*",
 				"compliance//*",
 				"rgds/*",

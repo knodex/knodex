@@ -1,6 +1,6 @@
 # knodex
 
-![Version: 0.6.0](https://img.shields.io/badge/Version-0.6.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 0.6.0](https://img.shields.io/badge/AppVersion-0.6.0-informational?style=flat-square)
+![Version: 0.7.0](https://img.shields.io/badge/Version-0.7.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 0.7.0](https://img.shields.io/badge/AppVersion-0.7.0-informational?style=flat-square)
 
 A Helm chart for deploying Knodex - a Kubernetes-native UI for browsing and deploying Kro ResourceGraphDefinitions
 
@@ -16,7 +16,7 @@ A Helm chart for deploying Knodex - a Kubernetes-native UI for browsing and depl
 |------------|------|---------|
 | https://charts.bitnami.com/bitnami | postgresql | 16.7.27 |
 | https://charts.bitnami.com/bitnami | redis | 18.19.4 |
-| oci://registry.k8s.io/kro/charts | kro | 0.9.1 |
+| oci://registry.k8s.io/kro/charts | kro | 0.9.2 |
 
 ## Installation
 
@@ -54,7 +54,7 @@ kubectl get secret knodex-initial-admin-password -n knodex -o jsonpath='{.data.p
 | crds.install | bool | `true` | Install the Project CRD (projects.knodex.io) |
 | defaultProject.create | bool | `true` | Create the default project on install/upgrade |
 | defaultProject.name | string | `"default"` | Name of the default project |
-| defaultProject.spec.description | string | `"Default project - allows deployments to any namespace"` |  |
+| defaultProject.spec.description | string | `"Default project - allows deployments to the default namespace"` |  |
 | defaultProject.spec.destinations | list | `[{"namespace":"default"}]` | Allowed deployment destinations |
 | defaultProject.spec.roles | list | `[]` | Roles for the default project (optional) |
 | dex | object | `{"affinity":{},"config":{"disableTLS":true,"issuerURL":"","knodexClientSecret":"","knodexRedirectURL":"","logLevel":"info","tlsSecretName":""},"enabled":false,"image":{"pullPolicy":"IfNotPresent","repository":"ghcr.io/dexidp/dex","tag":"v2.45.1"},"nodeSelector":{},"podAnnotations":{},"podLabels":{},"replicaCount":1,"resources":{"limits":{},"requests":{"cpu":"50m","memory":"64Mi"}},"service":{"annotations":{},"grpcPort":5557,"httpPort":5556,"metricsPort":5558,"type":"ClusterIP"},"tolerations":[]}` | ---------------------------------------------------------------------------- When enabled, Dex runs on the management cluster as an OIDC proxy. It reads Knodex SSO provider config and translates it into Dex connectors, allowing all managed tools (ArgoCD, Grafana, etc.) to authenticate via a single Dex endpoint backed by the customer's IDP (Entra ID, Okta, Google). |
@@ -83,7 +83,7 @@ kubectl get secret knodex-initial-admin-password -n knodex -o jsonpath='{.data.p
 | enterprise.license.text | string | `""` (no inline license) | Inline license JWT text. When set, the chart creates a secret with key `license.jwt` containing this value **and** sets the `KNODEX_LICENSE_TEXT` environment variable. If both `existingSecret` and `text` are set, `existingSecret` takes precedence for the volume mount. |
 | enterprise.networkPolicy | object | `{"enabled":false,"server":{"additionalEgress":[],"additionalIngress":[],"ingressFrom":[]}}` | Network policy configuration (Enterprise feature) |
 | enterprise.organization | string | `""` (server defaults to `"default"`) | Organization identity for multi-tenant RGD catalog filtering (Enterprise feature). When set, only RGDs labeled with `knodex.io/organization: <value>` (or unlabeled shared RGDs) are visible in the catalog. Must be ≤63 characters (Kubernetes label value limit). |
-| enterprise.postgres | object | `{"connectionString":"","connectionStringSecret":{"key":"DATABASE_URL","name":""},"deploymentMode":"","iamAuth":{"enabled":false},"migrations":{"activeDeadlineSeconds":600,"backoffLimit":3,"resources":{"limits":{"cpu":"500m","memory":"256Mi"},"requests":{"cpu":"50m","memory":"64Mi"}},"runJob":true,"ttlSecondsAfterFinished":300}}` | PostgreSQL database configuration (Enterprise feature). Provides the durable store for audit events, compliance violations, and per-organization data isolation via Row-Level Security.  Connection string precedence:   1. postgresql.enabled: true  — embedded subchart wins; chart assembles the      full DSN from postgresql.auth.* and stores it in a managed Secret.   2. enterprise.postgres.connectionStringSecret.name  — reference a pre-existing      external Secret (recommended for production, CNPG, ESO, etc.).   3. enterprise.postgres.connectionString  — inline DSN; chart creates a managed      Secret named `<release>-postgres` annotated `helm.sh/resource-policy: keep`.  Migration Job:   When `enterprise.postgres.deploymentMode != ""` AND `enterprise.enabled: true`,   the chart renders a pre-install/pre-upgrade Job that runs all pending schema   migrations under an advisory lock. Disable with `migrations.runJob: false` to   manage migrations via your own pipeline (server still migrates on startup). |
+| enterprise.postgres | object | `{"connectionString":"","connectionStringSecret":{"key":"DATABASE_URL","name":""},"deploymentMode":"","iamAuth":{"enabled":false},"migrations":{"activeDeadlineSeconds":600,"backoffLimit":3,"resources":{"limits":{"cpu":"500m","memory":"256Mi"},"requests":{"cpu":"50m","memory":"64Mi"}},"runJob":true,"ttlSecondsAfterFinished":300}}` | PostgreSQL database configuration. DEPRECATED naming surface: Postgres is no longer an enterprise-only feature (R5-5 makes it mandatory on every edition). Prefer the top-level `externalPostgresql` block (canonical, mirrors externalRedis) for external databases and the `postgresql` block for the embedded subchart. The `enterprise.postgres.connectionString*` knobs below are retained as a DEPRECATED ALIAS, resolved LAST in the supply-mode precedence chain (see _helpers.tpl knodex.postgresSecretRef). `deploymentMode`, `iamAuth`, and `migrations` continue to live here.  Migration Job:   The chart renders a pre-install/pre-upgrade Job that runs all pending schema   migrations under an advisory lock whenever Postgres resolves (now every   edition). Disable with `migrations.runJob: false` to manage migrations via   your own pipeline (the server still migrates on startup). |
 | enterprise.postgres.connectionString | string | `""` | Inline DATABASE_URL DSN. When set, the chart creates a managed Secret named `<release>-postgres` annotated `helm.sh/resource-policy: keep`. Suitable for dev/test only; production should use connectionStringSecret. Format: `postgres://user:pass@host:5432/dbname?sslmode=require` |
 | enterprise.postgres.connectionStringSecret | object | `{"key":"DATABASE_URL","name":""}` | Reference to an externally-managed Secret containing DATABASE_URL. Recommended for production. The chart does not create this Secret — provision it via External Secrets Operator, AKS Secret Provider, CNPG, etc. |
 | enterprise.postgres.connectionStringSecret.key | string | `"DATABASE_URL"` | Key within the Secret that contains the DSN. |
@@ -96,6 +96,15 @@ kubectl get secret knodex-initial-admin-password -n knodex -o jsonpath='{.data.p
 | enterprise.postgres.migrations.resources | object | `{"limits":{"cpu":"500m","memory":"256Mi"},"requests":{"cpu":"50m","memory":"64Mi"}}` | Job pod resources. |
 | enterprise.postgres.migrations.runJob | bool | `true` | Render the migration Job. Disable to manage migrations via your own pipeline — the server still migrates on startup. |
 | enterprise.postgres.migrations.ttlSecondsAfterFinished | int | `300` | Seconds the Job pod is retained after success. |
+| externalPostgresql | object | `{"database":"knodex","existingSecret":"","existingSecretKey":"DATABASE_URL","host":"","password":"","port":5432,"sslMode":"require","username":"knodex"}` | ---------------------------------------------------------------------------- Point a fresh install of any edition at a pre-provisioned external database WITHOUT enabling the embedded subchart (mirrors externalRedis). Setting either `existingSecret` or `host` here trips the auto-detect guard, so the embedded subchart's parent resources step aside automatically (set postgresql.enabled=false to also skip the unused embedded StatefulSet — see the postgresql block above).  TLS & rotation: prefer `existingSecret` holding a full DSN (key DATABASE_URL by default) so credentials rotate out-of-band (External Secrets Operator, CSI, CNPG, cloud-managed rotation) with no chart change. Set sslMode=require (or verify-full) for production. The inline host/username/password path is for convenience/dev only.  ⚠️  Role provisioning for an external DB is OPERATOR-MANAGED: the chart's initdb role hook applies to the embedded subchart only. Provision knodex_app / knodex_migrate (or grant your login role into them) out-of-band; migration 0005 best-effort-creates them NOLOGIN where it has privilege. ⚠️  Backup/restore is the OPERATOR'S RESPONSIBILITY (the chart configures none). |
+| externalPostgresql.database | string | `"knodex"` | Database name (used to build the DSN when host is set without existingSecret). |
+| externalPostgresql.existingSecret | string | `""` | Reference a pre-provisioned Secret holding a full DATABASE_URL DSN. Wins over host/username/password. Recommended for production. |
+| externalPostgresql.existingSecretKey | string | "DATABASE_URL" | Key within existingSecret holding the DSN. |
+| externalPostgresql.host | string | `""` | Hostname of the external Postgres. When set (and no existingSecret), the chart builds a managed DSN Secret from host/port/database/username/password. |
+| externalPostgresql.password | string | `""` | Password (used to build the DSN when host is set without existingSecret). For production prefer existingSecret over an inline password. |
+| externalPostgresql.port | int | `5432` | Port. |
+| externalPostgresql.sslMode | string | `"require"` | sslmode for the built DSN (disable | require | verify-ca | verify-full). |
+| externalPostgresql.username | string | `"knodex"` | Login user (used to build the DSN when host is set without existingSecret). |
 | externalRedis.host | string | `""` |  |
 | externalRedis.password | string | `""` |  |
 | externalRedis.port | int | `6379` |  |
@@ -121,8 +130,11 @@ kubectl get secret knodex-initial-admin-password -n knodex -o jsonpath='{.data.p
 | ingress.tls | list | `[]` |  |
 | kro | object | `{"enabled":false}` | ---------------------------------------------------------------------------- |
 | nameOverride | string | `""` |  |
-| postgresql | object | `{"auth":{"database":"knodex","password":"knodex","username":"knodex"},"enabled":false,"primary":{"persistence":{"enabled":false},"resources":{"limits":{"cpu":"500m","memory":"512Mi"},"requests":{"cpu":"100m","memory":"256Mi"}}}}` | ---------------------------------------------------------------------------- This subchart provides a self-contained PostgreSQL instance for environments where provisioning external Postgres infrastructure is impractical. Enable it for demos, local development, and CI pipelines. For production, keep postgresql.enabled: false and configure the postgres: section below.  Connection string precedence when postgres.deploymentMode is set:   1. postgresql.enabled: true  — embedded subchart wins; the chart assembles      the full DATABASE_URL DSN from the subchart auth values and stores it in      a Secret named <release>-knodex-postgres-url.   2. postgres.connectionStringSecret.name != ""  — reference a pre-existing      external Secret (recommended for production).   3. postgres.connectionString != ""  — inline DSN, chart creates a managed      Secret named <release>-postgres.  ⚠️  PRODUCTION WARNING: The embedded subchart uses ephemeral storage by default (primary.persistence.enabled: false) — ALL DATA IS LOST on pod restart. For production, provision an external Postgres instance and use postgres.connectionString or postgres.connectionStringSecret instead. |
-| postgresql.enabled | bool | false | Enable the embedded Bitnami PostgreSQL subchart. FOR DEMOS, DEV, AND CI ONLY — do NOT use in production. |
+| postgresql | object | `{"auth":{"database":"knodex","password":"knodex","username":"knodex"},"enabled":true,"forceEnable":false,"image":{"digest":"sha256:926356130b77d5742d8ce605b258d35db9b62f2f8fd1601f9dbaef0c8a710a8d","registry":"docker.io","repository":"bitnami/postgresql","tag":"17.6.0-debian-12-r4"},"primary":{"initdb":{"scripts":{"00-knodex-roles.sql":"-- Provision the RLS roles the Knodex app + migrations expect.\n-- Runs as the postgres superuser on first init; idempotent.\nDO $$\nBEGIN\n  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'knodex_app') THEN\n    CREATE ROLE knodex_app NOLOGIN;\n  END IF;\n  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'knodex_migrate') THEN\n    CREATE ROLE knodex_migrate NOLOGIN;\n  END IF;\n  -- The bundled login user inherits both roles. knodex is a regular\n  -- (non-superuser, non-BYPASSRLS) Bitnami user, so RLS applies.\n  GRANT knodex_app TO knodex;\n  GRANT knodex_migrate TO knodex;\nEND\n$$;\n"}},"persistence":{"enabled":false},"resources":{"limits":{"cpu":"500m","memory":"512Mi"},"requests":{"cpu":"100m","memory":"256Mi"}}}}` | ---------------------------------------------------------------------------- Postgres is MANDATORY on every edition (OSS, Enterprise, Cloud) as of R5-5: every edition persists a canonical user roster (`identity.users`) and the server FAILS FAST at startup if DATABASE_URL is unset / Postgres unreachable. To make a fresh `helm install` of ANY edition come up healthy with no extra values, the embedded Bitnami subchart is ENABLED BY DEFAULT.  Supply-mode precedence (highest first) — see _helpers.tpl knodex.postgresSecretRef:   1. embedded subchart (this block, enabled by default) — the chart assembles      the full DATABASE_URL DSN and stores it in <release>-knodex-postgres-url.   2. externalPostgresql.existingSecret — reference a pre-provisioned external      Secret (canonical production path; see the externalPostgresql block below).   3. externalPostgresql.host (+ username/password) — chart builds a managed DSN      Secret <fullname>-postgres from the block.   4. enterprise.postgres.connectionString* — DEPRECATED alias, resolved last.  AUTO-DETECT GUARD (upgrade-safety): when ANY external supply above is present, the chart automatically does NOT render the embedded subchart's PARENT resources (DSN Secret / DATABASE_URL source / wait-for-postgres credential) — even though it is default-on — UNLESS postgresql.forceEnable=true. Operators pointing at an external DB should ALSO set `postgresql.enabled: false` to skip the (otherwise unused) embedded StatefulSet, because Helm cannot evaluate a computed value for the Bitnami subchart's static `condition: postgresql.enabled`.  ⚠️  PRODUCTION WARNING: the embedded subchart uses EPHEMERAL storage by default (primary.persistence.enabled: false) — ALL DATA IS LOST on pod restart — and the chart configures NO backups (no WAL archiving, snapshots, or PVC backups): backup/restore is entirely the OPERATOR'S RESPONSIBILITY. Production deployments should set postgresql.enabled=false and point at a managed database via the externalPostgresql block below. |
+| postgresql.enabled | bool | true | Enable the embedded Bitnami PostgreSQL subchart. Default-on so a fresh install of any edition is healthy out of the box (R5-5). Set to false when using externalPostgresql / an external DSN to skip the unused embedded pod. |
+| postgresql.forceEnable | bool | false | Force the embedded subchart's parent resources (DSN Secret, DATABASE_URL source, wait-for-postgres credential) to render even when an external supply is detected. Overrides the auto-detect guard (AC #3). Rarely needed. |
+| postgresql.image.digest | string | `"sha256:926356130b77d5742d8ce605b258d35db9b62f2f8fd1601f9dbaef0c8a710a8d"` | Bitnami dependency risk: through 2025–2026 the Bitnami catalog removed floating semver tags from Docker Hub and relocated images (the `17.6.0-debian-12-r4` TAG that ships with subchart 16.7.27 is already gone from docker.io/bitnami/postgresql), so we pin by DIGEST exactly like redis.image.digest above. The digest still resolves under docker.io/bitnami/postgresql even though the tag does not; if Bitnami later DELETES the digest you must repoint `repository` to docker.io/bitnamilegacy/postgresql (which mirrors it) or bump the subchart version in Chart.yaml. To update: docker pull bitnami/postgresql:<tag> && \   docker inspect --format='{{index .RepoDigests 0}}' bitnami/postgresql:<tag> |
+| postgresql.primary.initdb | object | `{"scripts":{"00-knodex-roles.sql":"-- Provision the RLS roles the Knodex app + migrations expect.\n-- Runs as the postgres superuser on first init; idempotent.\nDO $$\nBEGIN\n  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'knodex_app') THEN\n    CREATE ROLE knodex_app NOLOGIN;\n  END IF;\n  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'knodex_migrate') THEN\n    CREATE ROLE knodex_migrate NOLOGIN;\n  END IF;\n  -- The bundled login user inherits both roles. knodex is a regular\n  -- (non-superuser, non-BYPASSRLS) Bitnami user, so RLS applies.\n  GRANT knodex_app TO knodex;\n  GRANT knodex_migrate TO knodex;\nEND\n$$;\n"}}` | initdb hook (runs ONCE on first init of an empty data dir, as the postgres superuser). Provisions the RLS roles the app expects (NFR-U13): knodex_app (the non-BYPASSRLS role the pgxpool runs as) and knodex_migrate (migration-time DDL). The bundled login user (auth.username, default `knodex`) is GRANTed INTO both, so the app connects as a non-superuser, non-BYPASSRLS role and the identity RLS policies actually constrain it. IDEMPOTENT with migration 0005 (which best-effort-creates these roles NOLOGIN and explicitly defers LOGIN/GRANT provisioning to "Story 15.3"). ⚠️  If you change auth.username, update the GRANT target below to match. |
 | postgresql.primary.persistence.enabled | bool | `false` | Persist data across pod restarts. Disabled by default so the embedded instance is ephemeral (data is lost on restart). For stable dev environments, set to true and configure a StorageClass. |
 | rbac.create | bool | `true` |  |
 | redis.architecture | string | `"standalone"` |  |
@@ -187,6 +199,7 @@ kubectl get secret knodex-initial-admin-password -n knodex -o jsonpath='{.data.p
 | server.podLabels | object | `{}` | Labels to add to server pods |
 | server.podSecurityContext | object | `{"fsGroup":10001,"runAsGroup":10001,"runAsNonRoot":true,"runAsUser":10001,"seccompProfile":{"type":"RuntimeDefault"}}` | Server pod security context (matches upstream Dockerfile UID 10001) |
 | server.priorityClassName | string | `""` | Priority class name for server pods |
+| server.project.wrapperRGD | string | `""` | Name of the kro ResourceGraphDefinition to use as a wrapper for Project creation. When set, POST /api/v1/projects creates a kro RGD instance instead of a Project CRD directly; the wrapper RGD materializes the full bundle (Project + any operator-defined bootstrap extras). Leave empty to use direct Project creation (default behavior). Can also be set at runtime via PUT /api/v1/settings/wrappers/Project. See deploy/examples/rgds/wrapped-project-example.yaml for authoring guide. |
 | server.readinessProbe.failureThreshold | int | `3` |  |
 | server.readinessProbe.httpGet.path | string | `"/readyz"` |  |
 | server.readinessProbe.httpGet.port | string | `"http"` |  |
@@ -194,7 +207,6 @@ kubectl get secret knodex-initial-admin-password -n knodex -o jsonpath='{.data.p
 | server.readinessProbe.periodSeconds | int | `10` |  |
 | server.readinessProbe.timeoutSeconds | int | `5` |  |
 | server.replicaCount | int | `1` |  |
-| server.project.wrapperRGD | string | `""` | Name of the kro `ResourceGraphDefinition` to use as a wrapper for Project creation. When set, `POST /api/v1/projects` creates a kro RGD instance instead of a `Project` CRD directly; the wrapper RGD materializes the full bundle (Project + any operator-defined bootstrap extras). Leave empty to use direct Project creation. Can also be managed at runtime via `PUT /api/v1/settings/wrappers/Project` (requires server-admin). See `deploy/examples/rgds/wrapped-project-example.yaml`. |
 | server.resources.limits | object | `{}` |  |
 | server.resources.requests.cpu | string | `"100m"` |  |
 | server.resources.requests.memory | string | `"128Mi"` |  |
@@ -209,119 +221,116 @@ kubectl get secret knodex-initial-admin-password -n knodex -o jsonpath='{.data.p
 | serviceAccount.create | bool | `true` |  |
 | serviceAccount.name | string | `""` |  |
 
-## PostgreSQL (Enterprise)
+## PostgreSQL
 
-Knodex Enterprise requires PostgreSQL as the durable store for audit events
-and compliance violation history. Operators bring their own production
-Postgres (managed RDS, Cloud SQL, Azure Database, etc.) — this chart does
-not package Postgres as a subchart. Local-dev provisioning is covered
-separately (Tilt + docker-compose).
+PostgreSQL is **mandatory on every edition** (OSS, Enterprise, Cloud). Each
+edition persists a canonical user roster (`identity.users`) on every OIDC
+login, and the server **fails fast at startup** if `DATABASE_URL` is unset or
+Postgres is unreachable. Enterprise additionally uses Postgres for the audit /
+compliance / license tables.
 
-The chart supports two deployment modes via `postgres.deploymentMode`:
+To make a fresh `helm install` of any edition come up healthy with no extra
+values, the chart **bundles the Bitnami PostgreSQL subchart and enables it by
+default** (`postgresql.enabled: true`). Production deployments should disable
+it and point at a managed database via `externalPostgresql`.
 
-| Mode        | Use case                                              |
-|-------------|-------------------------------------------------------|
-| `""`        | Postgres disabled (default; OSS-compatible).          |
-| `"shared"`  | Single DB hosting many orgs (Cloud free / team tier). |
-| `"per-org"` | One DB per Knodex tenant (Cloud enterprise tier).     |
+### Supply-mode precedence
 
-Any other value fails chart rendering with a clear error.
+`DATABASE_URL` resolves from exactly one source, highest precedence first
+(see `_helpers.tpl` `knodex.postgresSecretRef`):
 
-### Shared-DB mode (single Postgres for many orgs)
+| # | Source | When |
+|---|--------|------|
+| 1 | Embedded subchart DSN (`<release>-knodex-postgres-url`) | `postgresql.enabled` (default) and no external supply, or `postgresql.forceEnable=true` |
+| 2 | `externalPostgresql.existingSecret` | a pre-provisioned external Secret (canonical production path) |
+| 3 | `externalPostgresql.host` (+ `username`/`password`) | chart builds a managed DSN Secret `<fullname>-postgres` |
+| 4 | `enterprise.postgres.connectionString*` | **deprecated** alias, resolved last |
 
-```yaml
-enterprise:
-  enabled: true
+### Auto-detect guard (upgrade-safety)
 
-postgres:
-  deploymentMode: "shared"
-  connectionStringSecret:
-    name: knodex-shared-db
-    key: DATABASE_URL
-```
+Because the embedded subchart is default-on, the chart **auto-detects** an
+external supply (any of `externalPostgresql.host`, `externalPostgresql.existingSecret`,
+or the deprecated `enterprise.postgres.connectionString*`) and then does **not**
+render the embedded subchart's chart-owned resources (the DSN Secret, the
+`DATABASE_URL` source, the `wait-for-postgres` credential) — so a single,
+unambiguous DSN always wins. Override with `postgresql.forceEnable=true`.
 
-Provision the `knodex-shared-db` Secret out-of-band — typically via the
-External Secrets Operator backed by a vault (Azure Key Vault, AWS Secrets
-Manager, GCP Secret Manager, etc.). The chart references the Secret but
-does not create or mutate it.
+> Helm cannot evaluate a computed value for the Bitnami subchart's static
+> `condition: postgresql.enabled`, so operators pointing at an external DB
+> should **also set `postgresql.enabled: false`** to skip the (otherwise
+> unused) embedded StatefulSet.
 
-### Per-org DB mode (one DB per tenant)
+### Embedded (bundled) Postgres — demos / dev / CI
 
-Onboard a new tenant by installing the chart in a per-tenant namespace with
-a per-tenant DSN. Tenant offboarding / GDPR deletion is handled by the
-Knodex Cloud control plane — **not** by this chart.
+Default behavior, no values needed. The bundled image is **digest-pinned**
+(`postgresql.image.digest`) per the Bitnami catalog-volatility risk documented
+in `values.yaml`. On first init the subchart provisions the RLS roles the app
+expects (`knodex_app`, `knodex_migrate`) via `primary.initdb.scripts`,
+idempotent with migration `0005`.
 
-```yaml
-# values-org-acme.yaml
-enterprise:
-  enabled: true
-  organization: "acme-corp"
+> ⚠️ The bundled instance uses **ephemeral storage** by default — data is lost
+> on pod restart — and the chart configures **no backups**. Backup/restore is
+> entirely the operator's responsibility. Do not use the bundled subchart in
+> production.
 
-postgres:
-  deploymentMode: "per-org"
-  connectionStringSecret:
-    name: org-acme-db
-    key: DATABASE_URL
-```
+### External Postgres (recommended for production)
 
-```bash
-helm install knodex knodex/knodex \
-  --namespace org-acme \
-  --create-namespace \
-  --values values-org-acme.yaml
-```
-
-### Inline DSN (dev/test only)
-
-For dev and test, the chart can manage the credential itself when an inline
-DSN is supplied. The chart-managed Secret is annotated
-`helm.sh/resource-policy: keep` so a chart uninstall does not destroy the
-operator-supplied credential by accident.
+Point at a managed database via an existing Secret holding a full DSN:
 
 ```yaml
-postgres:
-  deploymentMode: "shared"
-  connectionString: "postgres://knodex:secret@postgres.acme.local:5432/knodex?sslmode=require"
+postgresql:
+  enabled: false          # skip the unused embedded subchart
+
+externalPostgresql:
+  existingSecret: knodex-db   # key DATABASE_URL by default
+  existingSecretKey: DATABASE_URL
 ```
 
-When both `connectionString` and `connectionStringSecret.name` are set, the
-external Secret wins.
+Provision the Secret out-of-band (External Secrets Operator, CSI driver, CNPG,
+cloud-managed rotation) so credentials rotate with no chart change. Set
+`sslMode: require` (or `verify-full`) for production. Role provisioning for an
+external DB is operator-managed (the chart's initdb hook applies to the
+embedded subchart only).
+
+For dev/test convenience the chart can build the DSN from inline fields:
+
+```yaml
+postgresql:
+  enabled: false
+
+externalPostgresql:
+  host: postgres.acme.local
+  database: knodex
+  username: knodex
+  password: secret
+  sslMode: require
+```
 
 ### IAM authentication
 
-`postgres.iamAuth.enabled: true` plumbs the `POSTGRES_IAM_AUTH_ENABLED`
-env var into the migration Job and the server Deployment. The binary's
-`TokenProvider` interface is the contract for handling this. Concrete
-provider implementations (RDS IAM, Cloud SQL IAM, Azure AD) are operator-
-supplied and **demand-driven** — they do **not** ship with this release.
+`enterprise.postgres.iamAuth.enabled: true` plumbs the
+`POSTGRES_IAM_AUTH_ENABLED` env var into the migration Job and the server
+Deployment. Concrete provider implementations (RDS IAM, Cloud SQL IAM, Azure
+AD) are operator-supplied and demand-driven — they do **not** ship with this
+release.
 
 ### Migration Job
 
-When `postgres.deploymentMode != ""`, a Helm pre-install/pre-upgrade Job
-runs all pending schema migrations under an advisory lock (the same lock
-the server uses on startup, so stale Pods cannot race the Job). The server
-Deployment rolls out only after the Job exits 0.
+A Helm pre-install/pre-upgrade Job runs all pending schema migrations under an
+advisory lock (the same lock the server uses on startup, so stale Pods cannot
+race the Job). The server Deployment rolls out only after the Job exits 0.
 
-If the Job fails, `helm install` / `helm upgrade` exits non-zero with the
-Job's failure message. To inspect the failure:
+If the Job fails, `helm install` / `helm upgrade` exits non-zero with the Job's
+failure message. To inspect the failure:
 
 ```bash
 kubectl describe job/<release>-postgres-migrate -n <namespace>
 kubectl logs job/<release>-postgres-migrate -n <namespace>
 ```
 
-To delegate migrations to your own pipeline, set `postgres.migrations.runJob: false`.
-The server still runs migrations on startup, so there is no "neither path
-migrates" footgun.
-
-### Out of scope
-
-- **Org offboarding / GDPR deletion**: handled by the Knodex Cloud control
-  plane, not this chart.
-- **IAM token providers**: interface ships in the server binary;
-  implementations are operator-supplied.
-- **Bundled Postgres**: operators bring their own production Postgres.
-  Local-dev provisioning is a separate concern (Tilt + docker-compose).
+To delegate migrations to your own pipeline, set
+`enterprise.postgres.migrations.runJob: false`. The server still runs
+migrations on startup, so there is no "neither path migrates" footgun.
 
 ## Organization (Enterprise)
 

@@ -21,7 +21,7 @@ function detectMac(): boolean {
 
 export function CmdKTrigger({
   onOpen,
-  placeholder = "Search, deploy, jump…",
+  placeholder = "Search…",
   className,
 }: CmdKTriggerProps) {
   // Lazy initializer — computes once on first render so Macs don't flicker
@@ -32,7 +32,7 @@ export function CmdKTrigger({
     <button
       type="button"
       onClick={onOpen}
-      data-testid="cmd-k-trigger"
+      data-testid="cmdk-trigger"
       aria-label="Open command palette"
       aria-keyshortcuts={isMac ? "Meta+K" : "Control+K"}
       className={cn(

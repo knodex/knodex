@@ -124,6 +124,12 @@ type Event struct {
 
 	// Details contains action-specific metadata.
 	Details map[string]any
+
+	// ResolvedUserID is the canonical identity.users ULID behind the actor of
+	// an identity.user.* event (R5-8 resolver). Empty for every other event —
+	// the EE Postgres store writes it to the nullable audit.events.resolved_user_id
+	// column. Informational only; never participates in authorization.
+	ResolvedUserID string
 }
 
 // Recorder is the interface handlers use to record audit events.

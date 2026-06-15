@@ -297,16 +297,6 @@ func (h *ValidationHandler) validateRoles(project *rbac.Project) []ValidationErr
 			}
 		}
 
-		// Validate group names if provided
-		for j, group := range role.Groups {
-			if !isValidGroupName(group) {
-				errors = append(errors, ValidationError{
-					Field:    fmt.Sprintf("roles[%d].groups[%d]", i, j),
-					Message:  fmt.Sprintf("invalid group name format: %s", group),
-					Severity: "error",
-				})
-			}
-		}
 	}
 
 	return errors

@@ -104,7 +104,7 @@ test.describe('Global Admin - Instance Deployment & Management', () => {
 
     // Verify success: toast message or navigation to instance detail
     const successToast = page.locator('text=deployed successfully');
-    const instanceDetailPage = page.locator('h1, h2, [data-testid="instance-name"]');
+    const _instanceDetailPage = page.locator('h1, h2, [data-testid="instance-name"]');
 
     const isSuccess = await Promise.race([
       successToast.isVisible({ timeout: 10000 }).then(() => true),
@@ -437,7 +437,7 @@ test.describe('Global Admin - Instance Deployment & Management', () => {
       const status = deleteResponse.status();
       console.log('Delete API call completed with status:', status);
       deleteSucceeded = (status === 200 || status === 204);
-    } catch (error) {
+    } catch {
       console.log('Delete API call timeout or failed, continuing anyway');
     }
 

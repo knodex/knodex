@@ -8,8 +8,8 @@ import { AxiosError } from "axios";
 import { toast } from "sonner";
 import { useCanI } from "@/hooks/useCanI";
 import { useProjects, useCreateProject, useDeleteProject } from "@/hooks/useProjects";
+import { useInstanceList } from "@/hooks/useInstances";
 import { ProjectList, CreateProjectModal, DeleteProjectDialog } from "@/components/projects";
-import { PageHeader } from "@/components/layout/PageHeader";
 import type { Project, CreateProjectRequest } from "@/types/project";
 import { toUserFriendlyError } from "@/lib/errors";
 
@@ -22,10 +22,16 @@ export function ProjectsSettings() {
   const [deletingProject, setDeletingProject] = useState<Project | null>(null);
 
   const { data: projectsData, isLoading, error } = useProjects();
+  // Derived project→instance stats source. Server-paginated + namespace param is
+  // single-exact, so we fetch a large page and match client-side by namespace
+  // membership. Very large clusters may paginate beyond this page — flagged for
+  // a future server-side "by project" filter.
+  const { data: instancesData } = useInstanceList({ pageSize: 200 });
   const createMutation = useCreateProject();
   const deleteMutation = useDeleteProject();
 
   const projects = projectsData?.items || [];
+  const instances = instancesData?.items || [];
 
   const handleCreateSubmit = async (data: CreateProjectRequest) => {
     try {
@@ -55,10 +61,6 @@ export function ProjectsSettings() {
     navigate(`/projects/${project.name}`);
   };
 
-  const handleEdit = (project: Project) => {
-    navigate(`/projects/${project.name}`);
-  };
-
   // 403 Access Denied
   const is403Error = error && (error as AxiosError)?.response?.status === 403;
 
@@ -76,8 +78,6 @@ export function ProjectsSettings() {
 
   return (
     <section className="space-y-6">
-      <PageHeader title="Projects" />
-
       {error && !is403Error && (
         <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-md">
           <p className="text-sm text-destructive">
@@ -88,7 +88,7 @@ export function ProjectsSettings() {
 
       <ProjectList
         projects={projects}
-        onEdit={(isLoadingCreate || isErrorCreate || canCreateProject) ? handleEdit : undefined}
+        instances={instances}
         onDelete={(isLoadingDelete || isErrorDelete || canDeleteProject) ? handleDelete : undefined}
         onClick={handleProjectClick}
         onCreate={() => setShowCreateModal(true)}

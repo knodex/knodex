@@ -29,7 +29,7 @@ func TestEvaluateOIDCUser_FullFlow(t *testing.T) {
 
 	// Evaluate OIDC user with groups
 	groups := []string{"engineering", "platform-team"}
-	result, err := provSvc.EvaluateOIDCUser(ctx, oidcSubject, email, displayName, groups)
+	result, err := provSvc.EvaluateOIDCUser(ctx, oidcSubject, email, displayName, groups, "https://idp.example.com", true)
 	if err != nil {
 		t.Fatalf("EvaluateOIDCUser() failed: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestEvaluateOIDCUser_GlobalAdminGroup(t *testing.T) {
 	ctx := context.Background()
 
 	// User in global admin group
-	result, err := provSvc.EvaluateOIDCUser(ctx, "admin-subject", "admin@example.com", "Admin User", []string{"platform-admins"})
+	result, err := provSvc.EvaluateOIDCUser(ctx, "admin-subject", "admin@example.com", "Admin User", []string{"platform-admins"}, "https://idp.example.com", true)
 	if err != nil {
 		t.Fatalf("EvaluateOIDCUser() failed: %v", err)
 	}
@@ -129,13 +129,13 @@ func TestEvaluateOIDCUser_Idempotent(t *testing.T) {
 	groups := []string{"group-a", "group-b"}
 
 	// First evaluation
-	result1, err := provSvc.EvaluateOIDCUser(ctx, oidcSubject, email, displayName, groups)
+	result1, err := provSvc.EvaluateOIDCUser(ctx, oidcSubject, email, displayName, groups, "https://idp.example.com", true)
 	if err != nil {
 		t.Fatalf("First EvaluateOIDCUser() failed: %v", err)
 	}
 
 	// Second evaluation - should return identical results
-	result2, err := provSvc.EvaluateOIDCUser(ctx, oidcSubject, email, displayName, groups)
+	result2, err := provSvc.EvaluateOIDCUser(ctx, oidcSubject, email, displayName, groups, "https://idp.example.com", true)
 	if err != nil {
 		t.Fatalf("Second EvaluateOIDCUser() failed: %v", err)
 	}
@@ -176,7 +176,7 @@ func TestEvaluateOIDCUser_ConcurrentEvaluations(t *testing.T) {
 		wg.Add(1)
 		go func(index int) {
 			defer wg.Done()
-			results[index], errs[index] = provSvc.EvaluateOIDCUser(ctx, oidcSubject, email, displayName, groups)
+			results[index], errs[index] = provSvc.EvaluateOIDCUser(ctx, oidcSubject, email, displayName, groups, "https://idp.example.com", true)
 		}(i)
 	}
 
@@ -274,7 +274,7 @@ func TestEvaluateOIDCUser_InvalidEmail(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			groups := []string{} // Empty groups for invalid email tests
-			result, err := provSvc.EvaluateOIDCUser(ctx, tt.oidcSubject, tt.email, tt.displayName, groups)
+			result, err := provSvc.EvaluateOIDCUser(ctx, tt.oidcSubject, tt.email, tt.displayName, groups, "https://idp.example.com", true)
 			if tt.wantErr && err == nil {
 				t.Errorf("EvaluateOIDCUser() expected error for email %q, got nil", tt.email)
 			}
@@ -311,7 +311,7 @@ func TestEvaluateOIDCUser_ProjectGroupMapping(t *testing.T) {
 	ctx := context.Background()
 
 	// User in engineering group
-	result, err := provSvc.EvaluateOIDCUser(ctx, "eng-subject", "engineer@example.com", "Engineer", []string{"engineering"})
+	result, err := provSvc.EvaluateOIDCUser(ctx, "eng-subject", "engineer@example.com", "Engineer", []string{"engineering"}, "https://idp.example.com", true)
 	if err != nil {
 		t.Fatalf("EvaluateOIDCUser() failed: %v", err)
 	}

@@ -5,6 +5,7 @@ import React from "react";
 import type { CatalogRGD } from "@/types/rgd";
 import { cn } from "@/lib/utils";
 import { RGDIcon } from "@/components/ui/rgd-icon";
+import { CardChevron } from "@/components/ui/card-chevron";
 
 interface CatalogCardProps {
   rgd: CatalogRGD;
@@ -40,6 +41,9 @@ export const CatalogCard = React.memo(function CatalogCard({
         }
       }}
     >
+      {/* CardChevron requires the outer `group` class above to fade in on hover */}
+      <CardChevron />
+
       {/* Accent edge — visible on hover */}
       <div
         className="absolute left-0 top-0 bottom-0 w-[3px] opacity-0 group-hover:opacity-100 transition-opacity duration-200"

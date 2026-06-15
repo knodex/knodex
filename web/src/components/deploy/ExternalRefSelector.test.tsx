@@ -28,7 +28,12 @@ const defaultProps = {
 // Capture form methods for assertions
 let formMethods: UseFormReturn | null = null;
 
-// Wrapper that provides FormProvider context
+// Wrapper that provides FormProvider context.
+// React Compiler flags the module-level `formMethods` assignment and the
+// inline `Wrapper` component — both are deliberate test introspection patterns
+// (capture form methods for assertions; defer the form to a child so the test
+// hook runs in the right scope).
+/* eslint-disable react-hooks/globals, react-hooks/static-components */
 function FormWrapper({ children, defaultValues }: { children: ReactNode; defaultValues?: Record<string, unknown> }) {
   const Wrapper = () => {
     const methods = useForm({ defaultValues: defaultValues || {} });
@@ -45,6 +50,7 @@ function FormWrapper({ children, defaultValues }: { children: ReactNode; default
   };
   return <Wrapper />;
 }
+/* eslint-enable react-hooks/globals, react-hooks/static-components */
 
 function renderSelector(props = {}, defaultValues?: Record<string, unknown>) {
   formMethods = null;

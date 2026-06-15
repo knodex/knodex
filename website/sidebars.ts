@@ -16,6 +16,7 @@ const sidebars: SidebarsConfig = {
         'user-guide/deployment-modes',
         'user-guide/project-management',
         'user-guide/categories',
+        'user-guide/agents',
       ],
     },
     {
@@ -34,6 +35,7 @@ const sidebars: SidebarsConfig = {
         'administration/secrets-management',
         'administration/custom-icons',
         'administration/catalog-filter',
+        'administration/agents',
         'administration/troubleshooting',
       ],
     },
@@ -55,8 +57,10 @@ const sidebars: SidebarsConfig = {
       items: [
         'enterprise/license-activation',
         'enterprise/organizations',
+        'enterprise/agents',
         'enterprise/compliance-management',
         'enterprise/constraint-template-development',
+        'enterprise/upgrade-notes',
       ],
     },
     {

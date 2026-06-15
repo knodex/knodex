@@ -92,6 +92,28 @@ describe("CatalogListView", () => {
     expect(onClick).toHaveBeenCalledTimes(1);
   });
 
+  it("never renders the kagent branding badge, even for a kagent.dev Agent producer", () => {
+    render(
+      <CatalogListView
+        items={[
+          createTestRGD({
+            name: "kagent-agent",
+            producesKinds: [
+              { group: "kagent.dev", version: "v1alpha2", kind: "Agent" },
+            ],
+          }),
+          createTestRGD({
+            name: "plain-app",
+            producesKinds: [{ group: "apps", version: "v1", kind: "Deployment" }],
+          }),
+        ]}
+      />
+    );
+
+    expect(screen.queryByTestId("agent-ai-badge")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Powered by kagent/i)).not.toBeInTheDocument();
+  });
+
   it("sets aria-sort on the active column header", () => {
     render(<CatalogListView items={items} />);
     // Name is default sort column

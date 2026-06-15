@@ -6,6 +6,7 @@ import { listRGDs, getRGD, getRGDSchema, listRGDInstances, createInstance, getRG
 import { listK8sResources } from "@/api/k8s";
 import type { RGDListParams, CreateInstanceRequest } from "@/types/rgd";
 import { STALE_TIME } from "@/lib/query-client";
+import { is403 } from "@/lib/errors";
 
 /**
  * Hook for fetching paginated RGD list
@@ -100,8 +101,8 @@ export function useCreateInstance() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ kind, ...request }: CreateInstanceRequest & { kind: string }) =>
-      createInstance(kind, request),
+    mutationFn: ({ group, kind, ...request }: CreateInstanceRequest & { group: string; kind: string }) =>
+      createInstance(group, kind, request),
     onSuccess: (data) => {
       // Invalidate instances list to refresh
       queryClient.invalidateQueries({ queryKey: ["rgd-instances", data.rgdName] });
@@ -109,6 +110,11 @@ export function useCreateInstance() {
       queryClient.invalidateQueries({ queryKey: ["instances"] });
       // Also invalidate the RGD list to update instance count
       queryClient.invalidateQueries({ queryKey: ["rgds"] });
+      // Keep the Agents hub fresh: a deployed kagent-agent RGD instance must
+      // appear in Installed Agents without waiting out the 30s staleTime.
+      // Unconditional — detecting agent-ness client-side isn't worth it; a
+      // non-agent invalidation is one cheap LIST (Story 49.3).
+      queryClient.invalidateQueries({ queryKey: ["agents", "installed"] });
     },
   });
 }
@@ -130,12 +136,7 @@ export function useK8sResources(
     staleTime: STALE_TIME.FREQUENT,
     retry: (failureCount, error) => {
       // Don't retry on 403 (forbidden) errors
-      if (error && typeof error === "object" && "response" in error) {
-        const axiosError = error as { response?: { status?: number } };
-        if (axiosError.response?.status === 403) {
-          return false;
-        }
-      }
+      if (is403(error)) return false;
       return failureCount < 2;
     },
   });

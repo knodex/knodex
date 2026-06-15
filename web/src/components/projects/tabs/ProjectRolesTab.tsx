@@ -133,7 +133,7 @@ export function ProjectRolesTab({
               onDelete={deletion.handleDeleteRole}
               projectDestinations={project.destinations || []}
               onPoliciesChange={saveLogic.handlePoliciesChange}
-              onGroupsChange={saveLogic.handleGroupsChange}
+              onTeamsChange={saveLogic.handleTeamsChange}
               onDestinationsChange={saveLogic.handleDestinationsChange}
             />
           );

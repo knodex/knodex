@@ -112,7 +112,7 @@ test.describe.skip('OIDC Authentication Flow', () => {
 
     // Check for Global Admin indicator in UI
     // This could be a badge, role label, or admin menu items
-    const globalAdminIndicator = page.locator('[data-testid="global-admin-badge"], text="Global Admin", [role="badge"]:has-text("Admin")');
+    const _globalAdminIndicator = page.locator('[data-testid="global-admin-badge"], text="Global Admin", [role="badge"]:has-text("Admin")');
 
     // Wait for role to be loaded and displayed
     await page.waitForTimeout(2000);

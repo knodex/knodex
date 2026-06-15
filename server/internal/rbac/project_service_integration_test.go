@@ -287,13 +287,11 @@ func TestProjectService_GetProject_Integration(t *testing.T) {
 					Name:        "admin",
 					Description: "Full access",
 					Policies:    []string{"p, role:serveradmin, *, *, *, allow"},
-					Groups:      []string{"admins"},
 				},
 				{
 					Name:        "developer",
 					Description: "Limited access",
 					Policies:    []string{"p, role:developer, applications, get, *, allow"},
-					Groups:      []string{"developers"},
 				},
 			},
 		}
@@ -307,7 +305,6 @@ func TestProjectService_GetProject_Integration(t *testing.T) {
 
 		assert.Len(t, retrieved.Spec.Destinations, 3)
 		assert.Len(t, retrieved.Spec.Roles, 2)
-		assert.Contains(t, retrieved.Spec.Roles[0].Groups, "admins")
 	})
 }
 
@@ -833,20 +830,26 @@ func TestProjectService_RoleOperations_Integration(t *testing.T) {
 		assert.Equal(t, "admin", updated.Spec.Roles[0].Name)
 	})
 
-	t.Run("add group to role", func(t *testing.T) {
+	t.Run("add team to role", func(t *testing.T) {
 		name := testProjectName()
 		defer cleanupProject(t, name)
 
 		// Create project
-		spec := newTestProjectSpec("Group operations test")
+		spec := newTestProjectSpec("Team operations test")
 		_, err := testProjectSvc.CreateProject(ctx, name, spec, testCreatedBy)
 		require.NoError(t, err)
 
-		// Add group to admin role
-		updated, err := testProjectSvc.AddGroupToRole(ctx, name, "admin", "developers", testCreatedBy)
+		// Add a team to the admin role via UpdateRole
+		updatedRole := rbac.ProjectRole{
+			Name:        "admin",
+			Description: "Full access",
+			Policies:    []string{"p, role:serveradmin, *, *, *, allow"},
+			Teams:       []string{"developers-team"},
+		}
+		updated, err := testProjectSvc.UpdateRole(ctx, name, "admin", updatedRole, testCreatedBy)
 		require.NoError(t, err)
 
-		// Verify group added
+		// Verify team added
 		var adminRole *rbac.ProjectRole
 		for i := range updated.Spec.Roles {
 			if updated.Spec.Roles[i].Name == "admin" {
@@ -855,7 +858,7 @@ func TestProjectService_RoleOperations_Integration(t *testing.T) {
 			}
 		}
 		require.NotNil(t, adminRole)
-		assert.Contains(t, adminRole.Groups, "developers")
+		assert.Contains(t, adminRole.Teams, "developers-team")
 	})
 
 	t.Run("get project roles", func(t *testing.T) {
@@ -933,11 +936,33 @@ func TestProjectService_GetProjectByDestinationNamespace_Integration(t *testing.
 // GetUserProjectsByGroup INTEGRATION TESTS
 // =============================================================================
 
+// stubTeamResolver implements TeamResolver for integration tests without
+// requiring live Team CRD instances in the cluster.
+type stubTeamResolver struct {
+	groups map[string][]string // team name → oidc groups
+}
+
+func (s *stubTeamResolver) GetGroups(name string) ([]string, bool) {
+	g, ok := s.groups[name]
+	return g, ok
+}
+
 func TestProjectService_GetUserProjectsByGroup_Integration(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("find projects by user groups", func(t *testing.T) {
-		// Create multiple projects with different groups
+		// Wire a stub TeamResolver so teams expand to OIDC groups without
+		// needing live Team CRD instances in the cluster.
+		resolver := &stubTeamResolver{
+			groups: map[string][]string{
+				"developers-team": {"developers"},
+				"admins-team":     {"admins"},
+			},
+		}
+		testProjectSvc.SetTeamResolver(resolver)
+		t.Cleanup(func() { testProjectSvc.SetTeamResolver(nil) })
+
+		// Create multiple projects with different teams
 		name1 := testProjectName()
 		defer cleanupProject(t, name1)
 		name2 := testProjectName()
@@ -945,34 +970,34 @@ func TestProjectService_GetUserProjectsByGroup_Integration(t *testing.T) {
 		name3 := testProjectName()
 		defer cleanupProject(t, name3)
 
-		// Project 1: developers group
+		// Project 1: developers team
 		spec1 := rbac.ProjectSpec{
 			Description:  "Developers project",
 			Destinations: []rbac.Destination{{Namespace: "*"}},
 			Roles: []rbac.ProjectRole{
-				{Name: "developer", Description: "Dev", Policies: []string{"p, allow"}, Groups: []string{"developers"}},
+				{Name: "developer", Description: "Dev", Policies: []string{"p, allow"}, Teams: []string{"developers-team"}},
 			},
 		}
 		_, err := testProjectSvc.CreateProject(ctx, name1, spec1, testCreatedBy)
 		require.NoError(t, err)
 
-		// Project 2: admins group
+		// Project 2: admins team
 		spec2 := rbac.ProjectSpec{
 			Description:  "Admins project",
 			Destinations: []rbac.Destination{{Namespace: "*"}},
 			Roles: []rbac.ProjectRole{
-				{Name: "admin", Description: "Admin", Policies: []string{"p, allow"}, Groups: []string{"admins"}},
+				{Name: "admin", Description: "Admin", Policies: []string{"p, allow"}, Teams: []string{"admins-team"}},
 			},
 		}
 		_, err = testProjectSvc.CreateProject(ctx, name2, spec2, testCreatedBy)
 		require.NoError(t, err)
 
-		// Project 3: both groups
+		// Project 3: both teams
 		spec3 := rbac.ProjectSpec{
 			Description:  "Shared project",
 			Destinations: []rbac.Destination{{Namespace: "*"}},
 			Roles: []rbac.ProjectRole{
-				{Name: "all", Description: "All", Policies: []string{"p, allow"}, Groups: []string{"developers", "admins"}},
+				{Name: "all", Description: "All", Policies: []string{"p, allow"}, Teams: []string{"developers-team", "admins-team"}},
 			},
 		}
 		_, err = testProjectSvc.CreateProject(ctx, name3, spec3, testCreatedBy)
@@ -982,7 +1007,7 @@ func TestProjectService_GetUserProjectsByGroup_Integration(t *testing.T) {
 		projects, err := testProjectSvc.GetUserProjectsByGroup(ctx, []string{"developers"})
 		require.NoError(t, err)
 
-		// Should find project1 and project3
+		// Should find project1 and project3 (developer + shared), not project2 (admins-only)
 		foundNames := make([]string, 0)
 		for _, p := range projects {
 			if strings.HasPrefix(p.Name, testPrefix) {

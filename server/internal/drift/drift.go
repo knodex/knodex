@@ -46,17 +46,26 @@ type Service struct {
 
 // NewService creates a new drift detection service.
 // If client is nil, all operations are no-ops (graceful degradation).
-// If organization is empty, it defaults to "default".
+//
+// The organization scopes every drift key. An empty organization is a
+// configuration error (the organization is normalized and validated in
+// config.Load): rather than silently coercing it to a shared "default"
+// keyspace — which would collide drift state across tenants — the service
+// fails closed by disabling itself (operations become no-ops) and logs the
+// misconfiguration (audit G-16).
 func NewService(client *redis.Client, logger *slog.Logger, organization string) *Service {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	logger = logger.With("component", "drift-service")
 	if organization == "" {
-		organization = "default"
+		logger.Error("drift service received an empty organization (configuration error); " +
+			"drift detection disabled to avoid cross-tenant key collisions")
+		client = nil // fail closed: disable all operations
 	}
 	return &Service{
 		client:       client,
-		logger:       logger.With("component", "drift-service"),
+		logger:       logger,
 		organization: organization,
 	}
 }

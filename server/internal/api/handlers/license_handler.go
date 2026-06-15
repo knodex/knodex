@@ -45,6 +45,12 @@ func NewLicenseHandler(licenseService services.LicenseService, accessChecker lic
 // readable by all users so the UI can adapt feature visibility. Sensitive
 // fields (license key, token) are never exposed. Write access (UpdateLicense)
 // requires settings:update permission (serveradmin only).
+//
+// STORY-465 AC #11/#13: when the underlying service is the enterprise one,
+// the response is enriched with a `seats` object built from GetSeatUsage.
+// Authorization is unchanged — `seats` follows the same gate as the rest of
+// the payload. AC #12: the legacy `license.maxUsers` field is preserved for
+// backward compatibility; `seats` is additive.
 func (h *LicenseHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	if h.licenseService == nil {
 		response.WriteJSON(w, http.StatusOK, &services.LicenseStatus{
@@ -57,6 +63,15 @@ func (h *LicenseHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status := h.licenseService.GetStatus()
+	// AC #11: in EE builds, attach the seat-usage snapshot. NoopLicenseService
+	// returns the cold-start sentinel — we suppress it on OSS so the field is
+	// omitted entirely (rather than reporting a misleading "allowed: 0"). EE
+	// builds emit the field even at cold start so the UI knows to render
+	// "calculating…" (lastUpdated == "").
+	if status != nil && status.Enterprise {
+		usage := h.licenseService.GetSeatUsage(r.Context())
+		status.Seats = &usage
+	}
 	response.WriteJSON(w, http.StatusOK, status)
 }
 

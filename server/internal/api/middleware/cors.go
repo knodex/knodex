@@ -45,7 +45,7 @@ func CORS(config CORSConfig) func(http.Handler) http.Handler {
 			if allowedSet[origin] {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
 				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Request-ID")
+				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Request-ID, X-Knodex-Project")
 				w.Header().Set("Access-Control-Max-Age", "3600")
 			} else {
 				slog.Warn("blocked cross-origin request",

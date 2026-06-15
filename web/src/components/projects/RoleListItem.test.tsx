@@ -10,8 +10,8 @@ vi.mock('./PolicyRulesTable', () => ({
   PolicyRulesTable: () => <div data-testid="policy-rules-table" />,
 }));
 
-vi.mock('./OIDCGroupsManager', () => ({
-  OIDCGroupsManager: () => <div data-testid="oidc-groups-manager" />,
+vi.mock('@/components/teams/TeamPicker', () => ({
+  TeamPicker: () => <div data-testid="team-picker" />,
 }));
 
 vi.mock('./DestinationScopeSelector', () => ({
@@ -23,7 +23,7 @@ const baseRole = {
   name: 'deployer',
   description: 'Can deploy and manage instances',
   policies: ['p1', 'p2'],
-  groups: ['dev-group'],
+  teams: ['team-alpha'],
 };
 
 const defaultProps = {
@@ -42,17 +42,23 @@ const defaultProps = {
   onCancelEdit: vi.fn(),
   onDelete: vi.fn(),
   onPoliciesChange: vi.fn(),
-  onGroupsChange: vi.fn(),
+  onTeamsChange: vi.fn(),
   onDestinationsChange: vi.fn(),
 };
 
 describe('RoleListItem', () => {
-  it('renders role name, policy count, and group count', () => {
+  it('renders role name and policy count', () => {
     render(<RoleListItem {...defaultProps} />);
 
     expect(screen.getByText('deployer')).toBeInTheDocument();
     expect(screen.getByText('2 policies')).toBeInTheDocument();
-    expect(screen.getByText('1 groups')).toBeInTheDocument();
+  });
+
+  it('renders teams badge, not groups badge', () => {
+    render(<RoleListItem {...defaultProps} />);
+
+    expect(screen.getByText('1 teams')).toBeInTheDocument();
+    expect(screen.queryByText(/groups/)).not.toBeInTheDocument();
   });
 
   it('renders description', () => {
@@ -88,11 +94,12 @@ describe('RoleListItem', () => {
     expect(onToggleExpand).toHaveBeenCalledWith('deployer');
   });
 
-  it('renders PolicyRulesTable and OIDCGroupsManager when expanded', () => {
+  it('renders PolicyRulesTable and TeamPicker when expanded, no OIDCGroupsManager', () => {
     render(<RoleListItem {...defaultProps} isExpanded={true} />);
 
     expect(screen.getByTestId('policy-rules-table')).toBeInTheDocument();
-    expect(screen.getByTestId('oidc-groups-manager')).toBeInTheDocument();
+    expect(screen.getByTestId('team-picker')).toBeInTheDocument();
+    expect(screen.queryByTestId('oidc-groups-manager')).not.toBeInTheDocument();
   });
 
   it('does not render expanded content when collapsed', () => {

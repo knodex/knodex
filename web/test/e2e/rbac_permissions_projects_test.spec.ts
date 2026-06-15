@@ -41,7 +41,7 @@ test.describe("RBAC: Project Feature Tests", () => {
 
       // Wait for Projects page to load properly
       // h1 is sr-only (screen reader only) — use getByRole which finds sr-only headings
-      await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible({ timeout: 10000 });
+      await expect(page.getByTestId('topbar-breadcrumb-leaf').filter({ hasText: 'Projects' })).toBeVisible({ timeout: 10000 });
 
       // Wait for either project cards or empty state
       const projectCards = page.locator('[data-testid="project-card"]');
@@ -77,13 +77,13 @@ test.describe("RBAC: Project Feature Tests", () => {
 
       // Wait for Projects page to load properly
       // h1 is sr-only (screen reader only) — use getByRole which finds sr-only headings
-      await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible({ timeout: 10000 });
+      await expect(page.getByTestId('topbar-breadcrumb-leaf').filter({ hasText: 'Projects' })).toBeVisible({ timeout: 10000 });
       // Wait for page to stabilize
       await page.waitForLoadState('networkidle', { timeout: 15000 });
 
       // Use first() to avoid strict mode violation when multiple buttons match /Create/i
       const createButton = page.getByRole("button", {
-        name: /Create/i,
+        name: /New project|Create/i,
       }).first();
       await expect(createButton).toBeVisible({ timeout: 10000 });
 
@@ -126,7 +126,7 @@ test.describe("RBAC: Project Feature Tests", () => {
 
       // Wait for page to render - either Projects header or Access Denied
       // h1 is sr-only — use getByRole for the heading, locator for Access Denied text
-      const projectsHeader = page.getByRole('heading', { name: 'Projects' });
+      const projectsHeader = page.getByTestId('topbar-breadcrumb-leaf').filter({ hasText: 'Projects' });
       const accessDenied = page.locator("text=Access Denied");
 
       await expect(projectsHeader.or(accessDenied).first()).toBeVisible({ timeout: 10000 });
@@ -156,7 +156,7 @@ test.describe("RBAC: Project Feature Tests", () => {
       // The Create Project button should NOT be visible for non-global-admin users
       // (Casbin permission check via useCanI() hides the button)
       const createButton = page.getByRole("button", {
-        name: /Create/i,
+        name: /New project|Create/i,
       });
       const isVisible = await createButton
         .isVisible({ timeout: 3000 })
@@ -207,7 +207,7 @@ test.describe("RBAC: Project Feature Tests", () => {
 
       // Viewers should NOT see Create/Edit buttons (Casbin permission check)
       const createButton = page.getByRole("button", {
-        name: /Create/i,
+        name: /New project|Create/i,
       });
       const editButton = page.getByRole("button", { name: /Edit/i });
       const deleteButton = page.locator('[data-testid="delete-project-btn"]');
@@ -252,7 +252,7 @@ test.describe("RBAC: Project Feature Tests", () => {
 
       // User without projects should not see Create button (not global admin)
       const createButton = page.getByRole("button", {
-        name: /Create/i,
+        name: /New project|Create/i,
       });
       const isVisible = await createButton
         .isVisible({ timeout: 2000 })
@@ -278,7 +278,7 @@ test.describe("RBAC: Project Feature Tests", () => {
       // Wait for either heading, project cards, or empty state
       // h1 is sr-only — use getByRole for the heading
       const projectCards = page.locator('[data-testid="project-card"]');
-      const heading = page.getByRole('heading', { name: 'Projects' });
+      const heading = page.getByTestId('topbar-breadcrumb-leaf').filter({ hasText: 'Projects' });
       const emptyState = page.locator('text=/no projects/i, text=/empty/i');
 
       await Promise.race([
@@ -350,7 +350,7 @@ test.describe("RBAC: Project Feature Tests", () => {
 
       // Wait for either heading or project cards - using multiple selectors for flexibility
       // h1 is sr-only — use getByRole for the heading
-      const projectsHeading = page.getByRole('heading', { name: 'Projects' });
+      const projectsHeading = page.getByTestId('topbar-breadcrumb-leaf').filter({ hasText: 'Projects' });
       const projectCards = page.locator('[data-testid="project-card"], .project-card, [class*="project"]');
 
       await Promise.race([
@@ -436,7 +436,7 @@ test.describe("RBAC: Project Feature Tests", () => {
 
       // Wait for page to render - either Projects header or Access Denied
       // h1 is sr-only — use getByRole for the heading
-      const projectsHeader = page.getByRole('heading', { name: 'Projects' });
+      const projectsHeader = page.getByTestId('topbar-breadcrumb-leaf').filter({ hasText: 'Projects' });
       const accessDenied = page.locator("text=Access Denied");
 
       await expect(projectsHeader.or(accessDenied).first()).toBeVisible({ timeout: 10000 });
@@ -465,7 +465,7 @@ test.describe("RBAC: Project Feature Tests", () => {
 
       // Viewer should NOT see Create Project button (Casbin permission check)
       const createButton = page.getByRole("button", {
-        name: /Create/i,
+        name: /New project|Create/i,
       });
       const isVisible = await createButton
         .isVisible({ timeout: 2000 })
@@ -490,7 +490,7 @@ test.describe("RBAC: Project Feature Tests", () => {
       await loginAs(page, tokens.users.global_admin, "/projects");
 
       // h1 is sr-only (screen reader only) — use getByRole which finds sr-only headings
-      await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible({ timeout: 10000 });
+      await expect(page.getByTestId('topbar-breadcrumb-leaf').filter({ hasText: 'Projects' })).toBeVisible({ timeout: 10000 });
       await page.waitForLoadState('networkidle', { timeout: 15000 });
 
       // Wait for either project cards or empty state
@@ -504,13 +504,13 @@ test.describe("RBAC: Project Feature Tests", () => {
         return;
       }
 
-      // Edit button is directly on the project card (data-testid="edit-project-btn")
-      const editButton = page.locator('[data-testid="edit-project-btn"]');
-      const editCount = await editButton.count();
-      console.log(`Global Admin sees ${editCount} edit buttons`);
-
-      // Global Admin should see edit buttons on project cards (if projects exist)
-      expect(editCount).toBeGreaterThan(0);
+      // Story 48.5 redesigned ProjectCard — the inline edit-project-btn is gone;
+      // edit affordance lives elsewhere now. Global Admin should at minimum see
+      // the Delete button (canManage path) on each card.
+      const deleteButtons = page.locator('button[aria-label^="Delete "]');
+      const deleteCount = await deleteButtons.count();
+      console.log(`Global Admin sees ${deleteCount} delete buttons on project cards`);
+      expect(deleteCount).toBeGreaterThan(0);
 
       await page.screenshot({
         path: path.join(
@@ -528,7 +528,7 @@ test.describe("RBAC: Project Feature Tests", () => {
       await loginAs(page, tokens.users.global_admin, "/projects");
 
       // h1 is sr-only (screen reader only) — use getByRole which finds sr-only headings
-      await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible({ timeout: 10000 });
+      await expect(page.getByTestId('topbar-breadcrumb-leaf').filter({ hasText: 'Projects' })).toBeVisible({ timeout: 10000 });
       // Projects now render as a table — wait for at least one project row
       await expect(page.getByRole('button', { name: /view details for/i }).first()).toBeVisible({ timeout: 15000 });
 
@@ -555,14 +555,15 @@ test.describe("RBAC: Project Feature Tests", () => {
       await page.waitForLoadState('networkidle', { timeout: 10000 });
 
       // Wait for the Projects heading to confirm page loaded
-      await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible({ timeout: 10000 });
+      await expect(page.getByTestId('topbar-breadcrumb-leaf').filter({ hasText: 'Projects' })).toBeVisible({ timeout: 10000 });
 
-      // Global Admin should see the Create Project button which allows adding members
-      const createButton = page.getByRole("button", { name: /^Create$/i });
+      // Global Admin should see the open-wizard button (renamed to "New project"
+      // in commit 4471140a).
+      const createButton = page.getByRole("button", { name: /^New project$/i });
       await expect(createButton).toBeVisible({ timeout: 10000 });
 
       const isVisible = await createButton.isVisible();
-      console.log(`Global Admin can see Create Project button: ${isVisible}`);
+      console.log(`Global Admin can see New project button: ${isVisible}`);
       expect(isVisible).toBe(true);
 
       await page.screenshot({
@@ -637,7 +638,7 @@ test.describe("RBAC: Project Feature Tests", () => {
 
       // Platform Admin should NOT see Create/Delete buttons (not global admin)
       const createButton = page.getByRole("button", {
-        name: /Create/i,
+        name: /New project|Create/i,
       });
       const isVisible = await createButton
         .isVisible({ timeout: 2000 })
@@ -668,7 +669,7 @@ test.describe("RBAC: Project Feature Tests", () => {
 
       // Viewer should NOT see any edit controls
       const createButton = page.getByRole("button", {
-        name: /Create/i,
+        name: /New project|Create/i,
       });
       const editButton = page.locator('[data-testid="edit-project-btn"]');
       const deleteButton = page.locator('[data-testid="delete-project-btn"]');
@@ -713,7 +714,7 @@ test.describe("RBAC: Project Feature Tests", () => {
 
       // Developer should NOT see any edit controls
       const createButton = page.getByRole("button", {
-        name: /Create/i,
+        name: /New project|Create/i,
       });
       const hasCreate = await createButton
         .isVisible({ timeout: 2000 })
@@ -738,7 +739,7 @@ test.describe("RBAC: Project Feature Tests", () => {
       await loginAs(page, tokens.users.global_admin, "/projects");
 
       // h1 is sr-only (screen reader only) — use getByRole which finds sr-only headings
-      await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible({ timeout: 10000 });
+      await expect(page.getByTestId('topbar-breadcrumb-leaf').filter({ hasText: 'Projects' })).toBeVisible({ timeout: 10000 });
       // Wait for project rows to load - Projects now use a table layout
       const projectRows = page.getByRole('button', { name: /view details for/i });
       await expect(projectRows.first()).toBeVisible({ timeout: 10000 });

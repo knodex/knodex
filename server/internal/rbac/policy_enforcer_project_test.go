@@ -17,7 +17,7 @@ import (
 func TestPolicyEnforcer_LoadProjectPolicies(t *testing.T) {
 	t.Parallel()
 
-	pe := newTestEnforcer(t)
+	pe := newTestEnforcerWithTeams(t, identityTeamResolver{})
 
 	// Create a project with roles
 	project := &Project{
@@ -35,7 +35,7 @@ func TestPolicyEnforcer_LoadProjectPolicies(t *testing.T) {
 						"rgds/*, get, allow",
 						"instances/engineering-*, create, allow",
 					},
-					Groups: []string{"engineering-devs"},
+					Teams: []string{"engineering-devs"},
 				},
 				{
 					Name:        "maintainer",
@@ -109,7 +109,7 @@ func TestPolicyEnforcer_LoadProjectPolicies(t *testing.T) {
 func TestPolicyEnforcer_LoadProjectPolicies_Errors(t *testing.T) {
 	t.Parallel()
 
-	pe := newTestEnforcer(t)
+	pe := newTestEnforcerWithTeams(t, identityTeamResolver{})
 
 	tests := []struct {
 		name        string
@@ -171,7 +171,7 @@ func TestPolicyEnforcer_LoadProjectPolicies_Errors(t *testing.T) {
 func TestPolicyEnforcer_LoadProjectPolicies_Idempotent(t *testing.T) {
 	t.Parallel()
 
-	pe := newTestEnforcer(t)
+	pe := newTestEnforcerWithTeams(t, identityTeamResolver{})
 
 	project := &Project{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-project"},
@@ -257,7 +257,7 @@ func TestPolicyEnforcer_SyncPolicies(t *testing.T) {
 func TestPolicyEnforcer_SyncPolicies_NoService(t *testing.T) {
 	t.Parallel()
 
-	pe := newTestEnforcer(t)
+	pe := newTestEnforcerWithTeams(t, identityTeamResolver{})
 
 	err := pe.SyncPolicies(context.Background())
 	assert.Error(t, err)
@@ -314,7 +314,7 @@ func TestPolicyEnforcer_ProjectRole_PolicyUpdate(t *testing.T) {
 						"p, proj:proj-policy-test:admin, projects, get, proj-policy-test, allow",
 						"p, proj:proj-policy-test:admin, projects, update, proj-policy-test, allow",
 					},
-					Groups: []string{"admin-group"},
+					Teams: []string{"admin-group"},
 				},
 			},
 		},
@@ -343,7 +343,7 @@ func TestPolicyEnforcer_ProjectRole_PolicyUpdate(t *testing.T) {
 						"p, proj:proj-policy-test:admin, instances, *, proj-policy-test/*, allow",
 						"p, proj:proj-policy-test:admin, settings, get, *, allow",
 					},
-					Groups: []string{"admin-group"},
+					Teams: []string{"admin-group"},
 				},
 				{
 					Name:        "viewer",
@@ -352,7 +352,7 @@ func TestPolicyEnforcer_ProjectRole_PolicyUpdate(t *testing.T) {
 						"p, proj:proj-policy-test:viewer, projects, get, proj-policy-test, allow",
 						"p, proj:proj-policy-test:viewer, instances, get, proj-policy-test/*, allow",
 					},
-					Groups: []string{"viewer-group"},
+					Teams: []string{"viewer-group"},
 				},
 			},
 		},
@@ -381,26 +381,35 @@ func TestPolicyEnforcer_ProjectRole_PolicyUpdate(t *testing.T) {
 	assert.False(t, allowed, "Viewer should NOT have instance create permission")
 }
 
-// TestPolicyEnforcer_SecretsAccess_AdminRole tests that project admin has full CRUD on secrets
+// TestPolicyEnforcer_SecretsAccess_AdminRole tests that a project admin with
+// destinations gets full CRUD on secrets in the listed namespaces (and only
+// there). Object shape is namespace-keyed (secrets/{ns}/{name}) — no project
+// segment — mirroring the URL middleware's Casbin normalization.
 func TestPolicyEnforcer_SecretsAccess_AdminRole(t *testing.T) {
 	t.Parallel()
 
-	pe := newTestEnforcer(t)
+	pe := newTestEnforcerWithTeams(t, identityTeamResolver{})
 	ctx := context.Background()
 
-	// Create a project with admin role
+	// Admin role with one destination namespace. Per TD-7, an admin role with
+	// no destinations gets no secret policies — destinations are the access
+	// boundary for namespace-keyed resources.
 	project := &Project{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "testproject",
 		},
 		Spec: ProjectSpec{
 			Description: "Test project for secrets access",
+			Destinations: []Destination{
+				{Namespace: "test-ns"},
+			},
 			Roles: []ProjectRole{
 				{
-					Name:        "admin",
-					Description: "Project admin",
-					Policies:    []string{},
-					Groups:      []string{"admin-group"},
+					Name:         "admin",
+					Description:  "Project admin",
+					Policies:     []string{},
+					Teams:        []string{"admin-group"},
+					Destinations: []string{"test-ns"},
 				},
 			},
 		},
@@ -415,13 +424,13 @@ func TestPolicyEnforcer_SecretsAccess_AdminRole(t *testing.T) {
 		action   string
 		expected bool
 	}{
-		{"admin can get secret", "secrets/testproject/mysecret", "get", true},
-		{"admin can create secret", "secrets/testproject/mysecret", "create", true},
-		{"admin can update secret", "secrets/testproject/mysecret", "update", true},
-		{"admin can delete secret", "secrets/testproject/mysecret", "delete", true},
-		{"admin can list secrets", "secrets/testproject/mysecret", "list", true},
-		// Cross-project isolation
-		{"admin cannot access other project secrets", "secrets/otherproject/mysecret", "get", false},
+		{"admin can get secret", "secrets/test-ns/mysecret", "get", true},
+		{"admin can create secret", "secrets/test-ns/mysecret", "create", true},
+		{"admin can update secret", "secrets/test-ns/mysecret", "update", true},
+		{"admin can delete secret", "secrets/test-ns/mysecret", "delete", true},
+		{"admin can list secrets", "secrets/test-ns/mysecret", "list", true},
+		// Cross-namespace isolation (was "cross-project" under the old model)
+		{"admin cannot access secrets in other namespace", "secrets/other-ns/mysecret", "get", false},
 	}
 
 	for _, tt := range tests {
@@ -433,26 +442,70 @@ func TestPolicyEnforcer_SecretsAccess_AdminRole(t *testing.T) {
 	}
 }
 
-// TestPolicyEnforcer_SecretsAccess_ReadonlyRole tests that readonly role can only get/list secrets
+// TestPolicyEnforcer_SecretsAccess_AdminRole_NoDestinations verifies TD-7:
+// an admin role WITHOUT destinations gets NO secret policies. The same role
+// retains all its non-secret built-ins (instances, repositories, etc.).
+func TestPolicyEnforcer_SecretsAccess_AdminRole_NoDestinations(t *testing.T) {
+	t.Parallel()
+
+	pe := newTestEnforcerWithTeams(t, identityTeamResolver{})
+	ctx := context.Background()
+
+	project := &Project{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "noscope",
+		},
+		Spec: ProjectSpec{
+			Roles: []ProjectRole{
+				{
+					Name:     "admin",
+					Policies: []string{},
+					Teams:    []string{"admin-group"},
+				},
+			},
+		},
+	}
+
+	err := pe.LoadProjectPolicies(ctx, project)
+	require.NoError(t, err)
+
+	// Non-secrets built-ins still work (regression guard for the change).
+	allowed, err := pe.CanAccessWithGroups(ctx, "user:admin", []string{"admin-group"}, "instances/noscope/Deployment/web", "create")
+	require.NoError(t, err)
+	assert.True(t, allowed, "admin without destinations should still create instances project-wide")
+
+	// AC8: no secret policy lines emitted for a role without destinations.
+	for _, action := range []string{"get", "create", "update", "delete", "list"} {
+		allowed, err := pe.CanAccessWithGroups(ctx, "user:admin", []string{"admin-group"}, "secrets/any-ns/mysecret", action)
+		require.NoError(t, err)
+		assert.Falsef(t, allowed, "admin without destinations should NOT be able to %s secrets", action)
+	}
+}
+
+// TestPolicyEnforcer_SecretsAccess_ReadonlyRole tests readonly with a single
+// destination — get/list only on secrets in that namespace.
 func TestPolicyEnforcer_SecretsAccess_ReadonlyRole(t *testing.T) {
 	t.Parallel()
 
-	pe := newTestEnforcer(t)
+	pe := newTestEnforcerWithTeams(t, identityTeamResolver{})
 	ctx := context.Background()
 
-	// Create a project with readonly role
 	project := &Project{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "testproject",
 		},
 		Spec: ProjectSpec{
 			Description: "Test project for secrets access",
+			Destinations: []Destination{
+				{Namespace: "test-ns"},
+			},
 			Roles: []ProjectRole{
 				{
-					Name:        "readonly",
-					Description: "Read-only role",
-					Policies:    []string{},
-					Groups:      []string{"readonly-group"},
+					Name:         "readonly",
+					Description:  "Read-only role",
+					Policies:     []string{},
+					Teams:        []string{"readonly-group"},
+					Destinations: []string{"test-ns"},
 				},
 			},
 		},
@@ -467,15 +520,13 @@ func TestPolicyEnforcer_SecretsAccess_ReadonlyRole(t *testing.T) {
 		action   string
 		expected bool
 	}{
-		// Readonly can get and list
-		{"readonly can get secret", "secrets/testproject/mysecret", "get", true},
-		{"readonly can list secrets", "secrets/testproject/mysecret", "list", true},
-		// Readonly cannot create/update/delete
-		{"readonly cannot create secret", "secrets/testproject/mysecret", "create", false},
-		{"readonly cannot update secret", "secrets/testproject/mysecret", "update", false},
-		{"readonly cannot delete secret", "secrets/testproject/mysecret", "delete", false},
-		// Cross-project isolation
-		{"readonly cannot access other project secrets", "secrets/otherproject/mysecret", "get", false},
+		{"readonly can get secret", "secrets/test-ns/mysecret", "get", true},
+		{"readonly can list secrets", "secrets/test-ns/mysecret", "list", true},
+		{"readonly cannot create secret", "secrets/test-ns/mysecret", "create", false},
+		{"readonly cannot update secret", "secrets/test-ns/mysecret", "update", false},
+		{"readonly cannot delete secret", "secrets/test-ns/mysecret", "delete", false},
+		// Cross-namespace isolation
+		{"readonly cannot access secrets in other namespace", "secrets/other-ns/mysecret", "get", false},
 	}
 
 	for _, tt := range tests {
@@ -487,81 +538,74 @@ func TestPolicyEnforcer_SecretsAccess_ReadonlyRole(t *testing.T) {
 	}
 }
 
-// TestPolicyEnforcer_SecretsAccess_WildcardScoping tests that secrets/* in a custom project
-// policy is correctly scoped to the project (not passed through as global secrets/*)
-func TestPolicyEnforcer_SecretsAccess_WildcardScoping(t *testing.T) {
+// TestPolicyEnforcer_SecretsAccess_SharedNamespace covers AC2 — two roles
+// from different projects that both list the same namespace in destinations
+// both gain access to the same Secret. This is the cross-project sharing
+// behavior the namespace-keyed model unlocks.
+func TestPolicyEnforcer_SecretsAccess_SharedNamespace(t *testing.T) {
 	t.Parallel()
 
-	pe := newTestEnforcer(t)
+	pe := newTestEnforcerWithTeams(t, identityTeamResolver{})
 	ctx := context.Background()
 
-	// Create project "alpha" with a custom role that uses the unqualified "secrets/*" wildcard
 	projectAlpha := &Project{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "alpha",
-		},
+		ObjectMeta: metav1.ObjectMeta{Name: "alpha"},
 		Spec: ProjectSpec{
-			Description: "Alpha project",
+			Destinations: []Destination{{Namespace: "xxx-shared"}},
 			Roles: []ProjectRole{
 				{
-					Name:        "developer",
-					Description: "Developer with unscoped secrets wildcard",
-					Policies: []string{
-						"secrets/*, create, allow",
-					},
-					Groups: []string{"alpha-devs"},
+					Name:         "developer",
+					Policies:     []string{"secrets/*, get, allow"},
+					Teams:        []string{"alpha-devs"},
+					Destinations: []string{"xxx-shared"},
+				},
+			},
+		},
+	}
+	projectBeta := &Project{
+		ObjectMeta: metav1.ObjectMeta{Name: "beta"},
+		Spec: ProjectSpec{
+			Destinations: []Destination{{Namespace: "xxx-shared"}},
+			Roles: []ProjectRole{
+				{
+					Name:         "developer",
+					Policies:     []string{"secrets/*, get, allow"},
+					Teams:        []string{"beta-devs"},
+					Destinations: []string{"xxx-shared"},
 				},
 			},
 		},
 	}
 
-	// Create project "beta" (separate tenant)
-	projectBeta := &Project{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "beta",
-		},
-		Spec: ProjectSpec{
-			Description: "Beta project",
-			Roles:       []ProjectRole{},
-		},
-	}
+	require.NoError(t, pe.LoadProjectPolicies(ctx, projectAlpha))
+	require.NoError(t, pe.LoadProjectPolicies(ctx, projectBeta))
 
-	err := pe.LoadProjectPolicies(ctx, projectAlpha)
+	allowed, err := pe.CanAccessWithGroups(ctx, "user:alice", []string{"alpha-devs"}, "secrets/xxx-shared/api-key", "get")
 	require.NoError(t, err)
-	err = pe.LoadProjectPolicies(ctx, projectBeta)
+	assert.True(t, allowed, "alpha developer should read shared-namespace secret")
+
+	allowed, err = pe.CanAccessWithGroups(ctx, "user:bob", []string{"beta-devs"}, "secrets/xxx-shared/api-key", "get")
 	require.NoError(t, err)
+	assert.True(t, allowed, "beta developer should read the same shared-namespace secret")
 
-	tests := []struct {
-		name     string
-		object   string
-		action   string
-		expected bool
-	}{
-		// Alpha developer can create secrets within their own project (scoped correctly)
-		{"alpha developer can create in alpha", "secrets/alpha/mysecret", "create", true},
-		// CRITICAL: alpha developer must NOT be able to create in beta (cross-project isolation)
-		{"alpha developer cannot create in beta", "secrets/beta/mysecret", "create", false},
-		// Cannot create globally
-		{"alpha developer cannot create globally", "secrets/other/mysecret", "create", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			allowed, err := pe.CanAccessWithGroups(ctx, "user:alphadev", []string{"alpha-devs"}, tt.object, tt.action)
-			require.NoError(t, err)
-			assert.Equal(t, tt.expected, allowed)
-		})
-	}
+	// Sanity: cross-namespace read still denied
+	allowed, err = pe.CanAccessWithGroups(ctx, "user:alice", []string{"alpha-devs"}, "secrets/xxx-private/api-key", "get")
+	require.NoError(t, err)
+	assert.False(t, allowed, "alpha developer should NOT read secret outside their destinations")
 }
 
-// TestPolicyEnforcer_SecretsAccess_CustomProjectRole tests custom project role with secrets access
-func TestPolicyEnforcer_SecretsAccess_CustomProjectRole(t *testing.T) {
+// TestPolicyEnforcer_SecretsAccess_CustomNamespacePolicy tests that a custom
+// project role with a namespace-literal secret policy (secrets/<ns>/*) grants
+// access in that namespace only. Under the namespace-keyed model the literal
+// "demo" is interpreted as a namespace name; cross-namespace remains denied.
+func TestPolicyEnforcer_SecretsAccess_CustomNamespacePolicy(t *testing.T) {
 	t.Parallel()
 
-	pe := newTestEnforcer(t)
+	pe := newTestEnforcerWithTeams(t, identityTeamResolver{})
 	ctx := context.Background()
 
-	// Create project with a custom developer role that has secrets create access
+	// "demo" here is the namespace name in the policy object; the project name
+	// matches purely as a convenience for the fixture.
 	project := &Project{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "demo",
@@ -571,11 +615,11 @@ func TestPolicyEnforcer_SecretsAccess_CustomProjectRole(t *testing.T) {
 			Roles: []ProjectRole{
 				{
 					Name:        "developer",
-					Description: "Developer role with secrets create",
+					Description: "Developer role with secrets create on namespace demo",
 					Policies: []string{
 						"secrets/demo/*, create, allow",
 					},
-					Groups: []string{"dev-group"},
+					Teams: []string{"dev-group"},
 				},
 			},
 		},
@@ -590,11 +634,11 @@ func TestPolicyEnforcer_SecretsAccess_CustomProjectRole(t *testing.T) {
 		action   string
 		expected bool
 	}{
-		{"developer can create secret", "secrets/demo/mysecret", "create", true},
-		{"developer cannot delete secret", "secrets/demo/mysecret", "delete", false},
-		{"developer cannot get secret", "secrets/demo/mysecret", "get", false},
-		// Cross-project isolation
-		{"developer cannot create secret in other project", "secrets/other/mysecret", "create", false},
+		{"developer can create secret in demo namespace", "secrets/demo/mysecret", "create", true},
+		{"developer cannot delete secret in demo namespace", "secrets/demo/mysecret", "delete", false},
+		{"developer cannot get secret in demo namespace", "secrets/demo/mysecret", "get", false},
+		// Cross-namespace isolation
+		{"developer cannot create secret in other namespace", "secrets/other/mysecret", "create", false},
 	}
 
 	for _, tt := range tests {
@@ -606,12 +650,15 @@ func TestPolicyEnforcer_SecretsAccess_CustomProjectRole(t *testing.T) {
 	}
 }
 
-// TestPolicyEnforcer_SecretsAccess_ArgoFormatPolicy tests AC #3 using the 6-part ArgoCD policy
-// format: "p, proj:demo:developer, secrets, create, demo, allow"
+// TestPolicyEnforcer_SecretsAccess_ArgoFormatPolicy exercises the 6-part
+// ArgoCD policy format ("p, proj:demo:developer, secrets, create, demo/*, allow").
+// Under the namespace-keyed model the scope segment "demo" is a namespace,
+// not a project — but the constructed object "secrets/demo/*" matches the
+// same URL-derived shape, so the test outcomes are unchanged.
 func TestPolicyEnforcer_SecretsAccess_ArgoFormatPolicy(t *testing.T) {
 	t.Parallel()
 
-	pe := newTestEnforcer(t)
+	pe := newTestEnforcerWithTeams(t, identityTeamResolver{})
 	ctx := context.Background()
 
 	// Simulate AC #3: project with a developer role using 6-part ArgoCD policy format
@@ -629,7 +676,7 @@ func TestPolicyEnforcer_SecretsAccess_ArgoFormatPolicy(t *testing.T) {
 						// 6-part ArgoCD format: p, subject, resource_type, action, scope, effect
 						"p, proj:demo:developer, secrets, create, demo/*, allow",
 					},
-					Groups: []string{"demo-devs"},
+					Teams: []string{"demo-devs"},
 				},
 			},
 		},
@@ -644,9 +691,9 @@ func TestPolicyEnforcer_SecretsAccess_ArgoFormatPolicy(t *testing.T) {
 		action   string
 		expected bool
 	}{
-		{"argo format: developer can create secret in demo", "secrets/demo/mysecret", "create", true},
+		{"argo format: developer can create secret in demo namespace", "secrets/demo/mysecret", "create", true},
 		{"argo format: developer cannot delete secret", "secrets/demo/mysecret", "delete", false},
-		{"argo format: developer cannot access other project", "secrets/other/mysecret", "create", false},
+		{"argo format: developer cannot access other namespace", "secrets/other/mysecret", "create", false},
 	}
 
 	for _, tt := range tests {

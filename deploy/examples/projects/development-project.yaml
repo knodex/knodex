@@ -1,6 +1,7 @@
 # Development Project - Multi-environment namespace pattern
 # This project allows developers to deploy to dev, staging, and feature namespaces
-# Apply with: kubectl apply -f <this-file> -n <knodex-namespace>
+# Apply with: kubectl apply -f development-teams.yaml -n <knodex-namespace>
+#             kubectl apply -f <this-file> -n <knodex-namespace>
 apiVersion: knodex.io/v1alpha1
 kind: Project
 metadata:
@@ -45,7 +46,7 @@ spec:
         - "p, proj:proj-development:lead-developer, project, *, proj-development, allow"
         - "p, proj:proj-development:lead-developer, instance, *, proj-development/*, allow"
         - "p, proj:proj-development:lead-developer, rgd, view, *, allow"
-      groups:
+      teams:
         - dev-leads
 
     - name: developer
@@ -56,7 +57,7 @@ spec:
         - "p, proj:proj-development:developer, instance, deploy, proj-development/feature-*, allow"
         - "p, proj:proj-development:developer, instance, view, proj-development/*, allow"
         - "p, proj:proj-development:developer, rgd, view, *, allow"
-      groups:
+      teams:
         - developers
 
     - name: qa-engineer
@@ -66,5 +67,5 @@ spec:
         - "p, proj:proj-development:qa-engineer, instance, deploy, proj-development/staging-*, allow"
         - "p, proj:proj-development:qa-engineer, instance, view, proj-development/*, allow"
         - "p, proj:proj-development:qa-engineer, rgd, view, *, allow"
-      groups:
+      teams:
         - qa-engineers

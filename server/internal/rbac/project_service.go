@@ -33,6 +33,11 @@ type ProjectService struct {
 	k8sClient     kubernetes.Interface
 	dynamicClient dynamic.Interface
 	namespace     string // Namespace where Project CRDs live (e.g., "knodex-system")
+
+	// teamResolver expands a role's teams[] into OIDC groups for the login /
+	// claims path (optional). Nil-safe. Set via SetTeamResolver to avoid churning
+	// the many constructor call sites. Teams resolve to group strings only (NFR-T1).
+	teamResolver TeamResolver
 }
 
 // NewProjectService creates a new ProjectService.
@@ -43,6 +48,12 @@ func NewProjectService(k8sClient kubernetes.Interface, dynamicClient dynamic.Int
 		dynamicClient: dynamicClient,
 		namespace:     namespace,
 	}
+}
+
+// SetTeamResolver injects the resolver used to expand roles[].teams[] into OIDC
+// groups when computing a user's project roles/accessible projects. Nil-safe.
+func (s *ProjectService) SetTeamResolver(r TeamResolver) {
+	s.teamResolver = r
 }
 
 // CreateProject creates a new Project CRD
@@ -282,29 +293,23 @@ func (s *ProjectService) DeleteProject(ctx context.Context, projectID string) er
 	return nil
 }
 
-// GetUserRole returns the role of a user in a specific project
-// In the ArgoCD model, users are bound to roles via OIDC groups in ProjectRole.Groups
+// GetUserRole returns the role of a user in a specific project.
+// Resolves group membership through Teams — the sole binding mechanism.
 func (s *ProjectService) GetUserRole(ctx context.Context, projectID string, userID string) (string, error) {
-	// Get the project
 	project, err := s.GetProject(ctx, projectID)
 	if err != nil {
 		return "", err
 	}
 
-	// In the ArgoCD model, role membership is determined by OIDC groups
-	// Users are assigned to roles via group membership (e.g., "user:{userID}")
 	userGroup := fmt.Sprintf("user:%s", userID)
-
-	// Check each role to see if the user's group is in its Groups list
 	for _, role := range project.Spec.Roles {
-		for _, group := range role.Groups {
-			if group == userGroup {
+		for _, g := range resolveRoleTeamGroups(role, s.teamResolver, nil) {
+			if g == userGroup {
 				return role.Name, nil
 			}
 		}
 	}
 
-	// User is not a member of any role in this project
 	return "", nil
 }
 
@@ -398,34 +403,6 @@ func (s *ProjectService) UpdateRole(ctx context.Context, projectID string, roleN
 	return s.UpdateProject(ctx, project, updatedBy)
 }
 
-// AddGroupToRole adds an OIDC group to a project role
-func (s *ProjectService) AddGroupToRole(ctx context.Context, projectID string, roleName string, groupName string, updatedBy string) (*Project, error) {
-	project, err := s.GetProject(ctx, projectID)
-	if err != nil {
-		return nil, err
-	}
-
-	// Find the role and add the group
-	found := false
-	for i, role := range project.Spec.Roles {
-		if role.Name == roleName {
-			// Check if group already exists
-			if collection.Contains(role.Groups, groupName) {
-				return nil, fmt.Errorf("group %s already in role %s", groupName, roleName)
-			}
-			project.Spec.Roles[i].Groups = append(project.Spec.Roles[i].Groups, groupName)
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		return nil, fmt.Errorf("role %s not found in project %s", roleName, projectID)
-	}
-
-	return s.UpdateProject(ctx, project, updatedBy)
-}
-
 // GetUserProjectsByGroup returns all projects a user has access to based on their OIDC groups
 func (s *ProjectService) GetUserProjectsByGroup(ctx context.Context, userGroups []string) ([]*Project, error) {
 	allProjects, err := s.ListProjects(ctx)
@@ -439,9 +416,10 @@ func (s *ProjectService) GetUserProjectsByGroup(ctx context.Context, userGroups 
 	var userProjects []*Project
 	for i := range allProjects.Items {
 		project := &allProjects.Items[i]
-		// Check if any user group matches any role's groups
+		// Check if any user group matches any role's effective groups (team-resolved).
+		// Teams resolve to groups only — same single-layer model as the enforcer (NFR-T1).
 		for _, role := range project.Spec.Roles {
-			for _, roleGroup := range role.Groups {
+			for _, roleGroup := range resolveRoleTeamGroups(role, s.teamResolver, nil) {
 				if userGroupSet[roleGroup] {
 					userProjects = append(userProjects, project)
 					goto nextProject
@@ -481,12 +459,10 @@ func (s *ProjectService) GetUserProjectRolesByGroup(ctx context.Context, userGro
 	for i := range allProjects.Items {
 		project := &allProjects.Items[i]
 
-		// Log the project's configured role groups for debugging
+		// Log the project's configured role groups for debugging (team-resolved).
 		var configuredGroups []string
 		for _, role := range project.Spec.Roles {
-			for _, g := range role.Groups {
-				configuredGroups = append(configuredGroups, g)
-			}
+			configuredGroups = append(configuredGroups, resolveRoleTeamGroups(role, s.teamResolver, nil)...)
 		}
 		if len(configuredGroups) > 0 {
 			slog.Debug("project role groups configuration",
@@ -495,9 +471,11 @@ func (s *ProjectService) GetUserProjectRolesByGroup(ctx context.Context, userGro
 			)
 		}
 
-		// Check each role to see if any user group matches
+		// Check each role to see if any user group matches its effective groups
+		// (team-resolved). Teams resolve to groups only — same single-layer model
+		// as the enforcer (NFR-T1).
 		for _, role := range project.Spec.Roles {
-			for _, roleGroup := range role.Groups {
+			for _, roleGroup := range resolveRoleTeamGroups(role, s.teamResolver, nil) {
 				if userGroupSet[roleGroup] {
 					// Found a matching group, record this role for the project
 					// First matching role wins (maintains deterministic behavior)

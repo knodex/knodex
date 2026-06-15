@@ -6,11 +6,16 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { InstancesPage } from "./InstancesPage";
 import type { Instance } from "@/types/rgd";
+import * as useCanIModule from "@/hooks/useCanI";
 
 // Mock hooks
 const mockUseInstanceList = vi.fn();
 vi.mock("@/hooks/useInstances", () => ({
   useInstanceList: (...args: unknown[]) => mockUseInstanceList(...args),
+}));
+
+vi.mock("@/hooks/useCanI", () => ({
+  useCanI: vi.fn(),
 }));
 
 vi.mock("@/hooks/useProjects", () => ({
@@ -60,14 +65,6 @@ vi.mock("@/components/catalog/Pagination", () => ({
   Pagination: () => <div data-testid="pagination" />,
 }));
 
-vi.mock("@/components/layout/PageHeader", () => ({
-  PageHeader: ({ title, subtitle, children, className }: { title: string; subtitle?: string; children?: React.ReactNode; className?: string }) => (
-    <div data-testid="page-header" data-title={title} data-subtitle={subtitle} data-classname={className}>
-      {children}
-    </div>
-  ),
-}));
-
 function createTestInstance(overrides: Partial<Instance> = {}): Instance {
   return {
     name: "my-instance",
@@ -97,6 +94,12 @@ function renderPage() {
 beforeEach(() => {
   mockUseInstanceList.mockReset();
   localStorage.clear();
+  // Default: user can deploy (gate is exercised explicitly in the Deploy CTA suite).
+  vi.mocked(useCanIModule.useCanI).mockReturnValue({
+    allowed: true,
+    isLoading: false,
+    isError: false,
+  });
 });
 
 describe("InstancesPage", () => {
@@ -134,8 +137,8 @@ describe("InstancesPage", () => {
     });
   });
 
-  describe("page header", () => {
-    it("renders title 'Instances'", () => {
+  describe("Deploy CTA (AC #1 — Casbin-gated)", () => {
+    function withEmptyList() {
       mockUseInstanceList.mockReturnValue({
         data: { items: [], totalCount: 0, page: 1, pageSize: 20 },
         isLoading: false,
@@ -144,47 +147,63 @@ describe("InstancesPage", () => {
         isFetching: false,
         refetch: vi.fn(),
       });
+    }
 
-      renderPage();
-
-      const header = screen.getByTestId("page-header");
-      expect(header).toHaveAttribute("data-title", "Instances");
-    });
-  });
-
-  describe("Deploy button", () => {
-    it("renders Deploy button linking to /catalog", () => {
-      mockUseInstanceList.mockReturnValue({
-        data: { items: [], totalCount: 0, page: 1, pageSize: 20 },
+    it("renders Deploy CTA linking to /catalog when user has instances:create permission", () => {
+      vi.mocked(useCanIModule.useCanI).mockReturnValue({
+        allowed: true,
         isLoading: false,
         isError: false,
-        error: null,
-        isFetching: false,
-        refetch: vi.fn(),
       });
+      withEmptyList();
 
       renderPage();
 
       const button = screen.getByTestId("deploy-new-button");
       expect(button).toBeInTheDocument();
       expect(button).toHaveAttribute("href", "/catalog");
+      expect(button).toHaveAttribute("aria-label", "Deploy a resource");
       expect(button).toHaveTextContent("Deploy");
     });
 
     it("has brand-primary background CSS class", () => {
-      mockUseInstanceList.mockReturnValue({
-        data: { items: [], totalCount: 0, page: 1, pageSize: 20 },
+      vi.mocked(useCanIModule.useCanI).mockReturnValue({
+        allowed: true,
         isLoading: false,
         isError: false,
-        error: null,
-        isFetching: false,
-        refetch: vi.fn(),
       });
+      withEmptyList();
 
       renderPage();
 
       const button = screen.getByTestId("deploy-new-button");
       expect(button).toHaveClass("bg-[var(--brand-primary)]");
+    });
+
+    it("hides the Deploy CTA when the user lacks instances:create permission", () => {
+      vi.mocked(useCanIModule.useCanI).mockReturnValue({
+        allowed: false,
+        isLoading: false,
+        isError: false,
+      });
+      withEmptyList();
+
+      renderPage();
+
+      expect(screen.queryByTestId("deploy-new-button")).not.toBeInTheDocument();
+    });
+
+    it("hides the Deploy CTA while the permission check is loading", () => {
+      vi.mocked(useCanIModule.useCanI).mockReturnValue({
+        allowed: undefined,
+        isLoading: true,
+        isError: false,
+      });
+      withEmptyList();
+
+      renderPage();
+
+      expect(screen.queryByTestId("deploy-new-button")).not.toBeInTheDocument();
     });
   });
 
@@ -302,15 +321,17 @@ describe("InstancesPage", () => {
     });
   });
 
-  describe("summary footer (AC #5)", () => {
-    it("renders the breakdown chip strip in table view", () => {
+  describe("list footer (AC #6 — 48.1 ListFooter, degraded/errored merged bucket)", () => {
+    it("renders the breakdown in table view, merging Degraded + Unhealthy", () => {
       const items = [
         createTestInstance({ name: "a", health: "Healthy" }),
         createTestInstance({ name: "b", health: "Healthy" }),
         createTestInstance({ name: "c", health: "Degraded" }),
+        createTestInstance({ name: "d", health: "Unhealthy" }),
+        createTestInstance({ name: "e", health: "Progressing" }),
       ];
       mockUseInstanceList.mockReturnValue({
-        data: { items, totalCount: 3, page: 1, pageSize: 20 },
+        data: { items, totalCount: 5, page: 1, pageSize: 20 },
         isLoading: false,
         isError: false,
         error: null,
@@ -320,14 +341,15 @@ describe("InstancesPage", () => {
 
       renderPage();
 
-      const footer = screen.getByTestId("instances-summary-footer");
-      expect(footer).toHaveTextContent("3 total");
-      // Exact-text assertions: catch any future refactor that capitalizes or rewords the label.
+      const footer = screen.getByTestId("instances-list-footer");
+      expect(footer).toHaveTextContent("5 total");
       expect(footer).toHaveTextContent("2 healthy");
-      expect(footer).toHaveTextContent("1 degraded");
+      expect(footer).toHaveTextContent("1 progressing");
+      // Degraded(1) + Unhealthy(1) merge into a single "degraded / errored" bucket.
+      expect(footer).toHaveTextContent("2 degraded / errored");
     });
 
-    it("counts unknown health strings into the Unknown bucket (forward-compat guard)", () => {
+    it("does not surface the Unknown bucket; total still reflects every visible row", () => {
       const items = [
         // @ts-expect-error -- simulating a future API value not in the InstanceHealth enum.
         createTestInstance({ name: "future", health: "Suspended" }),
@@ -344,14 +366,14 @@ describe("InstancesPage", () => {
 
       renderPage();
 
-      const footer = screen.getByTestId("instances-summary-footer");
+      const footer = screen.getByTestId("instances-list-footer");
       expect(footer).toHaveTextContent("2 total");
-      // 1 Healthy + 1 unknown bucket — totals add up.
       expect(footer).toHaveTextContent("1 healthy");
-      expect(footer).toHaveTextContent("1 unknown");
+      // Unknown is intentionally not shown (transient ingestion gap, not actionable).
+      expect(footer).not.toHaveTextContent("unknown");
     });
 
-    it("does not render the footer in grid view", () => {
+    it("renders the footer in grid view too (parity with the list view)", () => {
       localStorage.setItem("knodex.instances.view", "grid");
       mockUseInstanceList.mockReturnValue({
         data: { items: [createTestInstance()], totalCount: 1, page: 1, pageSize: 20 },
@@ -364,7 +386,22 @@ describe("InstancesPage", () => {
 
       renderPage();
 
-      expect(screen.queryByTestId("instances-summary-footer")).not.toBeInTheDocument();
+      expect(screen.getByTestId("instances-list-footer")).toBeInTheDocument();
+    });
+
+    it("does not render the footer in the empty state", () => {
+      mockUseInstanceList.mockReturnValue({
+        data: { items: [], totalCount: 0, page: 1, pageSize: 20 },
+        isLoading: false,
+        isError: false,
+        error: null,
+        isFetching: false,
+        refetch: vi.fn(),
+      });
+
+      renderPage();
+
+      expect(screen.queryByTestId("instances-list-footer")).not.toBeInTheDocument();
     });
   });
 });

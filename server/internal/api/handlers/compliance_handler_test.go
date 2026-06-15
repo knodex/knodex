@@ -10,11 +10,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/knodex/knodex/server/internal/api/middleware"
+	"github.com/knodex/knodex/server/internal/rbac"
 	"github.com/knodex/knodex/server/internal/services"
 )
 
@@ -2106,6 +2108,11 @@ type mockViolationHistoryService struct {
 	countErr      error
 	exportErr     error
 	exportCSV     string
+
+	// Captured args for assertions
+	lastListOpts      services.ViolationHistoryListOptions
+	lastCountFilters  services.ViolationHistoryExportFilters
+	lastExportFilters services.ViolationHistoryExportFilters
 }
 
 func (m *mockViolationHistoryService) IsAvailable() bool {
@@ -2116,21 +2123,24 @@ func (m *mockViolationHistoryService) GetRetentionDays() int {
 	return m.retentionDays
 }
 
-func (m *mockViolationHistoryService) ListByTimeRange(_ context.Context, _, _ time.Time, _ services.ViolationHistoryListOptions) ([]services.ViolationHistoryRecord, int, error) {
+func (m *mockViolationHistoryService) ListByTimeRange(_ context.Context, _, _ time.Time, opts services.ViolationHistoryListOptions) ([]services.ViolationHistoryRecord, int, error) {
+	m.lastListOpts = opts
 	if m.listErr != nil {
 		return nil, 0, m.listErr
 	}
 	return m.records, len(m.records), nil
 }
 
-func (m *mockViolationHistoryService) CountByTimeRange(_ context.Context, _, _ time.Time, _ services.ViolationHistoryExportFilters) (int, error) {
+func (m *mockViolationHistoryService) CountByTimeRange(_ context.Context, _, _ time.Time, filters services.ViolationHistoryExportFilters) (int, error) {
+	m.lastCountFilters = filters
 	if m.countErr != nil {
 		return 0, m.countErr
 	}
 	return m.count, nil
 }
 
-func (m *mockViolationHistoryService) ExportCSV(_ context.Context, _ time.Time, _ services.ViolationHistoryExportFilters, w io.Writer) error {
+func (m *mockViolationHistoryService) ExportCSV(_ context.Context, _ time.Time, filters services.ViolationHistoryExportFilters, w io.Writer) error {
+	m.lastExportFilters = filters
 	if m.exportErr != nil {
 		return m.exportErr
 	}
@@ -2752,5 +2762,163 @@ func TestComplianceHandler_UpdateEnforcement_GenericError_NotClassifiedAsForbidd
 	// Verify it's NOT classified as 403
 	if rec.Code == http.StatusForbidden {
 		t.Error("generic error 'connection refused' must NOT be classified as 403 Forbidden")
+	}
+}
+
+// --- Violation History: namespace-scoped access filtering ---
+//
+// These tests verify that the three history endpoints (list, count, export) pass
+// the correct Namespaces slice to the history service based on the user's RBAC posture:
+//   - global admin (compliance/* access) → nil Namespaces (no DB filter)
+//   - project-scoped user → project destination namespaces
+//   - project-scoped user with no destinations → empty slice (fail-closed → 0 rows)
+
+// newHistoryFilterTestSetup creates the common setup for namespace-filter tests.
+// The returned enforcer denies global compliance/* access but allows project-scoped
+// compliance/alpha/* access, simulating a developer in project "alpha".
+func newHistoryFilterTestSetup(t *testing.T, alphaNamespaces []string) (*ComplianceHandler, *mockViolationHistoryService, *middleware.UserContext) {
+	t.Helper()
+
+	svc := newMockComplianceService(true)
+	enforcer := &mockPolicyEnforcer{
+		canAccessResult: false, // deny global access by default
+		canAccessMap: map[string]bool{
+			"compliance/*:get":       false,
+			"compliance/alpha/*:get": true, // project-scoped access passes checkPermission
+		},
+		accessibleProjects: []string{"alpha"},
+	}
+	handler := NewComplianceHandler(svc, enforcer, nil)
+
+	projSvc := newMockProjectService()
+	projSvc.addProject("alpha", rbac.ProjectSpec{
+		Destinations: makeDestinations(alphaNamespaces),
+	})
+	handler.SetProjectService(projSvc)
+
+	historySvc := &mockViolationHistoryService{available: true, retentionDays: 90}
+	handler.SetViolationHistoryService(historySvc)
+
+	userCtx := &middleware.UserContext{UserID: "dev-user", Groups: []string{"alpha-developers"}}
+	return handler, historySvc, userCtx
+}
+
+func makeDestinations(namespaces []string) []rbac.Destination {
+	dests := make([]rbac.Destination, len(namespaces))
+	for i, ns := range namespaces {
+		dests[i] = rbac.Destination{Namespace: ns}
+	}
+	return dests
+}
+
+func sortedStrings(s []string) []string {
+	cp := append([]string{}, s...)
+	sort.Strings(cp)
+	return cp
+}
+
+func TestComplianceHandler_ViolationHistory_GlobalAdmin_NilNamespaceFilter(t *testing.T) {
+	t.Parallel()
+
+	svc := newMockComplianceService(true)
+	enforcer := &mockPolicyEnforcer{canAccessResult: true} // global access
+	handler := NewComplianceHandler(svc, enforcer, nil)
+
+	historySvc := &mockViolationHistoryService{available: true, retentionDays: 90}
+	handler.SetViolationHistoryService(historySvc)
+
+	userCtx := &middleware.UserContext{UserID: "admin"}
+	req := newRequestWithUserContext(http.MethodGet, "/api/v1/compliance/violations/history?since="+time.Now().UTC().Add(-24*time.Hour).Format(time.RFC3339), nil, userCtx)
+	rec := httptest.NewRecorder()
+
+	handler.ListViolationHistory(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if historySvc.lastListOpts.Namespaces != nil {
+		t.Errorf("global admin should pass nil Namespaces (no DB filter), got %v", historySvc.lastListOpts.Namespaces)
+	}
+}
+
+func TestComplianceHandler_ViolationHistory_ProjectUser_NamespaceFilter(t *testing.T) {
+	t.Parallel()
+
+	handler, historySvc, userCtx := newHistoryFilterTestSetup(t, []string{"ns-a", "ns-b"})
+
+	req := newRequestWithUserContext(http.MethodGet, "/api/v1/compliance/violations/history?since="+time.Now().UTC().Add(-24*time.Hour).Format(time.RFC3339), nil, userCtx)
+	rec := httptest.NewRecorder()
+
+	handler.ListViolationHistory(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	want := []string{"ns-a", "ns-b"}
+	got := sortedStrings(historySvc.lastListOpts.Namespaces)
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("Namespaces passed to ListByTimeRange: got %v, want %v", got, want)
+	}
+}
+
+func TestComplianceHandler_ViolationHistory_ProjectUser_NoDestinations_EmptyFilter(t *testing.T) {
+	t.Parallel()
+
+	// Project exists but has no destinations → empty Namespaces slice → DB returns 0 rows
+	handler, historySvc, userCtx := newHistoryFilterTestSetup(t, []string{})
+
+	req := newRequestWithUserContext(http.MethodGet, "/api/v1/compliance/violations/history?since="+time.Now().UTC().Add(-24*time.Hour).Format(time.RFC3339), nil, userCtx)
+	rec := httptest.NewRecorder()
+
+	handler.ListViolationHistory(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if historySvc.lastListOpts.Namespaces == nil {
+		t.Error("expected empty (non-nil) Namespaces slice for fail-closed behaviour, got nil")
+	}
+	if len(historySvc.lastListOpts.Namespaces) != 0 {
+		t.Errorf("expected empty Namespaces, got %v", historySvc.lastListOpts.Namespaces)
+	}
+}
+
+func TestComplianceHandler_CountViolationHistory_ProjectUser_NamespaceFilter(t *testing.T) {
+	t.Parallel()
+
+	handler, historySvc, userCtx := newHistoryFilterTestSetup(t, []string{"prod-ns"})
+
+	req := newRequestWithUserContext(http.MethodGet, "/api/v1/compliance/violations/history/count?since="+time.Now().UTC().Add(-24*time.Hour).Format(time.RFC3339), nil, userCtx)
+	rec := httptest.NewRecorder()
+
+	handler.CountViolationHistory(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	want := []string{"prod-ns"}
+	got := sortedStrings(historySvc.lastCountFilters.Namespaces)
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("Namespaces passed to CountByTimeRange: got %v, want %v", got, want)
+	}
+}
+
+func TestComplianceHandler_ExportViolationHistory_ProjectUser_NamespaceFilter(t *testing.T) {
+	t.Parallel()
+
+	handler, historySvc, userCtx := newHistoryFilterTestSetup(t, []string{"staging-ns"})
+
+	req := newRequestWithUserContext(http.MethodGet, "/api/v1/compliance/violations/history/export?since="+time.Now().UTC().Add(-24*time.Hour).Format(time.RFC3339), nil, userCtx)
+	rec := httptest.NewRecorder()
+
+	handler.ExportViolationHistory(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	want := []string{"staging-ns"}
+	got := sortedStrings(historySvc.lastExportFilters.Namespaces)
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("Namespaces passed to ExportCSV: got %v, want %v", got, want)
 	}
 }

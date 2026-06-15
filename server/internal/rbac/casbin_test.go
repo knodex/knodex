@@ -1701,82 +1701,67 @@ func TestKeyMatch_CategoryScoped_RGD(t *testing.T) {
 	}
 }
 
-func TestBuiltinPolicies_OperatorRole(t *testing.T) {
+// TestBuiltinPolicies_NoGhostRoleCatalogGrants locks the Story 17.2 invariant:
+// catalog visibility comes SOLELY from project-role-granted rgds access, never from
+// a built-in (ghost) role. The retired role:operator / role:developer subjects used to
+// grant category-scoped RGD reads in loadBuiltinPoliciesLocked; this test proves that
+//
+//	(a) a bare member (no grouping policy) is denied every RGD category object, and
+//	(b) the now-unregistered role:operator / role:developer subjects grant nothing
+//	    (no fallthrough), while role:serveradmin remains fully allowed.
+//
+// It exercises the REAL bootstrap via NewCasbinEnforcer() (which runs
+// loadBuiltinPoliciesLocked) so a regression that re-introduces ghost-role grants fails here.
+func TestBuiltinPolicies_NoGhostRoleCatalogGrants(t *testing.T) {
 	t.Parallel()
 
 	enforcer, err := NewCasbinEnforcer()
 	require.NoError(t, err)
 
-	// Assign role:operator to a user
-	_, err = enforcer.AddUserRole("user:operator1", "role:operator")
-	require.NoError(t, err)
-
-	tests := []struct {
-		name     string
-		obj      string
-		act      string
-		expected bool
-	}{
-		// Operator gets infra/networking/storage category access
-		{"operator get infra RGD", "rgds/infrastructure/my-rgd", "get", true},
-		{"operator list infra RGDs", "rgds/infrastructure/my-rgd", "list", true},
-		{"operator get networking RGD", "rgds/networking/my-rgd", "get", true},
-		{"operator list networking RGDs", "rgds/networking/my-rgd", "list", true},
-		{"operator get storage RGD", "rgds/storage/my-rgd", "get", true},
-		{"operator list storage RGDs", "rgds/storage/my-rgd", "list", true},
-		// Operator does NOT get applications or observability access
-		{"operator denied applications", "rgds/applications/my-rgd", "get", false},
-		{"operator denied observability", "rgds/observability/my-rgd", "get", false},
-		// Operator does NOT get project/instance access
-		{"operator denied projects", "projects/test", "get", false},
-		{"operator denied instances", "instances/test/my-inst", "get", false},
+	// Every RGD category object the ghost roles used to grant.
+	ghostCategoryObjects := []string{
+		"rgds/infrastructure/my-rgd",
+		"rgds/networking/my-rgd",
+		"rgds/storage/my-rgd",
+		"rgds/applications/my-rgd",
+		"rgds/observability/my-rgd",
 	}
+	actions := []string{"get", "list"}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			allowed, err := enforcer.Enforce("user:operator1", tt.obj, tt.act)
+	// (a) A bare member — a subject with NO grouping policy — is denied every category.
+	for _, obj := range ghostCategoryObjects {
+		for _, act := range actions {
+			allowed, err := enforcer.Enforce("user:member1", obj, act)
 			require.NoError(t, err)
-			assert.Equal(t, tt.expected, allowed, "Enforce(operator, %s, %s)", tt.obj, tt.act)
-		})
-	}
-}
-
-func TestBuiltinPolicies_DeveloperRole(t *testing.T) {
-	t.Parallel()
-
-	enforcer, err := NewCasbinEnforcer()
-	require.NoError(t, err)
-
-	// Assign role:developer to a user
-	_, err = enforcer.AddUserRole("user:dev1", "role:developer")
-	require.NoError(t, err)
-
-	tests := []struct {
-		name     string
-		obj      string
-		act      string
-		expected bool
-	}{
-		// Developer gets applications/observability category access
-		{"developer get applications RGD", "rgds/applications/my-rgd", "get", true},
-		{"developer list applications RGDs", "rgds/applications/my-rgd", "list", true},
-		{"developer get observability RGD", "rgds/observability/my-rgd", "get", true},
-		{"developer list observability RGDs", "rgds/observability/my-rgd", "list", true},
-		// Developer does NOT get infra/networking/storage access
-		{"developer denied infrastructure", "rgds/infrastructure/my-rgd", "get", false},
-		{"developer denied networking", "rgds/networking/my-rgd", "get", false},
-		{"developer denied storage", "rgds/storage/my-rgd", "get", false},
-		// Developer does NOT get project/instance access
-		{"developer denied projects", "projects/test", "get", false},
-		{"developer denied instances", "instances/test/my-inst", "get", false},
+			assert.False(t, allowed, "bare member must be denied %s on %s (no ghost-role fallthrough)", act, obj)
+		}
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			allowed, err := enforcer.Enforce("user:dev1", tt.obj, tt.act)
+	// (b) Assigning the retired ghost subjects grants NOTHING — they are no longer
+	// registered with any policy, so membership confers no access.
+	_, err = enforcer.AddUserRole("user:ghost-op", "role:operator")
+	require.NoError(t, err)
+	_, err = enforcer.AddUserRole("user:ghost-dev", "role:developer")
+	require.NoError(t, err)
+	for _, obj := range ghostCategoryObjects {
+		for _, act := range actions {
+			allowedOp, err := enforcer.Enforce("user:ghost-op", obj, act)
 			require.NoError(t, err)
-			assert.Equal(t, tt.expected, allowed, "Enforce(developer, %s, %s)", tt.obj, tt.act)
-		})
+			assert.False(t, allowedOp, "retired role:operator must grant nothing: %s on %s", act, obj)
+
+			allowedDev, err := enforcer.Enforce("user:ghost-dev", obj, act)
+			require.NoError(t, err)
+			assert.False(t, allowedDev, "retired role:developer must grant nothing: %s on %s", act, obj)
+		}
+	}
+
+	// Sanity: role:serveradmin is still fully allowed across all categories.
+	_, err = enforcer.AddUserRole("user:admin-sanity", CasbinRoleServerAdmin)
+	require.NoError(t, err)
+	for _, obj := range ghostCategoryObjects {
+		allowed, err := enforcer.Enforce("user:admin-sanity", obj, "get")
+		require.NoError(t, err)
+		assert.True(t, allowed, "serveradmin must still access %s", obj)
 	}
 }
 
@@ -1790,7 +1775,7 @@ func TestBuiltinPolicies_WildcardCoversAllCategories(t *testing.T) {
 	_, err = enforcer.AddUserRole("user:admin1", CasbinRoleServerAdmin)
 	require.NoError(t, err)
 
-	// serveradmin with rgds/* should see all categories including operator/developer ones
+	// serveradmin with rgds/* should see all RGD categories
 	cats := []string{"infrastructure", "networking", "storage", "applications", "observability", "uncategorized"}
 	for _, cat := range cats {
 		allowed, err := enforcer.Enforce("user:admin1", "rgds/"+cat+"/my-rgd", "get")

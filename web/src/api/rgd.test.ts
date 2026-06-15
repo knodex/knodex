@@ -12,6 +12,7 @@ const { mockWarn, mockError } = vi.hoisted(() => ({
 vi.mock('./client', () => ({
   default: {
     get: vi.fn(),
+    post: vi.fn(),
   },
 }));
 
@@ -32,7 +33,7 @@ vi.mock('@/lib/logger', () => ({
   },
 }));
 
-import { listInstances, getInstance, instancePath } from './rgd';
+import { listInstances, getInstance, instancePath, createRGD } from './rgd';
 
 describe('Instance namespace validation at API boundary', () => {
   beforeEach(() => {
@@ -175,6 +176,43 @@ describe('instancePath URL builder', () => {
   it('encodes special characters in path segments', () => {
     expect(instancePath('grp.example.com', 'my ns', 'My Kind', 'my name')).toBe(
       '/v1/apigroups/grp.example.com/namespaces/my%20ns/instances/My%20Kind/my%20name'
+    );
+  });
+});
+
+describe('createRGD (Story 50.2)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('POSTs the request to /v1/rgds and returns the created identity', async () => {
+    const { default: apiClient } = await import('./client');
+    const created = {
+      name: 'webapp-stack',
+      namespace: 'default',
+      kind: 'ResourceGraphDefinition',
+      apiVersion: 'kro.run/v1alpha1',
+    };
+    vi.mocked(apiClient.post).mockResolvedValue({ data: created });
+
+    const request = {
+      name: 'webapp-stack',
+      namespace: 'default',
+      yaml: 'apiVersion: kro.run/v1alpha1\nkind: ResourceGraphDefinition\n',
+      runId: 'run-1',
+    };
+    const result = await createRGD(request);
+
+    expect(apiClient.post).toHaveBeenCalledWith('/v1/rgds', request);
+    expect(result).toEqual(created);
+  });
+
+  it('propagates server rejections (the kind-locked 400, 403, 409)', async () => {
+    const { default: apiClient } = await import('./client');
+    vi.mocked(apiClient.post).mockRejectedValue(new Error('payload must be a kro.run/v1alpha1 ResourceGraphDefinition'));
+
+    await expect(createRGD({ yaml: 'kind: Deployment' })).rejects.toThrow(
+      'ResourceGraphDefinition'
     );
   });
 });

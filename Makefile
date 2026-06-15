@@ -1,8 +1,9 @@
 .PHONY: help dev dev-web dev-server dev-up dev-down db-reset \
         build build-web build-server \
+        verify-build-matrix \
         clean lint lint-fix lint-server lint-web \
         cluster-up cluster-down \
-        test test-server test-web e2e qa qa-stop \
+        test test-server test-web e2e e2e-identity qa qa-stop \
         tilt-up tilt-down tilt-status \
         docs-serve docs-build docs-clean docs-install docs-version \
         api-docs \
@@ -38,6 +39,7 @@ help:
 	@echo "Testing (cluster-agnostic - works with Kind, AKS, GKE, EKS):"
 	@echo "  make test           - Unit tests (fast, no cluster needed)"
 	@echo "  make e2e            - E2E tests (requires cluster)"
+	@echo "  make e2e-identity   - Cross-edition identity E2E (Layer 1 live + Layer 2 integration; EDITION=oss|ee)"
 	@echo "  make qa             - Full QA: deploy app + run all tests"
 	@echo "  make qa-stop        - Cleanup app deployment"
 	@echo ""
@@ -138,11 +140,14 @@ build-web:
 	@echo "Building web..."
 	cd web && npm run build
 
-# Copy web dist into Go embed path (exclude pre-compressed .gz/.br and stats.html)
+# Copy web dist into Go embed path (exclude pre-compressed .gz/.br and stats.html).
+# Restores .gitkeep after rsync so the tracked placeholder is preserved and
+# the working tree stays clean for developers.
 _embed-web:
 	@echo "Embedding web dist into Go binary..."
 	@rm -rf server/internal/static/dist
 	@rsync -a --exclude='*.gz' --exclude='*.br' --exclude='stats.html' web/dist/ server/internal/static/dist/
+	@touch server/internal/static/dist/.gitkeep
 
 # ===== Build - OSS Edition =====
 	@echo ""
@@ -168,6 +173,19 @@ _embed-web:
 	@echo ""
 	@echo "============================================"
 	@echo "============================================"
+
+# Two-edition build+test matrix: all four commands must succeed.
+verify-build-matrix:
+	@echo ""
+	@echo "============================================"
+	@echo "  Build+Test Matrix (OSS / Enterprise)"
+	@echo "============================================"
+	@echo "[1/4] go build ./... (OSS)"
+	cd server && go build ./...
+	@echo "[3/4] go test ./... (OSS)"
+	cd server && go test $$(go list ./... | grep -v -e /static -e /test/ -e /mocks/)
+	@echo ""
+	@echo "  Build+test matrix passed (4/4)."
 
 # ===== Cluster Management =====
 cluster-up:
@@ -220,6 +238,18 @@ e2e: _ensure-prereqs _ensure-app
 	@echo "============================================"
 	@echo "  E2E tests completed!"
 	@echo "============================================"
+
+# Cross-edition identity-persistence E2E (Story 15.5).
+# Runs Layer 1 (live mock-OIDC login → roster → Users API) and Layer 2 (existing
+# integration suites vs the deployed Postgres). Override the edition with
+# EDITION=oss|ee (default oss). Extra flags pass through via E2E_IDENTITY_ARGS,
+# e.g. `make e2e-identity EDITION=ee E2E_IDENTITY_ARGS=--no-setup`.
+e2e-identity:
+	@echo ""
+	@echo "============================================"
+	@echo "  Cross-edition Identity E2E (EDITION=$(or $(EDITION),oss))"
+	@echo "============================================"
+	./scripts/e2e-identity.sh $(or $(EDITION),oss) $(E2E_IDENTITY_ARGS)
 
 # Full QA cycle
 qa: _ensure-prereqs _deploy-app

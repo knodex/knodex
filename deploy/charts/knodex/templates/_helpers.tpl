@@ -211,16 +211,23 @@ Postgres chart-managed Secret name — used when an inline
 
 {{/*
 Postgres Secret reference — resolves the correct Secret name for DATABASE_URL
-across all three Postgres supply modes (precedence matches values.yaml comments):
-  1. postgresql.enabled: true  — embedded subchart; chart-built DSN Secret
-  2. enterprise.postgres.connectionStringSecret.name  — pre-existing external Secret
-  3. enterprise.postgres.connectionString  — inline DSN; chart-managed Secret
+across every Postgres supply mode. Precedence (highest first), matching
+values.yaml comments and knodex.postgresEmbeddedEnabled / the guard:
+  1. embedded subchart active (knodex.postgresEmbeddedEnabled) — chart-built DSN Secret
+  2. externalPostgresql.existingSecret — pre-existing external Secret (canonical)
+  3. externalPostgresql.host (no existingSecret) — chart-managed DSN Secret from the block
+  4. enterprise.postgres.connectionStringSecret.name — DEPRECATED alias, pre-existing Secret
+  5. enterprise.postgres.connectionString — DEPRECATED alias, inline DSN; chart-managed Secret
 Both the migration Job and the server Deployment resolve to the same
 secret/key pair via this helper (mirrors knodex.redisSecretRef).
 */}}
 {{- define "knodex.postgresSecretRef" -}}
-{{- if .Values.postgresql.enabled }}
+{{- if include "knodex.postgresEmbeddedEnabled" . }}
 {{- printf "%s-knodex-postgres-url" .Release.Name }}
+{{- else if .Values.externalPostgresql.existingSecret }}
+{{- .Values.externalPostgresql.existingSecret }}
+{{- else if .Values.externalPostgresql.host }}
+{{- include "knodex.postgresSecretName" . }}
 {{- else if .Values.enterprise.postgres.connectionStringSecret.name }}
 {{- .Values.enterprise.postgres.connectionStringSecret.name }}
 {{- else }}
@@ -248,11 +255,17 @@ Logic: fullnameOverride > nameOverride > default ("postgresql").
 
 {{/*
 Postgres Secret key holding the DSN. Defaults to `DATABASE_URL`.
-When the embedded subchart is active, the DSN Secret always uses key `DATABASE_URL`
-regardless of any postgres.connectionStringSecret.key override.
+When the embedded subchart is active, the DSN Secret always uses key `DATABASE_URL`.
+For externalPostgresql.existingSecret, honor existingSecretKey; for the legacy
+enterprise.postgres alias, honor connectionStringSecret.key. Precedence mirrors
+knodex.postgresSecretRef.
 */}}
 {{- define "knodex.postgresSecretKey" -}}
-{{- if .Values.postgresql.enabled }}
+{{- if include "knodex.postgresEmbeddedEnabled" . }}
+{{- "DATABASE_URL" }}
+{{- else if .Values.externalPostgresql.existingSecret }}
+{{- default "DATABASE_URL" .Values.externalPostgresql.existingSecretKey }}
+{{- else if .Values.externalPostgresql.host }}
 {{- "DATABASE_URL" }}
 {{- else }}
 {{- default "DATABASE_URL" .Values.enterprise.postgres.connectionStringSecret.key }}
@@ -260,14 +273,73 @@ regardless of any postgres.connectionStringSecret.key override.
 {{- end }}
 
 {{/*
-Whether Postgres-related resources should render. Postgres is enterprise-only,
-so this is true iff `enterprise.enabled` AND `enterprise.postgres.deploymentMode` is set.
-Returns "true" or empty string (Helm-truthy convention).
+Whether an EXTERNAL Postgres supply is present (operator points the chart at a
+database it does not provision). Any of: the canonical externalPostgresql block
+(host or existingSecret) OR the DEPRECATED enterprise.postgres.connectionString*
+alias. Returns "true" or empty string (Helm-truthy convention).
 */}}
-{{- define "knodex.postgresEnabled" -}}
-{{- if and .Values.enterprise.enabled .Values.enterprise.postgres.deploymentMode -}}
+{{- define "knodex.postgresExternalSupplyPresent" -}}
+{{- if or .Values.externalPostgresql.host .Values.externalPostgresql.existingSecret .Values.enterprise.postgres.connectionString .Values.enterprise.postgres.connectionStringSecret.name -}}
 true
 {{- end -}}
+{{- end }}
+
+{{/*
+Whether the embedded Bitnami PostgreSQL subchart's PARENT-rendered resources
+(the DSN Secret, the DATABASE_URL source, the wait-for-postgres credential)
+should render. Auto-detect guard (AC #3): the embedded path is active iff the
+operator knob `postgresql.enabled` is true AND no external supply is present —
+UNLESS `postgresql.forceEnable` overrides it. Default-on for a fresh install
+(postgresql.enabled defaults true) so OSS comes up healthy (R5-5), and it steps
+aside automatically when an external DSN is supplied.
+
+NOTE: the Bitnami subchart's own StatefulSet/Service are gated by the static
+`condition: postgresql.enabled` in Chart.yaml — Helm cannot evaluate a computed
+helper for a subchart condition. Operators supplying an external DB should set
+`postgresql.enabled: false` to avoid an unused embedded pod; this guard still
+guarantees the chart never emits a conflicting embedded DSN.
+*/}}
+{{- define "knodex.postgresEmbeddedEnabled" -}}
+{{- if and .Values.postgresql.enabled (or (not (include "knodex.postgresExternalSupplyPresent" .)) .Values.postgresql.forceEnable) -}}
+true
+{{- end -}}
+{{- end }}
+
+{{/*
+Whether Postgres-related resources should render. Postgres is mandatory on every
+edition (R5-5 / FR-U12): true whenever ANY supply mode resolves — the embedded
+subchart (per the guard) OR an external supply. Returns "true" or empty string.
+*/}}
+{{- define "knodex.postgresEnabled" -}}
+{{- if or (include "knodex.postgresEmbeddedEnabled" .) (include "knodex.postgresExternalSupplyPresent" .) -}}
+true
+{{- end -}}
+{{- end }}
+
+{{/*
+Postgres host — resolves the reachable hostname per mode (mirrors knodex.redisHost).
+Embedded subchart ⇒ the Bitnami primary Service (<subchart-fullname>).
+externalPostgresql.host ⇒ that host. For an external Secret / inline DSN the host
+is embedded in DATABASE_URL and not known at template time (wait-for-postgres
+probes the DSN directly via `pg_isready -d "$DATABASE_URL"`).
+*/}}
+{{- define "knodex.postgresHost" -}}
+{{- if include "knodex.postgresEmbeddedEnabled" . }}
+{{- include "knodex.postgresql.fullname" . }}
+{{- else if .Values.externalPostgresql.host }}
+{{- .Values.externalPostgresql.host }}
+{{- end }}
+{{- end }}
+
+{{/*
+Postgres port (mirrors knodex.redisPort).
+*/}}
+{{- define "knodex.postgresPort" -}}
+{{- if include "knodex.postgresEmbeddedEnabled" . }}
+{{- 5432 }}
+{{- else }}
+{{- .Values.externalPostgresql.port | default 5432 }}
+{{- end }}
 {{- end }}
 
 {{/*
@@ -284,6 +356,21 @@ Dex selector labels
 {{- define "knodex.dex.selectorLabels" -}}
 {{ include "knodex.selectorLabels" . }}
 app.kubernetes.io/component: dex-server
+{{- end }}
+
+{{/*
+kagent controller base URL — used for Agents Hub presence detection and A2A invocation.
+Explicit controllerBaseURL takes precedence; when kagent is installed as a subchart
+the URL is derived from the release namespace.
+*/}}
+{{- define "knodex.kagentControllerBaseURL" -}}
+{{- if .Values.kagent.controllerBaseURL }}
+{{- .Values.kagent.controllerBaseURL }}
+{{- else if .Values.kagent.enabled }}
+{{- printf "http://kagent-controller.%s.svc.cluster.local:8083" .Release.Namespace }}
+{{- else }}
+{{- "http://kagent-controller.kagent.svc.cluster.local:8083" }}
+{{- end }}
 {{- end }}
 
 {{/*

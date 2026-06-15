@@ -118,22 +118,31 @@ func (m *mockEmptyProjectReader) FindProjectForNamespace(ctx context.Context, na
 }
 
 // newTestEnforcer creates a PolicyEnforcer with a nil ProjectReader for testing.
+// Includes the identity team resolver so tests using Teams: work out of the box.
 func newTestEnforcer(t *testing.T) PolicyEnforcer {
 	t.Helper()
 	enforcer, err := NewCasbinEnforcer()
 	if err != nil {
 		t.Fatal("failed to create Casbin enforcer:", err)
 	}
-	return NewPolicyEnforcer(enforcer, nil)
+	return NewPolicyEnforcerWithConfig(enforcer, nil, DefaultPolicyEnforcerConfig(), WithTeamResolver(identityTeamResolver{}))
 }
 
 // newTestEnforcerWithMock creates a PolicyEnforcer with a mockProjectReader for testing.
+// Includes the identity team resolver so tests using Teams: work out of the box.
 func newTestEnforcerWithMock(t *testing.T) (PolicyEnforcer, *mockProjectReader) {
+	t.Helper()
+	return newTestEnforcerWithMockAndTeams(t, identityTeamResolver{})
+}
+
+// newTestEnforcerWithMockAndTeams creates a PolicyEnforcer with a mockProjectReader
+// and a TeamResolver for testing.
+func newTestEnforcerWithMockAndTeams(t *testing.T, resolver TeamResolver) (PolicyEnforcer, *mockProjectReader) {
 	t.Helper()
 	enforcer, err := NewCasbinEnforcer()
 	if err != nil {
 		t.Fatal("failed to create Casbin enforcer:", err)
 	}
 	reader := newMockProjectReader()
-	return NewPolicyEnforcer(enforcer, reader), reader
+	return NewPolicyEnforcerWithConfig(enforcer, reader, DefaultPolicyEnforcerConfig(), WithTeamResolver(resolver)), reader
 }

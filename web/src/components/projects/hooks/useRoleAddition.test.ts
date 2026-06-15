@@ -26,7 +26,7 @@ describe('useRoleAddition', () => {
   it('rejects duplicate role names', async () => {
     const options = {
       ...defaultOptions,
-      roles: [{ name: 'admin', policies: [], groups: [] }],
+      roles: [{ name: 'admin', policies: [] }],
     };
     const { result } = renderHook(() => useRoleAddition(options));
 
@@ -47,11 +47,9 @@ describe('useRoleAddition', () => {
       await result.current.handleAddRole();
     });
 
-    expect(defaultOptions.onUpdate).toHaveBeenCalledWith({
-      roles: expect.arrayContaining([
-        expect.objectContaining({ name: 'deployer' }),
-      ]),
-    });
+    const call = defaultOptions.onUpdate.mock.calls[0][0];
+    expect(call.roles[0].name).toBe('deployer');
+    expect(call.roles[0]).not.toHaveProperty('groups');
     expect(defaultOptions.onSuccess).toHaveBeenCalled();
   });
 

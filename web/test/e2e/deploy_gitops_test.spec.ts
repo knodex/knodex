@@ -291,7 +291,7 @@ test.describe('GitOps Path Configuration', () => {
     console.log('Successfully overrode branch and path values');
   });
 
-  test('AC-PATH-04: GitOps deployment API includes branch and path', async ({ page, request }) => {
+  test('AC-PATH-04: GitOps deployment API includes branch and path', async ({ page, request: _request }) => {
     // This test verifies the complete flow: selecting GitOps mode,
     // configuring branch/path, and ensuring the API request includes them
 
@@ -443,7 +443,7 @@ test.describe('GitOps Path Configuration', () => {
       console.log('Could not capture API request, verifying via UI response');
 
       // Check for success or error message
-      const successMessage = page.locator('text=successfully, text=created, text=deployed');
+      const _successMessage = page.locator('text=successfully, text=created, text=deployed');
       const errorMessage = page.locator('text=failed, text=error, text=Failed');
 
       if (await errorMessage.isVisible({ timeout: 3000 })) {

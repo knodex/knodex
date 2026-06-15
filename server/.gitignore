@@ -27,4 +27,8 @@ vendor/
 .env.local
 
 # Build output
-dist/
+/dist/
+
+# Embed placeholder is tracked; build artifacts inside it are not
+internal/static/dist/*
+!internal/static/dist/.gitkeep

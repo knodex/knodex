@@ -24,7 +24,7 @@ func newTestRedis(t *testing.T) (*redis.Client, *miniredis.Miniredis) {
 func TestStoreDrift(t *testing.T) {
 	client, mr := newTestRedis(t)
 	defer mr.Close()
-	svc := NewService(client, nil, "")
+	svc := NewService(client, nil, "default")
 
 	spec := map[string]interface{}{"replicas": float64(3)}
 	err := svc.StoreDrift(context.Background(), "default", "WebApp", "my-app", spec)
@@ -58,7 +58,7 @@ func TestStoreDrift(t *testing.T) {
 func TestCheckDrift_Drifted(t *testing.T) {
 	client, mr := newTestRedis(t)
 	defer mr.Close()
-	svc := NewService(client, nil, "")
+	svc := NewService(client, nil, "default")
 
 	desiredSpec := map[string]interface{}{"replicas": float64(5)}
 	if err := svc.StoreDrift(context.Background(), "ns", "Kind", "app", desiredSpec); err != nil {
@@ -85,7 +85,7 @@ func TestCheckDrift_Drifted(t *testing.T) {
 func TestCheckDrift_Reconciled(t *testing.T) {
 	client, mr := newTestRedis(t)
 	defer mr.Close()
-	svc := NewService(client, nil, "")
+	svc := NewService(client, nil, "default")
 
 	spec := map[string]interface{}{"replicas": float64(3)}
 	if err := svc.StoreDrift(context.Background(), "ns", "Kind", "app", spec); err != nil {
@@ -118,7 +118,7 @@ func TestCheckDrift_Reconciled(t *testing.T) {
 func TestCheckDrift_NoDriftEntry(t *testing.T) {
 	client, mr := newTestRedis(t)
 	defer mr.Close()
-	svc := NewService(client, nil, "")
+	svc := NewService(client, nil, "default")
 
 	liveSpec := map[string]interface{}{"replicas": float64(3)}
 	isDrifted, desiredSpec, driftedAt, err := svc.CheckDrift(context.Background(), "ns", "Kind", "app", liveSpec)
@@ -139,7 +139,7 @@ func TestCheckDrift_NoDriftEntry(t *testing.T) {
 func TestClearDrift(t *testing.T) {
 	client, mr := newTestRedis(t)
 	defer mr.Close()
-	svc := NewService(client, nil, "")
+	svc := NewService(client, nil, "default")
 
 	spec := map[string]interface{}{"key": "value"}
 	if err := svc.StoreDrift(context.Background(), "ns", "Kind", "app", spec); err != nil {
@@ -159,7 +159,7 @@ func TestClearDrift(t *testing.T) {
 func TestCheckAndClearIfReconciled(t *testing.T) {
 	client, mr := newTestRedis(t)
 	defer mr.Close()
-	svc := NewService(client, nil, "")
+	svc := NewService(client, nil, "default")
 
 	spec := map[string]interface{}{"replicas": float64(3)}
 	if err := svc.StoreDrift(context.Background(), "ns", "Kind", "app", spec); err != nil {
@@ -222,7 +222,7 @@ func TestGracefulDegradation_NilClient(t *testing.T) {
 func TestBatchCheckDrift(t *testing.T) {
 	client, mr := newTestRedis(t)
 	defer mr.Close()
-	svc := NewService(client, nil, "")
+	svc := NewService(client, nil, "default")
 
 	// Store drift entries for 3 instances
 	spec1 := map[string]interface{}{"replicas": float64(3)}
@@ -303,7 +303,7 @@ func TestBatchCheckDrift_NilClient(t *testing.T) {
 func TestBatchCheckDrift_Empty(t *testing.T) {
 	client, mr := newTestRedis(t)
 	defer mr.Close()
-	svc := NewService(client, nil, "")
+	svc := NewService(client, nil, "default")
 
 	results := svc.BatchCheckDrift(context.Background(), nil)
 	if len(results) != 0 {
@@ -343,7 +343,7 @@ func TestNewService_EmptyOrg(t *testing.T) {
 	client, mr := newTestRedis(t)
 	defer mr.Close()
 
-	svc := NewService(client, nil, "")
+	svc := NewService(client, nil, "default")
 	if svc.organization != "default" {
 		t.Errorf("expected organization 'default' for empty string, got %q", svc.organization)
 	}
@@ -426,5 +426,26 @@ func TestCheckAndClearIfReconciled_AtomicNoRace(t *testing.T) {
 	exists, _ = client.Exists(ctx, key).Result()
 	if exists != 0 {
 		t.Error("expected drift entry to be deleted after reconciliation with specB")
+	}
+}
+
+// TestNewService_EmptyOrgFailsClosed asserts the audit G-16 fix: an empty
+// organization is treated as a configuration error and the service disables
+// itself (fail-closed) rather than silently coercing to a shared "default"
+// keyspace. With the service disabled, StoreDrift is a no-op and writes nothing.
+func TestNewService_EmptyOrgFailsClosed(t *testing.T) {
+	client, mr := newTestRedis(t)
+	defer mr.Close()
+
+	svc := NewService(client, nil, "") // empty org -> fail closed
+
+	spec := map[string]interface{}{"replicas": float64(3)}
+	if err := svc.StoreDrift(context.Background(), "ns", "Kind", "app", spec); err != nil {
+		t.Fatalf("StoreDrift should no-op (not error) when disabled: %v", err)
+	}
+
+	// No keys should have been written (no silent "default" keyspace).
+	if keys := mr.Keys(); len(keys) != 0 {
+		t.Fatalf("expected no keys written for empty-org (fail-closed) service, got %v", keys)
 	}
 }

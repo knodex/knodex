@@ -403,18 +403,6 @@ func (c *Controller) applyObjectToCluster(ctx context.Context, obj *unstructured
 	return nil
 }
 
-// deleteFromCluster removes a resource from the Kubernetes cluster.
-// Used as a best-effort compensating action when Git push fails after a
-// successful cluster apply in GitOps mode. IsNotFound is treated as success
-// (idempotent delete).
-func (c *Controller) deleteFromCluster(ctx context.Context, obj *unstructured.Unstructured, req *DeployRequest) error {
-	gvr, err := c.getGVRFromUnstructured(obj)
-	if err != nil {
-		return fmt.Errorf("determine GVR for delete: %w", err)
-	}
-	return c.deleteFromClusterByGVR(ctx, gvr, obj, req)
-}
-
 // deleteFromClusterByGVR deletes a resource using a pre-resolved GVR, skipping the
 // discovery round-trip. Used in the GitOps compensating-delete path where the GVR
 // was already resolved during cluster apply.

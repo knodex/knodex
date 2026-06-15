@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"regexp"
 
+	"github.com/knodex/knodex/server/internal/api/response"
 	"github.com/knodex/knodex/server/internal/icons"
 )
 
@@ -28,7 +29,7 @@ func NewIconsHandler(registry *icons.Registry) *IconsHandler {
 func (h *IconsHandler) GetIcon(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
 	if !slugPattern.MatchString(slug) {
-		http.Error(w, "invalid slug", http.StatusBadRequest)
+		response.BadRequest(w, "invalid slug", nil)
 		return
 	}
 	svg, ok := h.registry.Get(slug)

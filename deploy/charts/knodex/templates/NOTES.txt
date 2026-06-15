@@ -112,6 +112,22 @@ NEXT STEPS
    Install Kro: https://kro.run/docs/getting-started/Installation/
    {{- end }}
 
+{{- if .Values.kagent.enabled }}
+
+--------------------------------------------------------------------------------
+AGENTS (kagent)
+--------------------------------------------------------------------------------
+The kagent operator is being installed as a dependency.
+Controller URL: {{ include "knodex.kagentControllerBaseURL" . }}
+
+Once the operator is ready, the Agents workspace in Knodex will become active.
+Verify presence with:
+  kubectl get deploy -n {{ .Release.Namespace }} -l app.kubernetes.io/name=kagent
+
+Create agents from the Agents tab (Create Agent → Deploy drawer), which deploys
+the agent-wrapping RGD (deploy/agents/kagent-agent.yaml) into your namespace.
+{{- end }}
+
 2. Create ResourceGraphDefinitions (RGDs) for your organization
 
 3. Create Projects to organize access control:

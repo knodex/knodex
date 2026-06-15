@@ -1,0 +1,14 @@
+# CI fixture — AC #1 / AC #2 path (a): default OSS bundled Postgres.
+#
+# A fresh OSS install (enterprise.enabled=false) with NO Postgres values set must
+# provision a working embedded Postgres path: the Bitnami subchart enabled,
+# DATABASE_URL wired to the chart-built DSN Secret, and the wait-for-postgres
+# init container present. This is the default-on behavior (R5-5) — this fixture
+# just pins enterprise.enabled=false explicitly to exercise the OSS edition.
+#
+# Used in CI via:
+#   helm template knodex ./deploy/charts/knodex \
+#     --values ./deploy/charts/knodex/ci/values-oss-default-postgres.yaml
+
+enterprise:
+  enabled: false

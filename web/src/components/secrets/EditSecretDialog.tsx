@@ -16,8 +16,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { KeyValueEditor } from "./KeyValueEditor";
 import { createPairId, type KeyValuePair } from "./keyValueTypes";
-import type { SecretDetail } from "@/types/secret";
-import { useCurrentProject } from "@/hooks/useAuth";
+import { SecretMetadataFields } from "./SecretMetadataFields";
+import type { SecretDetail, SecretMetadata } from "@/types/secret";
+import { validateDocsUrl } from "@/lib/url-utils";
+import { dateInputToExpiresAt, emptyMetadataValue, expiresAtToDateInput, type SecretMetadataFormValue } from "@/lib/secret-metadata";
 
 interface EditSecretDialogProps {
   open: boolean;
@@ -26,13 +28,16 @@ interface EditSecretDialogProps {
 }
 
 export function EditSecretDialog({ open, onOpenChange, secret }: EditSecretDialogProps) {
-  const project = useCurrentProject() ?? "";
   const [pairs, setPairs] = useState<KeyValuePair[]>([]);
+  const [metadata, setMetadata] = useState<SecretMetadataFormValue>(emptyMetadataValue);
+  /** Snapshot of the metadata as the dialog opened, used to decide whether
+   *  the user touched the section and we need to send `metadata` in the PUT. */
+  const [initialMetadata, setInitialMetadata] = useState<SecretMetadataFormValue>(emptyMetadataValue);
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
 
   const updateMutation = useUpdateSecret();
 
-  // Initialize pairs from secret data when dialog opens
+  // Initialize pairs + metadata from secret when dialog opens
   useEffect(() => {
     if (open) {
       const initialPairs: KeyValuePair[] = Object.keys(secret.data).map((key) => ({
@@ -44,11 +49,18 @@ export function EditSecretDialog({ open, onOpenChange, secret }: EditSecretDialo
       if (initialPairs.length === 0) {
         initialPairs.push({ id: createPairId(), key: "", value: "", visible: false });
       }
+      const md: SecretMetadataFormValue = {
+        rotation: secret.metadata?.rotation ?? "",
+        docsUrl: secret.metadata?.docsUrl ?? "",
+        expiresAtDate: expiresAtToDateInput(secret.metadata?.expiresAt),
+      };
       // eslint-disable-next-line react-hooks/set-state-in-effect -- Intentional reset when dialog opens
       setPairs(initialPairs);
+      setMetadata(md);
+      setInitialMetadata(md);
       setValidationErrors({});
     }
-  }, [open, secret.data]);
+  }, [open, secret.data, secret.metadata]);
 
   const handleOpenChange = useCallback(
     (isOpen: boolean) => {
@@ -60,17 +72,29 @@ export function EditSecretDialog({ open, onOpenChange, secret }: EditSecretDialo
     [onOpenChange]
   );
 
+  const metadataChanged = useCallback((): boolean => {
+    return (
+      metadata.rotation !== initialMetadata.rotation ||
+      metadata.docsUrl !== initialMetadata.docsUrl ||
+      metadata.expiresAtDate !== initialMetadata.expiresAtDate
+    );
+  }, [metadata, initialMetadata]);
+
   const validate = useCallback((): boolean => {
     const errors: Record<string, string> = {};
 
-    // For edit, only pairs with a non-empty value count as updates.
+    // For edit, only pairs with a non-empty value count as data updates.
     // Pairs with a key but empty value are skipped (unchanged on server).
     const pairsWithValues = pairs.filter((p) => p.key.trim() && p.value);
-    // Also check for new keys (key + value both filled in)
     const nonEmptyPairs = pairs.filter((p) => p.key.trim() || p.value.trim());
-    if (pairsWithValues.length === 0) {
-      errors.keys = "At least one key must have a new value";
-    } else {
+
+    // Require at least *some* change — either a new value or a metadata edit.
+    // Metadata-only edits are legitimate (e.g., just updating the docs URL).
+    if (pairsWithValues.length === 0 && !metadataChanged()) {
+      errors.keys = "Enter a new value or change a metadata field to save";
+    }
+
+    {
       const keys = new Set<string>();
       for (const pair of nonEmptyPairs) {
         if (!pair.key.trim()) {
@@ -85,9 +109,15 @@ export function EditSecretDialog({ open, onOpenChange, secret }: EditSecretDialo
       }
     }
 
+    // Metadata is optional. Sanity-check the URL shape only when supplied.
+    if (metadata.docsUrl) {
+      const msg = validateDocsUrl(metadata.docsUrl);
+      if (msg) errors["metadata:docsUrl"] = msg;
+    }
+
     setValidationErrors(errors);
     return Object.keys(errors).length === 0;
-  }, [pairs]);
+  }, [pairs, metadata, metadataChanged]);
 
   const handleSubmit = useCallback(async () => {
     if (!validate()) return;
@@ -101,12 +131,24 @@ export function EditSecretDialog({ open, onOpenChange, secret }: EditSecretDialo
       }
     }
 
+    // Only send `metadata` if the user actually touched the section.
+    // Omitting the field tells the server to leave existing labels/annotations
+    // exactly as they were (matches the contract documented on UpdateSecretRequest).
+    let metadataPayload: SecretMetadata | undefined;
+    if (metadataChanged()) {
+      metadataPayload = {
+        rotation: metadata.rotation || undefined,
+        docsUrl: metadata.docsUrl.trim() || undefined,
+        expiresAt: dateInputToExpiresAt(metadata.expiresAtDate),
+      };
+    }
+
     try {
       await updateMutation.mutateAsync({
         name: secret.name,
-        project,
         namespace: secret.namespace,
         data,
+        metadata: metadataPayload,
       });
       toast.success(`Secret "${secret.name}" updated successfully`);
       handleOpenChange(false);
@@ -123,16 +165,16 @@ export function EditSecretDialog({ open, onOpenChange, secret }: EditSecretDialo
         toast.error("Failed to update secret");
       }
     }
-  }, [validate, pairs, secret.name, secret.namespace, project, updateMutation, handleOpenChange]);
+  }, [validate, pairs, secret.name, secret.namespace, metadata, metadataChanged, updateMutation, handleOpenChange]);
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-[600px]">
+      <DialogContent className="sm:max-w-[600px] max-h-[90vh] flex flex-col overflow-hidden">
         <DialogHeader>
           <DialogTitle>Edit Secret</DialogTitle>
           <DialogDescription>
-            Update values for "{secret.name}". Only keys with new values will be updated.
-            Leave a value empty to keep it unchanged.
+            Update values for "{secret.name}". Only keys with new values will be updated —
+            leave a value empty to keep it unchanged. Metadata fields are optional.
           </DialogDescription>
         </DialogHeader>
 
@@ -141,12 +183,21 @@ export function EditSecretDialog({ open, onOpenChange, secret }: EditSecretDialo
             e.preventDefault();
             handleSubmit();
           }}
+          className="flex min-h-0 flex-1 flex-col"
         >
-          <div className="space-y-4 py-2">
+          <div className="flex-1 space-y-4 overflow-y-auto py-2 pr-1">
             <KeyValueEditor
               pairs={pairs}
               onChange={setPairs}
               errors={validationErrors}
+            />
+
+            {/* Optional metadata: rotation policy, docs URL, expiration */}
+            <SecretMetadataFields
+              value={metadata}
+              onChange={setMetadata}
+              errors={validationErrors}
+              idPrefix="edit-secret-metadata"
             />
           </div>
 

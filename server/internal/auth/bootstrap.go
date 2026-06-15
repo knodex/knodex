@@ -29,13 +29,28 @@ const (
 type ProjectBootstrapService struct {
 	projectService AuthProjectService
 	k8sClient      kubernetes.Interface
+	// projectName / projectNamespace name the auto-created default project.
+	// They are configurable (audit G-15) so a cloud tenant can rename it; empty
+	// inputs fall back to the DefaultProject* constants for OSS/EE parity.
+	projectName      string
+	projectNamespace string
 }
 
-// NewProjectBootstrapService creates a new bootstrap service
-func NewProjectBootstrapService(projectService AuthProjectService, k8sClient kubernetes.Interface) *ProjectBootstrapService {
+// NewProjectBootstrapService creates a new bootstrap service. projectName and
+// projectNamespace are configurable (audit G-15); pass empty strings to use the
+// DefaultProjectName / DefaultProjectNamespace constants (today's behavior).
+func NewProjectBootstrapService(projectService AuthProjectService, k8sClient kubernetes.Interface, projectName, projectNamespace string) *ProjectBootstrapService {
+	if projectName == "" {
+		projectName = DefaultProjectName
+	}
+	if projectNamespace == "" {
+		projectNamespace = DefaultProjectNamespace
+	}
 	return &ProjectBootstrapService{
-		projectService: projectService,
-		k8sClient:      k8sClient,
+		projectService:   projectService,
+		k8sClient:        k8sClient,
+		projectName:      projectName,
+		projectNamespace: projectNamespace,
 	}
 }
 
@@ -43,7 +58,7 @@ func NewProjectBootstrapService(projectService AuthProjectService, k8sClient kub
 // This is idempotent - safe to call multiple times
 func (s *ProjectBootstrapService) EnsureDefaultProject(ctx context.Context, adminUserID string) (*rbac.Project, error) {
 	// Try to get existing default project
-	project, err := s.projectService.GetProject(ctx, DefaultProjectName)
+	project, err := s.projectService.GetProject(ctx, s.projectName)
 	if err == nil {
 		slog.Info("default project already exists",
 			"project_id", project.Name,
@@ -66,8 +81,8 @@ func (s *ProjectBootstrapService) EnsureDefaultProject(ctx context.Context, admi
 
 	// Default project doesn't exist - create it
 	slog.Info("creating default project",
-		"project_name", DefaultProjectName,
-		"namespace", DefaultProjectNamespace,
+		"project_name", s.projectName,
+		"namespace", s.projectNamespace,
 		"admin_user_id", adminUserID,
 	)
 
@@ -77,7 +92,7 @@ func (s *ProjectBootstrapService) EnsureDefaultProject(ctx context.Context, admi
 		// Allow deployments to the default-project namespace
 		Destinations: []rbac.Destination{
 			{
-				Namespace: DefaultProjectNamespace,
+				Namespace: s.projectNamespace,
 			},
 		},
 		// Allow common namespace-scoped resources
@@ -90,39 +105,35 @@ func (s *ProjectBootstrapService) EnsureDefaultProject(ctx context.Context, admi
 				Name:        "platform-admin",
 				Description: "Full access to project resources",
 				Policies: []string{
-					fmt.Sprintf("p, proj:%s:platform-admin, *, *, %s/*, allow", DefaultProjectName, DefaultProjectName),
+					fmt.Sprintf("p, proj:%s:platform-admin, *, *, %s/*, allow", s.projectName, s.projectName),
 				},
-				Groups: []string{
-					fmt.Sprintf("admin:%s", adminUserID), // Admin user's group
-				},
+				// Team binding is the operator's responsibility (Teams-only binding, Story 10.6).
 			},
 			{
 				Name:        "developer",
 				Description: "Deploy and manage instances within the project",
 				Policies: []string{
-					fmt.Sprintf("p, proj:%s:developer, applications, *, %s/*, allow", DefaultProjectName, DefaultProjectName),
-					fmt.Sprintf("p, proj:%s:developer, repositories, get, %s/*, allow", DefaultProjectName, DefaultProjectName),
+					fmt.Sprintf("p, proj:%s:developer, applications, *, %s/*, allow", s.projectName, s.projectName),
+					fmt.Sprintf("p, proj:%s:developer, repositories, get, %s/*, allow", s.projectName, s.projectName),
 				},
-				Groups: []string{}, // No groups by default
 			},
 			{
 				Name:        "viewer",
 				Description: "Read-only access to project resources",
 				Policies: []string{
-					fmt.Sprintf("p, proj:%s:viewer, *, get, %s/*, allow", DefaultProjectName, DefaultProjectName),
+					fmt.Sprintf("p, proj:%s:viewer, *, get, %s/*, allow", s.projectName, s.projectName),
 				},
-				Groups: []string{}, // No groups by default
 			},
 		},
 	}
 
 	// Create the project
-	project, err = s.projectService.CreateProject(ctx, DefaultProjectName, projectSpec, adminUserID)
+	project, err = s.projectService.CreateProject(ctx, s.projectName, projectSpec, adminUserID)
 	if err != nil {
 		// Check if it was created in a race condition
 		if errors.IsAlreadyExists(err) {
 			// Another concurrent request created it - get it
-			project, getErr := s.projectService.GetProject(ctx, DefaultProjectName)
+			project, getErr := s.projectService.GetProject(ctx, s.projectName)
 			if getErr != nil {
 				return nil, fmt.Errorf("default project created by another request but failed to retrieve: %w", getErr)
 			}
@@ -147,38 +158,17 @@ func (s *ProjectBootstrapService) EnsureDefaultProject(ctx context.Context, admi
 	return project, nil
 }
 
-// ensureAdminRole ensures the admin user has the platform-admin role in the project
-// In the ArgoCD model, users are bound to roles via OIDC groups
+// ensureAdminRole ensures the platform-admin role exists in the project.
+// Team binding is the operator's responsibility (via Teams-only binding, Story 10.6).
 func (s *ProjectBootstrapService) ensureAdminRole(ctx context.Context, project *rbac.Project, adminUserID string) (*rbac.Project, error) {
-	adminGroup := fmt.Sprintf("admin:%s", adminUserID)
-
-	// Check if platform-admin role exists with admin's group
+	// Check if platform-admin role already exists
 	for _, role := range project.Spec.Roles {
 		if role.Name == "platform-admin" {
-			for _, group := range role.Groups {
-				if group == adminGroup {
-					// Admin group is already in the role
-					return project, nil
-				}
-			}
-
-			// Admin group not in role - add it
-			slog.Warn("admin user not in platform-admin role, adding their group",
-				"project_id", project.Name,
-				"admin_user_id", adminUserID,
-				"admin_group", adminGroup,
-			)
-
-			updatedProject, err := s.projectService.AddGroupToRole(ctx, project.Name, "platform-admin", adminGroup, "system-bootstrap")
-			if err != nil {
-				return nil, fmt.Errorf("failed to add admin group to platform-admin role: %w", err)
-			}
-
-			return updatedProject, nil
+			return project, nil
 		}
 	}
 
-	// platform-admin role doesn't exist - create it
+	// platform-admin role doesn't exist - create it (no group/team binding; operator configures Teams)
 	slog.Warn("platform-admin role not found in project, creating it",
 		"project_id", project.Name,
 		"admin_user_id", adminUserID,
@@ -190,7 +180,6 @@ func (s *ProjectBootstrapService) ensureAdminRole(ctx context.Context, project *
 		Policies: []string{
 			fmt.Sprintf("p, proj:%s:platform-admin, *, *, %s/*, allow", project.Name, project.Name),
 		},
-		Groups: []string{adminGroup},
 	}
 
 	updatedProject, err := s.projectService.AddRole(ctx, project.Name, adminRole, "system-bootstrap")

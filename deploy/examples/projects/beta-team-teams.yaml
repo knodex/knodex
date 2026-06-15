@@ -1,0 +1,20 @@
+# Teams for beta-team-project.yaml
+# Apply with: kubectl apply -f <this-file> -n <knodex-namespace>
+---
+apiVersion: knodex.io/v1alpha1
+kind: Team
+metadata:
+  name: beta-admins
+spec:
+  description: "Beta project administrators"
+  oidcGroups:
+    - beta-admins
+---
+apiVersion: knodex.io/v1alpha1
+kind: Team
+metadata:
+  name: beta-developers
+spec:
+  description: "Beta project developers"
+  oidcGroups:
+    - beta-developers

@@ -1,14 +1,13 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, memo } from "react";
 import type { Instance } from "@/types/rgd";
 import { formatDistanceToNow } from "@/lib/date";
 import { ChevronRight } from "@/lib/icons";
-import { HealthBadge } from "./HealthBadge";
 import { ScopeIndicator } from "@/components/shared/ScopeIndicator";
 import { SortableHead } from "@/components/ui/sortable-table";
-import { deriveActorLabel } from "./instance-utils";
+import { deriveActorLabel, STRIPE_COLOR } from "./instance-utils";
 import {
   TableBody,
   TableCell,
@@ -32,7 +31,7 @@ interface InstancesListViewProps {
   onInstanceClick?: (instance: Instance) => void;
 }
 
-export function InstancesListView({ items, onInstanceClick }: InstancesListViewProps) {
+export const InstancesListView = memo(function InstancesListView({ items, onInstanceClick }: InstancesListViewProps) {
   const [sortField, setSortField] = useState<SortField>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
 
@@ -111,9 +110,14 @@ export function InstancesListView({ items, onInstanceClick }: InstancesListViewP
                 }
               }}
             >
-              <TableCell>
-                <HealthBadge health={instance.health} size="sm" />
-              </TableCell>
+              <TableCell
+                data-testid="instance-row-health-stripe"
+                data-health={instance.health}
+                aria-label={`Health: ${instance.health}`}
+                style={{
+                  boxShadow: `inset 3px 0 0 ${STRIPE_COLOR[instance.health] ?? "var(--status-inactive)"}`,
+                }}
+              />
               <TableCell>
                 <div className="min-w-0">
                   <p className="font-medium text-foreground truncate">{instance.name}</p>
@@ -156,4 +160,4 @@ export function InstancesListView({ items, onInstanceClick }: InstancesListViewP
       </table>
     </ListTableShell>
   );
-}
+});

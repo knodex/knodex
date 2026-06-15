@@ -1,0 +1,29 @@
+# Teams for development-project.yaml
+# Apply with: kubectl apply -f <this-file> -n <knodex-namespace>
+---
+apiVersion: knodex.io/v1alpha1
+kind: Team
+metadata:
+  name: dev-leads
+spec:
+  description: "Development lead engineers"
+  oidcGroups:
+    - dev-leads
+---
+apiVersion: knodex.io/v1alpha1
+kind: Team
+metadata:
+  name: developers
+spec:
+  description: "Development team engineers"
+  oidcGroups:
+    - developers
+---
+apiVersion: knodex.io/v1alpha1
+kind: Team
+metadata:
+  name: qa-engineers
+spec:
+  description: "QA engineering team"
+  oidcGroups:
+    - qa-engineers

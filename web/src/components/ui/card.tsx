@@ -36,6 +36,9 @@ const CardTitle = React.forwardRef<
   HTMLParagraphElement,
   React.HTMLAttributes<HTMLHeadingElement>
 >(({ className, ...props }, ref) => (
+  // CardTitle is a generic primitive — callers pass heading text via children
+  // through {...props}, which the static a11y rule cannot see.
+  // eslint-disable-next-line jsx-a11y/heading-has-content
   <h3
     ref={ref}
     className={cn(

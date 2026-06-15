@@ -31,8 +31,8 @@ type RoleToValidate struct {
 	Description string `json:"description,omitempty"`
 	// Policies is the list of policy strings defining permissions
 	Policies []string `json:"policies,omitempty"`
-	// Groups is the list of OIDC groups assigned to this role
-	Groups []string `json:"groups,omitempty"`
+	// Teams is the list of Team names bound to this role
+	Teams []string `json:"teams,omitempty"`
 }
 
 // ValidateProjectUpdateRequest represents the request body for validating project updates
@@ -91,7 +91,7 @@ func toRbacProject(p *ProjectToValidate) *rbac.Project {
 			Name:        r.Name,
 			Description: r.Description,
 			Policies:    r.Policies,
-			Groups:      r.Groups,
+			Teams:       r.Teams,
 		})
 	}
 
@@ -123,7 +123,7 @@ func applyValidationUpdateToProject(current *rbac.Project, req *ValidateProjectU
 				Name:        r.Name,
 				Description: r.Description,
 				Policies:    r.Policies,
-				Groups:      r.Groups,
+				Teams:       r.Teams,
 			})
 		}
 	}

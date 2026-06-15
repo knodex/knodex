@@ -55,6 +55,10 @@ export function useDeleteInstance() {
       queryClient.removeQueries({ queryKey: ["instance", group, namespace, kind, name] });
       queryClient.invalidateQueries({ queryKey: ["instances"] });
       queryClient.invalidateQueries({ queryKey: ["rgds"] });
+      // Keep the Agents hub fresh: deleting a kagent-agent instance
+      // garbage-collects the Agent CR, so Installed Agents must refetch
+      // (Story 49.3 — unconditional, same rationale as useCreateInstance).
+      queryClient.invalidateQueries({ queryKey: ["agents", "installed"] });
     },
   });
 }

@@ -308,6 +308,88 @@ func sortMemberships(memberships []ProjectMembership) {
 	})
 }
 
+// TestGroupMapper_OrgServeradminBoundary pins AC #3 of story 11.3, re-pointed by
+// story 12.2 to the reserved `admins` group: the reserved kx-team-<org>-admins →
+// role:serveradmin path is granted ONLY through the explicit production cloud
+// mapping {Group:"kx-team-*-admins", GlobalAdmin:true}, and NO other kx-team-*
+// string (a non-admin team like platform-eng) ever produces a global role or a
+// project membership. Absent the mapping, even the reserved admins group grants
+// nothing — proving the grant is operator-configured, never implicit. This is the
+// management/data-plane boundary (DT-6, FR-T10); see also
+// rbac.TestPolicyEnforcer_OrgOnlyContext_DeniedAcrossDataPlane (the enforcement
+// pin). NOTE (story 12.1): cloud tokens carry team groups only, sourced natively
+// by Keycloak; story 12.2 retired the kx-org-<slug>-serveradmin path entirely and
+// made the reserved `admins` group the single serveradmin source.
+func TestGroupMapper_OrgServeradminBoundary(t *testing.T) {
+	// The production cloud mapping: serveradmin == reserved `admins` team in a
+	// single-tenant cloud deployment, expressed solely as this globalAdmin wildcard
+	// mapping over the reserved kx-team-<org>-admins group.
+	cloudMapping := []config.OIDCGroupMapping{
+		{Group: "kx-team-*-admins", GlobalAdmin: true},
+	}
+
+	tests := []struct {
+		name            string
+		mappings        []config.OIDCGroupMapping
+		groups          []string
+		wantProjects    []ProjectMembership
+		wantGlobalRoles []string
+	}{
+		{
+			// (a) Full-access path: reserved admins group → role:serveradmin.
+			name:            "reserved admins group with cloud mapping -> role:serveradmin, no projects",
+			mappings:        cloudMapping,
+			groups:          []string{"kx-team-acme-admins"},
+			wantProjects:    []ProjectMembership{},
+			wantGlobalRoles: []string{rbac.CasbinRoleServerAdmin},
+		},
+		{
+			// (b) A non-admin team does NOT match *-admins → nothing.
+			name:            "non-admin team group with cloud mapping -> nothing",
+			mappings:        cloudMapping,
+			groups:          []string{"kx-team-acme-platform-eng"},
+			wantProjects:    []ProjectMembership{},
+			wantGlobalRoles: []string{},
+		},
+		{
+			// A bare org-member group (no team) matches nothing either.
+			name:            "org member group with cloud mapping -> nothing",
+			mappings:        cloudMapping,
+			groups:          []string{"some-org-group"},
+			wantProjects:    []ProjectMembership{},
+			wantGlobalRoles: []string{},
+		},
+		{
+			// (c) Absent the mapping, the reserved admins group grants nothing —
+			// the grant is configured, not implicit.
+			name:            "reserved admins group with empty mappings -> nothing",
+			mappings:        []config.OIDCGroupMapping{},
+			groups:          []string{"kx-team-acme-admins"},
+			wantProjects:    []ProjectMembership{},
+			wantGlobalRoles: []string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mapper := NewGroupMapper(tt.mappings)
+			result := mapper.EvaluateMappings(tt.groups)
+
+			require.NotNil(t, result)
+
+			if len(tt.wantGlobalRoles) == 0 {
+				assert.Empty(t, result.GlobalRoles, "GlobalRoles should be empty")
+			} else {
+				assert.Equal(t, tt.wantGlobalRoles, result.GlobalRoles, "GlobalRoles mismatch")
+			}
+
+			sortMemberships(result.ProjectMemberships)
+			sortMemberships(tt.wantProjects)
+			assert.Equal(t, tt.wantProjects, result.ProjectMemberships, "ProjectMemberships mismatch")
+		})
+	}
+}
+
 func TestRoleIsHigher(t *testing.T) {
 	tests := []struct {
 		role1    string

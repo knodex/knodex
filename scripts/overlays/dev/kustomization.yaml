@@ -71,6 +71,19 @@ patches:
         path: /data/OIDC_ENABLED
         value: "true"
 
+  # Pin the inactivity threshold explicitly for the identity E2E (Story 15.5 AC6).
+  # The Layer-1 suite backdates last_seen_at past this window and asserts
+  # isInactive=true while billing is unchanged; pinning it here makes the
+  # assertion deterministic instead of relying on the server's compiled-in
+  # default (30) happening to match the test's E2E_INACTIVE_THRESHOLD_DAYS.
+  - target:
+      kind: ConfigMap
+      name: knodex-config
+    patch: |
+      - op: add
+        path: /data/IDENTITY_INACTIVE_THRESHOLD_DAYS
+        value: "30"
+
   # Increase rate limits for E2E test suite (all tests run as same user)
   - target:
       kind: ConfigMap

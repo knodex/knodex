@@ -75,7 +75,7 @@ const mockProjects = {
 }
 
 // Mock namespaces
-const mockNamespaces = {
+const _mockNamespaces = {
   namespaces: ['default', 'production', 'staging'],
 }
 

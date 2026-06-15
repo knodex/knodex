@@ -72,6 +72,14 @@ const (
 // Compile-time interface compliance check
 var _ ServiceInterface = (*Service)(nil)
 
+// ObservedGroupsRecorder records distinct OIDC group strings seen at login so
+// the team/role editor can offer a typeahead of real, observed groups. It is
+// defined here (rather than importing internal/groups concretely) to avoid an
+// import cycle and to keep the recording call fakeable in tests.
+type ObservedGroupsRecorder interface {
+	Record(ctx context.Context, groups []string) error
+}
+
 // Service provides authentication operations
 type Service struct {
 	config           *Config
@@ -83,6 +91,7 @@ type Service struct {
 	groupMapper      *GroupMapper
 	k8sClient        kubernetes.Interface
 	blacklist        JWTBlacklistInterface
+	observedGroups   ObservedGroupsRecorder
 }
 
 // validatePasswordComplexity checks if password meets complexity requirements
@@ -232,8 +241,8 @@ func NewService(config *Config, accountStore *AccountStore, projectService AuthP
 		}
 	}
 
-	// Create bootstrap service for default project
-	bootstrapService := NewProjectBootstrapService(projectService, k8sClient)
+	// Create bootstrap service for default project (name/namespace configurable, audit G-15)
+	bootstrapService := NewProjectBootstrapService(projectService, k8sClient, config.BootstrapProjectName, config.BootstrapProjectNamespace)
 
 	service := &Service{
 		config:           config,
@@ -251,6 +260,10 @@ func NewService(config *Config, accountStore *AccountStore, projectService AuthP
 		"password_provided", config.LocalAdminPassword != "",
 	)
 
+	// Zero out the plaintext password now that it has been persisted to the
+	// AccountStore — it must not linger in process memory.
+	config.LocalAdminPassword = ""
+
 	return service, nil
 }
 
@@ -259,6 +272,14 @@ func NewService(config *Config, accountStore *AccountStore, projectService AuthP
 // GroupMapper is created after the auth Service in the initialization order.
 func (s *Service) SetGroupMapper(mapper *GroupMapper) {
 	s.groupMapper = mapper
+}
+
+// SetObservedGroupsStore sets the recorder for distinct OIDC group strings seen
+// at login (Story 10.3). Set after construction (mirroring SetGroupMapper) so
+// NewService's signature and call sites stay unchanged. A nil recorder disables
+// recording. Recording is always best-effort and never affects token generation.
+func (s *Service) SetObservedGroupsStore(recorder ObservedGroupsRecorder) {
+	s.observedGroups = recorder
 }
 
 // AuthenticateLocal authenticates a local user using AccountStore
@@ -469,6 +490,31 @@ func (s *Service) GenerateTokenForAccount(account *Account, userID string) (stri
 func (s *Service) GenerateTokenWithGroups(userID, email, displayName string, groups []string) (string, time.Time, error) {
 	now := time.Now()
 	expiresAt := now.Add(s.config.JWTExpiry)
+
+	// Story 10.3: passively record the distinct group strings this login token
+	// carries so the team/role editor can offer a typeahead of real, observed
+	// groups (FR-T3, NFR-T6 — no IdP admin creds, any provider). This is the one
+	// place every OIDC login funnels its final group list. Recording is
+	// fire-and-forget: token generation is on the login hot path, so a slow or
+	// down Redis must degrade to "no new suggestions", never to a slow/failed
+	// login (AC #1). The goroutine is rooted in context.Background() (not the
+	// request context) with a short timeout so it survives the response
+	// returning, and is short-lived and self-terminating (no leak).
+	if s.observedGroups != nil && len(groups) > 0 {
+		recorder := s.observedGroups
+		toRecord := groups
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := recorder.Record(ctx, toRecord); err != nil {
+				slog.Warn("failed to record observed OIDC groups",
+					"user_id", userID,
+					"groups_count", len(toRecord),
+					"error", err,
+				)
+			}
+		}()
+	}
 
 	// Resolve project roles from OIDC groups
 	// This enables the frontend to determine user permissions (e.g., useCanDeploy hook)
@@ -1209,11 +1255,11 @@ func (s *Service) ValidateToken(ctx context.Context, tokenString string) (*JWTCl
 		if s.blacklist != nil {
 			revoked, err := s.blacklist.IsRevoked(ctx, jti)
 			if err != nil {
-				slog.WarnContext(ctx, "failed to check JWT blacklist, allowing token",
-					"jti", jti,
-					"error", err,
-				)
-				// fail-open: continue without blocking
+				// Redis unavailable: fail-open so a Redis outage does not lock
+				// out all active users. The blacklist is defense-in-depth; the
+				// primary validation (expiry, password change, deleted account)
+				// has already passed above.
+				slog.Warn("jwt blacklist check failed, failing open", "error", err)
 			} else if revoked {
 				return nil, fmt.Errorf("session has been revoked")
 			}
@@ -1234,7 +1280,9 @@ func (s *Service) RevokeToken(ctx context.Context, jti string, remainingTTL time
 // IsLocalLoginEnabled reports whether the local user login pathway is active.
 // See ServiceInterface doc for the two preconditions.
 func (s *Service) IsLocalLoginEnabled() bool {
-	return s.config.LocalLoginEnabled && s.config.LocalAdminPassword != ""
+	// LocalAdminPassword is zeroed after construction; rely on the LocalLoginEnabled
+	// flag alone — the password has already been persisted to the AccountStore.
+	return s.config.LocalLoginEnabled
 }
 
 // GetBootstrapService returns the project bootstrap service

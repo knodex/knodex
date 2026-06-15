@@ -5,9 +5,9 @@
  * Project Policies Tab - View and manage Casbin policies
  */
 import { useState } from "react";
-import { FileCode, Info, AlertCircle, Copy, Check } from "@/lib/icons";
+import { FileCode, Info, AlertCircle } from "@/lib/icons";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { CopyButton } from "@/components/ui/copy-button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { Project } from "@/types/project";
@@ -37,7 +37,6 @@ export function ProjectPoliciesTab({
   canManage,
 }: ProjectPoliciesTabProps) {
   const [viewMode, setViewMode] = useState<"visual" | "raw">("visual");
-  const [copied, setCopied] = useState(false);
 
   // Collect policies from all roles
   const allPolicies: { role: string; policy: string }[] = [];
@@ -47,12 +46,7 @@ export function ProjectPoliciesTab({
     });
   });
 
-  const handleCopyPolicies = () => {
-    const policyText = allPolicies.map((p) => p.policy).join("\n");
-    navigator.clipboard.writeText(policyText);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
+  const policiesText = allPolicies.map((p) => p.policy).join("\n");
 
   return (
     <div className="space-y-4">
@@ -126,19 +120,11 @@ export function ProjectPoliciesTab({
                   {allPolicies.length} polic{allPolicies.length !== 1 ? "ies" : "y"} across {project.roles?.length || 0} roles
                 </CardDescription>
               </div>
-              <Button variant="outline" size="sm" onClick={handleCopyPolicies}>
-                {copied ? (
-                  <>
-                    <Check className="h-4 w-4 mr-2" />
-                    Copied
-                  </>
-                ) : (
-                  <>
-                    <Copy className="h-4 w-4 mr-2" />
-                    Copy All
-                  </>
-                )}
-              </Button>
+              <CopyButton
+                text={policiesText}
+                label="Copy All"
+                iconClassName="h-4 w-4 mr-2"
+              />
             </div>
           </CardHeader>
           <CardContent>

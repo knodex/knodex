@@ -1,6 +1,7 @@
 # Alpha Team Project - Restricted to specific namespace
 # This project allows developers to deploy only to ns-alpha-team namespace
-# Apply with: kubectl apply -f <this-file> -n <knodex-namespace>
+# Apply with: kubectl apply -f alpha-team-teams.yaml -n <knodex-namespace>
+#             kubectl apply -f <this-file> -n <knodex-namespace>
 apiVersion: knodex.io/v1alpha1
 kind: Project
 metadata:
@@ -44,7 +45,7 @@ spec:
         - "p, proj:proj-alpha-team:admin, project, *, proj-alpha-team, allow"
         - "p, proj:proj-alpha-team:admin, instance, *, proj-alpha-team/*, allow"
         - "p, proj:proj-alpha-team:admin, rgd, view, *, allow"
-      groups:
+      teams:
         - alpha-admins
 
     - name: developer
@@ -55,7 +56,7 @@ spec:
         - "p, proj:proj-alpha-team:developer, instance, view, proj-alpha-team/*, allow"
         - "p, proj:proj-alpha-team:developer, instance, delete, proj-alpha-team/*, allow"
         - "p, proj:proj-alpha-team:developer, rgd, view, *, allow"
-      groups:
+      teams:
         - alpha-developers
 
     - name: viewer
@@ -64,5 +65,5 @@ spec:
         - "p, proj:proj-alpha-team:viewer, project, view, proj-alpha-team, allow"
         - "p, proj:proj-alpha-team:viewer, instance, view, proj-alpha-team/*, allow"
         - "p, proj:proj-alpha-team:viewer, rgd, view, *, allow"
-      groups:
+      teams:
         - alpha-viewers

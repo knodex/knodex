@@ -1,0 +1,43 @@
+{
+  "name": "@knodex/design-tokens",
+  "version": "0.7.0",
+  "description": "Shared Knodex design primitives (colors, typography, spacing, radii, shadows) — the cross-repo source of truth for the design-system bridge (FR34 / Gate G5).",
+  "license": "AGPL-3.0-only",
+  "type": "commonjs",
+  "main": "tailwind-preset.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "require": "./tailwind-preset.js",
+      "default": "./tailwind-preset.js"
+    },
+    "./tailwind-preset": {
+      "types": "./index.d.ts",
+      "require": "./tailwind-preset.js",
+      "default": "./tailwind-preset.js"
+    },
+    "./tokens.json": "./tokens.json",
+    "./css/tokens.css": "./css/tokens.css"
+  },
+  "files": [
+    "tokens.json",
+    "tailwind-preset.js",
+    "css/tokens.css",
+    "index.d.ts"
+  ],
+  "scripts": {
+    "build": "node ../../scripts/build-tokens.mjs"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/knodex/knodex-ee.git",
+    "directory": "web/src/design-tokens"
+  },
+  "sideEffects": [
+    "./css/tokens.css"
+  ]
+}

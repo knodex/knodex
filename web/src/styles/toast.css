@@ -7,7 +7,7 @@
  * Overrides Sonner's default styling with design token-based
  * semantic colors. Targets Sonner's data-attribute selectors.
  *
- * Token source: web/src/styles/tokens.css
+ * Token source: @knodex/design-tokens (web/src/design-tokens/tokens.json)
  */
 
 /* ── Base toast container ── */

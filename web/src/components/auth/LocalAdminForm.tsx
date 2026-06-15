@@ -100,6 +100,10 @@ export function LocalAdminForm({ onSuccess }: LocalAdminFormProps) {
   };
 
   return (
+    // react-hook-form's documented pattern is to invoke `handleSubmit(onSubmit)`
+    // in the onSubmit handler binding; the function captures form state via refs
+    // by design.
+    // eslint-disable-next-line react-hooks/refs
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
       <div className="space-y-2">
         <label

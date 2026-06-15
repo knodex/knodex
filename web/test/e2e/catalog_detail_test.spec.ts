@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { test, expect, TestUserRole, setupPermissionMocking } from '../fixture'
-import { mockRGDs, mockRGDListResponse, API_PATHS } from '../fixture/mock-data'
+import { mockRGDs, mockRGDListResponse } from '../fixture/mock-data'
 
 test.describe('RGD Detail View', () => {
   // Authenticate as Global Admin to see all RGD details

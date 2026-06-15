@@ -22,8 +22,12 @@ export function useTestConnection(
   const [testResult, setTestResult] = useState<TestConnectionResponse | null>(null);
   const [isTesting, setIsTesting] = useState(false);
 
-  // Reset test result when auth type changes
+  // Reset test result when auth type changes.
+  // React Compiler flags setState-in-effect, but the intent is exactly
+  // "reset transient state on an external prop change", which is a documented
+  // acceptable use of useEffect (https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes).
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setTestResult(null);
   }, [selectedAuthType]);
 

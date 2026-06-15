@@ -12,6 +12,7 @@ import (
 	"github.com/knodex/knodex/server/internal/api/middleware"
 	"github.com/knodex/knodex/server/internal/api/response"
 	"github.com/knodex/knodex/server/internal/rbac"
+	"github.com/knodex/knodex/server/internal/util/collection"
 )
 
 // AccountInfoResponse represents the response from the account info endpoint
@@ -26,6 +27,19 @@ type AccountInfoResponse struct {
 	Issuer         string            `json:"issuer"`
 	TokenExpiresAt int64             `json:"tokenExpiresAt"`
 	TokenIssuedAt  int64             `json:"tokenIssuedAt"`
+	// IsOrgAdmin reports whether the user is an org admin: membership of
+	// role:serveradmin in CasbinRoles, granted at login via the operator
+	// globalAdmin mapping. Defaults false (read-only) without that mapping.
+	IsOrgAdmin bool `json:"isOrgAdmin"`
+	// ApplicationRole is the caller's effective application role (story 17.1), the
+	// "member" baseline of the two-axis model: every user has exactly one app role
+	// (member → serveradmin) ⊥ zero-or-more project roles. It is DERIVED from
+	// existing Casbin state — "serveradmin" iff role:serveradmin ∈ CasbinRoles, else
+	// "member" — using the identical predicate as IsOrgAdmin above. "member" is a
+	// pure display value, NOT a Casbin subject: no role:member policy is created and
+	// no new Enforce()/can-i resource is added (single-enforcement-layer, NFR-T1).
+	// The web "My Access" self-view reads it to render the app-role badge.
+	ApplicationRole string `json:"applicationRole"`
 }
 
 // CanIServiceInterface defines the interface for permission checking operations
@@ -63,12 +77,22 @@ func (h *AccountHandler) RegisterEnterpriseResource(resource string) {
 	h.enterpriseResources[resource] = true
 }
 
-// projectScopedResources are resources that require a valid project name in the subresource.
+// projectScopedResources are resources whose can-i subresource is a project
+// name (validated via projectService.Exists to prevent permission-existence
+// enumeration). Resources NOT in this map either accept "-" (no subresource)
+// or accept a non-project identifier (e.g., a K8s namespace name).
+//
+// Secrets are intentionally NOT in this list: under the namespace-keyed
+// authorization model (see secrets-namespace-keyed-authz spec), the
+// subresource passed from the web is a K8s namespace, not a project. The
+// project-existence pre-check would 404 every legitimate namespace whose
+// name does not coincide with a project name, breaking Edit/Delete UI gates.
+// The downstream canIService.CanI handles namespace-keyed Casbin objects
+// directly via "secrets/{ns}/*".
 var projectScopedResources = map[string]bool{
 	"instances":    true,
 	"projects":     true,
 	"repositories": true,
-	"secrets":      true,
 	"rgds":         true,
 	"compliance":   true,
 	"applications": true,
@@ -311,17 +335,33 @@ func (h *AccountHandler) Info(w http.ResponseWriter, r *http.Request) {
 		roles = map[string]string{}
 	}
 
+	// Org-admin status: membership of role:serveradmin in CasbinRoles, granted at
+	// login via the operator globalAdmin mapping. Defaults to false without it.
+	isOrgAdmin := collection.Contains(userCtx.CasbinRoles, rbac.CasbinRoleServerAdmin)
+
+	// Effective application role (story 17.1): the "member" baseline derived purely
+	// from existing Casbin state — serveradmin iff role:serveradmin ∈ CasbinRoles,
+	// member otherwise. This reuses the exact IsOrgAdmin predicate above; it adds NO
+	// new Enforce() call, NO can-i resource, and NO role:member subject/policy. The
+	// floor is "no policies"; member is a string the handler returns (NFR-T1).
+	applicationRole := "member"
+	if collection.Contains(userCtx.CasbinRoles, rbac.CasbinRoleServerAdmin) {
+		applicationRole = "serveradmin"
+	}
+
 	resp := AccountInfoResponse{
-		UserID:         userCtx.UserID,
-		Email:          userCtx.Email,
-		DisplayName:    userCtx.DisplayName,
-		Groups:         groups,
-		CasbinRoles:    casbinRoles,
-		Projects:       projects,
-		Roles:          roles,
-		Issuer:         issuer,
-		TokenExpiresAt: userCtx.TokenExpiresAt,
-		TokenIssuedAt:  userCtx.TokenIssuedAt,
+		UserID:          userCtx.UserID,
+		Email:           userCtx.Email,
+		DisplayName:     userCtx.DisplayName,
+		Groups:          groups,
+		CasbinRoles:     casbinRoles,
+		Projects:        projects,
+		Roles:           roles,
+		Issuer:          issuer,
+		TokenExpiresAt:  userCtx.TokenExpiresAt,
+		TokenIssuedAt:   userCtx.TokenIssuedAt,
+		IsOrgAdmin:      isOrgAdmin,
+		ApplicationRole: applicationRole,
 	}
 
 	response.WriteJSON(w, http.StatusOK, resp)

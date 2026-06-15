@@ -8,7 +8,6 @@ import {
   mockInstances,
   API_PATHS,
 } from '../fixture/mock-data'
-import type { Instance } from '../../src/types/rgd'
 import type { Project, ProjectListResponse } from '../../src/types/project'
 import { buildInstanceRoute } from '../../src/lib/instancePath'
 

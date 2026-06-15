@@ -587,6 +587,21 @@ func inferCasbinObjectAndAction(r *http.Request, cleanPath string) (object, acti
 		object = "*"
 	}
 
+	// POST-to-scoped-collection slot fix: when the method is POST and the URL
+	// already carries scope (e.g., /namespaces/{ns}/secrets — no name yet),
+	// the inferred object would be "secrets/{ns}" (2 segments) but every
+	// per-scope policy is "{resource}/{scope}/*" (3+ segments). The
+	// resource-name-to-be-created is in the request body, not the URL, so
+	// the Casbin object must represent the *collection slot* inside the
+	// scope. Appending "/*" expresses "any name in this scope" and lets
+	// "{resource}/{scope}/*"-style policies match natively via keyMatch.
+	//
+	// Idempotent when the path already produced a wildcard (e.g.,
+	// POST /projects → "projects/*"). Skipped when object is bare "*".
+	if r.Method == http.MethodPost && object != "*" && !strings.HasSuffix(object, "/*") {
+		object += "/*"
+	}
+
 	return object, action
 }
 
@@ -660,11 +675,21 @@ func isInstanceListRequest(path, method string) bool {
 		cleanPath == "/api/v1/instances/stuck"
 }
 
-// isInstanceCreateRequest checks if the request is for creating an instance
-// Instance Create Hybrid Authorization Model: Instance creation is handled by the
-// DeploymentValidator middleware which has access to the request body (projectId).
-// The DeploymentValidator checks project-scoped permissions using "instances/{projectId}/*"
-// which matches both built-in roles (instances/*) and project roles (instances/proj-name/*).
+// isInstanceCreateRequest checks if the request is for creating an instance.
+//
+// Instance Create — body-side validation delegation (not Casbin delegation):
+// Instance creation is handled by the DeploymentValidator middleware which has
+// access to the request body. DeploymentValidator performs project existence
+// validation, source repository policy checks, and destination namespace policy
+// checks — all things that need the request body, which the standard
+// authorization middleware does not parse.
+//
+// Casbin authorization for instance POST is now handled correctly by the
+// standard middleware after the POST-to-scoped-collection slot fix in
+// inferCasbinObjectAndAction (POST /apigroups/.../namespaces/{ns}/instances/{kind}
+// → object "instances/{ns}/{kind}/*"). This bypass remains because we still
+// want DeploymentValidator's body-side checks; bypassing the standard
+// middleware ensures we don't run Casbin twice for the same object.
 //
 // GVK-aware routes:
 //

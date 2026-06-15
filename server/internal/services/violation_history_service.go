@@ -49,15 +49,17 @@ type ViolationHistoryRecord struct {
 type ViolationHistoryListOptions struct {
 	Page        int
 	PageSize    int
-	Constraint  string // filter: {kind}/{name}
-	Resource    string // filter: {kind}/{namespace}/{name}
-	Enforcement string // filter: deny, warn, dryrun
-	Status      string // filter: active, resolved, all
+	Constraint  string   // filter: {kind}/{name}
+	Resource    string   // filter: {kind}/{namespace}/{name}
+	Enforcement string   // filter: deny, warn, dryrun
+	Status      string   // filter: active, resolved, all
+	Namespaces  []string // project-scoped access filter; nil = no filter (serveradmin)
 }
 
 // ViolationHistoryExportFilters defines filter criteria for CSV export and count queries.
 type ViolationHistoryExportFilters struct {
-	Enforcement string // filter: deny, warn, dryrun
-	Constraint  string // filter: {kind}/{name}
-	Resource    string // filter: {kind}/{namespace}/{name}
+	Enforcement string   // filter: deny, warn, dryrun
+	Constraint  string   // filter: {kind}/{name}
+	Resource    string   // filter: {kind}/{namespace}/{name}
+	Namespaces  []string // project-scoped access filter; nil = no filter (serveradmin)
 }

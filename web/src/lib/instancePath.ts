@@ -4,9 +4,13 @@
 /**
  * Build a frontend route URL for an instance detail page.
  *
- * Routes mirror Kubernetes API ordering — group first, then optional namespace.
- *   Namespaced:     /instances/group/{group}/ns/{namespace}/{kind}/{name}
- *   Cluster-scoped: /instances/group/{group}/cluster/{kind}/{name}
+ * Routes mirror Kubernetes API ordering — group and version first, then optional namespace.
+ * Absence of namespace (segment count) distinguishes cluster-scoped from namespaced,
+ * matching how the real Kubernetes API omits the namespaces/{ns} segment for cluster-scoped
+ * resources rather than using a sentinel value.
+ *
+ *   Namespaced:     /instances/{group}/{version}/{namespace}/{kind}/{name}
+ *   Cluster-scoped: /instances/{group}/{version}/{kind}/{name}
  *
  * Group is derived from apiVersion (`{group}/{version}`). Knodex only indexes
  * Kro-spawned CRDs which always declare a non-empty apiGroup, and the backend
@@ -28,13 +32,14 @@ export function buildInstanceRoute(args: {
     );
   }
   const g = encodeURIComponent(group);
+  const v = encodeURIComponent(versionOf(args.apiVersion));
   const k = encodeURIComponent(args.kind);
   const n = encodeURIComponent(args.name);
   if (args.namespace) {
     const ns = encodeURIComponent(args.namespace);
-    return `/instances/group/${g}/ns/${ns}/${k}/${n}`;
+    return `/instances/${g}/${v}/${ns}/${k}/${n}`;
   }
-  return `/instances/group/${g}/cluster/${k}/${n}`;
+  return `/instances/${g}/${v}/${k}/${n}`;
 }
 
 /**
@@ -45,4 +50,14 @@ export function buildInstanceRoute(args: {
 export function apiGroupOf(apiVersion: string): string {
   const slash = apiVersion.indexOf("/");
   return slash === -1 ? "" : apiVersion.slice(0, slash);
+}
+
+/**
+ * Extract the version segment from an apiVersion string.
+ *   "apps.example.com/v1alpha1" -> "v1alpha1"
+ *   "v1"                        -> "v1"        (core group; version is the whole string)
+ */
+export function versionOf(apiVersion: string): string {
+  const slash = apiVersion.indexOf("/");
+  return slash === -1 ? apiVersion : apiVersion.slice(slash + 1);
 }

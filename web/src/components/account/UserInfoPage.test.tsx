@@ -46,6 +46,17 @@ const oidcUserState = {
   issuer: "https://auth.example.com",
 };
 
+// Member with no project bindings (story 17.1) — the canonical "bare member"
+// who must land on the self-view, not a 403 wall.
+const bareMemberState = {
+  user: { id: "oidc-member-001", email: "newcomer@example.com", name: "New Comer" },
+  groups: [] as string[],
+  casbinRoles: [] as string[],
+  projects: [] as string[],
+  roles: {} as Record<string, string>,
+  issuer: "https://auth.example.com",
+};
+
 // Local admin mock state
 const localAdminState = {
   user: { id: "local-admin-001", email: "admin@local", name: "Admin User" },
@@ -172,6 +183,76 @@ describe("UserInfoPage", () => {
       await renderPage();
 
       // Should not render a Project Roles section since roles is empty
+      expect(screen.queryByText("Project Roles")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("My Access (story 17.1)", () => {
+    it("renders the My Access header and self-view wrapper", async () => {
+      await renderPage();
+
+      expect(screen.getByTestId("my-access-view")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "My Access" })).toBeInTheDocument();
+    });
+
+    it("shows the serveradmin application-role badge for a server admin", async () => {
+      mockAccountInfo = buildAccountInfo({ applicationRole: "serveradmin" });
+      await renderPage();
+
+      const badge = await screen.findByTestId("application-role");
+      expect(badge).toHaveTextContent("serveradmin");
+    });
+
+    it("shows the member application-role badge for a bare member", async () => {
+      mockState = { ...bareMemberState };
+      mockAccountInfo = buildAccountInfo({
+        userID: "oidc-member-001",
+        email: "newcomer@example.com",
+        casbinRoles: [],
+        projects: [],
+        roles: {},
+        applicationRole: "member",
+      });
+      await renderPage();
+
+      const badge = await screen.findByTestId("application-role");
+      expect(badge).toHaveTextContent("member");
+    });
+
+    it("renders the bound-projects section with project roles from account info", async () => {
+      mockState = { ...bareMemberState };
+      mockAccountInfo = buildAccountInfo({
+        casbinRoles: [],
+        projects: ["proj-gamma"],
+        roles: { "proj-gamma": "developer" },
+        applicationRole: "member",
+      });
+      await renderPage();
+
+      expect(await screen.findByTestId("bound-projects")).toBeInTheDocument();
+      expect(screen.getByText("developer on proj-gamma")).toBeInTheDocument();
+      // Plain-language effective-access summary, not raw Casbin tuples
+      expect(screen.getByTestId("effective-access-summary")).toBeInTheDocument();
+      expect(screen.getByText(/You can act as/)).toBeInTheDocument();
+      expect(screen.queryByTestId("my-access-empty")).not.toBeInTheDocument();
+    });
+
+    it("shows the honest empty-state for a member with no bindings", async () => {
+      mockState = { ...bareMemberState };
+      mockAccountInfo = buildAccountInfo({
+        casbinRoles: [],
+        projects: [],
+        roles: {},
+        applicationRole: "member",
+      });
+      await renderPage();
+
+      const empty = await screen.findByTestId("my-access-empty");
+      expect(empty).toBeInTheDocument();
+      expect(
+        screen.getByText("You're signed in but not yet a member of any project")
+      ).toBeInTheDocument();
+      // A bare member must NOT see a Project Roles section
       expect(screen.queryByText("Project Roles")).not.toBeInTheDocument();
     });
   });

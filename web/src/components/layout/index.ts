@@ -6,5 +6,6 @@ export { NamespaceSelector } from "./NamespaceSelector";
 export { Sidebar, SidebarNav } from "./Sidebar";
 export { SidebarDrawer } from "./SidebarDrawer";
 export { TopBar } from "./TopBar";
+export { PageShell } from "./PageShell";
 export { BottomNav } from "./BottomNav";
 export { DashboardLayout } from "./DashboardLayout";

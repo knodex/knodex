@@ -281,6 +281,35 @@ export async function createInstance(
   return response.data;
 }
 
+export interface CreateRGDRequest {
+  /** Overrides the YAML's metadata.name (DNS-1123 subdomain). */
+  name?: string;
+  /** Overrides the YAML's metadata.namespace (defaults to "default"). */
+  namespace?: string;
+  /** The full ResourceGraphDefinition manifest (kro.run/v1alpha1 only). */
+  yaml: string;
+  /** Originating RGD Builder run id — stamps the run's actionTaken (best-effort). */
+  runId?: string;
+}
+
+export interface CreateRGDResponse {
+  name: string;
+  namespace: string;
+  kind: string;
+  apiVersion: string;
+}
+
+/**
+ * Create a ResourceGraphDefinition from a YAML manifest (Story 50.2 —
+ * the RGD Builder's "Use this spec" deploy hand-off). The server is strictly
+ * kind-locked: anything that is not a kro.run/v1alpha1 ResourceGraphDefinition
+ * is rejected with 400.
+ */
+export async function createRGD(request: CreateRGDRequest): Promise<CreateRGDResponse> {
+  const response = await apiClient.post<CreateRGDResponse>("/v1/rgds", request);
+  return response.data;
+}
+
 export interface PreflightResponse {
   valid: boolean;
   message?: string;

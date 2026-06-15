@@ -1,30 +1,21 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo } from "react";
 import { GitBranch, Plus, Search, Trash2, X } from "@/lib/icons";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableRow,
-} from "@/components/ui/table";
-import { ListTableHeader, ListTableShell } from "@/components/ui/list-table";
-import { SortableHead } from "@/components/ui/sortable-table";
+import { ListFooter } from "@/components/ui/list-footer";
 import { Skeleton } from "@/components/ui/skeleton";
+import { formatDate } from "@/lib/date";
 import {
   filterSearchClasses,
   filterSearchIconClasses,
   filterClearButtonClasses,
 } from "@/components/ui/filter-bar";
 import type { RepositoryConfig } from "@/types/repository";
-import { getRepositoryDisplayURL, getAuthTypeDisplayName } from "@/types/repository";
-
-type SortField = "name" | "url" | "authType" | "project" | "status";
-type SortDir = "asc" | "desc";
+import { getRepositoryDisplayURL } from "@/types/repository";
 
 interface RepositoryListProps {
   repositories: RepositoryConfig[];
@@ -36,12 +27,31 @@ interface RepositoryListProps {
   isLoading?: boolean;
 }
 
-function getStatusColor(status?: string) {
-  switch (status) {
-    case "valid": return "bg-status-success/10 text-status-success";
-    case "invalid": return "bg-destructive/10 text-destructive";
-    default: return "bg-secondary text-muted-foreground";
-  }
+/**
+ * Connection-registry mental model (Story 48.7): a repository is presented as a
+ * binary connection — `Connected` (green) when its `validationStatus` is `"valid"`,
+ * `Disconnected` (neutral grey) for everything else (`"invalid"`, `"unknown"`,
+ * `undefined`). Deliberately a binary state, not a sync-style health tristate —
+ * a repository is a registration, not a continuously reconciled target.
+ */
+function getConnectionState(status?: string): {
+  label: "Connected" | "Disconnected";
+  className: string;
+} {
+  return status === "valid"
+    ? { label: "Connected", className: "bg-status-success/10 text-status-success" }
+    : { label: "Disconnected", className: "bg-secondary text-muted-foreground" };
+}
+
+/**
+ * Format `createdAt` for the per-row "Connected since" metadatum. Returns null when
+ * the value is absent or unparseable so the UI renders nothing (no "Invalid Date").
+ */
+function formatConnectedSince(createdAt?: string): string | null {
+  if (!createdAt) return null;
+  const parsed = new Date(createdAt);
+  if (isNaN(parsed.getTime())) return null;
+  return formatDate(createdAt);
 }
 
 export function RepositoryList({
@@ -53,18 +63,10 @@ export function RepositoryList({
   isLoading = false,
 }: RepositoryListProps) {
   const [searchQuery, setSearchQuery] = useState("");
-  const [sortField, setSortField] = useState<SortField>("name");
-  const [sortDir, setSortDir] = useState<SortDir>("asc");
 
-  const handleSort = useCallback((field: SortField) => {
-    if (sortField === field) {
-      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    } else {
-      setSortField(field);
-      setSortDir("asc");
-    }
-  }, [sortField]);
-
+  // Prototype landing (48.7 follow-up): card layout, no sortable column headers.
+  // Cards are ordered: Connected first (alphabetical), then Disconnected (alphabetical).
+  // This matches the prototype's visual grouping (healthy state on top).
   const sorted = useMemo(() => {
     let items = repositories;
 
@@ -79,39 +81,21 @@ export function RepositoryList({
     }
 
     return [...items].sort((a, b) => {
-      let aVal: string;
-      let bVal: string;
-
-      switch (sortField) {
-        case "name":
-          aVal = a.name.toLowerCase();
-          bVal = b.name.toLowerCase();
-          break;
-        case "url":
-          aVal = getRepositoryDisplayURL(a).toLowerCase();
-          bVal = getRepositoryDisplayURL(b).toLowerCase();
-          break;
-        case "authType":
-          aVal = a.authType || "";
-          bVal = b.authType || "";
-          break;
-        case "project":
-          aVal = a.projectId || "";
-          bVal = b.projectId || "";
-          break;
-        case "status":
-          aVal = a.validationStatus || "";
-          bVal = b.validationStatus || "";
-          break;
-        default:
-          return 0;
-      }
-
-      if (aVal < bVal) return sortDir === "asc" ? -1 : 1;
-      if (aVal > bVal) return sortDir === "asc" ? 1 : -1;
-      return 0;
+      const aConnected = getConnectionState(a.validationStatus).label === "Connected";
+      const bConnected = getConnectionState(b.validationStatus).label === "Connected";
+      if (aConnected !== bConnected) return aConnected ? -1 : 1;
+      return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
     });
-  }, [repositories, searchQuery, sortField, sortDir]);
+  }, [repositories, searchQuery]);
+
+  // Footer counts are computed over the VISIBLE (filtered) rows, not the raw
+  // `repositories` array — mirrors the 48.2/48.3/48.6 ListFooter precedent so
+  // the breakdown stays consistent with the rows on screen when a search is active.
+  const connectedCount = useMemo(
+    () => sorted.filter((r) => getConnectionState(r.validationStatus).label === "Connected").length,
+    [sorted]
+  );
+  const disconnectedCount = sorted.length - connectedCount;
 
   if (isLoading) {
     return (
@@ -120,35 +104,22 @@ export function RepositoryList({
           <Skeleton className="h-9 flex-1" />
           <Skeleton className="h-8 w-20" />
         </div>
-        <ListTableShell noAnimation>
-          <Table>
-            <ListTableHeader>
-              <TableRow>
-                <th className="pl-4 w-[25%] p-3"><Skeleton className="h-4 w-12" /></th>
-                <th className="w-[30%] p-3"><Skeleton className="h-4 w-10" /></th>
-                <th className="w-[12%] p-3"><Skeleton className="h-4 w-10" /></th>
-                <th className="w-[15%] p-3"><Skeleton className="h-4 w-12" /></th>
-                <th className="w-[10%] p-3"><Skeleton className="h-4 w-10" /></th>
-              </TableRow>
-            </ListTableHeader>
-            <TableBody>
-              {Array.from({ length: 3 }).map((_, i) => (
-                <TableRow key={i}>
-                  <TableCell className="pl-4">
-                    <div className="flex items-center gap-3">
-                      <Skeleton className="h-8 w-8 rounded-md" />
-                      <Skeleton className="h-4 w-32" />
-                    </div>
-                  </TableCell>
-                  <TableCell><Skeleton className="h-4 w-40" /></TableCell>
-                  <TableCell><Skeleton className="h-4 w-12" /></TableCell>
-                  <TableCell><Skeleton className="h-4 w-16" /></TableCell>
-                  <TableCell><Skeleton className="h-4 w-12" /></TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </ListTableShell>
+        <div className="space-y-3">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div
+              key={i}
+              className="flex items-center gap-4 rounded-[var(--radius-token-lg)] border border-[var(--border-subtle)] bg-[var(--surface-primary)] p-4"
+            >
+              <Skeleton className="h-12 w-12 rounded-[var(--radius-token-md)] shrink-0" />
+              <div className="flex-1 space-y-2">
+                <Skeleton className="h-4 w-48" />
+                <Skeleton className="h-3 w-64" />
+                <Skeleton className="h-3 w-40" />
+              </div>
+              <Skeleton className="h-6 w-24 rounded-full shrink-0" />
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
@@ -162,7 +133,7 @@ export function RepositoryList({
         </div>
         <h3 className="text-base font-semibold mb-1">No repositories yet</h3>
         <p className="text-sm text-muted-foreground mb-6 max-w-sm">
-          Start adding repositories to enable deployment tracking and GitOps workflows.
+          Connect a Git repository to use it as a deployment source.
         </p>
         {canManage && onCreate && (
           <button
@@ -213,7 +184,7 @@ export function RepositoryList({
         )}
       </div>
 
-      {/* Table */}
+      {/* Card list (prototype-aligned; replaces the prior table) */}
       {sorted.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-16 text-center">
           <GitBranch className="h-12 w-12 text-muted-foreground mb-4" />
@@ -222,72 +193,107 @@ export function RepositoryList({
           </p>
         </div>
       ) : (
-        <ListTableShell>
-          <Table className="table-fixed">
-            <ListTableHeader>
-              <TableRow>
-                <SortableHead field="name" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="w-[22%]">Name</SortableHead>
-                <SortableHead field="url" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="w-[32%]">URL</SortableHead>
-                <SortableHead field="authType" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="w-[12%]">Auth</SortableHead>
-                <SortableHead field="project" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="w-[15%]">Project</SortableHead>
-                <SortableHead field="status" sortField={sortField} sortDir={sortDir} onSort={handleSort} className="w-[10%]">Status</SortableHead>
-                {canManage && <th className="w-[5%]" />}
-              </TableRow>
-            </ListTableHeader>
-            <TableBody>
-              {sorted.map((repo) => (
-                <TableRow
-                  key={repo.id}
-                  className={onEdit ? "cursor-pointer" : ""}
-                  onClick={() => onEdit?.(repo)}
-                  role={onEdit ? "button" : undefined}
-                  tabIndex={onEdit ? 0 : undefined}
-                  aria-label={`View details for ${repo.name}`}
-                  onKeyDown={(e) => {
-                    if (onEdit && (e.key === "Enter" || e.key === " ")) {
-                      e.preventDefault();
-                      onEdit(repo);
-                    }
-                  }}
-                >
-                  <TableCell className="font-medium text-foreground truncate">{repo.name}</TableCell>
-                  <TableCell className="font-mono text-xs text-muted-foreground truncate">
-                    {getRepositoryDisplayURL(repo)} ({repo.defaultBranch})
-                  </TableCell>
-                  <TableCell className="text-xs text-muted-foreground">
-                    {repo.authType ? getAuthTypeDisplayName(repo.authType) : "—"}
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground truncate">{repo.projectId || "—"}</TableCell>
-                  <TableCell>
-                    {repo.validationStatus && (
-                      <Badge className={`text-xs ${getStatusColor(repo.validationStatus)}`}>
-                        {repo.validationStatus}
+        <>
+        <ul
+          className="space-y-3 list-none"
+          data-testid="repositories-list"
+          aria-label="Repositories"
+        >
+          {sorted.map((repo) => {
+            const connectedSince = formatConnectedSince(repo.createdAt);
+            const { label: statusLabel, className: statusClassName } = getConnectionState(repo.validationStatus);
+            const interactive = !!onEdit;
+            return (
+              // The card is promoted to role="button" with tabIndex=0 + Enter/
+              // Space handlers when onEdit is set — the whole card is the click
+              // target. jsx-a11y doesn't follow the role promotion on <li>, so
+              // suppress the noninteractive-element-interactions warning.
+              // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
+              <li
+                key={repo.id}
+                data-testid={`repository-card-${repo.id}`}
+                className={
+                  "group relative flex items-center gap-4 rounded-[var(--radius-token-lg)] " +
+                  "border border-[var(--border-subtle)] bg-[var(--surface-primary)] p-4 " +
+                  "transition-colors duration-150 " +
+                  (interactive
+                    ? "cursor-pointer hover:border-[var(--border-hover)] hover:bg-[var(--surface-elevated)] focus-within:border-[var(--border-hover)]"
+                    : "")
+                }
+                onClick={() => onEdit?.(repo)}
+                role={interactive ? "button" : undefined}
+                tabIndex={interactive ? 0 : undefined}
+                aria-label={interactive ? `View details for ${repo.name}` : undefined}
+                onKeyDown={(e) => {
+                  if (interactive && (e.key === "Enter" || e.key === " ")) {
+                    e.preventDefault();
+                    onEdit?.(repo);
+                  }
+                }}
+              >
+                {/* Git-icon tile (teal on a muted background) */}
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[var(--radius-token-md)] bg-[rgba(45,212,191,0.08)] text-[var(--brand-primary)]">
+                  <GitBranch className="h-5 w-5" aria-hidden="true" />
+                </div>
+
+                {/* Name + project tag, URL, connected-since metadata */}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-foreground truncate">
+                      {repo.name}
+                    </span>
+                    {repo.projectId && (
+                      <Badge
+                        variant="secondary"
+                        className="text-[11px] font-normal text-muted-foreground bg-[rgba(255,255,255,0.05)] border-0"
+                      >
+                        {repo.projectId}
                       </Badge>
                     )}
-                  </TableCell>
-                  {canManage && (
-                    <TableCell>
-                      {onDelete && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                          aria-label={`Delete ${repo.name}`}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onDelete(repo.id);
-                          }}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      )}
-                    </TableCell>
+                  </div>
+                  <p className="mt-0.5 text-xs font-mono text-muted-foreground truncate">
+                    {getRepositoryDisplayURL(repo)}
+                  </p>
+                  {connectedSince && (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Connected since {connectedSince}
+                    </p>
                   )}
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </ListTableShell>
+                </div>
+
+                {/* Status pill (right) */}
+                <div className="flex items-center gap-2 shrink-0">
+                  <Badge className={`text-xs ${statusClassName}`}>{statusLabel}</Badge>
+                  {canManage && onDelete && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
+                      aria-label={`Delete ${repo.name}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDelete(repo.id);
+                      }}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+        <div data-testid="repositories-list-footer">
+          <ListFooter
+            total={sorted.length}
+            totalLabel="repositories"
+            breakdown={[
+              ["connected", connectedCount],
+              ["disconnected", disconnectedCount],
+            ]}
+          />
+        </div>
+        </>
       )}
     </div>
   );

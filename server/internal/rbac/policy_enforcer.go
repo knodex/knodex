@@ -292,10 +292,24 @@ type SyncResult struct {
 	Errors []error
 }
 
+// ProjectStatusUpdater updates the status subresource of a Project CRD.
+// Used by the policy enforcer to surface team-resolution warnings as conditions.
+type ProjectStatusUpdater interface {
+	UpdateProjectStatus(ctx context.Context, project *Project) (*Project, error)
+}
+
+// teamConditionIssue records a team-resolution problem found during policy loading.
+type teamConditionIssue struct {
+	role   string
+	team   string
+	reason string // "TeamNotFound" or "TeamEmpty"
+}
+
 // policyEnforcer implements PolicyEnforcer
 type policyEnforcer struct {
 	enforcer      *CasbinEnforcer
 	projectReader ProjectReader
+	statusUpdater ProjectStatusUpdater
 	mu            sync.RWMutex
 
 	// loadedProjects tracks which projects have policies loaded
@@ -309,6 +323,10 @@ type policyEnforcer struct {
 
 	// Redis role store for persisting user-role assignments across restarts (optional)
 	roleStore *RedisRoleStore
+
+	// teamResolver expands a role's teams[] into OIDC groups (optional). Nil-safe:
+	// when unset, teams contribute no groups.
+	teamResolver TeamResolver
 
 	// Structured logger
 	logger *slog.Logger
@@ -341,6 +359,25 @@ type PolicyEnforcerOption func(*policyEnforcer)
 func WithRedisRoleStore(store *RedisRoleStore) PolicyEnforcerOption {
 	return func(pe *policyEnforcer) {
 		pe.roleStore = store
+	}
+}
+
+// WithTeamResolver sets the resolver used to expand a role's teams[] into OIDC
+// groups. Nil-safe: when unset, teams contribute no groups. Teams are only ever
+// expanded into group strings — there is no separate team-based enforcement
+// layer (single Casbin layer; NFR-T1).
+func WithTeamResolver(r TeamResolver) PolicyEnforcerOption {
+	return func(pe *policyEnforcer) {
+		pe.teamResolver = r
+	}
+}
+
+// WithProjectStatusUpdater wires in a writer used to surface team-resolution
+// warnings as a RolesResolved status condition on the Project CRD.
+// Nil-safe: without it, warnings are logged only (existing behavior).
+func WithProjectStatusUpdater(u ProjectStatusUpdater) PolicyEnforcerOption {
+	return func(pe *policyEnforcer) {
+		pe.statusUpdater = u
 	}
 }
 
@@ -796,7 +833,11 @@ func (pe *policyEnforcer) getProjectScopedWildcards(ctx context.Context, groups 
 		// Extract project names from role strings and add wildcards
 		// Role format: proj:<project>:<role>
 		for _, role := range roles {
-			if strings.HasPrefix(role, "proj:") {
+			// Secrets do NOT carry a project segment in their policy objects
+			// (URL-inferred shape is "secrets/{ns}/{name}"). Skip the project-wide
+			// wildcard for secrets — the per-policy loop below picks up the actual
+			// namespace-scoped objects "secrets/{ns}/*" instead.
+			if resourceType != "secrets" && strings.HasPrefix(role, "proj:") {
 				parts := strings.Split(role, ":")
 				if len(parts) >= 2 {
 					projectName := parts[1]
@@ -809,12 +850,18 @@ func (pe *policyEnforcer) getProjectScopedWildcards(ctx context.Context, groups 
 				}
 			}
 
-			// Also extract namespace-scoped wildcards from the role's actual policies.
-			// Roles with destinations generate policies like "secrets/{project}/{ns}/*".
-			// The project-wide wildcard "secrets/{project}/*" won't match these via keyMatch,
-			// so we need to include the actual namespace-scoped objects for list authorization.
-			// Deduplicate via seenObjects: multiple groups can map to the same role, causing
-			// its policies to be extracted multiple times without this guard.
+			// Also extract namespace-scoped wildcards from the role's actual
+			// policies. Two shapes exist depending on resource:
+			//   - Instances (project-scoped + namespace dimension):
+			//     destinations generate "instances/{project}/{ns}/*".
+			//   - Secrets (namespace-keyed, no project dimension):
+			//     destinations generate "secrets/{ns}/*".
+			// Either way, the project-wide wildcard added above does NOT
+			// match these via keyMatch, so we must include the actual
+			// per-destination objects for list authorization to succeed.
+			// Deduplicate via seenObjects: multiple groups can map to the
+			// same role, causing its policies to be extracted multiple
+			// times without this guard.
 			rolePolicies, err := pe.enforcer.GetPoliciesForRole(role)
 			if err != nil {
 				continue
@@ -825,8 +872,9 @@ func (pe *policyEnforcer) getProjectScopedWildcards(ctx context.Context, groups 
 				if len(policy) >= 2 {
 					obj := policy[1]
 					if strings.HasPrefix(obj, prefix) && obj != prefix+"*" {
-						// Only add namespace-scoped wildcards (e.g., "secrets/alpha/ns-app/*")
-						// Skip project-wide wildcards (already added above)
+						// Per-destination objects (e.g., "instances/alpha/ns-app/*"
+						// or "secrets/ns-app/*"). Skip the project-wide
+						// wildcard already added above.
 						if !seenObjects[obj] {
 							seenObjects[obj] = true
 							wildcards = append(wildcards, obj)
@@ -876,7 +924,7 @@ func (pe *policyEnforcer) LoadProjectPolicies(ctx context.Context, project *Proj
 	}
 
 	pe.mu.Lock()
-	err := pe.loadProjectPoliciesLocked(project)
+	teamIssues, err := pe.loadProjectPoliciesLocked(project)
 	pe.mu.Unlock()
 
 	if err != nil {
@@ -885,6 +933,11 @@ func (pe *policyEnforcer) LoadProjectPolicies(ctx context.Context, project *Proj
 			"error", err,
 		)
 		return fmt.Errorf("load project policies: %w", err)
+	}
+
+	// Surface team-resolution warnings as a RolesResolved status condition (AC #7).
+	if pe.statusUpdater != nil {
+		pe.updateRolesResolvedCondition(ctx, project, teamIssues)
 	}
 
 	// Invalidate cache when policies change
@@ -915,7 +968,10 @@ func (pe *policyEnforcer) LoadProjectPolicies(ctx context.Context, project *Proj
 //   - rgds/*, list, allow - List access to all RGDs (catalog browsing)
 //   - compliance/{project}/*, get, allow - Read access to compliance data (enterprise feature)
 //   - compliance/{project}/*, list, allow - List access to compliance data (enterprise feature)
-//   - secrets/{project}/*, *, allow - Full secrets management for project
+//
+// NOTE: Secrets are NOT in this list. Secrets are namespace-keyed (mirror instances'
+// URL shape) and emitted directly per destination by emitBuiltInSecretPoliciesLocked.
+// A role wanting secret access MUST declare destinations.
 func getBuiltInAdminPolicies(projectName string) []string {
 	return []string{
 		// Repository management - scoped to project
@@ -936,47 +992,6 @@ func getBuiltInAdminPolicies(projectName string) []string {
 		// Compliance read access - scoped to project (enterprise feature)
 		fmt.Sprintf("compliance/%s/*, get, allow", projectName),
 		fmt.Sprintf("compliance/%s/*, list, allow", projectName),
-
-		// Secrets management - full CRUD scoped to project
-		fmt.Sprintf("secrets/%s/*, *, allow", projectName),
-	}
-}
-
-// getBuiltInOperatorPolicies returns built-in policies for the global role:operator role.
-// Operators can view infrastructure, networking, and storage category RGDs in the sidebar.
-//
-// Policies granted:
-//   - rgds/infrastructure/*, get, allow - View infrastructure RGDs and category sidebar
-//   - rgds/infrastructure/*, list, allow - List infrastructure RGDs
-//   - rgds/networking/*, get, allow - View networking RGDs and category sidebar
-//   - rgds/networking/*, list, allow - List networking RGDs
-//   - rgds/storage/*, get, allow - View storage RGDs and category sidebar
-//   - rgds/storage/*, list, allow - List storage RGDs
-func getBuiltInOperatorPolicies() []string {
-	return []string{
-		"rgds/infrastructure/*, get, allow",
-		"rgds/infrastructure/*, list, allow",
-		"rgds/networking/*, get, allow",
-		"rgds/networking/*, list, allow",
-		"rgds/storage/*, get, allow",
-		"rgds/storage/*, list, allow",
-	}
-}
-
-// getBuiltInDeveloperPolicies returns built-in policies for the global role:developer role.
-// Developers can view applications and observability category RGDs in the sidebar.
-//
-// Policies granted:
-//   - rgds/applications/*, get, allow - View application RGDs and category sidebar
-//   - rgds/applications/*, list, allow - List application RGDs
-//   - rgds/observability/*, get, allow - View observability RGDs and category sidebar
-//   - rgds/observability/*, list, allow - List observability RGDs
-func getBuiltInDeveloperPolicies() []string {
-	return []string{
-		"rgds/applications/*, get, allow",
-		"rgds/applications/*, list, allow",
-		"rgds/observability/*, get, allow",
-		"rgds/observability/*, list, allow",
 	}
 }
 
@@ -992,10 +1007,10 @@ func getBuiltInDeveloperPolicies() []string {
 //   - rgds/*, list, allow - List access to all RGDs (catalog browsing)
 //   - repositories/{project}/*, get, allow - View repositories in project
 //   - repositories/{project}/*, list, allow - List repositories in project
-//   - applications/{project}/*, get, allow - View applications in project
-//   - applications/{project}/*, list, allow - List applications in project
-//   - secrets/{project}/*, get, allow - View secrets in project
-//   - secrets/{project}/*, list, allow - List secrets in project
+//
+// NOTE: Secrets are NOT in this list. Secrets are namespace-keyed and emitted
+// directly per destination by emitBuiltInSecretPoliciesLocked. A readonly role
+// wanting secret access MUST declare destinations.
 func getBuiltInReadonlyPolicies(projectName string) []string {
 	return []string{
 		// Project: view only
@@ -1012,23 +1027,48 @@ func getBuiltInReadonlyPolicies(projectName string) []string {
 		// Repository: view and list only
 		fmt.Sprintf("repositories/%s/*, get, allow", projectName),
 		fmt.Sprintf("repositories/%s/*, list, allow", projectName),
-
-		// Applications: view and list only
-		fmt.Sprintf("applications/%s/*, get, allow", projectName),
-		fmt.Sprintf("applications/%s/*, list, allow", projectName),
-
-		// Secrets: view and list only
-		fmt.Sprintf("secrets/%s/*, get, allow", projectName),
-		fmt.Sprintf("secrets/%s/*, list, allow", projectName),
 	}
 }
 
-// loadProjectPoliciesLocked loads policies from a Project CRD into Casbin
-// IMPORTANT: Caller MUST hold the mutex lock before calling this method
-func (pe *policyEnforcer) loadProjectPoliciesLocked(project *Project) error {
+// emitBuiltInSecretPoliciesLocked adds namespace-keyed secret policies for a built-in
+// role (admin or readonly) for each destination namespace declared on the role.
+//
+// Secrets follow the namespace-keyed pattern (mirror instances' URL shape): the
+// Casbin object is "secrets/{ns}/{name}" (no project segment, see
+// inferCasbinObjectAndAction in middleware/authz.go). A role with empty
+// destinations receives NO secret policies — destinations are the access
+// boundary for namespace-keyed resources, exactly like instances behave today
+// for namespace-bearing pattern via destinations.
+//
+// IMPORTANT: Caller MUST hold the mutex lock before calling this method.
+func (pe *policyEnforcer) emitBuiltInSecretPoliciesLocked(roleName string, verbs, destinations []string) error {
+	if len(destinations) == 0 {
+		return nil // TD-7: destinations required for secret access
+	}
+	for _, dest := range destinations {
+		dest = strings.TrimSpace(dest)
+		if dest == "" {
+			continue
+		}
+		object := fmt.Sprintf("secrets/%s/*", dest)
+		for _, verb := range verbs {
+			if _, err := pe.enforcer.AddPolicy(roleName, object, verb, "allow"); err != nil {
+				return fmt.Errorf("failed to add built-in secrets policy %s for role %s on %s: %w",
+					verb, roleName, dest, err)
+			}
+		}
+	}
+	return nil
+}
+
+// loadProjectPoliciesLocked loads policies from a Project CRD into Casbin.
+// It returns team-resolution issues (missing or empty teams) found during loading.
+// IMPORTANT: Caller MUST hold the mutex lock before calling this method.
+func (pe *policyEnforcer) loadProjectPoliciesLocked(project *Project) ([]teamConditionIssue, error) {
+	var teamIssues []teamConditionIssue
 	// Remove existing policies for this project
 	if err := pe.removeProjectPoliciesLocked(project.Name); err != nil {
-		return fmt.Errorf("failed to remove old policies for project %s: %w", project.Name, err)
+		return nil, fmt.Errorf("failed to remove old policies for project %s: %w", project.Name, err)
 	}
 
 	// Load new policies from Project.Spec.Roles
@@ -1040,7 +1080,7 @@ func (pe *policyEnforcer) loadProjectPoliciesLocked(project *Project) error {
 		// Format role name as proj:{project}:{role}
 		roleName, err := FormatProjectRole(project.Name, role.Name)
 		if err != nil {
-			return fmt.Errorf("%w: %v", ErrInvalidRole, err)
+			return nil, fmt.Errorf("%w: %v", ErrInvalidRole, err)
 		}
 
 		// Add each policy from the role
@@ -1052,7 +1092,7 @@ func (pe *policyEnforcer) loadProjectPoliciesLocked(project *Project) error {
 			// Parse and add policy with project scoping (+ destination scoping if set)
 			// Policy format: "object, action, effect" (3-part only for security)
 			if err := pe.addProjectScopedPolicyFromStringWithDests(project.Name, roleName, policyStr, role.Destinations); err != nil {
-				return fmt.Errorf("%w: failed to add policy for role %s: %v", ErrInvalidPolicy, role.Name, err)
+				return nil, fmt.Errorf("%w: failed to add policy for role %s: %v", ErrInvalidPolicy, role.Name, err)
 			}
 		}
 
@@ -1068,8 +1108,12 @@ func (pe *policyEnforcer) loadProjectPoliciesLocked(project *Project) error {
 			)
 			for _, policyStr := range builtInPolicies {
 				if err := pe.addPolicyFromStringWithDests(roleName, policyStr, role.Destinations, project.Name); err != nil {
-					return fmt.Errorf("%w: failed to add built-in admin policy for role %s: %v", ErrInvalidPolicy, role.Name, err)
+					return nil, fmt.Errorf("%w: failed to add built-in admin policy for role %s: %v", ErrInvalidPolicy, role.Name, err)
 				}
+			}
+			// Secrets are namespace-keyed — emit per destination, none if destinations empty.
+			if err := pe.emitBuiltInSecretPoliciesLocked(roleName, []string{"*"}, role.Destinations); err != nil {
+				return nil, fmt.Errorf("%w: %v", ErrInvalidPolicy, err)
 			}
 		}
 
@@ -1084,21 +1128,48 @@ func (pe *policyEnforcer) loadProjectPoliciesLocked(project *Project) error {
 			)
 			for _, policyStr := range builtInPolicies {
 				if err := pe.addPolicyFromStringWithDests(roleName, policyStr, role.Destinations, project.Name); err != nil {
-					return fmt.Errorf("%w: failed to add built-in readonly policy for role %s: %v", ErrInvalidPolicy, role.Name, err)
+					return nil, fmt.Errorf("%w: failed to add built-in readonly policy for role %s: %v", ErrInvalidPolicy, role.Name, err)
 				}
+			}
+			// Secrets are namespace-keyed — emit per destination (get/list only).
+			if err := pe.emitBuiltInSecretPoliciesLocked(roleName, []string{"get", "list"}, role.Destinations); err != nil {
+				return nil, fmt.Errorf("%w: %v", ErrInvalidPolicy, err)
 			}
 		}
 
-		// Add group-to-role mappings for OIDC groups
-		if len(role.Groups) > 0 {
+		// Resolve teams[] into OIDC groups via resolveRoleTeamGroupsWithCallbacks.
+		// Missing and empty teams each accumulate a teamConditionIssue for the
+		// RolesResolved status condition (AC #7; NFR-T1 single Casbin layer kept).
+		projectName := project.Name
+		roleNameForLog := role.Name
+		effectiveGroups := resolveRoleTeamGroupsWithCallbacks(role, pe.teamResolver,
+			func(team string) {
+				pe.logger.Warn("role references a team not found in the team store; contributing no groups",
+					"project", projectName,
+					"role", roleNameForLog,
+					"team", team,
+				)
+				teamIssues = append(teamIssues, teamConditionIssue{role: roleNameForLog, team: team, reason: "TeamNotFound"})
+			},
+			func(team string) {
+				pe.logger.Warn("role references a team that has no configured oidcGroups; contributing no groups",
+					"project", projectName,
+					"role", roleNameForLog,
+					"team", team,
+				)
+				teamIssues = append(teamIssues, teamConditionIssue{role: roleNameForLog, team: team, reason: "TeamEmpty"})
+			},
+		)
+		if len(effectiveGroups) > 0 {
 			pe.logger.Info("loading OIDC group mappings for project role",
 				"project", project.Name,
 				"role", role.Name,
-				"groups_count", len(role.Groups),
-				"groups", role.Groups,
+				"groups_count", len(effectiveGroups),
+				"groups", effectiveGroups,
+				"teams", role.Teams,
 			)
 		}
-		for _, group := range role.Groups {
+		for _, group := range effectiveGroups {
 			groupSubject, err := FormatGroupSubject(group)
 			if err != nil {
 				// Skip invalid group names with warning
@@ -1113,7 +1184,7 @@ func (pe *policyEnforcer) loadProjectPoliciesLocked(project *Project) error {
 
 			// Add grouping policy: group -> role
 			if _, err := pe.enforcer.AddUserRole(groupSubject, roleName); err != nil {
-				return fmt.Errorf("failed to add group %s to role %s: %w", group, roleName, err)
+				return nil, fmt.Errorf("failed to add group %s to role %s: %w", group, roleName, err)
 			}
 			pe.logger.Info("added OIDC group to role mapping",
 				"project", project.Name,
@@ -1182,7 +1253,7 @@ func (pe *policyEnforcer) loadProjectPoliciesLocked(project *Project) error {
 	// Mark project as loaded
 	pe.loadedProjects[project.Name] = true
 
-	return nil
+	return teamIssues, nil
 }
 
 // roleBinding represents a user or group role binding stored in project annotations
@@ -1331,7 +1402,12 @@ func (pe *policyEnforcer) addPolicyFromStringWithDests(roleName, policyStr strin
 	// should be expanded per destination. Repositories and compliance are project-level
 	// resources — their handlers check "resource/{project}/*" which must match
 	// project-wide policies.
-	nsResources := []string{"instances/", "secrets/"}
+	//
+	// NOTE: Secrets are deliberately omitted here. Their built-in policies are no
+	// longer routed through this function (see emitBuiltInSecretPoliciesLocked);
+	// any incoming "secrets/{project}/*" string would be legacy and is rejected
+	// at the spec level (TD-7: destinations required for secret access).
+	nsResources := []string{"instances/"}
 	projectWildcard := projectName + "/*"
 	expanded := false
 	for _, prefix := range nsResources {
@@ -1357,7 +1433,8 @@ func (pe *policyEnforcer) addPolicyFromStringWithDests(roleName, policyStr strin
 	return nil
 }
 
-// addProjectScopedPolicyFromString adds a policy that is scoped to a specific project.
+// addProjectScopedPolicyFromStringWithDests adds a policy that is scoped to a specific
+// project, optionally further scoped to destinations.
 // This method is used when loading custom policies from Project CRD spec.roles[].policies.
 // It automatically scopes wildcard objects to the project to prevent privilege escalation.
 //
@@ -1374,11 +1451,6 @@ func (pe *policyEnforcer) addPolicyFromStringWithDests(roleName, policyStr strin
 // Supports two formats:
 // 1. Simplified 3-part: "object, action, effect"
 // 2. ArgoCD 6-part: "p, subject, resource_type, action, scope, effect"
-func (pe *policyEnforcer) addProjectScopedPolicyFromString(projectName, roleName, policyStr string) error {
-	return pe.addProjectScopedPolicyFromStringWithDests(projectName, roleName, policyStr, nil)
-}
-
-// addProjectScopedPolicyFromStringWithDests adds a project-scoped policy, optionally scoped to destinations.
 func (pe *policyEnforcer) addProjectScopedPolicyFromStringWithDests(projectName, roleName, policyStr string, destinations []string) error {
 	policyStr = strings.TrimSpace(policyStr)
 	if policyStr == "" {
@@ -1457,14 +1529,31 @@ func (pe *policyEnforcer) addProjectScopedPolicyFromStringWithDests(projectName,
 // scopeObjectToProject converts wildcard objects to project-scoped objects.
 // This is the core of multi-tenant access control.
 //
-// Examples:
-//   - "*" -> ["projects/{project}", "instances/{project}/*", "repositories/{project}/*", "secrets/{project}/*", ...]
+// Resource shapes split into two families:
+//   - Project-scoped (project segment in the object): projects, instances,
+//     repositories, compliance.
+//   - Namespace-keyed (no project segment, namespace alone is the boundary):
+//     secrets. Requires destinations; without them, no policies are emitted
+//     (TD-7 in the secrets-namespace-keyed-authz spec).
+//
+// Examples (NO destinations):
+//   - "*" -> ["projects/{project}", "instances/{project}/*",
+//     "repositories/{project}/*", "compliance/{project}/*", "rgds/*"]
+//     (secrets intentionally absent — see TD-7)
 //   - "{project}/*" -> same as "*" (from 6-part ArgoCD format with resourceType="*")
 //   - "instances/*" -> ["instances/{project}/*"]
 //   - "repositories/*" -> ["repositories/{project}/*"]
-//   - "secrets/*" -> ["secrets/{project}/*"]
+//   - "secrets/*" -> nil  (TD-7: destinations required for secret access)
 //   - "rgds/*" -> ["rgds/*"] (RGDs are global/shared, not project-scoped)
 //   - "projects/{other}" -> ["projects/{other}"] (explicit path not modified)
+//
+// Examples (WITH destinations ["ns-a", "ns-b"]):
+//   - "*" -> ["projects/{project}",
+//     "instances/{project}/ns-a/*", "instances/{project}/ns-b/*",
+//     "secrets/ns-a/*", "secrets/ns-b/*",
+//     "repositories/{project}/*", "compliance/{project}/*", "rgds/*"]
+//   - "instances/*" -> ["instances/{project}/ns-a/*", "instances/{project}/ns-b/*"]
+//   - "secrets/*" -> ["secrets/ns-a/*", "secrets/ns-b/*"]  (no project segment)
 func scopeObjectToProject(projectName, object string) []string {
 	return scopeObjectToProjectWithDestinations(projectName, object, nil)
 }
@@ -1492,15 +1581,19 @@ func scopeObjectToProjectWithDestinations(projectName, object string, destinatio
 			fmt.Sprintf("projects/%s", projectName),
 		}
 
-		// Namespace-bearing resources: scope per-destination if destinations provided.
-		// Only instances and secrets are namespace-scoped (have K8s namespace dimension).
-		nsResources := []string{"instances", "secrets"}
-		for _, res := range nsResources {
-			result = append(result, scopeResourceToDestinations(res, projectName, destinations)...)
-		}
+		// Instances: project-scoped, per-destination if destinations set.
+		// Object shape: instances/{project}/* or instances/{project}/{dest}/*.
+		// Resolved at enforcement time via resolveNamespaceToProjectObject.
+		result = append(result, scopeResourceToDestinations("instances", projectName, destinations)...)
+
+		// Secrets: namespace-keyed (no project segment), per-destination only.
+		// Object shape: secrets/{dest}/*. The URL middleware emits
+		// secrets/{ns}/{name} directly (no project segment), so the policy must
+		// mirror that shape. Empty destinations → no secret policies (TD-7).
+		result = append(result, scopeSecretsToDestinations(destinations)...)
 
 		// Project-level resources: always project-wide regardless of destinations.
-		// Repositories, applications, and compliance are not namespace-scoped —
+		// Repositories and compliance are not namespace-scoped —
 		// their handlers check "resource/{project}/*" which must match project-wide policies.
 		projectWideResources := []string{"repositories", "compliance"}
 		for _, res := range projectWideResources {
@@ -1512,8 +1605,14 @@ func scopeObjectToProjectWithDestinations(projectName, object string, destinatio
 		return result
 	}
 
+	// Handle secrets wildcard separately — namespace-keyed, no project segment.
+	// Empty destinations → no policies (TD-7).
+	if object == "secrets/*" {
+		return scopeSecretsToDestinations(destinations)
+	}
+
 	// Handle namespace-bearing resource wildcards — per-destination if destinations set
-	nsResourcePrefixes := []string{"instances/", "secrets/"}
+	nsResourcePrefixes := []string{"instances/"}
 	for _, prefix := range nsResourcePrefixes {
 		if object == prefix+"*" {
 			resType := strings.TrimSuffix(prefix, "/")
@@ -1559,6 +1658,25 @@ func scopeResourceToDestinations(resourceType, projectName string, destinations 
 	return result
 }
 
+// scopeSecretsToDestinations returns namespace-keyed secret policy objects.
+// Secrets follow the same URL shape as instances post-middleware-normalization,
+// but WITHOUT a project segment — the Casbin object is "secrets/{ns}/{name}".
+// Empty destinations → empty result (TD-7: destinations required for secret access).
+func scopeSecretsToDestinations(destinations []string) []string {
+	if len(destinations) == 0 {
+		return nil
+	}
+	result := make([]string, 0, len(destinations))
+	for _, dest := range destinations {
+		dest = strings.TrimSpace(dest)
+		if dest == "" {
+			continue
+		}
+		result = append(result, fmt.Sprintf("secrets/%s/*", dest))
+	}
+	return result
+}
+
 // SyncPolicies synchronizes all Project policies from Kubernetes
 // SECURITY: This method holds the lock for the entire sync operation to prevent
 // race conditions (TOCTOU) where the loadedProjects map could be modified during sync.
@@ -1590,7 +1708,12 @@ func (pe *policyEnforcer) SyncPolicies(ctx context.Context) error {
 	currentProjects := make(map[string]bool)
 
 	// Load policies from each project (using locked version)
+	type projectIssues struct {
+		project *Project
+		issues  []teamConditionIssue
+	}
 	var syncErrors []error
+	var allIssues []projectIssues
 	for i := range projects {
 		project := &projects[i]
 		currentProjects[project.Name] = true
@@ -1602,9 +1725,11 @@ func (pe *policyEnforcer) SyncPolicies(ctx context.Context) error {
 		}
 
 		// Use locked version since we already hold the lock
-		if err := pe.loadProjectPoliciesLocked(project); err != nil {
+		issues, err := pe.loadProjectPoliciesLocked(project)
+		if err != nil {
 			syncErrors = append(syncErrors, fmt.Errorf("project %s: %w", project.Name, err))
 		}
+		allIssues = append(allIssues, projectIssues{project: project, issues: issues})
 	}
 
 	// Remove policies for projects that no longer exist
@@ -1627,6 +1752,13 @@ func (pe *policyEnforcer) SyncPolicies(ctx context.Context) error {
 		)
 	}
 
+	// Surface team-resolution warnings as RolesResolved conditions (AC #7).
+	if pe.statusUpdater != nil {
+		for _, pi := range allIssues {
+			pe.updateRolesResolvedCondition(ctx, pi.project, pi.issues)
+		}
+	}
+
 	// Increment background sync counter
 	pe.IncrementBackgroundSyncs()
 
@@ -1640,6 +1772,49 @@ func (pe *policyEnforcer) SyncPolicies(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// updateRolesResolvedCondition sets or clears the RolesResolved status condition on
+// the project based on team-resolution issues found during policy loading (AC #7).
+// It is best-effort: errors writing status are logged but do not affect policy loading.
+func (pe *policyEnforcer) updateRolesResolvedCondition(ctx context.Context, project *Project, issues []teamConditionIssue) {
+	updated := project.DeepCopyObject().(*Project)
+
+	// Remove any existing RolesResolved condition so we can replace it.
+	filtered := updated.Status.Conditions[:0]
+	for _, c := range updated.Status.Conditions {
+		if c.Type != ProjectConditionRolesResolved {
+			filtered = append(filtered, c)
+		}
+	}
+	updated.Status.Conditions = filtered
+
+	if len(issues) == 0 {
+		// All teams resolved — set condition True.
+		updated.Status.Conditions = append(updated.Status.Conditions, ProjectCondition{
+			Type:   ProjectConditionRolesResolved,
+			Status: ConditionStatusTrue,
+			Reason: "AllTeamsResolved",
+		})
+	} else {
+		msg := fmt.Sprintf("role %q: team %q (%s)", issues[0].role, issues[0].team, issues[0].reason)
+		if len(issues) > 1 {
+			msg += fmt.Sprintf(" (+%d more)", len(issues)-1)
+		}
+		updated.Status.Conditions = append(updated.Status.Conditions, ProjectCondition{
+			Type:    ProjectConditionRolesResolved,
+			Status:  ConditionStatusFalse,
+			Reason:  "TeamUnresolved",
+			Message: msg,
+		})
+	}
+
+	if _, err := pe.statusUpdater.UpdateProjectStatus(ctx, updated); err != nil {
+		pe.logger.Warn("failed to update RolesResolved condition",
+			"project", project.Name,
+			"error", err,
+		)
+	}
 }
 
 // removeProjectPoliciesLocked removes all policies for a project

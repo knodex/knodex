@@ -32,7 +32,7 @@ import type { Page } from '@playwright/test';
  */
 async function openCreateWizardAndSubmit(page: Page, projectName: string) {
   // Click Create button to open wizard modal
-  const createButton = page.getByRole('button', { name: 'Create', exact: true });
+  const createButton = page.getByRole('button', { name: 'New project', exact: true });
   await expect(createButton).toBeVisible({ timeout: 10000 });
   await createButton.click();
 
@@ -82,12 +82,13 @@ test.describe('Global Admin - Projects Settings UI', () => {
       fullPage: true
     });
 
-    // Verify page title
-    const pageTitle = page.locator('h1, h2').filter({ hasText: /Projects/i }).first();
-    await expect(pageTitle).toBeVisible({ timeout: 10000 });
+    // Verify page identity. The per-page <h1>/<h2> header was removed app-wide
+    // (epic-048 / 48.12) — page identity now lives on the topbar breadcrumb leaf.
+    const breadcrumbLeaf = page.getByTestId('topbar-breadcrumb-leaf').filter({ hasText: /Projects/i }).first();
+    await expect(breadcrumbLeaf).toBeVisible({ timeout: 10000 });
 
     // Check for Create Project button in header
-    const createButton = page.getByRole('button', { name: 'Create', exact: true });
+    const createButton = page.getByRole('button', { name: 'New project', exact: true });
     await expect(createButton).toBeVisible({ timeout: 5000 });
 
     // Check for project cards or list items (if any projects exist)
@@ -123,7 +124,7 @@ test.describe('Global Admin - Projects Settings UI', () => {
     await page.waitForLoadState('networkidle', { timeout: 15000 });
 
     // Open the wizard modal
-    const createButton = page.getByRole('button', { name: 'Create', exact: true });
+    const createButton = page.getByRole('button', { name: 'New project', exact: true });
     await expect(createButton).toBeVisible({ timeout: 10000 });
     await createButton.click();
 
@@ -371,8 +372,8 @@ test.describe('Global Admin - Projects Settings UI', () => {
         const confirmDialog = page.locator('[role="alertdialog"], [role="dialog"]');
         await expect(confirmDialog).toBeVisible({ timeout: 5000 });
 
-        // Check for warning message about deletion
-        const warningText = page.locator('text=/delete|remove|permanent|cannot be undone/i');
+        // Check for warning message about deletion — strict mode picks first match
+        const warningText = page.locator('text=/delete|remove|permanent|cannot be undone/i').first();
         await expect(warningText).toBeVisible({ timeout: 3000 });
 
         // Cancel first to test cancel flow
@@ -385,6 +386,12 @@ test.describe('Global Admin - Projects Settings UI', () => {
         // Click delete again to actually delete
         await deleteButton.click();
         await page.waitForTimeout(1000);
+
+        // DeleteProjectDialog is type-to-confirm: the destructive "Delete
+        // Project" button stays disabled until the user re-types the project
+        // name into the #confirm-name Input. Fill it before asserting the
+        // click goes through.
+        await page.locator('#confirm-name').fill(testProjectName);
 
         // Confirm deletion
         const confirmDeleteButton = page.locator('button:has-text("Delete"), button:has-text("Confirm")').last();
@@ -430,11 +437,11 @@ test.describe('Global Admin - Projects Settings UI', () => {
       fullPage: true
     });
 
-    // Verify empty state has a CTA button (Create Project button in empty state)
-    const createCTA = page.getByRole('button', { name: 'Create Project', exact: true });
+    // Verify empty state has a CTA button (renamed to "New project" in commit 4471140a).
+    const createCTA = page.getByRole('button', { name: 'New project', exact: true });
     await expect(createCTA).toBeVisible({ timeout: 5000 });
 
-    console.log('✓ Empty State displays correctly with Create Project CTA');
+    console.log('✓ Empty State displays correctly with New project CTA');
   });
 
   test('AC-129-11: RBAC Protection - Settings accessible only to Global Admin', async ({ page }) => {
@@ -442,12 +449,11 @@ test.describe('Global Admin - Projects Settings UI', () => {
     await page.goto('/projects');
     await page.waitForLoadState('networkidle');
 
-    // Verify we can access Projects page (title renders)
-    const projectsPage = page.getByRole('heading', { name: /Projects/i });
-    await expect(projectsPage).toBeVisible({ timeout: 10000 });
+    // Verify we can access Projects page (Story 48.12: identity on TopBar breadcrumb leaf)
+    await expect(page.getByTestId('topbar-breadcrumb-leaf').filter({ hasText: /Projects/i })).toBeVisible({ timeout: 10000 });
 
     // Verify Global Admin can see Create button
-    const createButton = page.getByRole('button', { name: 'Create', exact: true });
+    const createButton = page.getByRole('button', { name: 'New project', exact: true });
     await expect(createButton).toBeVisible({ timeout: 5000 });
 
     console.log('✓ RBAC Protection - Global Admin can access Projects Settings');
@@ -471,7 +477,7 @@ test.describe('Viewer - Projects Settings Access Denied', () => {
     await page.waitForLoadState('networkidle', { timeout: 15000 });
 
     // Viewer can see the page but should NOT see Create button
-    const createButton = page.getByRole('button', { name: 'Create', exact: true });
+    const createButton = page.getByRole('button', { name: 'New project', exact: true });
     await expect(createButton).not.toBeVisible({ timeout: 5000 });
 
     console.log('✓ Viewer cannot see Create button on Projects page');
@@ -490,7 +496,8 @@ test.describe('Viewer - Projects Settings Access Denied', () => {
     // Viewer should be redirected or see access denied
     const projectsPage = page.locator('h1:has-text("Projects Settings"), h2:has-text("Projects")').first();
     const accessDenied = page.locator('text=/access denied|unauthorized|forbidden|not authorized/i');
-    const catalogPage = page.locator('h1:has-text("Catalog"), h1:has-text("Catalog")').first();
+    // 48.12 removed the Catalog H1; page identity now lives on the breadcrumb leaf.
+    const catalogPage = page.getByTestId('topbar-breadcrumb-leaf').filter({ hasText: 'Catalog' });
 
     const hasProjects = await projectsPage.isVisible({ timeout: 3000 }).catch(() => false);
     const hasDenied = await accessDenied.isVisible({ timeout: 3000 }).catch(() => false);

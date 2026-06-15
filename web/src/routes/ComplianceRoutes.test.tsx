@@ -165,10 +165,13 @@ describe("ComplianceDashboard", () => {
       } as ReturnType<typeof useComplianceModule.useComplianceSummary>);
     });
 
-    it("renders page header with correct title (AC-LAYOUT-02)", () => {
+    it("renders the summary cards section (page identity owned by topbar after Story 48.12)", () => {
       render(<ComplianceDashboard />, { wrapper: createWrapper() });
 
-      expect(screen.getByText("Policy Compliance")).toBeInTheDocument();
+      // Page identity ("Policy Compliance" / "Compliance") now lives in the topbar
+      // breadcrumb leaf, tested in `web/src/components/layout/Breadcrumbs.test.tsx`.
+      // The dashboard itself just renders its summary + recent violations sections.
+      expect(screen.getByTestId("summary-cards")).toBeInTheDocument();
     });
 
     it("renders summary cards section (AC-LAYOUT-03)", () => {
