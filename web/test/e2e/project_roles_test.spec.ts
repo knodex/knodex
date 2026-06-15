@@ -67,7 +67,7 @@ test.describe('Project Roles Tab - Add and Delete Role', () => {
       await page.waitForLoadState('networkidle', { timeout: 15000 });
 
       // Click on Roles tab
-      const rolesTab = page.locator('button[role="tab"]').filter({ hasText: 'Roles' });
+      const rolesTab = page.locator('button[role="tab"]').filter({ hasText: 'Access' });
       await expect(rolesTab).toBeVisible({ timeout: 10000 });
       await rolesTab.click();
 
@@ -92,7 +92,7 @@ test.describe('Project Roles Tab - Add and Delete Role', () => {
       await page.waitForLoadState('networkidle', { timeout: 15000 });
 
       // Click on Roles tab
-      const rolesTab = page.locator('button[role="tab"]').filter({ hasText: 'Roles' });
+      const rolesTab = page.locator('button[role="tab"]').filter({ hasText: 'Access' });
       await rolesTab.click();
       await page.waitForTimeout(1000);
 
@@ -140,7 +140,7 @@ test.describe('Project Roles Tab - Add and Delete Role', () => {
       await page.waitForLoadState('networkidle', { timeout: 15000 });
 
       // Click on Roles tab
-      const rolesTab = page.locator('button[role="tab"]').filter({ hasText: 'Roles' });
+      const rolesTab = page.locator('button[role="tab"]').filter({ hasText: 'Access' });
       await rolesTab.click();
       await page.waitForTimeout(1000);
 
@@ -187,7 +187,7 @@ test.describe('Project Roles Tab - Add and Delete Role', () => {
       await page.waitForLoadState('networkidle', { timeout: 15000 });
 
       // Click on Roles tab
-      const rolesTab = page.locator('button[role="tab"]').filter({ hasText: 'Roles' });
+      const rolesTab = page.locator('button[role="tab"]').filter({ hasText: 'Access' });
       await rolesTab.click();
       await page.waitForTimeout(1000);
 
@@ -217,7 +217,7 @@ test.describe('Project Roles Tab - Add and Delete Role', () => {
       await setupPermissionMocking(page, { '*:*': true });
 
       // Navigate back to Roles tab
-      const rolesTabAfterRefresh = page.locator('button[role="tab"]').filter({ hasText: 'Roles' });
+      const rolesTabAfterRefresh = page.locator('button[role="tab"]').filter({ hasText: 'Access' });
       await rolesTabAfterRefresh.click();
       await page.waitForTimeout(1000);
 
@@ -241,7 +241,7 @@ test.describe('Project Roles Tab - Add and Delete Role', () => {
       await page.waitForLoadState('networkidle', { timeout: 15000 });
 
       // Click on Roles tab
-      const rolesTab = page.locator('button[role="tab"]').filter({ hasText: 'Roles' });
+      const rolesTab = page.locator('button[role="tab"]').filter({ hasText: 'Access' });
       await rolesTab.click();
       await page.waitForTimeout(1000);
 
@@ -280,7 +280,7 @@ test.describe('Project Roles Tab - Add and Delete Role', () => {
       await page.waitForLoadState('networkidle', { timeout: 15000 });
 
       // Click on Roles tab
-      const rolesTab = page.locator('button[role="tab"]').filter({ hasText: 'Roles' });
+      const rolesTab = page.locator('button[role="tab"]').filter({ hasText: 'Access' });
       await rolesTab.click();
       await page.waitForTimeout(1000);
 
@@ -331,7 +331,7 @@ test.describe('Project Roles Tab - Add and Delete Role', () => {
       await page.waitForLoadState('networkidle', { timeout: 15000 });
 
       // Click on Roles tab
-      const rolesTab = page.locator('button[role="tab"]').filter({ hasText: 'Roles' });
+      const rolesTab = page.locator('button[role="tab"]').filter({ hasText: 'Access' });
       await rolesTab.click();
       await page.waitForTimeout(1000);
 
@@ -415,7 +415,7 @@ test.describe('Project Roles Tab - Add and Delete Role', () => {
       await page.waitForLoadState('networkidle', { timeout: 15000 });
 
       // Click on Roles tab - wait for it to be visible first
-      const rolesTab = page.locator('button[role="tab"]').filter({ hasText: 'Roles' });
+      const rolesTab = page.locator('button[role="tab"]').filter({ hasText: 'Access' });
       await expect(rolesTab).toBeVisible({ timeout: 10000 });
       await rolesTab.click();
       await page.waitForTimeout(1000);
@@ -516,7 +516,7 @@ test.describe('Project Roles Tab - Add and Delete Role', () => {
       await setupPermissionMocking(page, { '*:*': true });
 
       // Navigate back to Roles tab
-      const rolesTabAfterRefresh = page.locator('button[role="tab"]').filter({ hasText: 'Roles' });
+      const rolesTabAfterRefresh = page.locator('button[role="tab"]').filter({ hasText: 'Access' });
       await rolesTabAfterRefresh.click();
       await page.waitForTimeout(1000);
 
@@ -540,7 +540,7 @@ test.describe('Project Roles Tab - Add and Delete Role', () => {
       await page.waitForLoadState('networkidle', { timeout: 15000 });
 
       // Click on Roles tab - wait for it to be visible first
-      const rolesTab = page.locator('button[role="tab"]').filter({ hasText: 'Roles' });
+      const rolesTab = page.locator('button[role="tab"]').filter({ hasText: 'Access' });
       await expect(rolesTab).toBeVisible({ timeout: 10000 });
       await rolesTab.click();
       await page.waitForTimeout(1000);
@@ -625,7 +625,7 @@ test.describe('Project Roles Tab - Add and Delete Role', () => {
       await page.waitForLoadState('networkidle', { timeout: 15000 });
 
       // Click on Roles tab
-      const rolesTab = page.locator('button[role="tab"]').filter({ hasText: 'Roles' });
+      const rolesTab = page.locator('button[role="tab"]').filter({ hasText: 'Access' });
       await rolesTab.click();
       await page.waitForTimeout(1000);
 
@@ -659,7 +659,7 @@ test.describe('Project Roles Tab - Add and Delete Role', () => {
       await page.waitForLoadState('networkidle', { timeout: 15000 });
 
       // Wait for and click on Roles tab
-      const rolesTab = page.locator('button[role="tab"]').filter({ hasText: 'Roles' });
+      const rolesTab = page.locator('button[role="tab"]').filter({ hasText: 'Access' });
       const rolesTabVisible = await rolesTab.waitFor({ state: 'visible', timeout: 10000 }).then(() => true).catch(() => false);
 
       if (!rolesTabVisible) {
@@ -706,7 +706,7 @@ test.describe('Project Roles Tab - Add and Delete Role', () => {
       await page.waitForLoadState('networkidle', { timeout: 15000 });
 
       // Click on Roles tab
-      const rolesTab = page.locator('button[role="tab"]').filter({ hasText: 'Roles' });
+      const rolesTab = page.locator('button[role="tab"]').filter({ hasText: 'Access' });
       await rolesTab.click();
       await page.waitForTimeout(1000);
 
@@ -761,7 +761,7 @@ test.describe('Project Roles Tab - Viewer Cannot Manage', () => {
     await page.waitForLoadState('networkidle', { timeout: 15000 });
 
     // Click on Roles tab
-    const rolesTab = page.locator('button[role="tab"]').filter({ hasText: 'Roles' });
+    const rolesTab = page.locator('button[role="tab"]').filter({ hasText: 'Access' });
     const hasRolesTab = await rolesTab.isVisible({ timeout: 5000 }).catch(() => false);
 
     if (hasRolesTab) {
@@ -797,7 +797,7 @@ test.describe('Project Roles Tab - Viewer Cannot Manage', () => {
     await page.waitForLoadState('networkidle', { timeout: 15000 });
 
     // Click on Roles tab
-    const rolesTab = page.locator('button[role="tab"]').filter({ hasText: 'Roles' });
+    const rolesTab = page.locator('button[role="tab"]').filter({ hasText: 'Access' });
     const hasRolesTab = await rolesTab.isVisible({ timeout: 5000 }).catch(() => false);
 
     if (hasRolesTab) {
