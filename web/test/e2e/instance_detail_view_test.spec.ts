@@ -283,7 +283,7 @@ test.describe('Instance Detail View', () => {
 
       // Source chip is in the header card meta strip (not the Deployment Information card)
       const headerCard = page.getByTestId('instance-header-card')
-      await expect(headerCard.getByText('Source')).toBeVisible()
+      await expect(headerCard.getByText('Source', { exact: true })).toBeVisible()
       // Branch chip and path chip should not appear in the source chip area
       await expect(headerCard.getByText('main')).not.toBeVisible()
       await expect(headerCard.getByText('instances/team-alpha')).not.toBeVisible()
