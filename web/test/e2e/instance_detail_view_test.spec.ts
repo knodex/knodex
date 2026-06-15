@@ -338,36 +338,28 @@ test.describe('Instance Detail View', () => {
   })
 
   test.describe('Conditions', () => {
-    test('shows collapsed conditions with count when all healthy', async ({ page }) => {
+    test('shows conditions card with all conditions and rollup count when healthy', async ({ page }) => {
       await setupMocks(page, detailInstance)
       await page.goto(buildInstanceRoute(detailInstance))
 
-      // Conditions summary visible
+      // Header rollup summary visible
       await expect(page.getByText('2/2')).toBeVisible()
 
-      // Individual conditions NOT visible (collapsed)
-      await expect(page.getByText('AllReady')).not.toBeVisible()
+      // Conditions card always shows every condition (no collapse)
+      const conditions = page.getByTestId('instance-conditions-card')
+      await expect(conditions.getByText('Ready', { exact: true })).toBeVisible()
+      await expect(conditions.getByText('All resources ready')).toBeVisible()
+      await expect(conditions.getByText('all passing')).toBeVisible()
     })
 
-    test('expands conditions on click', async ({ page }) => {
-      await setupMocks(page, detailInstance)
-      await page.goto(buildInstanceRoute(detailInstance))
-
-      // Click the conditions toggle
-      await page.getByRole('button', { name: /conditions/i }).click()
-
-      // Now individual conditions are visible
-      await expect(page.getByText('Ready', { exact: true })).toBeVisible()
-      await expect(page.getByText('All resources ready')).toBeVisible()
-    })
-
-    test('auto-expands conditions when any is failing', async ({ page }) => {
+    test('surfaces failing condition message and count', async ({ page }) => {
       await setupMocks(page, unhealthyInstance)
       await page.goto(buildInstanceRoute(unhealthyInstance))
 
-      // Failing condition visible immediately (auto-expanded)
+      // Failing condition visible immediately in the conditions card
       await expect(page.getByText('Deployment failed: OOMKilled')).toBeVisible()
-      await expect(page.getByText('1/2')).toBeVisible()
+      await expect(page.getByText('1/2', { exact: true })).toBeVisible()
+      await expect(page.getByText('1/2 passing')).toBeVisible()
     })
   })
 
@@ -379,9 +371,9 @@ test.describe('Instance Detail View', () => {
       // Navigate to Spec tab
       await page.getByRole('tab', { name: /spec/i }).click()
 
-      // Spec content visible
+      // Spec content visible (rendered as YAML, not JSON)
       await expect(page.getByTestId('spec-content')).toBeVisible()
-      await expect(page.getByText('"replicas": 3')).toBeVisible()
+      await expect(page.getByText(/replicas:\s*3/)).toBeVisible()
 
       // Copy button present
       await expect(page.getByRole('button', { name: /copy/i })).toBeVisible()
@@ -389,22 +381,21 @@ test.describe('Instance Detail View', () => {
   })
 
   test.describe('Tab navigation', () => {
-    test('defaults to Status tab', async ({ page }) => {
+    test('defaults to Overview tab', async ({ page }) => {
       await setupMocks(page, detailInstance)
       await page.goto(buildInstanceRoute(detailInstance))
 
-      const statusTab = page.getByRole('tab', { name: /^Status$/i })
-      await expect(statusTab).toHaveAttribute('aria-selected', 'true')
+      const overviewTab = page.getByRole('tab', { name: /^Overview$/i })
+      await expect(overviewTab).toHaveAttribute('aria-selected', 'true')
     })
 
-    test('switches to Deployment History tab', async ({ page }) => {
+    test('switches to History tab', async ({ page }) => {
       await setupMocks(page, detailInstance)
       await page.goto(buildInstanceRoute(detailInstance))
 
-      await page.getByRole('tab', { name: /deployment history/i }).click()
+      await page.getByRole('tab', { name: /history/i }).click()
 
-      // Deployment History content area visible
-      const historyTab = page.getByRole('tab', { name: /deployment history/i })
+      const historyTab = page.getByRole('tab', { name: /history/i })
       await expect(historyTab).toHaveAttribute('aria-selected', 'true')
     })
   })

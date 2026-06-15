@@ -23,8 +23,8 @@ describe('InstanceMetadataSection', () => {
   it('renders "Direct deployment" when not gitops', () => {
     render(<InstanceMetadataSection instance={baseInstance} isGitOps={false} />);
 
+    // the "Source" chip label is rendered by InstanceHeaderCard around this content
     expect(screen.getByText('Direct deployment')).toBeInTheDocument();
-    expect(screen.getByText('Source')).toBeInTheDocument();
   });
 
   it('renders git branch and commit when gitops', () => {

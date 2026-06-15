@@ -44,7 +44,9 @@ export function TabBar<T extends string>({
 
   return (
     <div className="border-b border-border">
-      <nav ref={navRef} className="flex gap-1 -mb-px" role="tablist">
+      {/* This is a tab control, not page navigation, so a neutral <div> with
+          role="tablist" is more correct than a <nav> landmark. */}
+      <div ref={navRef} className="flex gap-1 -mb-px" role="tablist">
         {tabs.map((tab, index) => (
           <button
             key={tab.id}
@@ -64,9 +66,23 @@ export function TabBar<T extends string>({
           >
             {tab.icon}
             {tab.label}
+            {tab.count !== undefined && (
+              <span
+                className={cn(
+                  "text-[11px] font-mono rounded-full px-1.5 py-px",
+                  tab.countVariant === "warn"
+                    ? "bg-[var(--status-error)]/10 text-[var(--status-error)]"
+                    : activeTab === tab.id
+                      ? "bg-primary/10 text-primary"
+                      : "bg-[var(--surface-elevated)] text-[var(--text-secondary)]"
+                )}
+              >
+                {tab.count}
+              </span>
+            )}
           </button>
         ))}
-      </nav>
+      </div>
     </div>
   );
 }

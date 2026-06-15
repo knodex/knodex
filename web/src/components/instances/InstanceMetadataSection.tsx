@@ -48,47 +48,48 @@ interface InstanceMetadataSectionProps {
   isGitOps: boolean;
 }
 
+/**
+ * Source value content (rendered inside the header's "Source" meta chip):
+ * repo link + short commit + drift marker for GitOps, plain label otherwise.
+ */
 export function InstanceMetadataSection({ instance, isGitOps }: InstanceMetadataSectionProps) {
+  if (!isGitOps) {
+    return <span className="text-xs text-[var(--text-primary)]">Direct deployment</span>;
+  }
+
   return (
-    <div className="px-6 py-3 flex items-center gap-4 text-sm" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
-      <span className="text-[var(--text-muted)]">Source</span>
-      {isGitOps ? (
-        <div className="flex items-center gap-4 text-[var(--text-primary)]">
-          {instance.gitInfo?.repositoryUrl && (
-            <a
-              href={buildRepoURL(instance.gitInfo.repositoryUrl, instance.annotations, instance.gitInfo.branch, instance.gitInfo.path)}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 font-mono text-[var(--text-secondary)] hover:text-primary hover:underline transition-colors"
-            >
-              {instance.gitInfo.repositoryUrl}
-            </a>
-          )}
-          {instance.gitInfo?.commitSha && (
-            <span className="inline-flex items-center gap-1.5 font-mono">
-              <GitCommit className="h-3.5 w-3.5 text-[var(--text-muted)]" />
-              {instance.gitInfo.commitUrl ? (
-                <a href={instance.gitInfo.commitUrl} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
-                  {instance.gitInfo.commitSha.substring(0, 8)}
-                </a>
-              ) : (
-                instance.gitInfo.commitSha.substring(0, 8)
-              )}
-            </span>
-          )}
-          {!instance.gitInfo?.repositoryUrl && !instance.gitInfo?.commitSha && (
-            <span className="text-[var(--text-secondary)]">GitOps</span>
-          )}
-          {instance.gitopsDrift && (
-            <span className="inline-flex items-center gap-1 text-xs font-medium text-status-warning">
-              <AlertTriangle className="h-3.5 w-3.5" />
-              Drifted
-            </span>
-          )}
-        </div>
-      ) : (
-        <span className="text-[var(--text-secondary)]">Direct deployment</span>
+    <span className="inline-flex items-center gap-3 text-xs text-[var(--text-primary)]">
+      {instance.gitInfo?.repositoryUrl && (
+        <a
+          href={buildRepoURL(instance.gitInfo.repositoryUrl, instance.annotations, instance.gitInfo.branch, instance.gitInfo.path)}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1.5 font-mono text-[var(--text-secondary)] hover:text-primary hover:underline transition-colors"
+        >
+          {instance.gitInfo.repositoryUrl}
+        </a>
       )}
-    </div>
+      {instance.gitInfo?.commitSha && (
+        <span className="inline-flex items-center gap-1.5 font-mono">
+          <GitCommit className="h-3.5 w-3.5 text-[var(--text-muted)]" />
+          {instance.gitInfo.commitUrl ? (
+            <a href={instance.gitInfo.commitUrl} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+              {instance.gitInfo.commitSha.substring(0, 8)}
+            </a>
+          ) : (
+            instance.gitInfo.commitSha.substring(0, 8)
+          )}
+        </span>
+      )}
+      {!instance.gitInfo?.repositoryUrl && !instance.gitInfo?.commitSha && (
+        <span className="text-[var(--text-secondary)]">GitOps</span>
+      )}
+      {instance.gitopsDrift && (
+        <span className="inline-flex items-center gap-1 font-medium text-status-warning">
+          <AlertTriangle className="h-3.5 w-3.5" />
+          Drifted
+        </span>
+      )}
+    </span>
   );
 }
