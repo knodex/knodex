@@ -8,6 +8,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
+	"github.com/knodex/knodex/server/internal/kro"
 	"github.com/knodex/knodex/server/internal/models"
 )
 
@@ -20,6 +21,8 @@ type rgdConfig struct {
 	pluralName       string
 	scope            string
 	schemaAPIVersion string // overrides default "example.com/v1"; "-" to omit entirely
+	schemaGroup      string // sets spec.schema.group (KRO instance-group override)
+	schemaKind       string // overrides default "TestResource"
 	crdVersions      []map[string]interface{}
 }
 
@@ -59,6 +62,19 @@ func WithSchemaAPIVersion(v string) RGDOption {
 	return func(c *rgdConfig) { c.schemaAPIVersion = v }
 }
 
+// WithSchemaKind sets spec.schema.kind (default "TestResource"). Used to test
+// discovery-by-Kind ingestion of agent RGDs.
+func WithSchemaKind(k string) RGDOption {
+	return func(c *rgdConfig) { c.schemaKind = k }
+}
+
+// WithSchemaGroup sets spec.schema.group — KRO's instance-group override. Used
+// to test that the instance group wins over the RGD's own group (kro.run) when
+// spec.schema.apiVersion carries no group.
+func WithSchemaGroup(g string) RGDOption {
+	return func(c *rgdConfig) { c.schemaGroup = g }
+}
+
 // WithCRDVersions sets spec.schema.crd.spec.versions on the unstructured RGD.
 // Each entry should include at least "name" and "served". Used to test the
 // multi-served-version invariant in the RGD watcher.
@@ -86,8 +102,12 @@ func NewUnstructuredRGD(name, namespace string, opts ...RGDOption) *unstructured
 		labelsInterface[k] = v
 	}
 
+	schemaKind := cfg.schemaKind
+	if schemaKind == "" {
+		schemaKind = "TestResource"
+	}
 	schemaMap := map[string]interface{}{
-		"kind": "TestResource",
+		"kind": schemaKind,
 	}
 	// Default apiVersion is "example.com/v1"; "-" sentinel omits it.
 	switch cfg.schemaAPIVersion {
@@ -97,6 +117,9 @@ func NewUnstructuredRGD(name, namespace string, opts ...RGDOption) *unstructured
 		// omit
 	default:
 		schemaMap["apiVersion"] = cfg.schemaAPIVersion
+	}
+	if cfg.schemaGroup != "" {
+		schemaMap["group"] = cfg.schemaGroup
 	}
 	// Build crd.spec block when names or versions are set
 	crdSpec := map[string]interface{}{}
@@ -172,6 +195,7 @@ func NewCatalogRGD(name, namespace string, opts ...CatalogRGDOption) models.Cata
 		Description: "Test RGD " + name,
 		Tags:        []string{"test"},
 		Category:    "Testing",
+		Annotations: map[string]string{kro.CatalogAnnotation: "true"},
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 	}
@@ -179,4 +203,9 @@ func NewCatalogRGD(name, namespace string, opts ...CatalogRGDOption) models.Cata
 		o(&rgd)
 	}
 	return rgd
+}
+
+// WithNoCatalogAnnotation removes the catalog annotation for testing non-catalog RGDs.
+func WithNoCatalogAnnotation() CatalogRGDOption {
+	return func(r *models.CatalogRGD) { delete(r.Annotations, kro.CatalogAnnotation) }
 }

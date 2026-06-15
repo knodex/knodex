@@ -33,6 +33,8 @@ import (
 	"github.com/knodex/knodex/server/internal/health"
 	"github.com/knodex/knodex/server/internal/history"
 	"github.com/knodex/knodex/server/internal/icons"
+	"github.com/knodex/knodex/server/internal/kagent"
+	"github.com/knodex/knodex/server/internal/kagent/runs"
 	"github.com/knodex/knodex/server/internal/kro/children"
 	"github.com/knodex/knodex/server/internal/kro/diff"
 	kroparser "github.com/knodex/knodex/server/internal/kro/parser"
@@ -40,6 +42,7 @@ import (
 	"github.com/knodex/knodex/server/internal/kro/watcher"
 	"github.com/knodex/knodex/server/internal/rbac"
 	"github.com/knodex/knodex/server/internal/repository"
+	"github.com/knodex/knodex/server/internal/roletemplates"
 	"github.com/knodex/knodex/server/internal/services"
 	"github.com/knodex/knodex/server/internal/services/wrapper"
 	"github.com/knodex/knodex/server/internal/sso"
@@ -90,7 +93,10 @@ type RouterConfig struct {
 	PermissionService       *rbac.PermissionService
 	PolicyEnforcer          rbac.PolicyEnforcer
 	PolicyCacheManager      *rbac.PolicyCacheManager
+	ObservedGroupsStore     handlers.ObservedGroupsLister // Story 10.3: observed OIDC groups for the team/role editor typeahead (nil when Redis unavailable)
 	ProjectService          rbac.ProjectServiceInterface
+	TeamService             rbac.TeamServiceInterface // Story 10.4: cluster-scoped Team CRUD (nil when dynamic client unavailable)
+	IdentityService         services.IdentityService  // Story 15.8: canonical user roster for the operator Users API (nil disables the endpoints)
 	HistoryService          *history.Service
 	NamespaceService        *rbac.NamespaceService
 	LicenseService          services.LicenseService          // Enterprise feature: License validation
@@ -117,6 +123,27 @@ type RouterConfig struct {
 	Organization            string        // Organization identity for settings endpoint (from KNODEX_ORGANIZATION, default "default")
 	SwaggerEnabled          bool          // Enable Swagger UI at /swagger/ (default: false, env: SWAGGER_UI_ENABLED)
 	CatalogPackageFilter    []string      // Restrict category config to matching package labels (empty = no filtering, from CATALOG_PACKAGE_FILTER)
+	// KagentChecker detects kagent presence for the /agents hub (Story 49.1).
+	// Nil when no Kubernetes client is available — the status endpoint then
+	// reports a degraded payload instead of failing.
+	KagentChecker handlers.KagentPresenceChecker
+	// AgentRunStore persists agent invocation run records (Story 49.4).
+	// Nil when no backing store is available — the runs endpoint then serves
+	// an empty list and the invoke endpoint refuses with 503.
+	AgentRunStore runs.Store
+	// AgentInvoker is the kagent A2A invocation client (Story 49.4). Nil
+	// invoker marks every run failed ("agent invoker not configured").
+	AgentInvoker handlers.A2AInvoker
+	// AgentRunResultStore persists the FULL terminal payload of agent
+	// invocations (Story 50.1) — the conversational read path. Nil store
+	// makes the built-in invoke endpoint refuse with 503 and the result
+	// endpoint serve 404s.
+	AgentRunResultStore runs.ResultStore
+	// AgentSpecValidator validates generated specs against cluster policy
+	// (Story 50.3). EE-injected (Gatekeeper AdmissionReview); nil in OSS
+	// builds and when the EE validator failed to construct — the result then
+	// carries no policyValidation.
+	AgentSpecValidator handlers.AgentSpecValidator
 }
 
 // RouterResult holds the HTTP handler and resources that need lifecycle management.
@@ -130,7 +157,18 @@ type RouterResult struct {
 
 // Note: permissionServiceAdapter removed - all authorization uses CasbinAuthz exclusively.
 
-// NewRouterWithConfig creates the HTTP router with custom configuration
+// NewRouterWithConfig creates the HTTP router with custom configuration.
+//
+// This is an orchestration function: it wires the full HTTP surface area
+// (health, auth, RGD/instance CRUD, projects, repositories, settings, SSO,
+// teams, websocket, OSS/EE route fan-out, etc.) and inherits one
+// `if cfg.<service> != nil` branch per optional/feature-gated subsystem, so
+// gocyclo overshoots the project's 100 baseline (currently 107). The
+// matching pattern is established by `app.App.Run` (app/app.go:304); the
+// long-term plan is the TODO in `.golangci.yaml` (drive gocyclo down to 15
+// after the registration blocks are extracted into per-feature registrars).
+//
+//nolint:gocyclo // route-registration orchestration; tracked in .golangci.yaml TODO
 func NewRouterWithConfig(healthChecker *health.Checker, rgdWatcher *watcher.RGDWatcher, instanceTracker *watcher.InstanceTracker, schemaExtractor *kroschema.Extractor, cfg RouterConfig) RouterResult {
 	// Track user rate limiters for shutdown
 	var userRateLimiters []*middleware.UserRateLimiter
@@ -406,6 +444,12 @@ func NewRouterWithConfig(healthChecker *health.Checker, rgdWatcher *watcher.RGDW
 	protectedMux.HandleFunc("GET /api/v1/rgds/{name}/graph", resourceHandler.GetDefinitionGraph)
 	protectedMux.HandleFunc("GET /api/v1/rgds/{name}/schema", schemaHandler.GetSchema)
 	protectedMux.HandleFunc("POST /api/v1/rgds/{name}/schema/invalidate", schemaHandler.InvalidateSchemaCache)
+	// RGD create (Story 50.2): the RGD Builder's "Use this spec" deploy
+	// hand-off. NO extra middleware — CasbinAuthz already infers object
+	// rgds/* action create for this path (serveradmin-only by default; the
+	// GET-only catalog bypass does not apply to POST).
+	rgdCreateHandler := handlers.NewRGDCreateHandler(cfg.DynamicClient, cfg.AgentRunStore, cfg.AuditRecorder, logger)
+	protectedMux.HandleFunc("POST /api/v1/rgds", rgdCreateHandler.Create)
 
 	// GraphRevision routes (only if watcher is available)
 	if cfg.GraphRevisionWatcher != nil {
@@ -532,6 +576,69 @@ func NewRouterWithConfig(healthChecker *health.Checker, rgdWatcher *watcher.RGDW
 		protectedMux.HandleFunc("GET /api/v1/rbac/metrics", rbacMetricsHandler.GetMetrics)
 	}
 
+	// Observed-groups discovery endpoint (Story 10.3) - operator-gated read of the
+	// distinct OIDC group strings seen at login, for the team/role editor typeahead.
+	// Same operator gate as RBAC metrics (settings/* get). Store may be nil (Redis
+	// unavailable) → handler returns an empty list.
+	if cfg.PolicyEnforcer != nil {
+		groupsHandler := handlers.NewGroupsHandler(cfg.PolicyEnforcer, cfg.ObservedGroupsStore)
+		protectedMux.HandleFunc("GET /api/v1/groups/observed", groupsHandler.ListObserved)
+	}
+
+	// Teams CRUD API (Story 10.4) - operator-gated cluster-scoped Team management
+	// for the OSS Teams settings page. Same settings/* gate as observed-groups
+	// (read=get, mutate=update); no new can-i resource (NFR-T1). Re-resolution
+	// after a write is the 10.2 TeamWatcher's job — no second re-sync here.
+	if cfg.TeamService != nil && cfg.PolicyEnforcer != nil {
+		teamHandler := handlers.NewTeamHandler(cfg.TeamService, cfg.PolicyEnforcer)
+		protectedMux.HandleFunc("GET /api/v1/teams", teamHandler.ListTeams)
+		protectedMux.HandleFunc("GET /api/v1/teams/{name}", teamHandler.GetTeam)
+		protectedMux.HandleFunc("POST /api/v1/teams", teamHandler.CreateTeam)
+		protectedMux.HandleFunc("PUT /api/v1/teams/{name}", teamHandler.UpdateTeam)
+		protectedMux.HandleFunc("DELETE /api/v1/teams/{name}", teamHandler.DeleteTeam)
+	}
+
+	// Role Templates CRUD API (Story 18.1) - operator-gated, ConfigMap-backed
+	// catalog of reusable PROJECT-role presets (admin/developer/operator/...)
+	// the web UI seeds from at project create/edit time. Same settings/* gate as
+	// Teams (read=get, mutate=update); no new can-i resource, no second
+	// enforcement layer (NFR-T1). Templates are UI seeds copied into
+	// Project.spec.roles[] — they never participate in Enforce(). Backed by the
+	// knodex-role-templates ConfigMap in the install namespace; read/write per
+	// request (not startup-cached, unlike categories).
+	if cfg.K8sClient != nil && cfg.PolicyEnforcer != nil {
+		roleTemplatesStore := roletemplates.NewStore(cfg.K8sClient, serverNamespace())
+		roleTemplatesHandler := handlers.NewRoleTemplatesHandler(roleTemplatesStore, cfg.PolicyEnforcer)
+		protectedMux.HandleFunc("GET /api/v1/settings/role-templates", roleTemplatesHandler.ListRoleTemplates)
+		protectedMux.HandleFunc("GET /api/v1/settings/role-templates/{name}", roleTemplatesHandler.GetRoleTemplate)
+		protectedMux.HandleFunc("POST /api/v1/settings/role-templates", roleTemplatesHandler.CreateRoleTemplate)
+		protectedMux.HandleFunc("PUT /api/v1/settings/role-templates/{name}", roleTemplatesHandler.UpdateRoleTemplate)
+		protectedMux.HandleFunc("DELETE /api/v1/settings/role-templates/{name}", roleTemplatesHandler.DeleteRoleTemplate)
+	}
+
+	// Users API (Story 15.8) - operator-gated read/reclaim over the canonical
+	// identity.users roster (Story 15.2). Same settings/* gate as Teams
+	// (read=get, delete=update); no new can-i resource (NFR-T1/NFR-U3). AGPL on
+	// every edition — IdentityService is composed on all builds.
+	if cfg.IdentityService != nil && cfg.PolicyEnforcer != nil {
+		usersHandler := handlers.NewUsersHandler(cfg.IdentityService, cfg.PolicyEnforcer)
+		protectedMux.HandleFunc("GET /api/v1/users", usersHandler.ListUsers)
+		protectedMux.HandleFunc("GET /api/v1/users/{id}", usersHandler.GetUser)
+		protectedMux.HandleFunc("DELETE /api/v1/users/{id}", usersHandler.DeleteUser)
+	}
+
+	// Integration read contract (Story 12.7) - read-only, operator-gated source
+	// data for the future, separate-repo Grafana replicator: projects, teams
+	// (with their Keycloak group identifiers), and team→project-role bindings.
+	// Derived purely from cluster CRDs — NO token/claims dependency. Same
+	// settings/* get gate as Teams/observed-groups (no new can-i resource,
+	// NFR-T1). The replicator contract surfaces group identifiers without members.
+	if cfg.TeamService != nil && cfg.ProjectService != nil && cfg.PolicyEnforcer != nil {
+		integrationHandler := handlers.NewIntegrationHandler(cfg.TeamService, cfg.ProjectService, cfg.PolicyEnforcer)
+		protectedMux.HandleFunc("GET /api/v1/integration/teams", integrationHandler.ListTeams)
+		protectedMux.HandleFunc("GET /api/v1/integration/projects", integrationHandler.ListProjects)
+	}
+
 	// Protected API v1 routes - Project management (require authentication)
 	if cfg.ProjectService != nil && cfg.PolicyEnforcer != nil {
 		projectHandler := handlers.NewProjectHandler(cfg.ProjectService, cfg.PolicyEnforcer, cfg.AuditRecorder)
@@ -556,27 +663,30 @@ func NewRouterWithConfig(healthChecker *health.Checker, rgdWatcher *watcher.RGDW
 		secretsHandler := handlers.NewSecretsHandler(handlers.SecretsHandlerConfig{
 			K8sClient:     cfg.K8sClient,
 			DynamicClient: dynamicClient,
-			Enforcer:      cfg.PolicyEnforcer,
 			Recorder:      cfg.AuditRecorder,
 			NSAccess:      authService,
 		})
-		protectedMux.HandleFunc("POST /api/v1/secrets", secretsHandler.CreateSecret)
+		// Namespace-keyed routes — mirror the Instances URL shape so the
+		// existing CasbinAuthz middleware normalizes /api/v1/namespaces/{ns}/secrets/{name}
+		// into Casbin object "secrets/{ns}/{name}" automatically. Collection
+		// list is namespace-agnostic (filtered to user's accessible namespaces).
 		protectedMux.HandleFunc("GET /api/v1/secrets", secretsHandler.ListSecrets)
-		protectedMux.HandleFunc("HEAD /api/v1/secrets/{name}", secretsHandler.CheckSecretExists)
-		protectedMux.HandleFunc("GET /api/v1/secrets/{name}", secretsHandler.GetSecret)
-		protectedMux.HandleFunc("PUT /api/v1/secrets/{name}", secretsHandler.UpdateSecret)
-		protectedMux.HandleFunc("DELETE /api/v1/secrets/{name}", secretsHandler.DeleteSecret)
+		protectedMux.HandleFunc("POST /api/v1/namespaces/{namespace}/secrets", secretsHandler.CreateSecret)
+		protectedMux.HandleFunc("GET /api/v1/namespaces/{namespace}/secrets/{name}", secretsHandler.GetSecret)
+		protectedMux.HandleFunc("HEAD /api/v1/namespaces/{namespace}/secrets/{name}", secretsHandler.CheckSecretExists)
+		protectedMux.HandleFunc("PUT /api/v1/namespaces/{namespace}/secrets/{name}", secretsHandler.UpdateSecret)
+		protectedMux.HandleFunc("DELETE /api/v1/namespaces/{namespace}/secrets/{name}", secretsHandler.DeleteSecret)
 	} else {
 		// Fail-closed: return 503 when K8s client or authorization services are not initialized
 		secretsUnavailable := func(w http.ResponseWriter, r *http.Request) {
 			response.ServiceUnavailable(w, "secrets management temporarily unavailable")
 		}
-		protectedMux.HandleFunc("POST /api/v1/secrets", secretsUnavailable)
 		protectedMux.HandleFunc("GET /api/v1/secrets", secretsUnavailable)
-		protectedMux.HandleFunc("HEAD /api/v1/secrets/{name}", secretsUnavailable)
-		protectedMux.HandleFunc("GET /api/v1/secrets/{name}", secretsUnavailable)
-		protectedMux.HandleFunc("PUT /api/v1/secrets/{name}", secretsUnavailable)
-		protectedMux.HandleFunc("DELETE /api/v1/secrets/{name}", secretsUnavailable)
+		protectedMux.HandleFunc("POST /api/v1/namespaces/{namespace}/secrets", secretsUnavailable)
+		protectedMux.HandleFunc("GET /api/v1/namespaces/{namespace}/secrets/{name}", secretsUnavailable)
+		protectedMux.HandleFunc("HEAD /api/v1/namespaces/{namespace}/secrets/{name}", secretsUnavailable)
+		protectedMux.HandleFunc("PUT /api/v1/namespaces/{namespace}/secrets/{name}", secretsUnavailable)
+		protectedMux.HandleFunc("DELETE /api/v1/namespaces/{namespace}/secrets/{name}", secretsUnavailable)
 	}
 
 	// Protected API v1 routes - Role binding management (require authentication)
@@ -639,6 +749,96 @@ func NewRouterWithConfig(healthChecker *health.Checker, rgdWatcher *watcher.RGDW
 	// Protected API v1 routes - General settings (organization identity, etc.)
 	settingsHandler := handlers.NewSettingsHandler(cfg.Organization)
 	protectedMux.HandleFunc("GET /api/v1/settings", settingsHandler.GetSettings)
+
+	// Protected API v1 routes - Agents hub kagent presence status (Story 49.1).
+	// Auth-only by explicit scope decision: any authenticated user can read;
+	// no Casbin resource. Degraded states are 200 payloads, never 5xx.
+	agentsStatusHandler := handlers.NewAgentsStatusHandler(cfg.KagentChecker)
+	protectedMux.HandleFunc("GET /api/v1/agents/status", agentsStatusHandler.GetStatus)
+
+	// Protected API v1 routes - Installed BYOA agents (Story 49.2).
+	// Authorization is the Casbin-derived accessible-namespace set applied
+	// inside the handler — the same single enforcement layer as
+	// GET /api/v1/instances. No can-i resource, no CasbinAuthz wrapper.
+	// Avoid Go interface nil gotcha: only assign authz when non-nil.
+	var agentsNamespaceAuthz handlers.AccessibleNamespacesProvider
+	if authService != nil {
+		agentsNamespaceAuthz = authService
+	}
+	// Story 50.4: a single shared ModelConfig resolver (Agent → ModelConfig →
+	// {provider, model}). Constructed once so its positive cache is shared
+	// across requests; nil when there is no dynamic client (model omitted).
+	var agentModelResolver kagent.ModelResolver
+	if cfg.DynamicClient != nil {
+		agentModelResolver = kagent.NewModelResolver(cfg.DynamicClient)
+	}
+	agentsInstalledHandler := handlers.NewAgentsInstalledHandler(cfg.DynamicClient, agentsNamespaceAuthz, agentModelResolver)
+	protectedMux.HandleFunc("GET /api/v1/agents", agentsInstalledHandler.ListAgents)
+
+	// Models tab (Story 53.4): list the caller's accessible kagent ModelConfigs
+	// and create one by orchestrating a Secret + a KnodexAgentModelConfig instance.
+	// Same single Casbin accessible-namespace layer as the agents list; the POST
+	// adds an explicit secrets-create enforce (credential-minting gate). The
+	// literal "models" segment is more specific than the {namespace}/{name}
+	// invoke wildcard below, so Go ServeMux routes /agents/models here.
+	agentModelsHandler := handlers.NewAgentModelsHandler(cfg.DynamicClient, agentsNamespaceAuthz, cfg.K8sClient, cfg.PolicyEnforcer)
+	protectedMux.HandleFunc("GET /api/v1/agents/models", agentModelsHandler.ListModels)
+	protectedMux.HandleFunc("POST /api/v1/agents/models", agentModelsHandler.CreateModel)
+
+	// Templates tab: discover agent-template RGDs by schema.kind
+	// (KnodexAgentTemplate), independent of the catalog annotation. Reuses the
+	// catalog RGDHandler; the literal "templates" segment is more specific than
+	// the {namespace}/{name} invoke wildcard, so Go ServeMux routes it here.
+	protectedMux.HandleFunc("GET /api/v1/agents/templates", rgdHandler.ListAgentTemplates)
+
+	// Agent model edit: list a namespace's ModelConfigs and repoint an agent at
+	// one (patches ONLY spec.declarative.modelConfig). Authorization is the same
+	// single Casbin accessible-namespace check as the agents list — resolved
+	// inside the handler from the live Agent CR. The {namespace}/{name}/
+	// modelconfigs|model paths are agent-scoped (and a distinct method for the
+	// PATCH) so they never collide with the sessions/{id} or runs/{id}/result
+	// wildcards.
+	agentModelEditHandler := handlers.NewAgentModelEditHandler(cfg.DynamicClient, agentsNamespaceAuthz)
+	protectedMux.HandleFunc("GET /api/v1/agents/{namespace}/{name}/modelconfigs", agentModelEditHandler.ListModelConfigs)
+	protectedMux.HandleFunc("PATCH /api/v1/agents/{namespace}/{name}/model", agentModelEditHandler.EditModel)
+
+	// Protected API v1 routes - Agent run history + invocation (Story 49.4).
+	// Same single Casbin enforcement layer as GET /agents: the
+	// accessible-namespace set is applied inside the handlers — no can-i
+	// resource, no CasbinAuthz wrapper. The literal /agents/status|runs|
+	// sessions routes take precedence over the {namespace}/{name} wildcard.
+	// Avoid the Go interface nil gotcha: only assign the hub when non-nil.
+	var runBroadcaster handlers.RunBroadcaster
+	if cfg.WebSocketHub != nil {
+		runBroadcaster = cfg.WebSocketHub
+	}
+	agentsRunsHandler := handlers.NewAgentsRunsHandler(cfg.AgentRunStore, agentsNamespaceAuthz)
+	protectedMux.HandleFunc("GET /api/v1/agents/runs", agentsRunsHandler.ListRuns)
+	// Story 53.5 re-homes the run-result write + spec-validation seam onto this
+	// surviving BYOA invoke path (the built-in handler that owned them was
+	// deleted in 53.1): completeRun now writes the full runs.Result and runs
+	// the EE policy validation. resultStore nil ⇒ result never fetchable;
+	// specValidator nil ⇒ no policyValidation (OSS).
+	agentsInvokeHandler := handlers.NewAgentsInvokeHandler(cfg.DynamicClient, agentsNamespaceAuthz, cfg.AgentRunStore, cfg.AgentInvoker, runBroadcaster, cfg.AgentRunResultStore, cfg.AgentSpecValidator)
+	protectedMux.HandleFunc("POST /api/v1/agents/{namespace}/{name}/invoke", agentsInvokeHandler.Invoke)
+
+	// Protected API v1 routes - Agent run results (Story 50.1). The result
+	// endpoint applies the same single Casbin namespace-visibility filter as
+	// the runs list inside the handler (Story 53.1 — no global-readable
+	// carve-out). cfg.AgentSpecValidator is now wired onto the invoke
+	// completion path above (53.5 re-homing complete).
+	agentsRunResultHandler := handlers.NewAgentsRunResultHandler(cfg.AgentRunResultStore, agentsNamespaceAuthz)
+	protectedMux.HandleFunc("GET /api/v1/agents/runs/{id}/result", agentsRunResultHandler.GetResult)
+
+	// Protected API v1 routes - Chat sessions (Story 50.6). Sessions are a
+	// VIEW over the run store (group runs by conversationId), so they reuse
+	// the SAME single Casbin enforcement layer applied inside the handler —
+	// no can-i resource, no CasbinAuthz wrapper, matching agents/runs. The
+	// literal "sessions" segment is more specific than the {namespace}/{name}
+	// invoke wildcard, so it routes here.
+	agentsSessionsHandler := handlers.NewAgentsSessionsHandler(cfg.AgentRunStore, agentsNamespaceAuthz)
+	protectedMux.HandleFunc("GET /api/v1/agents/sessions", agentsSessionsHandler.ListSessions)
+	protectedMux.HandleFunc("GET /api/v1/agents/sessions/{id}", agentsSessionsHandler.GetSession)
 
 	// Protected API v1 routes - License status (enterprise feature)
 	// GET is available to all authenticated users, POST requires settings:update

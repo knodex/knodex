@@ -145,6 +145,43 @@ func TestRGDCache_All(t *testing.T) {
 	}
 }
 
+// TestRGDCache_AgentKindExcludedFromListButGettable proves the agent RGDs'
+// visibility asymmetry: a published (catalog:true) RGD whose schema.kind is an
+// agent kind is fetchable by name (Get, the Deploy drawer's load path) but
+// absent from the main catalog List — agent kinds route to the Agents pages.
+func TestRGDCache_AgentKindExcludedFromListButGettable(t *testing.T) {
+	t.Parallel()
+
+	cache := NewRGDCache()
+
+	plain := catalogRGD("plain-rgd", "default")
+	agentRGD := catalogRGD("kagent-agent", "default")
+	agentRGD.Kind = kro.AgentKind
+
+	cache.Set(plain)
+	cache.Set(agentRGD)
+
+	// List excludes the agent-kinded RGD.
+	result := cache.List(models.DefaultListOptions())
+	if result.TotalCount != 1 {
+		t.Fatalf("expected 1 RGD in List (agent kind excluded), got %d", result.TotalCount)
+	}
+	for _, rgd := range result.Items {
+		if rgd.Name == "kagent-agent" {
+			t.Errorf("agent-kinded RGD %q must not appear in catalog List", rgd.Name)
+		}
+	}
+
+	// Get still returns it (single-fetch path bypasses matchesFilter).
+	got, found := cache.Get("default", "kagent-agent")
+	if !found {
+		t.Fatal("agent-kinded RGD must remain fetchable by name via Get (Deploy drawer load)")
+	}
+	if got.Name != "kagent-agent" {
+		t.Errorf("expected name %q, got %q", "kagent-agent", got.Name)
+	}
+}
+
 func TestRGDCache_ListFilterByNamespace(t *testing.T) {
 	t.Parallel()
 
@@ -167,6 +204,35 @@ func TestRGDCache_ListFilterByNamespace(t *testing.T) {
 		if rgd.Namespace != "ns1" {
 			t.Errorf("expected namespace ns1, got %s", rgd.Namespace)
 		}
+	}
+}
+
+func TestRGDCache_ListDiscoverBySchemaKind(t *testing.T) {
+	t.Parallel()
+
+	cache := NewRGDCache()
+
+	// Published agent-template RGD: catalog annotation + agent schema.kind.
+	builder := catalogRGD("rgd-builder", "ns1")
+	builder.Kind = kro.AgentTemplateKind
+	cache.Set(builder)
+	// A normal catalog RGD that must NOT leak into a SchemaKind query.
+	cache.Set(catalogRGD("regular", "ns1"))
+	// An UNPUBLISHED agent template (no catalog annotation) must not surface
+	// anywhere — the annotation is the single publishing gateway.
+	cache.Set(&models.CatalogRGD{Name: "unpublished", Title: "unpublished", Kind: kro.AgentTemplateKind})
+
+	// SchemaKind query surfaces only the published agent template.
+	opts := models.DefaultListOptions()
+	opts.SchemaKind = kro.AgentTemplateKind
+	if got := cache.List(opts); got.TotalCount != 1 || got.Items[0].Name != "rgd-builder" {
+		t.Fatalf("SchemaKind query: expected only rgd-builder, got %+v", got.Items)
+	}
+
+	// The default catalog list (no SchemaKind) EXCLUDES agent kinds — they
+	// route to the Agents pages — and returns only the regular RGD.
+	if got := cache.List(models.DefaultListOptions()); got.TotalCount != 1 || got.Items[0].Name != "regular" {
+		t.Fatalf("catalog list: expected only regular, got %+v", got.Items)
 	}
 }
 

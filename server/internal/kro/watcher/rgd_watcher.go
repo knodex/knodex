@@ -454,15 +454,14 @@ func (w *RGDWatcher) handleDelete(obj interface{}) {
 //   - Inactive RGDs are included with an "Inactive" status so the UI can show them
 //     with a badge and disabled deploy button, preserving instance visibility
 func (w *RGDWatcher) shouldIncludeInCatalog(u *unstructured.Unstructured) bool {
-	// Check for catalog annotation using parser helper
+	// The catalog annotation is the single ingestion gateway — agent RGDs
+	// carry it too (their schema.kind only routes them to the Agents pages).
 	value, ok := parser.GetAnnotation(u, kro.CatalogAnnotation)
-	if !ok {
-		return false
-	}
-
-	// Accept "true", "yes", "1"
-	value = strings.ToLower(value)
-	if value != "true" && value != "yes" && value != "1" {
+	hasCatalog := ok && func() bool {
+		v := strings.ToLower(value)
+		return v == "true" || v == "yes" || v == "1"
+	}()
+	if !hasCatalog {
 		return false
 	}
 
@@ -536,19 +535,29 @@ func (w *RGDWatcher) passesIngestionInvariants(u *unstructured.Unstructured) boo
 	return true
 }
 
-// deriveCRDAPIVersion returns the apiVersion of the CRD declared by an RGD,
-// mirroring the extraction logic in unstructuredToRGD: read spec.schema.apiVersion
-// (falling back to spec.apiVersion), and prepend the RGD's own group when the
-// declared apiVersion has no slash.
+// deriveCRDAPIVersion returns the apiVersion of the CRD declared by an RGD:
+// read spec.schema.apiVersion (falling back to spec.apiVersion), and when it
+// carries no group, prepend the instance group.
+//
+// KRO sets the instance CRD group from spec.schema.group, defaulting to the
+// RGD's own group (kro.run) only when schema.group is unset. Agent RGDs override
+// it (e.g. agents.knodex.io), so schema.group must win — prepending the RGD
+// object's group unconditionally points instances at kro.run and the API server
+// 404s ("resource type not yet registered").
 func deriveCRDAPIVersion(u *unstructured.Unstructured) string {
 	apiVersion := parser.GetSpecFieldStringOrDefault(u, "", "schema", "apiVersion")
 	if apiVersion == "" {
 		apiVersion = parser.GetSpecFieldStringOrDefault(u, "", "apiVersion")
 	}
 	if apiVersion != "" && !strings.Contains(apiVersion, "/") {
-		rgdAPIVersion := parser.GetAPIVersion(u)
-		if parts := strings.Split(rgdAPIVersion, "/"); len(parts) == 2 {
-			apiVersion = parts[0] + "/" + apiVersion
+		group := parser.GetSpecFieldStringOrDefault(u, "", "schema", "group")
+		if group == "" {
+			if parts := strings.Split(parser.GetAPIVersion(u), "/"); len(parts) == 2 {
+				group = parts[0]
+			}
+		}
+		if group != "" {
+			apiVersion = group + "/" + apiVersion
 		}
 	}
 	return apiVersion
@@ -572,8 +581,9 @@ func (w *RGDWatcher) unstructuredToRGD(u *unstructured.Unstructured) *models.Cat
 	}
 
 	// Extract API version and kind from spec.schema (RGD structure)
-	// Using parser's type-safe field accessors
-	apiVersion := parser.GetSpecFieldStringOrDefault(u, "", "schema", "apiVersion")
+	// Using parser's type-safe field accessors. deriveCRDAPIVersion prepends the
+	// instance group (spec.schema.group, else the RGD's own group) when absent.
+	apiVersion := deriveCRDAPIVersion(u)
 	kind := parser.GetSpecFieldStringOrDefault(u, "", "schema", "kind")
 
 	// Extract declared plural name from spec.schema.crd.spec.names.plural (if present)
@@ -584,20 +594,8 @@ func (w *RGDWatcher) unstructuredToRGD(u *unstructured.Unstructured) *models.Cat
 	isClusterScoped := scope == "Cluster"
 
 	// Fallback to spec level (legacy or alternative format)
-	if apiVersion == "" {
-		apiVersion = parser.GetSpecFieldStringOrDefault(u, "", "apiVersion")
-	}
 	if kind == "" {
 		kind = parser.GetSpecFieldStringOrDefault(u, "", "kind")
-	}
-
-	// If apiVersion doesn't contain a group (no "/"), prepend the RGD's group
-	// Resources created by an RGD are in the same group as the RGD itself
-	if apiVersion != "" && !strings.Contains(apiVersion, "/") {
-		rgdAPIVersion := parser.GetAPIVersion(u)
-		if parts := strings.Split(rgdAPIVersion, "/"); len(parts) == 2 {
-			apiVersion = parts[0] + "/" + apiVersion
-		}
 	}
 
 	// Parse creation timestamp using parser helper

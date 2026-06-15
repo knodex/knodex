@@ -491,16 +491,23 @@ func (c *RGDCache) matchesFilter(rgd *models.CatalogRGD, opts models.ListOptions
 	// Admin view (no IncludePublic and no Projects): Shows all catalog RGDs
 	// User view (IncludePublic=true): Shows public RGDs + user's project RGDs
 
-	// Get catalog annotation - this is the gateway to the catalog
-	catalogValue := ""
-	if rgd.Annotations != nil {
-		catalogValue = rgd.Annotations[kro.CatalogAnnotation]
+	// Catalog annotation is the single publishing gateway. RGDs without it are
+	// invisible to everyone, including admins — in every list mode.
+	if !rgd.IsCatalog() {
+		return false
 	}
-	isInCatalog := catalogValue == "true"
 
-	// RGDs without catalog annotation are not part of the catalog
-	// They are invisible to everyone, including admins (not ingested)
-	if !isInCatalog {
+	// schema.kind routes WHERE a published RGD surfaces:
+	// - A SchemaKind query targets RGDs by their schema.kind directly (the
+	//   Agents → Templates list). Org + project visibility below still apply.
+	// - The default catalog list excludes agent kinds — they live on the
+	//   Agents pages (Create Agent, Templates, Models), not in the Catalog,
+	//   but stay fetchable by name via Get (Deploy drawer load).
+	if opts.SchemaKind != "" {
+		if rgd.Kind != opts.SchemaKind {
+			return false
+		}
+	} else if kro.IsAgentSchemaKind(rgd.Kind) {
 		return false
 	}
 

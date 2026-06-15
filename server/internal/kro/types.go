@@ -67,3 +67,26 @@ const (
 	RGDOrganizationLabel = "knodex.io/organization"
 	RGDPackageLabel      = "knodex.io/package"
 )
+
+// Agent RGD schema kinds. The catalog annotation is the ONLY publishing
+// gateway (whether an RGD is ingested and user-fetchable at all); these kinds
+// only ROUTE a published RGD to the Agents workspace instead of the main
+// catalog list. Agent RGDs therefore carry knodex.io/catalog: "true" like
+// every other published RGD.
+const (
+	AgentKind               = "KagentAgent"
+	AgentTemplateKind       = "KnodexAgentTemplate"
+	AgentModelConfigKind    = "KnodexAgentModelConfig"
+	AgentProviderConfigKind = "KnodexProviderConfig"
+)
+
+// IsAgentSchemaKind reports whether kind belongs to the Agents workspace.
+// Routing only: the main catalog list excludes these kinds (they have their
+// own pages); it grants no visibility by itself.
+func IsAgentSchemaKind(kind string) bool {
+	switch kind {
+	case AgentKind, AgentTemplateKind, AgentModelConfigKind, AgentProviderConfigKind:
+		return true
+	}
+	return false
+}

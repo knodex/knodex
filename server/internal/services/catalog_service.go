@@ -215,6 +215,12 @@ func (s *CatalogService) GetRGD(ctx context.Context, authCtx *UserAuthContext, n
 		return nil, ErrNotFound
 	}
 
+	// Catalog annotation is the single publishing gateway (agent RGDs carry it
+	// too) — 404 to hide existence, mirroring the list/schema/graph/deploy gates.
+	if !rgd.IsCatalog() {
+		return nil, ErrNotFound
+	}
+
 	// Organization filter: hide RGDs from other orgs (returns 404 to hide existence per AC#7)
 	// This is separate from project access checks because org mismatch should not reveal
 	// the RGD exists — returning 403 would confirm its existence to other-org users.
@@ -488,6 +494,9 @@ func (s *CatalogService) filtersToListOptions(filters RGDFilters) models.ListOpt
 	if filters.ProducesGroup != "" {
 		opts.ProducesGroup = filters.ProducesGroup
 	}
+	if filters.SchemaKind != "" {
+		opts.SchemaKind = filters.SchemaKind
+	}
 	if filters.Status != "" {
 		opts.Status = filters.Status
 	}
@@ -555,7 +564,7 @@ func (s *CatalogService) listCacheKey(opts models.ListOptions) string {
 	copy(tags, opts.Tags)
 	sort.Strings(tags)
 
-	return fmt.Sprintf("rgd:list:org=%s:ns=%s:cat=%s:tags=%s:ek=%s:search=%s:dok=%s:pk=%s:pg=%s:projects=%s:public=%t:status=%s:page=%d:size=%d:sort=%s:%s",
+	return fmt.Sprintf("rgd:list:org=%s:ns=%s:cat=%s:tags=%s:ek=%s:search=%s:dok=%s:pk=%s:pg=%s:sk=%s:projects=%s:public=%t:status=%s:page=%d:size=%d:sort=%s:%s",
 		opts.Organization,
 		opts.Namespace,
 		opts.Category,
@@ -565,6 +574,7 @@ func (s *CatalogService) listCacheKey(opts models.ListOptions) string {
 		opts.DependsOnKind,
 		opts.ProducesKind,
 		opts.ProducesGroup,
+		opts.SchemaKind,
 		strings.Join(projects, ","),
 		opts.IncludePublic,
 		opts.Status,

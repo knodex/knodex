@@ -1,15 +1,13 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { Suspense } from "react";
+import { useState } from "react";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useParams, useLocation, type Location } from "react-router-dom";
 import { queryClient } from "@/lib/query-client";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
-import { RouteErrorBoundary } from "@/components/ui/route-error-boundary";
 import { LoginPage, AuthCallback } from "@/components/auth";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import { PageSkeleton } from "@/components/ui/page-skeleton";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "sonner";
 import {
@@ -22,6 +20,9 @@ import {
   ProjectsSettings,
   ProjectDetail,
   SSOSettings,
+  TeamsSettings,
+  UsersSettings,
+  RoleTemplatesSettings,
   AuditSettings,
   LicenseSettings,
   AuditPage,
@@ -36,11 +37,237 @@ import {
   CategoryPage,
   UserInfoPage,
   DeployRoute,
+  DeployRGDRoute,
+  AgentsRoute,
+  AgentsListRoute,
+  AgentsModelsRoute,
+  AgentsTemplatesRoute,
+  AgentChatLayoutRoute,
+  AgentChatRoute,
+  SessionsListRoute,
 } from "@/lib/route-preloads";
 import { MobileDeployGuard } from "@/components/layout/MobileDeployGuard";
+import { IndexRedirect } from "@/components/layout/IndexRedirect";
+import { LazyRouteElement } from "@/components/layout/LazyRouteElement";
+import { SettingsLayout } from "@/components/settings/SettingsLayout";
+import { AgentsLayout } from "@/components/agents/AgentsLayout";
 
-function RouteLoader() {
-  return <PageSkeleton />;
+/** Index route for /agents/list/:namespace/:name — immediately navigates to a new session. */
+function AgentChatNewConversation() {
+  const { namespace, name } = useParams<{ namespace: string; name: string }>();
+  const [newId] = useState(() => crypto.randomUUID());
+  return (
+    <Navigate
+      to={`/agents/list/${encodeURIComponent(namespace!)}/${encodeURIComponent(name!)}/chat/${newId}`}
+      replace
+    />
+  );
+}
+
+/**
+ * Inner component (must be inside BrowserRouter to use useLocation).
+ * Implements the modal-routes pattern: when `location.state.backgroundLocation`
+ * is set (e.g. navigating to /deploy-rgd from the RGD builder), the main
+ * Routes tree renders the background page while an overlay Routes renders the
+ * drawer on top. The Sheet uses a Radix portal so it renders over the
+ * background regardless of component tree position.
+ */
+function AppRoutes() {
+  const location = useLocation();
+  const state = location.state as { backgroundLocation?: Location } | null;
+
+  const mainRoutes = (
+    <Routes location={state?.backgroundLocation ?? location}>
+      {/* Public routes */}
+      <Route path="/login" element={<LoginPage />} />
+      <Route path="/auth/callback" element={<AuthCallback />} />
+
+      {/* Protected routes - wrapped in DashboardLayout */}
+      <Route path="/" element={<DashboardLayout />}>
+        {/* Default landing (story 17.1): a bare member with no project
+            bindings lands on the self-scoped "My Access" view instead of
+            /instances (which 403-walls them); everyone else → /instances. */}
+        <Route index element={<IndexRedirect />} />
+
+        {/* Catalog routes - lazy loaded */}
+        <Route path="catalog" element={<LazyRouteElement component={CatalogRoute} />} />
+        <Route
+          path="catalog/:rgdName"
+          element={<LazyRouteElement component={RGDDetailRoute} />}
+        />
+        <Route
+          path="deploy/:rgdName"
+          element={<LazyRouteElement component={DeployRoute} wrapper={MobileDeployGuard} />}
+        />
+        {/* Deploy a generated RGD (Story 50.2) — spec arrives via router state.
+            Rendered here for direct navigation; when navigated with
+            backgroundLocation in state, the overlay Routes below takes over. */}
+        <Route
+          path="deploy-rgd"
+          element={<LazyRouteElement component={DeployRGDRoute} wrapper={MobileDeployGuard} />}
+        />
+
+        {/* Agents workspace — master-detail shell (AgentsLayout) wraps each
+            tab, mirroring the Settings routes (wrapper, not nested Outlet). */}
+        <Route path="agents" element={<LazyRouteElement component={AgentsRoute} wrapper={AgentsLayout} />} />
+        <Route path="agents/list" element={<LazyRouteElement component={AgentsListRoute} wrapper={AgentsLayout} />} />
+        <Route path="agents/templates" element={<LazyRouteElement component={AgentsTemplatesRoute} wrapper={AgentsLayout} />} />
+        <Route path="agents/models" element={<LazyRouteElement component={AgentsModelsRoute} wrapper={AgentsLayout} />} />
+        {/* Kagent-style agent chat with sessions sidebar (namespaced identity) */}
+        <Route
+          path="agents/list/:namespace/:name"
+          element={<LazyRouteElement component={AgentChatLayoutRoute} />}
+        >
+          <Route index element={<AgentChatNewConversation />} />
+          <Route
+            path="chat/:sessionId"
+            element={<LazyRouteElement component={AgentChatRoute} />}
+          />
+        </Route>
+        {/* Chat session list */}
+        <Route
+          path="agents/sessions"
+          element={<LazyRouteElement component={SessionsListRoute} />}
+        />
+
+        {/* Instance routes - lazy loaded */}
+        <Route path="instances" element={<LazyRouteElement component={InstancesRoute} />} />
+        {/*
+         * GVK-aware instance detail routes, mirroring kube-apiserver URL ordering:
+         * group and version first, then optional namespace. Cluster-scoped resources
+         * omit the namespace segment (segment count is the discriminator), matching
+         * how the real K8s API drops the namespaces/{ns} path component rather than
+         * using a sentinel like "cluster".
+         *
+         *   Namespaced:     /instances/:group/:version/:namespace/:kind/:name
+         *   Cluster-scoped: /instances/:group/:version/:kind/:name
+         */}
+        <Route
+          path="instances/:group/:version/:namespace/:kind/:name"
+          element={<LazyRouteElement component={InstanceDetailRoute} />}
+        />
+        <Route
+          path="instances/:group/:version/:kind/:name"
+          element={<LazyRouteElement component={InstanceDetailRoute} />}
+        />
+
+        {/* Secrets routes - lazy loaded */}
+        <Route path="secrets" element={<LazyRouteElement component={SecretsRoute} />} />
+        <Route
+          path="secrets/:namespace/:name"
+          element={<LazyRouteElement component={SecretDetailRoute} />}
+        />
+
+        {/* Category routes - nested under catalog (OSS) */}
+        <Route
+          path="catalog/categories/:slug"
+          element={<LazyRouteElement component={CategoryPage} />}
+        />
+
+        {/* Compliance routes - lazy loaded (Enterprise only - protected in component) */}
+        <Route
+          path="compliance"
+          element={<LazyRouteElement component={ComplianceDashboard} />}
+        />
+        <Route
+          path="compliance/templates"
+          element={<LazyRouteElement component={ConstraintTemplatesPage} />}
+        />
+        <Route
+          path="compliance/templates/:name"
+          element={<LazyRouteElement component={ConstraintTemplateDetailPage} />}
+        />
+        <Route
+          path="compliance/constraints"
+          element={<LazyRouteElement component={ConstraintsPage} />}
+        />
+        <Route
+          path="compliance/constraints/:kind/:name"
+          element={<LazyRouteElement component={ConstraintDetailPage} />}
+        />
+        <Route
+          path="compliance/violations"
+          element={<LazyRouteElement component={ViolationsPage} />}
+        />
+
+        {/* Audit route - lazy loaded (Enterprise only - protected in component) */}
+        <Route path="audit" element={<LazyRouteElement component={AuditPage} />} />
+
+        {/* Account route - lazy loaded (all authenticated users) */}
+        <Route path="user-info" element={<LazyRouteElement component={UserInfoPage} />} />
+
+        {/* Projects & Repositories - top-level routes (authz handled in components via Casbin) */}
+        <Route
+          path="repositories"
+          element={<LazyRouteElement component={RepositoriesSettings} />}
+        />
+        <Route
+          path="projects"
+          element={<LazyRouteElement component={ProjectsSettings} />}
+        />
+        <Route
+          path="projects/:name"
+          element={<LazyRouteElement component={ProjectDetail} />}
+        />
+
+        {/* Settings routes — master-detail shell (SettingsLayout) wraps
+            each sub-page; the persistent menu replaces the old card grid.
+            Global Admin only — protected in component. */}
+        <Route
+          path="settings"
+          element={<LazyRouteElement component={Settings} wrapper={SettingsLayout} />}
+        />
+        <Route
+          path="settings/sso"
+          element={<LazyRouteElement component={SSOSettings} wrapper={SettingsLayout} />}
+        />
+        {/* settings/teams + settings/users: the federated TeamsSettings and
+            the local identity.users roster. */}
+        <Route
+          path="settings/teams"
+          element={<LazyRouteElement component={TeamsSettings} wrapper={SettingsLayout} />}
+        />
+        <Route
+          path="settings/users"
+          element={<LazyRouteElement component={UsersSettings} wrapper={SettingsLayout} />}
+        />
+        <Route
+          path="settings/role-templates"
+          element={
+            <LazyRouteElement component={RoleTemplatesSettings} wrapper={SettingsLayout} />
+          }
+        />
+        <Route
+          path="settings/audit"
+          element={<LazyRouteElement component={AuditSettings} wrapper={SettingsLayout} />}
+        />
+        <Route
+          path="settings/license"
+          element={<LazyRouteElement component={LicenseSettings} wrapper={SettingsLayout} />}
+        />
+
+        {/* 404 fallback. */}
+        <Route path="*" element={<Navigate to="/instances" replace />} />
+      </Route>
+    </Routes>
+  );
+
+  return (
+    <>
+      {mainRoutes}
+      {/* Overlay: when /deploy-rgd is navigated with a backgroundLocation in
+          state, render the drawer on top of the background page. The Sheet uses
+          a Radix portal so it layers correctly regardless of DOM position. */}
+      {state?.backgroundLocation && (
+        <Routes>
+          <Route
+            path="deploy-rgd"
+            element={<LazyRouteElement component={DeployRGDRoute} wrapper={MobileDeployGuard} />}
+          />
+        </Routes>
+      )}
+    </>
+  );
 }
 
 function App() {
@@ -55,286 +282,7 @@ function App() {
             closeButton
           />
           <BrowserRouter>
-            <Routes>
-              {/* Public routes */}
-              <Route path="/login" element={<LoginPage />} />
-              <Route path="/auth/callback" element={<AuthCallback />} />
-
-              {/* Protected routes - wrapped in DashboardLayout */}
-              <Route path="/" element={<DashboardLayout />}>
-                {/* Default redirect */}
-                <Route index element={<Navigate to="/instances" replace />} />
-
-                {/* Catalog routes - lazy loaded */}
-                <Route
-                  path="catalog"
-                  element={
-                    <RouteErrorBoundary>
-                      <Suspense fallback={<RouteLoader />}>
-                        <CatalogRoute />
-                      </Suspense>
-                    </RouteErrorBoundary>
-                  }
-                />
-                <Route
-                  path="catalog/:rgdName"
-                  element={
-                    <RouteErrorBoundary>
-                      <Suspense fallback={<RouteLoader />}>
-                        <RGDDetailRoute />
-                      </Suspense>
-                    </RouteErrorBoundary>
-                  }
-                />
-                <Route
-                  path="deploy/:rgdName"
-                  element={
-                    <RouteErrorBoundary>
-                      <MobileDeployGuard>
-                        <Suspense fallback={<RouteLoader />}>
-                          <DeployRoute />
-                        </Suspense>
-                      </MobileDeployGuard>
-                    </RouteErrorBoundary>
-                  }
-                />
-
-                {/* Instance routes - lazy loaded */}
-                <Route
-                  path="instances"
-                  element={
-                    <RouteErrorBoundary>
-                      <Suspense fallback={<RouteLoader />}>
-                        <InstancesRoute />
-                      </Suspense>
-                    </RouteErrorBoundary>
-                  }
-                />
-                {/*
-                 * GVK-aware instance detail routes, mirroring kube-apiserver URL
-                 * ordering: group first, then optional namespace. The cluster vs
-                 * namespaced shape is encoded by two distinct routes — there is no
-                 * empty-namespace sentinel.
-                 */}
-                <Route
-                  path="instances/group/:group/ns/:namespace/:kind/:name"
-                  element={
-                    <RouteErrorBoundary>
-                      <Suspense fallback={<RouteLoader />}>
-                        <InstanceDetailRoute />
-                      </Suspense>
-                    </RouteErrorBoundary>
-                  }
-                />
-                <Route
-                  path="instances/group/:group/cluster/:kind/:name"
-                  element={
-                    <RouteErrorBoundary>
-                      <Suspense fallback={<RouteLoader />}>
-                        <InstanceDetailRoute />
-                      </Suspense>
-                    </RouteErrorBoundary>
-                  }
-                />
-
-                {/* Secrets routes - lazy loaded */}
-                <Route
-                  path="secrets"
-                  element={
-                    <RouteErrorBoundary>
-                      <Suspense fallback={<RouteLoader />}>
-                        <SecretsRoute />
-                      </Suspense>
-                    </RouteErrorBoundary>
-                  }
-                />
-                <Route
-                  path="secrets/:namespace/:name"
-                  element={
-                    <RouteErrorBoundary>
-                      <Suspense fallback={<RouteLoader />}>
-                        <SecretDetailRoute />
-                      </Suspense>
-                    </RouteErrorBoundary>
-                  }
-                />
-
-                {/* Category routes - nested under catalog (OSS) */}
-                <Route
-                  path="catalog/categories/:slug"
-                  element={
-                    <RouteErrorBoundary>
-                      <Suspense fallback={<RouteLoader />}>
-                        <CategoryPage />
-                      </Suspense>
-                    </RouteErrorBoundary>
-                  }
-                />
-
-                {/* Compliance routes - lazy loaded (Enterprise only - protected in component) */}
-                <Route
-                  path="compliance"
-                  element={
-                    <RouteErrorBoundary>
-                      <Suspense fallback={<RouteLoader />}>
-                        <ComplianceDashboard />
-                      </Suspense>
-                    </RouteErrorBoundary>
-                  }
-                />
-                <Route
-                  path="compliance/templates"
-                  element={
-                    <RouteErrorBoundary>
-                      <Suspense fallback={<RouteLoader />}>
-                        <ConstraintTemplatesPage />
-                      </Suspense>
-                    </RouteErrorBoundary>
-                  }
-                />
-                <Route
-                  path="compliance/templates/:name"
-                  element={
-                    <RouteErrorBoundary>
-                      <Suspense fallback={<RouteLoader />}>
-                        <ConstraintTemplateDetailPage />
-                      </Suspense>
-                    </RouteErrorBoundary>
-                  }
-                />
-                <Route
-                  path="compliance/constraints"
-                  element={
-                    <RouteErrorBoundary>
-                      <Suspense fallback={<RouteLoader />}>
-                        <ConstraintsPage />
-                      </Suspense>
-                    </RouteErrorBoundary>
-                  }
-                />
-                <Route
-                  path="compliance/constraints/:kind/:name"
-                  element={
-                    <RouteErrorBoundary>
-                      <Suspense fallback={<RouteLoader />}>
-                        <ConstraintDetailPage />
-                      </Suspense>
-                    </RouteErrorBoundary>
-                  }
-                />
-                <Route
-                  path="compliance/violations"
-                  element={
-                    <RouteErrorBoundary>
-                      <Suspense fallback={<RouteLoader />}>
-                        <ViolationsPage />
-                      </Suspense>
-                    </RouteErrorBoundary>
-                  }
-                />
-
-                {/* Audit route - lazy loaded (Enterprise only - protected in component) */}
-                <Route
-                  path="audit"
-                  element={
-                    <RouteErrorBoundary>
-                      <Suspense fallback={<RouteLoader />}>
-                        <AuditPage />
-                      </Suspense>
-                    </RouteErrorBoundary>
-                  }
-                />
-
-                {/* Account route - lazy loaded (all authenticated users) */}
-                <Route
-                  path="user-info"
-                  element={
-                    <RouteErrorBoundary>
-                      <Suspense fallback={<RouteLoader />}>
-                        <UserInfoPage />
-                      </Suspense>
-                    </RouteErrorBoundary>
-                  }
-                />
-
-                {/* Projects & Repositories - top-level routes (authz handled in components via Casbin) */}
-                <Route
-                  path="repositories"
-                  element={
-                    <RouteErrorBoundary>
-                      <Suspense fallback={<RouteLoader />}>
-                        <RepositoriesSettings />
-                      </Suspense>
-                    </RouteErrorBoundary>
-                  }
-                />
-                <Route
-                  path="projects"
-                  element={
-                    <RouteErrorBoundary>
-                      <Suspense fallback={<RouteLoader />}>
-                        <ProjectsSettings />
-                      </Suspense>
-                    </RouteErrorBoundary>
-                  }
-                />
-                <Route
-                  path="projects/:name"
-                  element={
-                    <RouteErrorBoundary>
-                      <Suspense fallback={<RouteLoader />}>
-                        <ProjectDetail />
-                      </Suspense>
-                    </RouteErrorBoundary>
-                  }
-                />
-
-                {/* Settings routes - lazy loaded (Global Admin only - protected in component) */}
-                <Route
-                  path="settings"
-                  element={
-                    <RouteErrorBoundary>
-                      <Suspense fallback={<RouteLoader />}>
-                        <Settings />
-                      </Suspense>
-                    </RouteErrorBoundary>
-                  }
-                />
-                <Route
-                  path="settings/sso"
-                  element={
-                    <RouteErrorBoundary>
-                      <Suspense fallback={<RouteLoader />}>
-                        <SSOSettings />
-                      </Suspense>
-                    </RouteErrorBoundary>
-                  }
-                />
-                <Route
-                  path="settings/audit"
-                  element={
-                    <RouteErrorBoundary>
-                      <Suspense fallback={<RouteLoader />}>
-                        <AuditSettings />
-                      </Suspense>
-                    </RouteErrorBoundary>
-                  }
-                />
-                <Route
-                  path="settings/license"
-                  element={
-                    <RouteErrorBoundary>
-                      <Suspense fallback={<RouteLoader />}>
-                        <LicenseSettings />
-                      </Suspense>
-                    </RouteErrorBoundary>
-                  }
-                />
-
-                {/* 404 fallback */}
-                <Route path="*" element={<Navigate to="/instances" replace />} />
-              </Route>
-            </Routes>
+            <AppRoutes />
           </BrowserRouter>
         </QueryClientProvider>
       </TooltipProvider>

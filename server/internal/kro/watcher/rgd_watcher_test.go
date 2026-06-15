@@ -137,6 +137,43 @@ func TestRGDWatcher_ShouldIncludeInCatalog(t *testing.T) {
 	}
 }
 
+func TestRGDWatcher_ShouldIncludeInCatalog_AnnotationIsTheOnlyGateway(t *testing.T) {
+	fakeClient := testutil.NewFakeDynamicClient(t)
+	watcher := NewRGDWatcherWithClient(fakeClient)
+
+	tests := []struct {
+		name       string
+		schemaKind string
+		annotated  bool
+		want       bool
+	}{
+		// schema.kind grants NO ingestion by itself — the catalog annotation is
+		// the single publishing gateway; kind only routes published RGDs.
+		{"agent template, no catalog annotation", kro.AgentTemplateKind, false, false},
+		{"agent model config, no catalog annotation", kro.AgentModelConfigKind, false, false},
+		{"agent provider config, no catalog annotation", kro.AgentProviderConfigKind, false, false},
+		{"agent template, catalog annotation", kro.AgentTemplateKind, true, true},
+		{"unrelated kind, no catalog annotation", "TestResource", false, false},
+		{"unrelated kind, catalog annotation", "TestResource", true, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := []testutil.RGDOption{
+				testutil.WithSchemaKind(tt.schemaKind),
+				testutil.WithSchemaAPIVersion("agents.knodex.io/v1alpha1"),
+			}
+			if tt.annotated {
+				opts = append(opts, testutil.WithAnnotations(map[string]string{kro.CatalogAnnotation: "true"}))
+			}
+			rgd := testutil.NewUnstructuredRGD("agent-rgd", "default", opts...)
+			if got := watcher.shouldIncludeInCatalog(rgd); got != tt.want {
+				t.Errorf("shouldIncludeInCatalog(kind=%q, annotated=%v) = %v, want %v", tt.schemaKind, tt.annotated, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRGDWatcher_RejectsInvalidAPIGroup(t *testing.T) {
 	fakeClient := testutil.NewFakeDynamicClient(t)
 	watcher := NewRGDWatcherWithClient(fakeClient)
@@ -327,6 +364,36 @@ func TestRGDWatcher_UnstructuredToRGD(t *testing.T) {
 	}
 }
 
+// TestRGDWatcher_UnstructuredToRGD_CatalogAnnotation guards the catalog gate's
+// load-bearing assumption: the parse pipeline must preserve knodex.io/catalog in
+// CatalogRGD.Annotations. If the parser ever drops it, IsCatalog() goes false and
+// every direct-lookup endpoint 404s legitimate catalog RGDs in production — a
+// regression the handler-level tests (which build CatalogRGD structs by hand)
+// would not catch.
+func TestRGDWatcher_UnstructuredToRGD_CatalogAnnotation(t *testing.T) {
+	fakeClient := testutil.NewFakeDynamicClient(t)
+	watcher := NewRGDWatcherWithClient(fakeClient)
+
+	t.Run("catalog annotation survives parse", func(t *testing.T) {
+		u := createTestRGD("cat-rgd", "default", map[string]string{kro.CatalogAnnotation: "true"}, nil)
+		rgd := watcher.unstructuredToRGD(u)
+		if rgd.Annotations[kro.CatalogAnnotation] != "true" {
+			t.Errorf("expected catalog annotation preserved, got %q", rgd.Annotations[kro.CatalogAnnotation])
+		}
+		if !rgd.IsCatalog() {
+			t.Error("expected IsCatalog() true for parsed catalog RGD")
+		}
+	})
+
+	t.Run("non-catalog RGD parses to IsCatalog false", func(t *testing.T) {
+		u := createTestRGD("internal-rgd", "default", nil, nil)
+		rgd := watcher.unstructuredToRGD(u)
+		if rgd.IsCatalog() {
+			t.Error("expected IsCatalog() false for RGD without catalog annotation")
+		}
+	})
+}
+
 func TestRGDWatcher_UnstructuredToRGD_DocsURL(t *testing.T) {
 	fakeClient := testutil.NewFakeDynamicClient(t)
 	watcher := NewRGDWatcherWithClient(fakeClient)
@@ -400,6 +467,54 @@ func TestRGDWatcher_UnstructuredToRGD_PluralName(t *testing.T) {
 		rgd := watcher.unstructuredToRGD(u)
 		if rgd.PluralName != "" {
 			t.Errorf("expected empty PluralName when plural key absent from names block, got %q", rgd.PluralName)
+		}
+	})
+}
+
+func TestRGDWatcher_UnstructuredToRGD_APIVersionGroup(t *testing.T) {
+	fakeClient := testutil.NewFakeDynamicClient(t)
+	watcher := NewRGDWatcherWithClient(fakeClient)
+
+	// Regression: agent RGDs declare a custom instance group via spec.schema.group
+	// (e.g. agents.knodex.io) while spec.schema.apiVersion is version-only. The
+	// instance group must win over the RGD object's own group (kro.run), else
+	// instance create targets the wrong group and the API server 404s with the
+	// misleading "resource type not yet registered" preflight message.
+	t.Run("schema.group wins over RGD object group when apiVersion is version-only", func(t *testing.T) {
+		u := testutil.NewUnstructuredRGD("kagent-rgd-builder-agent", "default",
+			testutil.WithAnnotations(map[string]string{kro.CatalogAnnotation: "true"}),
+			testutil.WithSchemaAPIVersion("v1alpha1"),
+			testutil.WithSchemaGroup("agents.knodex.io"),
+			testutil.WithSchemaKind("KnodexAgentTemplate"),
+		)
+		rgd := watcher.unstructuredToRGD(u)
+		if rgd.APIVersion != "agents.knodex.io/v1alpha1" {
+			t.Errorf("expected APIVersion 'agents.knodex.io/v1alpha1', got %q", rgd.APIVersion)
+		}
+	})
+
+	t.Run("absent schema.group falls back to RGD object group (kro.run)", func(t *testing.T) {
+		u := testutil.NewUnstructuredRGD("aks-cluster", "default",
+			testutil.WithAnnotations(map[string]string{kro.CatalogAnnotation: "true"}),
+			testutil.WithSchemaAPIVersion("v1alpha1"),
+			testutil.WithSchemaKind("AKSCluster"),
+		)
+		rgd := watcher.unstructuredToRGD(u)
+		if rgd.APIVersion != "kro.run/v1alpha1" {
+			t.Errorf("expected APIVersion 'kro.run/v1alpha1', got %q", rgd.APIVersion)
+		}
+	})
+
+	t.Run("apiVersion already carrying a group is left untouched", func(t *testing.T) {
+		u := testutil.NewUnstructuredRGD("explicit-rgd", "default",
+			testutil.WithAnnotations(map[string]string{kro.CatalogAnnotation: "true"}),
+			testutil.WithSchemaAPIVersion("example.com/v1"),
+			// schema.group set but must be ignored — apiVersion already qualified
+			testutil.WithSchemaGroup("agents.knodex.io"),
+		)
+		rgd := watcher.unstructuredToRGD(u)
+		if rgd.APIVersion != "example.com/v1" {
+			t.Errorf("expected APIVersion 'example.com/v1', got %q", rgd.APIVersion)
 		}
 	})
 }

@@ -1,0 +1,69 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# model-provider-config — wraps an API-key Secret + kagent.dev/v1alpha2
+# ModelProviderConfig pair. Deploying one instance mints the credential Secret
+# (key "apiKey" — the in-repo convention) and the ModelProviderConfig that
+# references it. Supersedes the old model-provider-secret RGD (Secret-only).
+#
+# Field shape verified against kagent 0.9.6 (CRD
+# modelproviderconfigs.kagent.dev v1alpha2): spec.type is a strict enum
+# (Anthropic, OpenAI, AzureOpenAI, Ollama, Gemini, GeminiVertexAI,
+# AnthropicVertexAI, Bedrock, SAPAICore); spec.secretRef.name must be a Secret
+# in the SAME namespace.
+#
+# Deliberately no endpoint field: kagent's CRD pattern (^https?://.*) rejects
+# an empty string, and KRO templates cannot conditionally omit a field — the
+# provider's default endpoint is always used. Providers needing a custom
+# endpoint (e.g. local Ollama) should apply a ModelProviderConfig directly.
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: kagent-model-provider-config
+  labels:
+    knodex.io/package: agents
+  # knodex.io/catalog:"true" is the single publishing gateway (the watcher only
+  # ingests annotated RGDs); schema.kind (KnodexProviderConfig) routes it to the
+  # Agents workspace and out of the main catalog list, while staying deployable
+  # from the Deploy drawer.
+  annotations:
+    knodex.io/catalog: "true"
+    knodex.io/description: "Provider credential for kagent — creates the API-key Secret and the ModelProviderConfig referencing it"
+    knodex.io/tags: "ai,agent,kagent,provider,secret"
+    knodex.io/category: "ai-agents"
+spec:
+  schema:
+    apiVersion: v1alpha1
+    group: agents.knodex.io
+    kind: KnodexProviderConfig
+    spec:
+      type: string | default="OpenAI" description="kagent provider enum (OpenAI, AzureOpenAI, Anthropic, Gemini, Ollama, Bedrock, ...) — canonical capitalization"
+      apiKey: string | description="Provider API key — stored verbatim in a Kubernetes Secret under key 'apiKey'"
+    status:
+      secretName: ${providerSecret.metadata.name}
+      providerConfigName: ${providerConfig.metadata.name}
+  resources:
+    - id: providerSecret
+      template:
+        apiVersion: v1
+        kind: Secret
+        metadata:
+          name: ${schema.metadata.name}
+          namespace: ${schema.metadata.namespace}
+          labels:
+            app.kubernetes.io/managed-by: knodex
+        stringData:
+          apiKey: ${schema.spec.apiKey}
+
+    - id: providerConfig
+      template:
+        apiVersion: kagent.dev/v1alpha2
+        kind: ModelProviderConfig
+        metadata:
+          name: ${schema.metadata.name}
+          namespace: ${schema.metadata.namespace}
+          labels:
+            app.kubernetes.io/managed-by: knodex
+        spec:
+          type: ${schema.spec.type}
+          secretRef:
+            name: ${providerSecret.metadata.name}
