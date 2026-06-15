@@ -183,7 +183,7 @@ test.describe('Agents Workspace (Story 53.6)', () => {
     const modelLink = page.getByTestId('agents-overview-quickstart-model')
     const agentLink = page.getByTestId('agents-overview-quickstart-agent')
     await expect(modelLink).toHaveAttribute('href', '/agents/models')
-    await expect(agentLink).toHaveAttribute('href', '/agents/list')
+    await expect(agentLink).toHaveAttribute('href', '/agents/templates')
 
     // The Model quickstart appears before the Agent one (first-run sequencing).
     const modelBox = await modelLink.boundingBox()

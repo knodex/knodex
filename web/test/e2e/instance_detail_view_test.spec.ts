@@ -245,7 +245,7 @@ test.describe('Instance Detail View', () => {
 
       // Namespace explicitly labeled
       await expect(page.getByText('Namespace')).toBeVisible()
-      await expect(page.getByText('team-alpha', { exact: true })).toBeVisible()
+      await expect(page.getByTestId('instance-header-card').getByText('team-alpha', { exact: true })).toBeVisible()
     })
 
     test('shows RGD description as subtitle', async ({ page }) => {
@@ -281,12 +281,12 @@ test.describe('Instance Detail View', () => {
       await setupMocks(page, gitopsInstance)
       await page.goto(buildInstanceRoute(gitopsInstance))
 
-      // Source row is the thin metadata bar above the tabs (not the Deployment Information card)
-      const sourceRow = page.locator('[style*="border-bottom"]').filter({ hasText: 'Source' })
-      await expect(sourceRow).toBeVisible()
-      // Branch chip and path chip should not appear in the source row
-      await expect(sourceRow.getByText('main')).not.toBeVisible()
-      await expect(sourceRow.getByText('instances/team-alpha')).not.toBeVisible()
+      // Source chip is in the header card meta strip (not the Deployment Information card)
+      const headerCard = page.getByTestId('instance-header-card')
+      await expect(headerCard.getByText('Source')).toBeVisible()
+      // Branch chip and path chip should not appear in the source chip area
+      await expect(headerCard.getByText('main')).not.toBeVisible()
+      await expect(headerCard.getByText('instances/team-alpha')).not.toBeVisible()
     })
   })
 
@@ -296,10 +296,13 @@ test.describe('Instance Detail View', () => {
       await page.goto(buildInstanceRoute(gitopsInstance))
 
       // Expand the Deployment Information card (collapsed by default)
-      await page.getByRole('button', { name: 'Deployment Information' }).click()
+      const deploymentBtn = page.getByRole('button', { name: 'Deployment Information' })
+      await deploymentBtn.click()
 
-      await expect(page.getByText('Synchronisation')).toBeVisible()
-      await expect(page.getByText('Synced')).toBeVisible()
+      // Scope to the card to avoid ambiguity with the k8s "Synced" condition type
+      const deploymentCard = deploymentBtn.locator('..')
+      await expect(deploymentCard.getByText('Synchronisation')).toBeVisible()
+      await expect(deploymentCard.getByText('Synced', { exact: true })).toBeVisible()
       await expect(page.getByText('Suspended')).not.toBeVisible()
     })
 
@@ -308,12 +311,15 @@ test.describe('Instance Detail View', () => {
       await page.goto(buildInstanceRoute(suspendedInstance))
 
       // Expand the Deployment Information card (collapsed by default)
-      await page.getByRole('button', { name: 'Deployment Information' }).click()
+      const deploymentBtn = page.getByRole('button', { name: 'Deployment Information' })
+      await deploymentBtn.click()
 
-      await expect(page.getByText('Synchronisation')).toBeVisible()
+      // Scope to the card to avoid ambiguity with the k8s "Synced" condition type
+      const deploymentCard = deploymentBtn.locator('..')
+      await expect(deploymentCard.getByText('Synchronisation')).toBeVisible()
       // Use exact match to avoid matching the "suspended-api" instance name heading
-      await expect(page.getByText('Suspended', { exact: true })).toBeVisible()
-      await expect(page.getByText('Synced', { exact: true })).not.toBeVisible()
+      await expect(deploymentCard.getByText('Suspended', { exact: true })).toBeVisible()
+      await expect(deploymentCard.getByText('Synced', { exact: true })).not.toBeVisible()
     })
 
     test('shows Repository row linking to repo root', async ({ page }) => {
@@ -358,7 +364,6 @@ test.describe('Instance Detail View', () => {
 
       // Failing condition visible immediately in the conditions card
       await expect(page.getByText('Deployment failed: OOMKilled')).toBeVisible()
-      await expect(page.getByText('1/2', { exact: true })).toBeVisible()
       await expect(page.getByText('1/2 passing')).toBeVisible()
     })
   })

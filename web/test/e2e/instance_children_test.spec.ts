@@ -171,8 +171,8 @@ test.describe('Instance Child Resources Tab', () => {
     await page.getByRole('tab', { name: /Resources/ }).click()
 
     // Verify group headers (node IDs from the mock response)
-    await expect(page.getByText('frontend')).toBeVisible()
-    await expect(page.getByText('backend')).toBeVisible()
+    await expect(page.getByText('frontend', { exact: true })).toBeVisible()
+    await expect(page.getByText('backend', { exact: true })).toBeVisible()
   })
 
   test('shows ready count per group', async ({ page }) => {

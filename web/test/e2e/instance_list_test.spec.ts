@@ -177,8 +177,7 @@ test.describe('Instance Detail View', () => {
   })
 
   test('displays instance namespace', async ({ page }) => {
-    // Use exact match to avoid matching breadcrumb "production/prod-db-1"
-    await expect(page.getByText('production', { exact: true })).toBeVisible()
+    await expect(page.getByTestId('instance-header-card').getByText('production', { exact: true })).toBeVisible()
   })
 
   test('navigating back returns to instances list', async ({ page }) => {
