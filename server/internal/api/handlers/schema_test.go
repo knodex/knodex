@@ -15,6 +15,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 
+	"github.com/knodex/knodex/server/internal/kro"
 	kroparser "github.com/knodex/knodex/server/internal/kro/parser"
 	kroschema "github.com/knodex/knodex/server/internal/kro/schema"
 	"github.com/knodex/knodex/server/internal/kro/watcher"
@@ -633,6 +634,62 @@ func TestSchemaHandler_GetSchema_RGDNotFound(t *testing.T) {
 	handler.GetSchema(w, req)
 
 	resp := w.Result()
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("expected status 404, got %d", resp.StatusCode)
+	}
+}
+
+func TestSchemaHandler_GetSchema_NoCatalogAnnotation_Returns404(t *testing.T) {
+	t.Parallel()
+
+	// Non-catalog RGD in the cache — schema must not be served by name.
+	cache := watcher.NewRGDCache()
+	rgd := testSchemaRGD()
+	delete(rgd.Annotations, models.CatalogAnnotation)
+	cache.Set(rgd)
+	w := watcher.NewRGDWatcherWithCache(cache)
+	extractor := kroschema.NewExtractorWithClient(fakeapiext.NewSimpleClientset())
+	handler := NewSchemaHandler(w, extractor)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/rgds/test-app/schema", nil)
+	req.SetPathValue("name", "test-app")
+	rec := httptest.NewRecorder()
+
+	handler.GetSchema(rec, req)
+
+	resp := rec.Result()
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("expected status 404, got %d", resp.StatusCode)
+	}
+}
+
+func TestSchemaHandler_GetSchema_AgentKindWithoutCatalogAnnotation_Returns404(t *testing.T) {
+	t.Parallel()
+
+	// The catalog annotation is the single publishing gateway: an agent
+	// schema.kind routes WHERE a published RGD surfaces but grants no
+	// visibility by itself. Unannotated agent RGDs must 404 like any other
+	// non-catalog RGD.
+	cache := watcher.NewRGDCache()
+	rgd := testSchemaRGD()
+	delete(rgd.Annotations, models.CatalogAnnotation)
+	rgd.Kind = kro.AgentTemplateKind
+	cache.Set(rgd)
+	w := watcher.NewRGDWatcherWithCache(cache)
+	extractor := kroschema.NewExtractorWithClient(fakeapiext.NewSimpleClientset())
+	handler := NewSchemaHandler(w, extractor)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/rgds/test-app/schema", nil)
+	req.SetPathValue("name", "test-app")
+	rec := httptest.NewRecorder()
+
+	handler.GetSchema(rec, req)
+
+	resp := rec.Result()
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusNotFound {
