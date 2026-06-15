@@ -8,6 +8,8 @@ import { cn } from "@/lib/utils";
 export interface BreadcrumbItem {
   label: string;
   to?: string;
+  /** "chip" renders the crumb as a bordered mono chip (instance namespace/kind). */
+  variant?: "chip";
 }
 
 interface BreadcrumbsProps {
@@ -31,13 +33,22 @@ function safeDecode(s: string): string {
   }
 }
 
-function buildInstanceLabel(params: ReturnType<typeof useParams>): string {
-  // Cluster-scoped routes have no namespace; filter empty parts so the label
-  // doesn't end up with a stray leading slash like "/Pod/pod1".
-  const parts = [params.namespace, params.kind, params.name].filter(
-    (p): p is string => Boolean(p),
-  );
-  return parts.map(safeDecode).join("/");
+/**
+ * Instance detail crumbs: namespace and kind as chips, instance name as the
+ * leaf. Cluster-scoped routes have no namespace, so that chip is omitted.
+ */
+function buildInstanceItems(params: ReturnType<typeof useParams>): BreadcrumbItem[] {
+  const items: BreadcrumbItem[] = [];
+  if (params.namespace) {
+    items.push({ label: safeDecode(params.namespace), variant: "chip" });
+  }
+  if (params.kind) {
+    items.push({ label: safeDecode(params.kind), variant: "chip" });
+  }
+  if (params.name) {
+    items.push({ label: safeDecode(params.name) });
+  }
+  return items;
 }
 
 function deriveItems(path: string, params: ReturnType<typeof useParams>): BreadcrumbItem[] {
@@ -69,25 +80,31 @@ function deriveItems(path: string, params: ReturnType<typeof useParams>): Breadc
     items.push({ label: "Instances", to: "/instances" });
 
     if (params.name) {
-      items.push({ label: buildInstanceLabel(params) });
+      items.push(...buildInstanceItems(params));
     }
   } else if (path.startsWith("/audit")) {
     items.push({ label: "Audit" });
   } else if (path.startsWith("/compliance")) {
     items.push({ label: "Compliance", to: "/compliance" });
 
-    if (path.includes("/templates/")) {
-      items.push({ label: "Templates", to: "/compliance/templates" });
-      const templateName = path.split("/templates/")[1];
-      if (templateName) {
-        items.push({ label: safeDecode(templateName) });
+    if (path.startsWith("/compliance/templates")) {
+      const detailName = path.split("/templates/")[1];
+      if (detailName) {
+        items.push({ label: "Constraint Templates", to: "/compliance/templates" });
+        items.push({ label: safeDecode(detailName) });
+      } else {
+        items.push({ label: "Constraint Templates" });
       }
-    } else if (path.includes("/constraints/")) {
-      items.push({ label: "Constraints", to: "/compliance/constraints" });
-      const constraintName = path.split("/constraints/")[1];
-      if (constraintName) {
-        items.push({ label: safeDecode(constraintName) });
+    } else if (path.startsWith("/compliance/constraints")) {
+      const detailName = path.split("/constraints/")[1];
+      if (detailName) {
+        items.push({ label: "Constraints", to: "/compliance/constraints" });
+        items.push({ label: safeDecode(detailName) });
+      } else {
+        items.push({ label: "Constraints" });
       }
+    } else if (path.startsWith("/compliance/violations")) {
+      items.push({ label: "Violations" });
     }
   } else if (path.startsWith("/secrets")) {
     items.push({ label: "Secrets" });
@@ -104,6 +121,8 @@ function deriveItems(path: string, params: ReturnType<typeof useParams>): Breadc
       items.push({ label: "SSO" });
     } else if (path.includes("/license")) {
       items.push({ label: "License" });
+    } else if (path.includes("/users")) {
+      items.push({ label: "Users" });
     }
   } else if (path.startsWith("/repositories")) {
     // Top-level Repositories route (App.tsx:262), distinct from /settings/repositories.
@@ -113,6 +132,21 @@ function deriveItems(path: string, params: ReturnType<typeof useParams>): Breadc
     items.push({ label: "Projects", to: "/projects" });
     if (params.name) {
       items.push({ label: safeDecode(params.name) });
+    }
+  } else if (path.startsWith("/agents")) {
+    items.push({ label: "Agents", to: "/agents" });
+    // Fully-qualified leaf for the sub-pages (the nav uses the short "Templates"
+    // label; the breadcrumb disambiguates from compliance's Constraint Templates).
+    if (path.startsWith("/agents/templates")) {
+      items.push({ label: "Agent Templates" });
+    } else if (path.startsWith("/agents/models")) {
+      items.push({ label: "Models" });
+    } else {
+      // Chat route /agents/list/:namespace/:name — label with the agent name (seg 2).
+      const chatMatch = path.match(/^\/agents\/list\/([^/]+)\/([^/]+)/);
+      if (chatMatch) {
+        items.push({ label: safeDecode(chatMatch[2]) });
+      }
     }
   } else if (path.startsWith("/user-info")) {
     items.push({ label: "Account" });
@@ -185,9 +219,14 @@ export function Breadcrumbs({ className, leadingSlot, hideHome }: BreadcrumbsPro
                 <span
                   className={cn(
                     "min-w-0 truncate",
-                    isLast ? "text-foreground font-medium" : "text-muted-foreground",
+                    item.variant === "chip"
+                      ? "font-mono text-xs text-[var(--text-secondary)] bg-[var(--surface-primary)] border border-[var(--border-subtle)] rounded-md px-2 py-0.5"
+                      : isLast
+                        ? "text-foreground font-medium"
+                        : "text-muted-foreground",
                   )}
                   aria-current={isLast ? "page" : undefined}
+                  data-testid={isLast ? "topbar-breadcrumb-leaf" : undefined}
                 >
                   {item.label}
                 </span>
