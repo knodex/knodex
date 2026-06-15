@@ -214,7 +214,7 @@ test.describe('Revision Timeline Markers', () => {
     await page.goto(instanceUrl)
 
     // Click Deployment History tab to show timeline content
-    const deploymentHistoryTab = page.getByRole('tab', { name: /Deployment History/i })
+    const deploymentHistoryTab = page.getByRole('tab', { name: /History/i })
     await expect(deploymentHistoryTab).toBeVisible({ timeout: 10000 })
     await deploymentHistoryTab.click()
 
@@ -229,7 +229,7 @@ test.describe('Revision Timeline Markers', () => {
     await setupBaseMocks(page)
     await page.goto(instanceUrl)
 
-    const dhTab = page.getByRole('tab', { name: /Deployment History/i })
+    const dhTab = page.getByRole('tab', { name: /History/i })
     await expect(dhTab).toBeVisible({ timeout: 10000 })
     await dhTab.click()
 
@@ -249,7 +249,7 @@ test.describe('Revision Timeline Markers', () => {
     await setupBaseMocks(page)
     await page.goto(instanceUrl)
 
-    const dhTab = page.getByRole('tab', { name: /Deployment History/i })
+    const dhTab = page.getByRole('tab', { name: /History/i })
     await expect(dhTab).toBeVisible({ timeout: 10000 })
     await dhTab.click()
 
@@ -268,7 +268,7 @@ test.describe('Revision Timeline Markers', () => {
     await setupBaseMocks(page, { timeline: timelineWithoutRevisions })
     await page.goto(instanceUrl)
 
-    const dhTab = page.getByRole('tab', { name: /Deployment History/i })
+    const dhTab = page.getByRole('tab', { name: /History/i })
     await expect(dhTab).toBeVisible({ timeout: 10000 })
     await dhTab.click()
 
@@ -282,7 +282,7 @@ test.describe('Revision Timeline Markers', () => {
     await setupBaseMocks(page, { timeline: { code: 'NOT_FOUND', message: 'Timeline not found' }, timelineStatus: 404 })
     await page.goto(instanceUrl)
 
-    const dhTab = page.getByRole('tab', { name: /Deployment History/i })
+    const dhTab = page.getByRole('tab', { name: /History/i })
     await expect(dhTab).toBeVisible({ timeout: 10000 })
     await dhTab.click()
 
