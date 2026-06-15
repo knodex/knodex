@@ -24,7 +24,7 @@ Knodex ships the RGD Builder as an agent template (the `kagent-rgd-builder-agent
 
 ### RGD Builder
 
-The RGD Builder generates cluster-grounded [ResourceGraphDefinitions (RGDs)](/docs/rgd-authoring/) from natural language. It introspects your cluster's available CRDs and API resources before generating, so every produced spec only references resources that actually exist in your environment.
+The RGD Builder generates cluster-grounded [ResourceGraphDefinitions (RGDs)](../rgd-authoring/) from natural language. It introspects your cluster's available CRDs and API resources before generating, so every produced spec only references resources that actually exist in your environment.
 
 #### Using the RGD Builder
 
