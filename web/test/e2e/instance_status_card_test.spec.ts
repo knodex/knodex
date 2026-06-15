@@ -63,8 +63,8 @@ test.describe('Instance Status Card (Unified Status Display)', () => {
     await navigateToInstanceDetail(page)
   })
 
-  test('AC-1: renders unified status card with all three sections', async ({ page }) => {
-    // The unified status card should be present
+  test('AC-1: renders status card, conditions card, and custom fields', async ({ page }) => {
+    // The status/outputs card should be present
     const statusCard = page.getByTestId('instance-status-card')
     await expect(statusCard).toBeVisible()
 
@@ -75,8 +75,8 @@ test.describe('Instance Status Card (Unified Status Display)', () => {
     // Custom fields section
     await expect(statusCard.getByTestId('custom-fields-section')).toBeVisible()
 
-    // Conditions section
-    await expect(statusCard.getByTestId('conditions-section')).toBeVisible()
+    // Conditions render in their own card on the Overview tab
+    await expect(page.getByTestId('instance-conditions-card')).toBeVisible()
   })
 
   test('AC-2: displays KRO state badge with correct color', async ({ page }) => {
@@ -122,6 +122,19 @@ test.describe('Instance Status Card (Unified Status Display)', () => {
     await expect(readonlyLink).toBeVisible()
   })
 
+  test('Story 55.1: renders object status fields as labelled category sections', async ({ page }) => {
+    const card = page.getByTestId('instance-status-card')
+
+    // The endpoints object is promoted to its own section with an uppercase header
+    const group = card.getByTestId('status-group-endpoints')
+    await expect(group).toBeVisible()
+    await expect(group.getByRole('heading', { name: /endpoints/i })).toBeVisible()
+
+    // Members render as first-class label/value rows inside the section
+    await expect(group.getByText('Primary', { exact: true })).toBeVisible()
+    await expect(group.getByRole('link', { name: /db-primary\.example\.com/i })).toBeVisible()
+  })
+
   test('AC-6: renders array values as chips', async ({ page }) => {
     const card = page.getByTestId('instance-status-card')
 
@@ -134,40 +147,29 @@ test.describe('Instance Status Card (Unified Status Display)', () => {
     await expect(card.locator('text=["node-1"')).toHaveCount(0)
   })
 
-  test('AC-7: conditions section preserves existing rendering', async ({ page }) => {
-    const conditions = page.getByTestId('conditions-section')
+  test('AC-7: conditions card renders every condition with its message', async ({ page }) => {
+    const conditions = page.getByTestId('instance-conditions-card')
     await expect(conditions).toBeVisible()
 
-    // Expand conditions section (collapsed by default when all conditions are True)
-    const expandButton = conditions.getByRole('button')
-    if (await expandButton.getAttribute('aria-expanded') === 'false') {
-      await expandButton.click()
-    }
+    // Card header
+    await expect(conditions.getByText('Conditions')).toBeVisible()
 
-    // Condition type
+    // Condition type — always visible (no collapse)
     await expect(conditions.getByText('Ready', { exact: true }).first()).toBeVisible()
-
-    // Condition reason in parentheses
-    await expect(conditions.getByText('(ResourcesReady)')).toBeVisible()
 
     // Condition message
     await expect(conditions.getByText('All resources are ready')).toBeVisible()
 
-    // Condition status badge
-    await expect(conditions.getByText('True')).toBeVisible()
-
-    // Sub-header
-    await expect(conditions.getByText('Conditions')).toBeVisible()
+    // Passing summary
+    await expect(conditions.getByText('all passing')).toBeVisible()
   })
 
-  test('AC-9: raw JSON status section is removed (status is now a tab, not collapsible)', async ({ page }) => {
-    // Status is now a tab, not a collapsible button. Verify the Status tab exists
-    // and that there is no separate collapsible "Status" section.
-    const statusTab = page.getByRole('tab', { name: 'Status' })
-    await expect(statusTab).toBeVisible()
+  test('AC-9: status renders inside the Overview tab (no collapsible section)', async ({ page }) => {
+    const overviewTab = page.getByRole('tab', { name: 'Overview' })
+    await expect(overviewTab).toBeVisible()
 
-    // The status tab should be active by default (border-primary class)
-    await expect(statusTab).toHaveAttribute('aria-selected', 'true')
+    // The Overview tab should be active by default
+    await expect(overviewTab).toHaveAttribute('aria-selected', 'true')
   })
 
   test('AC-9: spec raw JSON section still exists (now as a Spec tab)', async ({ page }) => {
@@ -178,9 +180,9 @@ test.describe('Instance Status Card (Unified Status Display)', () => {
     // Click Spec tab to show spec content
     await specTab.click()
 
-    // Should show JSON content for spec
-    await expect(page.getByText('"replicas": 3')).toBeVisible()
-    await expect(page.getByText('"storage": "100Gi"')).toBeVisible()
+    // Spec content is rendered as YAML (not JSON) — InstanceDetailView.SpecViewer uses yaml.dump
+    await expect(page.getByText(/replicas:\s*3/)).toBeVisible()
+    await expect(page.getByText(/storage:\s*100Gi/)).toBeVisible()
   })
 })
 
