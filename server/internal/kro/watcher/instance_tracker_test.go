@@ -79,6 +79,31 @@ func TestInstanceTracker_CalculateHealth(t *testing.T) {
 			expected: models.HealthProgressing,
 		},
 		{
+			// ASO periodic resync flips children Ready=False/Reconciling; must not read as Unhealthy
+			name: "ready condition false with reconciling reason",
+			conditions: []models.InstanceCondition{
+				{Type: "Ready", Status: "False", Reason: "Reconciling"},
+			},
+			status:   nil,
+			expected: models.HealthProgressing,
+		},
+		{
+			name: "ready condition false with updating reason",
+			conditions: []models.InstanceCondition{
+				{Type: "Ready", Status: "False", Reason: "Updating"},
+			},
+			status:   nil,
+			expected: models.HealthProgressing,
+		},
+		{
+			name: "ready condition false with creating reason",
+			conditions: []models.InstanceCondition{
+				{Type: "Ready", Status: "False", Reason: "Creating"},
+			},
+			status:   nil,
+			expected: models.HealthProgressing,
+		},
+		{
 			name: "ready condition unknown",
 			conditions: []models.InstanceCondition{
 				{Type: "Ready", Status: "Unknown"},

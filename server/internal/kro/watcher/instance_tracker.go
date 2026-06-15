@@ -850,7 +850,14 @@ func (t *InstanceTracker) calculateHealth(conditions []models.InstanceCondition,
 			case "False":
 				// Check reason for more context
 				reason := strings.ToLower(c.Reason)
-				if strings.Contains(reason, "progress") || strings.Contains(reason, "pending") {
+				// Transient reconcile churn is NOT a regression. ASO/KRO children
+				// briefly flip Ready=False with reason "Reconciling"/"Updating"/
+				// "Creating" on every periodic resync; classifying that as Unhealthy
+				// makes KRO's aggregate Ready flap and floods deployment history with
+				// bogus Unhealthy<->Healthy events. Treat it as Progressing instead.
+				if strings.Contains(reason, "progress") || strings.Contains(reason, "pending") ||
+					strings.Contains(reason, "reconcil") || strings.Contains(reason, "updating") ||
+					strings.Contains(reason, "creating") {
 					return models.HealthProgressing
 				}
 				if strings.Contains(reason, "degrad") {
