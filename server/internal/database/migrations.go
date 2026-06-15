@@ -96,12 +96,9 @@ func parseVersion(name string) (uint, error) {
 	if idx <= 0 {
 		return 0, fmt.Errorf("invalid migration filename %q: missing NNNN_ version prefix", name)
 	}
-	n, err := strconv.ParseUint(name[:idx], 10, 64)
+	n, err := strconv.ParseUint(name[:idx], 10, strconv.IntSize)
 	if err != nil {
 		return 0, fmt.Errorf("invalid migration version prefix in %q: %w", name, err)
-	}
-	if n > uint64(^uint(0)) {
-		return 0, fmt.Errorf("migration version in %q overflows uint", name)
 	}
 	return uint(n), nil
 }
