@@ -100,6 +100,9 @@ func parseVersion(name string) (uint, error) {
 	if err != nil {
 		return 0, fmt.Errorf("invalid migration version prefix in %q: %w", name, err)
 	}
+	if n > uint64(^uint(0)) {
+		return 0, fmt.Errorf("migration version in %q overflows uint", name)
+	}
 	return uint(n), nil
 }
 
