@@ -33,11 +33,6 @@ func NewUIGraphAdapter(g *krograph.Graph) *UIGraphAdapter {
 	return &UIGraphAdapter{graph: g}
 }
 
-// Graph returns the underlying KRO graph.
-func (a *UIGraphAdapter) Graph() *krograph.Graph {
-	return a.graph
-}
-
 // GetResourceGraph converts the KRO graph into a parser.ResourceGraph
 // compatible with all existing consumers.
 func (a *UIGraphAdapter) GetResourceGraph(rgdName, rgdNamespace string, rawSpec map[string]interface{}) *parser.ResourceGraph {

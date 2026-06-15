@@ -1,0 +1,29 @@
+# Teams for alpha-team-project.yaml
+# Apply with: kubectl apply -f <this-file> -n <knodex-namespace>
+---
+apiVersion: knodex.io/v1alpha1
+kind: Team
+metadata:
+  name: alpha-admins
+spec:
+  description: "Alpha project administrators"
+  oidcGroups:
+    - alpha-admins
+---
+apiVersion: knodex.io/v1alpha1
+kind: Team
+metadata:
+  name: alpha-developers
+spec:
+  description: "Alpha project developers"
+  oidcGroups:
+    - alpha-developers
+---
+apiVersion: knodex.io/v1alpha1
+kind: Team
+metadata:
+  name: alpha-viewers
+spec:
+  description: "Alpha project viewers"
+  oidcGroups:
+    - alpha-viewers

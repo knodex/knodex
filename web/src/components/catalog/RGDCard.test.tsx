@@ -59,4 +59,16 @@ describe("RGDCard", () => {
     renderCard(createTestRGD({ instances: 5 }));
     expect(screen.getByText("5 instances")).toBeInTheDocument();
   });
+
+  it("never renders the kagent branding badge, even for a kagent.dev Agent producer", () => {
+    renderCard(
+      createTestRGD({
+        producesKinds: [
+          { group: "kagent.dev", version: "v1alpha2", kind: "Agent" },
+        ],
+      })
+    );
+    expect(screen.queryByTestId("agent-ai-badge")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Powered by kagent/i)).not.toBeInTheDocument();
+  });
 });

@@ -37,7 +37,32 @@ Navigate to **Secrets** in the sidebar to manage secrets for your projects.
 
 ### Viewing Secrets
 
-The secrets list shows all secrets in your current project with their names, types, and creation dates. Click a secret to view its metadata (secret values are never displayed in the UI).
+The secrets list shows one row per secret in the current project, with these columns:
+
+| Column | What it shows |
+|--------|---------------|
+| Name | The Kubernetes Secret name. A small external-link icon appears next to the name when a [documentation URL](#operational-metadata) is set. |
+| Namespace | The namespace the Secret lives in. |
+| Keys | Comma-separated list of key names (values are never shown). |
+| Rotation | `Auto`, `Manual`, or `—`. See [Operational metadata](#operational-metadata). |
+| Status | Color-coded badge derived from the expiration date — `Active`, `Expiring soon` (within 30 days), `Expired`, or `—` when no expiration is set. The expiry hint (e.g., "Expires in 12d") is shown beneath the badge. |
+| Updated | When the secret was last touched through Knodex (or its creation time, if it has never been updated). |
+
+Click a row to view the secret's metadata. **Secret values are never displayed in the list.**
+
+### Operational Metadata
+
+When you create or edit a secret you can optionally record three fields that exist purely to remind you and your team about the secret's lifecycle. **Knodex does not act on these values automatically** — no rotation jobs, no email reminders. They are there so the list view tells the right story at a glance.
+
+| Field | Purpose |
+|-------|---------|
+| **Rotation** (`Manual` or `Auto`) | How this secret gets refreshed. Use `Manual` for secrets you rotate by hand, `Auto` for secrets refreshed by some external automation (External Secrets Operator, Vault sync, etc.). |
+| **Documentation URL** | Link to a runbook or owner page. When set, a small icon appears next to the secret's name in the list. Must be `http` or `https`. |
+| **Expiration date** | The day the secret is no longer valid. The Status column shows `Expired` once the date is in the past, `Expiring soon` within 30 days, and `Active` otherwise. |
+
+All three fields are **optional**. Leaving them blank produces a normal secret with no extra labels or annotations.
+
+These fields are stored on the underlying Kubernetes Secret as a label (Rotation) and annotations (Documentation URL, Expiration date) — see [Operational Metadata in the admin guide](../administration/secrets-management#operational-metadata) for the exact label/annotation keys and YAML examples.
 
 ### Creating Secrets
 
@@ -45,7 +70,18 @@ The secrets list shows all secrets in your current project with their names, typ
 2. Enter the secret name (must be DNS-compatible).
 3. Select the project and namespace.
 4. Add the required key-value pairs as specified by the RGD.
-5. Click **Save**.
+5. *(Optional)* In the **Metadata** section, set the rotation policy, documentation URL, and/or expiration date. All three are optional.
+6. Click **Save**.
+
+### Editing Secrets
+
+You can update a secret's values, its metadata, or both — independently.
+
+- **Updating values:** Type a new value next to any key. Keys whose value field you leave empty keep their existing server-side values (a partial update).
+- **Updating metadata only:** Change anything in the Metadata section and click **Update**. You do **not** have to also change a value — a metadata-only save is supported.
+- **Clearing metadata:** Empty out a metadata field (e.g., delete the URL or clear the date) and save.
+
+If you don't touch the Metadata section at all, the existing labels and annotations on the secret are preserved exactly as they were.
 
 ### Deleting Secrets
 
@@ -81,7 +117,7 @@ graph LR
 
 - **Use descriptive names.** Follow a naming pattern like `{app}-{environment}-{purpose}` (e.g., `myapp-staging-db-creds`).
 - **Organize by project.** Keep secrets scoped to the project that uses them. Avoid creating secrets in shared namespaces unless intentionally shared.
-- **Rotate regularly.** Update secret values periodically, especially for production credentials.
+- **Rotate regularly.** Update secret values periodically, especially for production credentials. Set the **Expiration date** metadata field when you create a credential with a known lifetime — the Status column will turn yellow 30 days before it expires and red once it has expired, so the next rotation is hard to miss.
 - **Read RGD author descriptions.** RGD authors should document what each secret key expects. Check the secret description in the RGD specification:
 
 ```yaml

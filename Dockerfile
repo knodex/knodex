@@ -22,7 +22,9 @@ COPY web/ ./
 # Copy version.txt to parent directory where vite.config.ts expects it
 COPY version.txt /version.txt
 
-# Build the web app (enterprise or OSS based on BUILD_MODE)
+# Build the web app based on BUILD_MODE:
+#   enterprise -> build:enterprise
+#   (default)  -> OSS build
 RUN if [ "$BUILD_MODE" = "enterprise" ]; then \
         npm run build:enterprise; \
     else \

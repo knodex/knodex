@@ -139,18 +139,20 @@ type ProjectRole struct {
 
 	// Policies are Casbin policy strings defining permissions
 	// Format: "p, subject, resource, action, object, effect"
-	// Example: "p, proj:myproject:developer, applications, *, myproject/*, allow"
+	// Example: "p, proj:myproject:developer, instances, *, myproject/*, allow"
 	Policies []string `json:"policies" yaml:"policies"`
-
-	// Groups are OIDC group names bound to this role
-	// Users in these groups will have this role
-	Groups []string `json:"groups,omitempty" yaml:"groups,omitempty"`
 
 	// Destinations is an optional list of namespace patterns from the project's
 	// destinations list. When set, policies for this role are scoped to only
 	// these namespaces. When empty/nil, the role gets project-wide policies
 	// (backward compatible).
 	Destinations []string `json:"destinations,omitempty" yaml:"destinations,omitempty"`
+
+	// Teams are Team CRD names bound to this role. Each team's spec.oidcGroups
+	// is resolved (via the TeamStore) at policy-generation time. Teams expand to
+	// group strings only — there is no separate team-based enforcement layer
+	// (single Casbin layer; NFR-T1).
+	Teams []string `json:"teams,omitempty" yaml:"teams,omitempty"`
 }
 
 // ClusterPhase represents the provisioning state of a cluster binding.
@@ -208,6 +210,7 @@ const (
 	ProjectConditionReady           = "Ready"
 	ProjectConditionValidationError = "ValidationError"
 	ProjectConditionSyncError       = "SyncError"
+	ProjectConditionRolesResolved   = "RolesResolved"
 )
 
 // Condition status constants
@@ -319,13 +322,13 @@ func (p *Project) DeepCopyObject() runtime.Object {
 				out.Spec.Roles[i].Policies = make([]string, len(role.Policies))
 				copy(out.Spec.Roles[i].Policies, role.Policies)
 			}
-			if role.Groups != nil {
-				out.Spec.Roles[i].Groups = make([]string, len(role.Groups))
-				copy(out.Spec.Roles[i].Groups, role.Groups)
-			}
 			if role.Destinations != nil {
 				out.Spec.Roles[i].Destinations = make([]string, len(role.Destinations))
 				copy(out.Spec.Roles[i].Destinations, role.Destinations)
+			}
+			if role.Teams != nil {
+				out.Spec.Roles[i].Teams = make([]string, len(role.Teams))
+				copy(out.Spec.Roles[i].Teams, role.Teams)
 			}
 		}
 	}

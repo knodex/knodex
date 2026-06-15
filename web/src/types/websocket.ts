@@ -18,6 +18,7 @@ export type MessageType =
   | "constraint_update"
   | "revision_update"
   | "resource_event"
+  | "agent_run_update"
   | "error"
   | "pong"
   | "subscribed"
@@ -192,6 +193,27 @@ export interface ResourceEventData {
 }
 
 /**
+ * Agent run update data - matches backend AgentRunUpdateData
+ * Used for real-time agent run lifecycle transitions (Story 49.4).
+ * Delivery is actor-or-global-admin; other viewers converge via polling.
+ */
+export interface AgentRunUpdateData {
+  /** add = run record created (running), update = terminal transition */
+  action: Action;
+  runId: string;
+  agentType: string;
+  /** Empty for built-in agent runs. */
+  agentNamespace: string;
+  /** running | completed | failed */
+  status: string;
+  /** Actor's user ID — used server-side for delivery filtering. */
+  actorId: string;
+  /** Actor's display identity (email). */
+  actor: string;
+  timestamp: string;
+}
+
+/**
  * Error data from server
  */
 export interface ErrorData {
@@ -235,4 +257,5 @@ export type SubscriptionResourceType =
   | "instances"
   | "rgd"
   | "rgds"
-  | "violations";
+  | "violations"
+  | "agent_runs";

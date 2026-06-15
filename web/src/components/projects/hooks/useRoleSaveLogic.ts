@@ -31,19 +31,6 @@ export function useRoleSaveLogic({ roles, onUpdate }: UseRoleSaveLogicOptions) {
     });
   }, [roles]);
 
-  const handleGroupsChange = useCallback((roleName: string, newGroups: string[]) => {
-    setPendingChanges(prev => {
-      const currentRole = prev.get(roleName) || roles.find(r => r.name === roleName);
-      if (!currentRole) return prev;
-      const newMap = new Map(prev);
-      newMap.set(roleName, {
-        ...currentRole,
-        groups: newGroups,
-      });
-      return newMap;
-    });
-  }, [roles]);
-
   const handleDestinationsChange = useCallback((roleName: string, newDestinations: string[]) => {
     setPendingChanges(prev => {
       const currentRole = prev.get(roleName) || roles.find(r => r.name === roleName);
@@ -52,6 +39,19 @@ export function useRoleSaveLogic({ roles, onUpdate }: UseRoleSaveLogicOptions) {
       newMap.set(roleName, {
         ...currentRole,
         destinations: newDestinations.length > 0 ? newDestinations : undefined,
+      });
+      return newMap;
+    });
+  }, [roles]);
+
+  const handleTeamsChange = useCallback((roleName: string, newTeams: string[]) => {
+    setPendingChanges(prev => {
+      const currentRole = prev.get(roleName) || roles.find(r => r.name === roleName);
+      if (!currentRole) return prev;
+      const newMap = new Map(prev);
+      newMap.set(roleName, {
+        ...currentRole,
+        teams: newTeams.length > 0 ? newTeams : undefined,
       });
       return newMap;
     });
@@ -98,8 +98,8 @@ export function useRoleSaveLogic({ roles, onUpdate }: UseRoleSaveLogicOptions) {
     setEditingRole,
     getRoleData,
     handlePoliciesChange,
-    handleGroupsChange,
     handleDestinationsChange,
+    handleTeamsChange,
     handleSaveRole,
     handleCancelEdit,
     hasUnsavedChanges,

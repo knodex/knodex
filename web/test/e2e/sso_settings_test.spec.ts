@@ -1,7 +1,7 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { test, expect, TestUserRole, setupAuthWithMocking } from '../fixture';
+import { test, expect, TestUserRole } from '../fixture';
 
 /**
  * SSO Settings E2E Tests
@@ -30,13 +30,17 @@ test.describe('Global Admin - SSO Settings Management', () => {
     await page.goto('/settings');
     await page.waitForLoadState('networkidle', { timeout: 15000 });
 
-    // Verify Settings page loads
-    const settingsTitle = page.locator('h1:has-text("Settings"), h2:has-text("Settings")').first();
-    await expect(settingsTitle).toBeVisible({ timeout: 10000 });
+    // Verify Settings page loads — identity now lives on the TopBar breadcrumb leaf
+    // (Story 48.12 removed the SettingsLayout PageHeader; the breadcrumb leaf
+    // carries `aria-current="page"`).
+    const settingsTitle = page.getByTestId('topbar-breadcrumb-leaf');
+    await expect(settingsTitle).toHaveText('Settings', { timeout: 10000 });
 
-    // Find SSO Providers card
-    const ssoCard = page.locator('a[href="/settings/sso"], [href="/settings/sso"]');
-    await expect(ssoCard).toBeVisible({ timeout: 5000 });
+    // Find SSO Providers nav link in the SettingsLayout sidebar (Story 48.10:
+    // Settings became a master-detail shell; navigation lives in the sidebar
+    // rather than as a clickable card on the General page).
+    const ssoNav = page.getByRole('link', { name: 'SSO Providers' }).first();
+    await expect(ssoNav).toBeVisible({ timeout: 5000 });
 
     await page.screenshot({
       path: '../test-results/e2e/screenshots/sso-01-settings-hub.png',
@@ -44,12 +48,13 @@ test.describe('Global Admin - SSO Settings Management', () => {
     });
 
     // Click to navigate to SSO settings
-    await ssoCard.click();
+    await ssoNav.click();
     await page.waitForLoadState('networkidle', { timeout: 15000 });
 
-    // Verify SSO Providers page loads
-    const ssoTitle = page.locator('h1:has-text("SSO"), h2:has-text("SSO Providers")');
-    await expect(ssoTitle).toBeVisible({ timeout: 10000 });
+    // Verify SSO Providers page loads — page identity is on TopBar breadcrumb
+    // leaf (Story 48.10 stripped the SubTitle/header off the SSO sub-page; the
+    // visible CardTitle on the list view is "Providers", not "SSO Providers").
+    await expect(page.getByTestId('topbar-breadcrumb-leaf')).toHaveText('SSO', { timeout: 10000 });
 
     await page.screenshot({
       path: '../test-results/e2e/screenshots/sso-01-sso-settings-page.png',
@@ -116,8 +121,11 @@ test.describe('Global Admin - SSO Settings Management', () => {
 
     await page.waitForTimeout(500);
 
-    // Verify form is displayed
-    const formTitle = page.locator('h2:has-text("Add SSO Provider")');
+    // Verify modal is displayed. The form moved from a full-page view into a
+    // Radix Dialog (matches the License renew modal pattern); DialogTitle
+    // renders as an h2, so this selector still matches — only the casing
+    // changed to sentence case per the new modal copy.
+    const formTitle = page.locator('h2:has-text("Add SSO provider")');
     await expect(formTitle).toBeVisible({ timeout: 5000 });
 
     await page.screenshot({
@@ -139,8 +147,10 @@ test.describe('Global Admin - SSO Settings Management', () => {
       fullPage: true,
     });
 
-    // Submit form
-    const submitButton = page.locator('button:has-text("Create Provider")');
+    // Submit modal (accent ✓ "Add provider" button in DialogFooter). Scope to
+    // [role="dialog"] so we don't accidentally hit the list-view "Add Provider"
+    // CTA — Playwright's :has-text() is a case-insensitive substring match.
+    const submitButton = page.locator('[role="dialog"] button:has-text("Add provider")');
     await submitButton.click();
 
     await page.waitForTimeout(2000);
@@ -154,9 +164,15 @@ test.describe('Global Admin - SSO Settings Management', () => {
     const providerName = page.locator('text=google').first();
     await expect(providerName).toBeVisible({ timeout: 10000 });
 
-    // Verify issuer URL is displayed
-    const issuerURL = page.locator('text=https://accounts.google.com');
-    await expect(issuerURL).toBeVisible({ timeout: 5000 });
+    // Verify issuer URL is displayed. The list renders the issuer as a host
+    // (protocol + path stripped via formatIssuerHost); the full URL lives in
+    // the element's title attribute (shown on hover). Assert on the host text
+    // and confirm the title preserves the full issuer.
+    const issuerHost = page.locator('text=accounts.google.com');
+    await expect(issuerHost).toBeVisible({ timeout: 5000 });
+    await expect(
+      page.locator('[title="https://accounts.google.com"]'),
+    ).toBeVisible({ timeout: 5000 });
 
     // Verify scope badges
     const openidBadge = page.locator('text=openid').first();
@@ -229,7 +245,7 @@ test.describe('Global Admin - SSO Settings Management', () => {
     });
 
     // Submit.
-    const submitButton = page.locator('button:has-text("Create Provider")');
+    const submitButton = page.locator('[role="dialog"] button:has-text("Add provider")');
     await submitButton.click();
     await page.waitForTimeout(2000);
 
@@ -241,7 +257,7 @@ test.describe('Global Admin - SSO Settings Management', () => {
     // Verify the new provider appears in the list with the public badge.
     const badge = page.locator('[data-testid="badge-public-supabase"]');
     await expect(badge).toBeVisible({ timeout: 5000 });
-    await expect(badge).toHaveText('Public (PKCE)');
+    await expect(badge).toHaveText('Public · PKCE');
 
     console.log('✓ AC: Admin can create a public-client SSO provider (PKCE)');
   });
@@ -383,7 +399,8 @@ test.describe('Global Admin - SSO Settings Management', () => {
     await page.locator('#issuerURL').fill('https://updated.google.com');
 
     // Submit
-    const saveButton = page.locator('button:has-text("Save Changes")');
+    // Edit modal submit is "Save changes" (sentence case in the new modal copy).
+    const saveButton = page.locator('[role="dialog"] button:has-text("Save changes")');
     await saveButton.click();
 
     await page.waitForTimeout(2000);
@@ -538,7 +555,7 @@ test.describe('Global Admin - SSO Settings Management', () => {
     await page.locator('#clientSecret').fill('client-secret');
     await page.locator('#redirectURL').fill('https://app.example.com/callback');
 
-    const submitButton = page.locator('button:has-text("Create Provider")');
+    const submitButton = page.locator('[role="dialog"] button:has-text("Add provider")');
     await submitButton.click();
 
     await page.waitForTimeout(2000);
@@ -587,7 +604,7 @@ test.describe('Global Admin - SSO Settings Management', () => {
     await page.waitForTimeout(500);
 
     // Try to submit empty form
-    const submitButton = page.locator('button:has-text("Create Provider")');
+    const submitButton = page.locator('[role="dialog"] button:has-text("Add provider")');
     await submitButton.click();
     await page.waitForTimeout(500);
 

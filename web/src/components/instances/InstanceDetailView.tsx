@@ -1,17 +1,13 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useState, useCallback } from "react";
-import {
-  Code,
-  Copy,
-  Check,
-} from "@/lib/icons";
+import yaml from "js-yaml";
+import { FileCode } from "@/lib/icons";
+import { CopyButton } from "@/components/ui/copy-button";
 import { InstanceStatusCard } from "./InstanceStatusCard";
 import { EditInstanceSpecDialog } from "./EditInstanceSpecDialog";
 import { DeleteInstanceDialog } from "./DeleteInstanceDialog";
 import { GitOpsDriftBanner } from "./GitOpsDriftBanner";
-import { Button } from "@/components/ui/button";
 import type { Instance } from "@/types/rgd";
 import { GitStatusDisplay } from "./GitStatusDisplay";
 import { DeploymentTimeline } from "./DeploymentTimeline";
@@ -23,41 +19,45 @@ import { TabBar } from "@/components/shared/TabBar";
 import { RevisionDiffDrawer } from "./RevisionDiffDrawer";
 import { InstanceHeaderCard } from "./InstanceHeaderCard";
 import { InstanceActionButtons } from "./InstanceActionButtons";
-import { InstanceMetadataSection } from "./InstanceMetadataSection";
+import { InstanceConditionsCard } from "./InstanceConditionsCard";
+import { InstanceResourcesSummaryCard, InstanceRecentActivityCard } from "./InstanceOverviewRail";
 import { useInstancePermissions } from "./hooks/useInstancePermissions";
 import { useInstanceDialogs } from "./hooks/useInstanceDialogs";
 import { useInstanceDeletion } from "./hooks/useInstanceDeletion";
 import { useInstanceTabs } from "./hooks/useInstanceTabs";
 import { useInstanceMetadata } from "./hooks/useInstanceMetadata";
+import { useInstanceChildren } from "@/hooks/useInstances";
+import { useInstanceEvents as useInstanceK8sEvents } from "@/hooks/useHistory";
+import { useInstanceTimeline } from "@/hooks/useHistory";
 import { apiGroupOf } from "@/lib/instancePath";
 
 /** Spec viewer with copy button */
 function SpecViewer({ spec }: { spec: Record<string, unknown> }) {
-  const [copied, setCopied] = useState(false);
-  const json = JSON.stringify(spec, null, 2);
-
-  const handleCopy = useCallback(() => {
-    navigator.clipboard.writeText(json).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
-  }, [json]);
+  const text = yaml.dump(spec, { lineWidth: 120, noRefs: true });
+  const fieldCount = Object.keys(spec).length;
 
   return (
-    <div className="rounded-lg border overflow-hidden" style={{ borderColor: "var(--border-default)", background: "var(--surface-primary)" }}>
-      <div className="flex items-center justify-between px-4 py-2 border-b" style={{ borderColor: "var(--border-subtle)", background: "var(--surface-bg)" }}>
-        <div className="flex items-center gap-2">
-          <Code className="h-3.5 w-3.5 text-[var(--text-muted)]" />
-          <span className="text-xs font-medium text-[var(--text-secondary)]">Instance Spec</span>
-        </div>
-        <Button variant="ghost" size="sm" onClick={handleCopy} className="h-7 gap-1.5 text-xs text-[var(--text-muted)] hover:text-[var(--text-secondary)]">
-          {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-          {copied ? "Copied" : "Copy"}
-        </Button>
+    <div className="rounded-lg border border-[var(--border-default)] bg-[var(--surface-primary)] overflow-hidden">
+      <div className="flex items-center gap-2.5 px-4 py-3 border-b border-[var(--border-subtle)]">
+        <FileCode className="h-4 w-4 text-[var(--text-muted)]" />
+        <h3 className="text-sm font-medium text-[var(--text-primary)]">Spec</h3>
+        {fieldCount > 0 && (
+          <span className="text-xs text-[var(--text-muted)]">
+            {fieldCount} field{fieldCount === 1 ? "" : "s"}
+          </span>
+        )}
+        <CopyButton
+          text={text}
+          label="Copy"
+          variant="ghost"
+          className="ml-auto h-7 text-xs text-[var(--text-muted)] hover:text-[var(--text-secondary)]"
+          iconClassName="h-3 w-3"
+        />
       </div>
-      <div className="p-4 overflow-x-auto">
+      {/* recessed surface mirrors the redesign's nested-area treatment */}
+      <div className="p-4 overflow-x-auto bg-[var(--surface-bg)]">
         <pre className="text-xs leading-relaxed font-mono text-[var(--text-secondary)]" data-testid="spec-content">
-          {json}
+          {text}
         </pre>
       </div>
     </div>
@@ -80,21 +80,64 @@ export function InstanceDetailView({
     dialogs.setShowDeleteDialog(false);
     onDeleted?.();
   });
+  const group = apiGroupOf(instance.apiVersion);
+
+  // Overview rail + rollup data (React Query dedupes with the tab components)
+  const { data: childrenData } = useInstanceChildren(group, instance.namespace, instance.kind, instance.name);
+  const { data: eventsData } = useInstanceK8sEvents(group, instance.namespace, instance.kind, instance.name);
+  const { data: timelineData } = useInstanceTimeline(group, instance.namespace, instance.kind, instance.name);
+
+  const resourceGroups = childrenData?.groups ?? [];
+  const resourcesTotal = resourceGroups.reduce((sum, g) => sum + g.count, 0);
+  const resourcesReady = resourceGroups.reduce((sum, g) => sum + g.readyCount, 0);
+  const resourcesFailing = resourceGroups
+    .flatMap((g) => g.resources)
+    .filter((r) => r.health === "Unhealthy" || r.health === "Degraded").length;
+  const events = eventsData?.events ?? [];
+  const eventsWarnings = events.filter((e) => e.type === "Warning").length;
+  const conditions = instance.conditions ?? [];
+  const conditionsPassing = conditions.filter((c) => c.status === "True").length;
+  const lastReconciled =
+    conditions.reduce<string | undefined>(
+      (latest, c) =>
+        c.lastTransitionTime && (!latest || c.lastTransitionTime > latest)
+          ? c.lastTransitionTime
+          : latest,
+      undefined
+    ) ?? instance.updatedAt;
+
   const { tabs, activeTab: effectiveTab, setActiveTab } = useInstanceTabs(
     instance,
-    metadata.eventsCount,
-    metadata.externalRefCount,
+    {
+      events: metadata.eventsCount,
+      externalRefs: metadata.externalRefCount,
+      resourcesReady,
+      resourcesTotal,
+      history: timelineData?.timeline?.length ?? 0,
+    },
     metadata.hasSpec,
   );
-  const group = apiGroupOf(instance.apiVersion);
 
   return (
     <div className="space-y-0 animate-fade-in">
-      {/* ── Instance Details card ── */}
-      <div className="rounded-lg border" style={{ borderColor: "var(--border-default)", background: "var(--surface-primary)" }}>
-        {/* Title bar + actions */}
-        <div className="flex items-center justify-between px-6 py-4" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
-          <h2 className="text-sm font-medium text-[var(--text-primary)]">Instance Details</h2>
+      {/* ── Header: identity + actions + meta chips + health rollup ── */}
+      <InstanceHeaderCard
+        instance={instance}
+        parentRGD={metadata.parentRGD}
+        canReadRGD={permissions.canReadRGD}
+        kroState={metadata.kroState}
+        isGitOps={metadata.isGitOps}
+        rollup={{
+          conditionsPassing,
+          conditionsTotal: conditions.length,
+          resourcesReady,
+          resourcesTotal,
+          resourcesFailing,
+          eventsCount: events.length,
+          eventsWarnings,
+          lastReconciled,
+        }}
+        actions={
           <InstanceActionButtons
             instanceUrl={metadata.instanceUrl}
             canUpdate={permissions.canUpdate}
@@ -109,20 +152,10 @@ export function InstanceDetailView({
             onEdit={() => dialogs.setShowEditDialog(true)}
             onDelete={() => dialogs.setShowDeleteDialog(true)}
           />
-        </div>
-
-        {/* Identity + key metadata — side by side */}
-        <InstanceHeaderCard
-          instance={instance}
-          parentRGD={metadata.parentRGD}
-          canReadRGD={permissions.canReadRGD}
-          kroState={metadata.kroState}
-          onRevisionClick={() => dialogs.setShowRevisionDrawer(true)}
-        />
-
-        {/* Source row — git info or direct mode indicator */}
-        <InstanceMetadataSection instance={instance} isGitOps={metadata.isGitOps} />
-      </div>
+        }
+        onRevisionClick={() => dialogs.setShowRevisionDrawer(true)}
+        onSelectTab={setActiveTab}
+      />
 
       {/* Tabs */}
       <div className="mt-6">
@@ -142,12 +175,23 @@ export function InstanceDetailView({
                 reconciliationSuspended={instance.reconciliationSuspended}
               />
             )}
-            {(instance.status || (instance.conditions && instance.conditions.length > 0)) && (
-              <InstanceStatusCard
-                status={instance.status}
-                conditions={instance.conditions}
-              />
-            )}
+            <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4 items-start">
+              <div className="space-y-4 min-w-0">
+                {conditions.length > 0 && <InstanceConditionsCard conditions={conditions} />}
+                {instance.status && <InstanceStatusCard status={instance.status} />}
+              </div>
+              <div className="space-y-4">
+                <InstanceResourcesSummaryCard
+                  groups={resourceGroups}
+                  totalCount={resourcesTotal}
+                  onViewAll={() => setActiveTab("children")}
+                />
+                <InstanceRecentActivityCard
+                  events={events}
+                  onViewAll={() => setActiveTab("events")}
+                />
+              </div>
+            </div>
           </div>
         )}
         {effectiveTab === "addons" && instance.kind && (

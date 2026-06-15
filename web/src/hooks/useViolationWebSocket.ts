@@ -341,6 +341,9 @@ export function useViolationWebSocket(
 
             reconnectTimeoutRef.current = setTimeout(() => {
               setReconnectAttempts((prev) => prev + 1);
+              // Self-recursive reconnect: `connect` is defined further down and
+              // is in scope at the time setTimeout fires.
+              // eslint-disable-next-line react-hooks/immutability
               connect();
             }, delay);
           } else if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {

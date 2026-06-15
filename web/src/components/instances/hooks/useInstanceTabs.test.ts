@@ -4,7 +4,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import { useInstanceTabs } from './useInstanceTabs';
-import type { ConditionalTab } from '@/hooks/useDynamicTabs';
+import type { InstanceTabCounts } from './useInstanceTabs';
+import type { Tab, ConditionalTab } from '@/hooks/useDynamicTabs';
 import type { InstanceTabId } from './useInstanceTabs';
 import type { Instance } from '@/types/rgd';
 
@@ -27,15 +28,26 @@ const mockInstance: Instance = {
   conditions: [],
   spec: { replicas: 3 },
   createdAt: '2024-01-15T10:30:00Z',
+  updatedAt: '2024-01-15T11:00:00Z',
   deploymentMode: 'direct',
+};
+
+const zeroCounts: InstanceTabCounts = {
+  events: 0,
+  externalRefs: 0,
+  resourcesReady: 0,
+  resourcesTotal: 0,
+  history: 0,
 };
 
 describe('useInstanceTabs', () => {
   const mockSetActiveTab = vi.fn();
+  let capturedBaseTabs: Tab<InstanceTabId>[] = [];
   let capturedConditionalTabs: ConditionalTab<InstanceTabId>[] = [];
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    capturedBaseTabs = [];
     capturedConditionalTabs = [];
 
     const { useRGDList } = await import('@/hooks/useRGDs');
@@ -47,10 +59,11 @@ describe('useInstanceTabs', () => {
       error: null,
     } as any);
 
-    vi.mocked(useDynamicTabs).mockImplementation((_baseTabs, conditionalTabs) => {
+    vi.mocked(useDynamicTabs).mockImplementation((baseTabs, conditionalTabs) => {
+      capturedBaseTabs = baseTabs as Tab<InstanceTabId>[];
       capturedConditionalTabs = conditionalTabs as ConditionalTab<InstanceTabId>[];
       return {
-        tabs: [{ id: 'status', label: 'Status', icon: null }],
+        tabs: [{ id: 'status', label: 'Overview', icon: null }],
         activeTab: 'status',
         setActiveTab: mockSetActiveTab,
       };
@@ -58,7 +71,7 @@ describe('useInstanceTabs', () => {
   });
 
   it('returns tabs, activeTab, and setActiveTab', () => {
-    const { result } = renderHook(() => useInstanceTabs(mockInstance, 0, 0, false));
+    const { result } = renderHook(() => useInstanceTabs(mockInstance, zeroCounts, false));
 
     expect(result.current.tabs).toBeDefined();
     expect(result.current.activeTab).toBe('status');
@@ -67,7 +80,7 @@ describe('useInstanceTabs', () => {
 
   it('calls useRGDList with extendsKind and pageSize 100', async () => {
     const { useRGDList } = await import('@/hooks/useRGDs');
-    renderHook(() => useInstanceTabs(mockInstance, 0, 0, false));
+    renderHook(() => useInstanceTabs(mockInstance, zeroCounts, false));
 
     expect(useRGDList).toHaveBeenCalledWith({ extendsKind: 'TestResource', pageSize: 100 });
   });
@@ -75,12 +88,29 @@ describe('useInstanceTabs', () => {
   it('calls useRGDList with undefined when kind is falsy', async () => {
     const { useRGDList } = await import('@/hooks/useRGDs');
     const noKindInstance: Instance = { ...mockInstance, kind: '' };
-    renderHook(() => useInstanceTabs(noKindInstance, 0, 0, false));
+    renderHook(() => useInstanceTabs(noKindInstance, zeroCounts, false));
 
     expect(useRGDList).toHaveBeenCalledWith(undefined);
   });
 
-  it('includes addons tab with correct label when addOnsCount > 0', async () => {
+  it('base tabs are Overview, Resources, Events, History in order', () => {
+    renderHook(() => useInstanceTabs(mockInstance, zeroCounts, false));
+
+    expect(capturedBaseTabs.map((t) => t.id)).toEqual([
+      'status',
+      'children',
+      'events',
+      'deployment-history',
+    ]);
+    expect(capturedBaseTabs.map((t) => t.label)).toEqual([
+      'Overview',
+      'Resources',
+      'Events',
+      'History',
+    ]);
+  });
+
+  it('includes addons tab with count pill when addOnsCount > 0', async () => {
     const { useRGDList } = await import('@/hooks/useRGDs');
     vi.mocked(useRGDList).mockReturnValue({
       data: { items: [], totalCount: 3 },
@@ -88,69 +118,82 @@ describe('useInstanceTabs', () => {
       error: null,
     } as any);
 
-    renderHook(() => useInstanceTabs(mockInstance, 0, 0, false));
+    renderHook(() => useInstanceTabs(mockInstance, zeroCounts, false));
 
     const addonsTab = capturedConditionalTabs.find(t => t.tab.id === 'addons');
     expect(addonsTab?.condition).toBe(true);
-    expect(addonsTab?.tab.label).toBe('Add-ons (3)');
+    expect(addonsTab?.tab.label).toBe('Add-ons');
+    expect(addonsTab?.tab.count).toBe('3');
   });
 
   it('addons tab condition is false when addOnsCount is 0', () => {
-    renderHook(() => useInstanceTabs(mockInstance, 0, 0, false));
+    renderHook(() => useInstanceTabs(mockInstance, zeroCounts, false));
 
     const addonsTab = capturedConditionalTabs.find(t => t.tab.id === 'addons');
     expect(addonsTab?.condition).toBe(false);
   });
 
-  it('includes external-refs tab when externalRefCount > 0', () => {
-    renderHook(() => useInstanceTabs(mockInstance, 0, 2, false));
+  it('includes References tab with count pill when externalRefs > 0', () => {
+    renderHook(() => useInstanceTabs(mockInstance, { ...zeroCounts, externalRefs: 2 }, false));
 
     const refsTab = capturedConditionalTabs.find(t => t.tab.id === 'external-refs');
     expect(refsTab?.condition).toBe(true);
-    expect(refsTab?.tab.label).toBe('External References (2)');
+    expect(refsTab?.tab.label).toBe('References');
+    expect(refsTab?.tab.count).toBe('2');
   });
 
-  it('external-refs tab condition is false when externalRefCount is 0', () => {
-    renderHook(() => useInstanceTabs(mockInstance, 0, 0, false));
+  it('external-refs tab condition is false when externalRefs is 0', () => {
+    renderHook(() => useInstanceTabs(mockInstance, zeroCounts, false));
 
     const refsTab = capturedConditionalTabs.find(t => t.tab.id === 'external-refs');
     expect(refsTab?.condition).toBe(false);
   });
 
   it('includes spec tab when hasSpec is true', () => {
-    renderHook(() => useInstanceTabs(mockInstance, 0, 0, true));
+    renderHook(() => useInstanceTabs(mockInstance, zeroCounts, true));
 
     const specTab = capturedConditionalTabs.find(t => t.tab.id === 'spec');
     expect(specTab?.condition).toBe(true);
   });
 
   it('spec tab condition is false when hasSpec is false', () => {
-    renderHook(() => useInstanceTabs(mockInstance, 0, 0, false));
+    renderHook(() => useInstanceTabs(mockInstance, zeroCounts, false));
 
     const specTab = capturedConditionalTabs.find(t => t.tab.id === 'spec');
     expect(specTab?.condition).toBe(false);
   });
 
-  it('shows events count in tab label when eventsCount > 0', () => {
-    renderHook(() => useInstanceTabs(mockInstance, 5, 0, false));
+  it('shows events count pill when events > 0 and none when 0', () => {
+    renderHook(() => useInstanceTabs(mockInstance, { ...zeroCounts, events: 5 }, false));
+    expect(capturedBaseTabs.find(t => t.id === 'events')?.count).toBe('5');
 
-    const eventsTab = capturedConditionalTabs.find(t => t.tab.id === 'events');
-    expect(eventsTab?.tab.label).toBe('Events (5)');
-    expect(eventsTab?.condition).toBe(true);
+    renderHook(() => useInstanceTabs(mockInstance, zeroCounts, false));
+    expect(capturedBaseTabs.find(t => t.id === 'events')?.count).toBeUndefined();
   });
 
-  it('shows plain "Events" label when eventsCount is 0', () => {
-    renderHook(() => useInstanceTabs(mockInstance, 0, 0, false));
+  it('shows ready/total resources pill with warn variant when not all ready', () => {
+    renderHook(() =>
+      useInstanceTabs(mockInstance, { ...zeroCounts, resourcesReady: 6, resourcesTotal: 7 }, false)
+    );
 
-    const eventsTab = capturedConditionalTabs.find(t => t.tab.id === 'events');
-    expect(eventsTab?.tab.label).toBe('Events');
-    expect(eventsTab?.condition).toBe(true);
+    const childrenTab = capturedBaseTabs.find(t => t.id === 'children');
+    expect(childrenTab?.count).toBe('6/7');
+    expect(childrenTab?.countVariant).toBe('warn');
   });
 
-  it('children tab is always included', () => {
-    renderHook(() => useInstanceTabs(mockInstance, 0, 0, false));
+  it('shows default-variant resources pill when all ready', () => {
+    renderHook(() =>
+      useInstanceTabs(mockInstance, { ...zeroCounts, resourcesReady: 7, resourcesTotal: 7 }, false)
+    );
 
-    const childrenTab = capturedConditionalTabs.find(t => t.tab.id === 'children');
-    expect(childrenTab?.condition).toBe(true);
+    const childrenTab = capturedBaseTabs.find(t => t.id === 'children');
+    expect(childrenTab?.count).toBe('7/7');
+    expect(childrenTab?.countVariant).toBe('default');
+  });
+
+  it('shows history count pill when history > 0', () => {
+    renderHook(() => useInstanceTabs(mockInstance, { ...zeroCounts, history: 40 }, false));
+
+    expect(capturedBaseTabs.find(t => t.id === 'deployment-history')?.count).toBe('40');
   });
 });

@@ -10,150 +10,26 @@ vi.mock("@/hooks/useCompliance", () => ({
   isEnterprise: vi.fn(() => false),
 }));
 
-import {
-  ROLE_PRESETS,
-  resolvePresetPolicies,
-  resolvePreset,
-} from "./role-presets";
+import { resolvePresetPolicies, resolvePreset } from "./role-presets";
 import type { RolePreset } from "./role-presets";
 
-describe("ROLE_PRESETS", () => {
-  it("contains exactly 3 presets: admin, developer, readonly", () => {
-    expect(ROLE_PRESETS).toHaveLength(3);
-    expect(ROLE_PRESETS.map((p) => p.name)).toEqual([
-      "admin",
-      "developer",
-      "readonly",
-    ]);
-  });
+// As of Story 18.1 the preset CATALOG is server-backed (the static ROLE_PRESETS
+// array was retired; defaults live in the Go store and are covered by
+// server/internal/roletemplates/store_test.go). These tests cover only the
+// client-side RESOLUTION logic this module still owns.
 
-  it("does not include a platform preset", () => {
-    expect(ROLE_PRESETS.find((p) => p.name === "platform")).toBeUndefined();
-  });
-
-  it("no preset references clusters resource", () => {
-    for (const preset of ROLE_PRESETS) {
-      for (const policy of preset.policies) {
-        expect(policy).not.toContain("clusters");
-      }
-    }
-  });
-
-  it("no non-admin preset includes secrets access", () => {
-    const nonAdmin = ROLE_PRESETS.filter((p) => p.name !== "admin");
-    for (const preset of nonAdmin) {
-      for (const policy of preset.policies) {
-        expect(policy).not.toContain("secrets");
-      }
-    }
-  });
-
-  it("admin preset has no secrets access (secrets are managed outside presets)", () => {
-    const admin = ROLE_PRESETS.find((p) => p.name === "admin")!;
-    for (const policy of admin.policies) {
-      expect(policy).not.toContain("secrets");
-    }
-  });
-});
-
-describe("admin preset", () => {
-  const admin = ROLE_PRESETS.find((p) => p.name === "admin")!;
-
-  it("has category-scoped instance policy", () => {
-    expect(admin.policies).toContainEqual(
-      expect.stringContaining("instances, *, */{project}/*, allow")
-    );
-  });
-
-  it("retains project management", () => {
-    expect(admin.policies).toContainEqual(
-      expect.stringContaining("projects, *, {project}, allow")
-    );
-  });
-
-  it("retains repository access", () => {
-    expect(admin.policies).toContainEqual(
-      expect.stringContaining("repositories, *, {project}/*, allow")
-    );
-  });
-});
-
-describe("developer preset", () => {
-  const developer = ROLE_PRESETS.find((p) => p.name === "developer")!;
-
-  it("has category-scoped instance policy with wildcard action", () => {
-    expect(developer.policies).toContainEqual(
-      expect.stringContaining("instances, *, */{project}/*, allow")
-    );
-  });
-
-  it("has rgds get and list", () => {
-    expect(developer.policies).toContainEqual(
-      expect.stringContaining("rgds, get, *, allow")
-    );
-    expect(developer.policies).toContainEqual(
-      expect.stringContaining("rgds, list, *, allow")
-    );
-  });
-
-  it("has read-only repository access", () => {
-    expect(developer.policies).toContainEqual(
-      expect.stringContaining("repositories, get, {project}/*, allow")
-    );
-    expect(developer.policies).toContainEqual(
-      expect.stringContaining("repositories, list, {project}/*, allow")
-    );
-  });
-});
-
-describe("readonly preset", () => {
-  const readonly = ROLE_PRESETS.find((p) => p.name === "readonly")!;
-
-  it("has category-scoped instance get and list policies", () => {
-    expect(readonly.policies).toContainEqual(
-      expect.stringContaining("instances, get, */{project}/*, allow")
-    );
-    expect(readonly.policies).toContainEqual(
-      expect.stringContaining("instances, list, */{project}/*, allow")
-    );
-  });
-
-  it("has no wildcard instance action", () => {
-    const instancePolicies = readonly.policies.filter((p) =>
-      p.includes("instances")
-    );
-    for (const policy of instancePolicies) {
-      expect(policy).not.toMatch(/instances, \*, /);
-    }
-  });
-
-  it("has rgds get and list", () => {
-    expect(readonly.policies).toContainEqual(
-      expect.stringContaining("rgds, get, *, allow")
-    );
-    expect(readonly.policies).toContainEqual(
-      expect.stringContaining("rgds, list, *, allow")
-    );
-  });
-});
-
-describe("admin preset (enterprise mode)", () => {
-  it("includes compliance policy in resolved output when isEnterprise returns true", () => {
-    vi.mocked(isEnterprise).mockReturnValueOnce(true);
-    const admin = ROLE_PRESETS.find((p) => p.name === "admin")!;
-    const resolved = resolvePresetPolicies(admin, "alpha");
-    expect(resolved).toContainEqual(
-      "p, proj:alpha:admin, compliance, get, alpha/*, allow"
-    );
-  });
-
-  it("excludes compliance policy in resolved output when isEnterprise returns false", () => {
-    vi.mocked(isEnterprise).mockReturnValueOnce(false);
-    const admin = ROLE_PRESETS.find((p) => p.name === "admin")!;
-    const resolved = resolvePresetPolicies(admin, "alpha");
-    expect(resolved.some((p) => p.includes("compliance"))).toBe(false);
-  });
-});
+// An admin-shaped template fixture, matching the server default's policy shape.
+const adminTemplate: RolePreset = {
+  name: "admin",
+  label: "Admin",
+  description: "Full project management access",
+  policies: [
+    "p, proj:{project}:{role}, projects, *, {project}, allow",
+    "p, proj:{project}:{role}, instances, *, */{project}/*, allow",
+    "p, proj:{project}:{role}, rgds, get, *, allow",
+    "p, proj:{project}:{role}, repositories, *, {project}/*, allow",
+  ],
+};
 
 describe("resolvePresetPolicies", () => {
   it("replaces {project} and {role} placeholders", () => {
@@ -161,9 +37,7 @@ describe("resolvePresetPolicies", () => {
       name: "tester",
       label: "Tester",
       description: "Test role",
-      policies: [
-        "p, proj:{project}:{role}, instances, *, */{project}/*, allow",
-      ],
+      policies: ["p, proj:{project}:{role}, instances, *, */{project}/*, allow"],
     };
     const resolved = resolvePresetPolicies(preset, "my-project");
     expect(resolved).toEqual([
@@ -171,16 +45,8 @@ describe("resolvePresetPolicies", () => {
     ]);
   });
 
-  it("resolves actual developer preset for a real project", () => {
-    const developer = ROLE_PRESETS.find((p) => p.name === "developer")!;
-    const resolved = resolvePresetPolicies(developer, "alpha");
-    expect(resolved).toContainEqual(
-      "p, proj:alpha:developer, instances, *, */alpha/*, allow"
-    );
-    expect(resolved).toContainEqual(
-      "p, proj:alpha:developer, rgds, get, *, allow"
-    );
-    // No unresolved placeholders
+  it("leaves no unresolved placeholders", () => {
+    const resolved = resolvePresetPolicies(adminTemplate, "alpha");
     for (const policy of resolved) {
       expect(policy).not.toContain("{project}");
       expect(policy).not.toContain("{role}");
@@ -188,22 +54,66 @@ describe("resolvePresetPolicies", () => {
   });
 });
 
+describe("enterprise compliance injection", () => {
+  it("injects compliance policy for the admin template when isEnterprise() is true", () => {
+    vi.mocked(isEnterprise).mockReturnValueOnce(true);
+    const resolved = resolvePresetPolicies(adminTemplate, "alpha");
+    expect(resolved).toContainEqual(
+      "p, proj:alpha:admin, compliance, get, alpha/*, allow"
+    );
+  });
+
+  it("omits compliance policy when isEnterprise() is false", () => {
+    vi.mocked(isEnterprise).mockReturnValueOnce(false);
+    const resolved = resolvePresetPolicies(adminTemplate, "alpha");
+    expect(resolved.some((p) => p.includes("compliance"))).toBe(false);
+  });
+
+  it("injects read-only compliance for the developer template when isEnterprise() is true", () => {
+    vi.mocked(isEnterprise).mockReturnValueOnce(true);
+    const developer: RolePreset = {
+      name: "developer",
+      label: "Developer",
+      policies: ["p, proj:{project}:{role}, rgds, get, *, allow"],
+    };
+    const resolved = resolvePresetPolicies(developer, "alpha");
+    // Read-only: get only (no create/update/delete/*) — mirrors ADMIN's get
+    // grant but is the only compliance verb a developer receives.
+    expect(resolved).toContainEqual(
+      "p, proj:alpha:developer, compliance, get, alpha/*, allow"
+    );
+    expect(
+      resolved.some((p) => /compliance,\s*(?:create|update|delete|\*)/.test(p))
+    ).toBe(false);
+  });
+
+  it("never injects compliance for a template that is neither admin nor developer, even in enterprise mode", () => {
+    vi.mocked(isEnterprise).mockReturnValueOnce(true);
+    const viewer: RolePreset = {
+      name: "viewer",
+      label: "Viewer",
+      policies: ["p, proj:{project}:{role}, rgds, get, *, allow"],
+    };
+    const resolved = resolvePresetPolicies(viewer, "alpha");
+    expect(resolved.some((p) => p.includes("compliance"))).toBe(false);
+  });
+});
+
 describe("resolvePreset", () => {
-  it("returns a ProjectRole with resolved policies", () => {
+  it("returns a ProjectRole with resolved policies and no groups field (teams-only binding)", () => {
     const preset: RolePreset = {
       name: "dev",
       label: "Dev",
       description: "Dev role",
-      policies: [
-        "p, proj:{project}:{role}, rgds, get, *, allow",
-      ],
+      policies: ["p, proj:{project}:{role}, rgds, get, *, allow"],
     };
     const role = resolvePreset(preset, "alpha");
     expect(role).toEqual({
       name: "dev",
       description: "Dev role",
       policies: ["p, proj:alpha:dev, rgds, get, *, allow"],
-      groups: [],
     });
+    // Legacy roles[].groups[] was removed in epic-10 — resolvePreset must not seed it.
+    expect("groups" in role).toBe(false);
   });
 });

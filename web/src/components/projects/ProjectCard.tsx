@@ -2,21 +2,26 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 /**
- * Project card component for displaying project information in a list
+ * ProjectCard — grid card for the Projects list.
+ *
+ * Visuals (AC 2/3): a 44px rounded icon whose hue is deterministic per project
+ * via `avatarToneIndex(project.name)` over the shared 7-tone avatar token
+ * palette (presentation only — there is NO persisted `color` field), the
+ * project name, a 2-line description clamp, a hover `CardChevron`, and a footer
+ * of DERIVED stats: `{instances} instances · {roles} roles` plus an amber
+ * `{N} issues` pill (the `--status-warning` token) when the project has any
+ * Degraded/Unhealthy instances. No `lead` avatar is rendered (no field).
  */
-import { Users, Shield, Edit, Trash2 } from "@/lib/icons";
+import { Package, Trash2 } from "@/lib/icons";
+import { avatarInitials, avatarToneIndex } from "@/components/ui/avatar";
+import { CardChevron } from "@/components/ui/card-chevron";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import type { Project } from "@/types/project";
+import type { ProjectInstanceStats } from "./project-instances";
 
 interface ProjectCardProps {
   project: Project;
-  onEdit?: (project: Project) => void;
+  stats?: ProjectInstanceStats;
   onDelete?: (projectName: string) => void;
   onClick?: (project: Project) => void;
   canManage?: boolean;
@@ -24,116 +29,104 @@ interface ProjectCardProps {
 
 export function ProjectCard({
   project,
-  onEdit,
+  stats,
   onDelete,
   onClick,
   canManage = false,
 }: ProjectCardProps) {
-  const roleCount = project.roles?.length || 0;
-  const destinationCount = project.destinations?.length || 0;
+  const roleCount = project.roles?.length ?? 0;
+  const instanceCount = stats?.total ?? 0;
+  const issueCount = stats?.issues ?? 0;
+  const tone = avatarToneIndex(project.name);
 
   return (
     <div
       role="button"
       tabIndex={0}
-      className="flex items-center justify-between p-4 rounded-lg border border-border hover:bg-secondary/50 transition-colors cursor-pointer"
-      onClick={() => onClick?.(project)}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick?.(project); } }}
       data-testid="project-card"
+      aria-label={`View details for ${project.name}`}
+      className="group relative flex flex-col rounded-lg border border-border bg-card p-4 text-left transition-colors hover:bg-secondary/50 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-primary)]"
+      onClick={() => onClick?.(project)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick?.(project);
+        }
+      }}
     >
-      <div className="flex items-center gap-4 flex-1 min-w-0">
-        {/* Icon */}
-        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 flex-shrink-0">
-          <Shield className="h-5 w-5 text-primary" />
-        </div>
+      <CardChevron />
 
-        {/* Project Info */}
-        <div className="flex-1 min-w-0">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <div className="font-medium text-sm truncate">{project.name}</div>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>{project.name}</p>
-            </TooltipContent>
-          </Tooltip>
-          {project.description && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <div className="text-xs text-muted-foreground truncate">
-                  {project.description}
-                </div>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>{project.description}</p>
-              </TooltipContent>
-            </Tooltip>
-          )}
-          <div className="text-xs text-muted-foreground mt-1">
-            Created {new Date(project.createdAt).toLocaleDateString()}
-            {project.createdBy && ` by ${project.createdBy}`}
-          </div>
-        </div>
-
-        {/* Badges */}
-        <div className="flex items-center gap-2 flex-shrink-0">
-          <Badge variant="secondary" className="flex items-center gap-1">
-            <Users className="h-3 w-3" />
-            <span>{roleCount} role{roleCount !== 1 ? "s" : ""}</span>
-          </Badge>
-          {destinationCount > 0 && (
-            <Badge variant="outline" className="text-xs">
-              {destinationCount} destination{destinationCount !== 1 ? "s" : ""}
-            </Badge>
+      {/* Header: tone icon + name/description */}
+      <div className="flex items-start gap-3">
+        <span
+          aria-hidden="true"
+          data-tone={tone}
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-sm font-semibold select-none"
+          style={{
+            backgroundColor: `hsl(var(--avatar-tone-${tone}-bg-hsl) / 0.18)`,
+            color: `var(--avatar-tone-${tone}-fg)`,
+          }}
+        >
+          {avatarInitials(project.name)}
+        </span>
+        <div className="min-w-0 flex-1 pr-5">
+          <p className="font-medium text-foreground truncate">{project.name}</p>
+          {project.description ? (
+            <p className="text-xs text-muted-foreground line-clamp-2 mt-0.5">
+              {project.description}
+            </p>
+          ) : (
+            <p className="text-xs text-muted-foreground/70 italic mt-0.5">
+              No description
+            </p>
           )}
         </div>
       </div>
 
-      {/* Actions */}
-      {canManage && (
-        <div
-          className="flex items-center gap-2 ml-4"
-          onClick={(e) => e.stopPropagation()}
-          onKeyDown={(e) => e.stopPropagation()}
-          role="toolbar"
-        >
-          {onEdit && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => onEdit(project)}
-                  data-testid="edit-project-btn"
-                >
-                  <Edit className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>Edit</p>
-              </TooltipContent>
-            </Tooltip>
-          )}
-          {onDelete && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => onDelete(project.name)}
-                  className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                  data-testid="delete-project-btn"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>Delete</p>
-              </TooltipContent>
-            </Tooltip>
+      {/* Footer: derived stats */}
+      <div className="mt-4 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 text-xs text-muted-foreground min-w-0">
+          <span className="inline-flex items-center gap-1 whitespace-nowrap">
+            <Package className="h-3.5 w-3.5" />
+            <span className="text-foreground font-medium">{instanceCount}</span>{" "}
+            {instanceCount === 1 ? "instance" : "instances"}
+          </span>
+          <span aria-hidden="true" className="opacity-60">
+            ·
+          </span>
+          <span className="whitespace-nowrap">
+            <span className="text-foreground font-medium">{roleCount}</span>{" "}
+            {roleCount === 1 ? "role" : "roles"}
+          </span>
+          {issueCount > 0 && (
+            <span
+              className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] font-medium whitespace-nowrap"
+              style={{
+                color: "var(--status-warning)",
+                backgroundColor: "hsl(var(--status-warning-hsl) / 0.12)",
+              }}
+            >
+              {issueCount} {issueCount === 1 ? "issue" : "issues"}
+            </span>
           )}
         </div>
-      )}
+
+        {canManage && onDelete && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+            aria-label={`Delete ${project.name}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete(project.name);
+            }}
+            onKeyDown={(e) => e.stopPropagation()}
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        )}
+      </div>
     </div>
   );
 }

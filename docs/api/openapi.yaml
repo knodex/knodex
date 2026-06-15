@@ -82,8 +82,23 @@ tags:
     description: WebSocket ticket and metrics
   - name: rbac-metrics
     description: RBAC policy and cache metrics
+  - name: groups
+    description: Observed OIDC group discovery for the team/role editor
+  - name: teams
+    description: Team CRUD — cluster-scoped named OIDC group sets bound to project roles
   - name: kubernetes
     description: Kubernetes resource and API discovery
+  - name: agents
+    description: AI Agents — kagent presence detection and agent operations
+  - name: integration
+    description: >-
+      Read-only "future Grafana replicator" contract. A stable, version-safe
+      surface exposing projects, teams (with their Keycloak group identifiers),
+      and team→project-role bindings, derived purely from cluster CRDs with NO
+      token/claims dependency. Join keys: the team group identifier
+      (`kx-team-<org>-<slug>`) ↔ a Grafana team; a project ↔ a Grafana org.
+      Member resolution for auth happens in Keycloak directly via the group
+      identifier — Knodex never replicates auth. Operator-gated (`settings:get`).
 
 # ---------------------------------------------------------------------------
 # PATHS
@@ -373,6 +388,45 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+    post:
+      summary: Create a ResourceGraphDefinition
+      description: |
+        Creates a `kro.run/v1alpha1 ResourceGraphDefinition` in the cluster from
+        a YAML payload — the RGD Builder's "Use this spec" deploy hand-off
+        (Story 50.2). The payload is strictly kind-locked: anything that is not
+        a ResourceGraphDefinition is rejected with 400 (the endpoint is never a
+        generic manifest-apply). The `knodex.io/catalog: "true"` annotation is
+        ensured so the created RGD surfaces in the Catalog. Requires the
+        `rgds/*` `create` permission (serveradmin-only by default).
+      tags: [rgds]
+      operationId: createRGD
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRGDRequest'
+      responses:
+        '201':
+          description: ResourceGraphDefinition created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateRGDResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: A ResourceGraphDefinition with this name already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /api/v1/rgds/count:
     get:
@@ -1305,6 +1359,337 @@ paths:
                 $ref: '#/components/schemas/RBACMetricsResponse'
 
   # -------------------------------------------------------------------------
+  # Observed Groups
+  # -------------------------------------------------------------------------
+  /api/v1/groups/observed:
+    get:
+      summary: List observed OIDC groups
+      description: >-
+        Returns the distinct OIDC group strings Knodex has passively observed in
+        login tokens, each with its last-seen timestamp, ordered most-recently-seen
+        first. Feeds a typeahead in the team/role editor so operators can pick real,
+        observed groups instead of typing them blind. Requires operator access
+        (`settings:get` permission). No IdP admin credentials are used; groups are
+        learned passively from tokens already validated at login.
+      tags: [groups]
+      operationId: listObservedGroups
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Observed groups (empty list when discovery is unavailable)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObservedGroupsResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # -------------------------------------------------------------------------
+  # Teams (Story 10.4)
+  # -------------------------------------------------------------------------
+  /api/v1/integration/teams:
+    get:
+      summary: List teams (replicator contract)
+      description: >-
+        Read-only source data for the future, separate-repo Grafana replicator.
+        Returns every cluster-scoped Team with its **group identifier(s)**
+        (`groupIdentifiers`, e.g. `kx-team-<org>-<slug>`) — the cross-tool join
+        key (group identifier ↔ Grafana team). The response is derived purely
+        from cluster CRDs and is **independent of the caller's token/claims**:
+        identical output regardless of which groups the caller's token carries.
+
+
+        **Roster source rule:** the group identifier is ALWAYS present and is the
+        canonical join key (the replicator can resolve members from Keycloak
+        itself). In **cloud-tenant** builds, `members` MAY be additionally
+        enriched best-effort from the control-plane roster proxy; a roster fetch
+        failure is non-fatal and the team is still returned with its group
+        identifier. In **OSS / non-cloud** builds no roster is fetched and
+        `members` is omitted.
+
+
+        Operator-gated with the same `settings:get` check as `/api/v1/teams`
+        (no new authorization resource).
+      tags: [integration]
+      operationId: listIntegrationTeams
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Team list (replicator contract)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntegrationTeamListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/integration/projects:
+    get:
+      summary: List projects + team bindings (replicator contract)
+      description: >-
+        Read-only source data for the future, separate-repo Grafana replicator.
+        Returns every Project with its `destinations` (namespaces) and its
+        **team→project-role bindings** derived from `spec.roles[].teams[]`. Each
+        binding resolves the bound teams to their group identifiers, so the
+        replicator gets the join key directly. The replicator maps each project
+        to a Grafana org (project ↔ Grafana org).
+
+
+        Derived purely from cluster CRDs with **no token/claims dependency** —
+        identical output regardless of the caller's token groups. A team named in
+        a binding but with no matching Team CRD is returned with empty
+        `groupIdentifiers` (non-fatal). Operator-gated (`settings:get`).
+      tags: [integration]
+      operationId: listIntegrationProjects
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Project list with team bindings (replicator contract)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntegrationProjectListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/teams:
+    get:
+      summary: List teams
+      description: >-
+        Returns all cluster-scoped Teams. A Team names a reusable set of OIDC
+        groups that a project role can bind via `roles[].teams[]`. Requires
+        operator access (`settings:get` permission).
+      tags: [teams]
+      operationId: listTeams
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Team list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeamListResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      summary: Create a team
+      description: >-
+        Creates a new cluster-scoped Team. The name must be a DNS-1123 subdomain
+        and the team must reference at least one non-empty OIDC group (≤253 chars,
+        no duplicates). Requires operator access (`settings:update` permission).
+      tags: [teams]
+      operationId: createTeam
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTeamRequest'
+      responses:
+        '201':
+          description: Team created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeamResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: Team already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/teams/{name}:
+    get:
+      summary: Get team details
+      description: Returns a single Team by name. Requires operator access (`settings:get`).
+      tags: [teams]
+      operationId: getTeam
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/TeamName'
+      responses:
+        '200':
+          description: Team details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeamResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      summary: Update a team
+      description: >-
+        Updates a Team's description and OIDC groups (the name is immutable).
+        Requires operator access (`settings:update`). A successful write triggers
+        automatic re-resolution of any project roles bound to the team.
+      tags: [teams]
+      operationId: updateTeam
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/TeamName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTeamRequest'
+      responses:
+        '200':
+          description: Team updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeamResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      summary: Delete a team
+      description: Deletes a Team by name. Requires operator access (`settings:update`).
+      tags: [teams]
+      operationId: deleteTeam
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/TeamName'
+      responses:
+        '204':
+          description: Team deleted
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # -------------------------------------------------------------------------
+  # Users (Story 15.8) — operator surface over the canonical identity roster
+  # -------------------------------------------------------------------------
+  /api/v1/users:
+    get:
+      summary: List users
+      description: >-
+        Returns a keyset-paginated page of the canonical persistent users
+        materialised on every OIDC login, ordered `last_seen_at DESC, id DESC`.
+        Each user's `federatedIdentities` are expanded and a display-only
+        `isInactive` flag is computed from `lastSeenAt` vs
+        `IDENTITY_INACTIVE_THRESHOLD_DAYS` (default 30) — `isInactive` never
+        participates in billing. Requires operator access (`settings:get`
+        permission); no new authorization resource (single Casbin enforcement
+        layer).
+      tags: [users]
+      operationId: listUsers
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Page size, 1..200 (default 50). Out-of-range or non-integer → 400.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+        - name: pageToken
+          in: query
+          required: false
+          description: Opaque keyset cursor from a prior page's `nextPageToken`. A malformed token → 400.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: User list (empty array when the org has no users)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UsersListResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/users/{id}:
+    get:
+      summary: Get user details
+      description: >-
+        Returns a single user by ULID, with federated identities expanded and
+        `isInactive` computed. A non-existent id, or an id belonging to another
+        org (hidden by row-level security), returns `404` — never `403`, so user
+        existence is not leaked across orgs. Requires operator access
+        (`settings:get`).
+      tags: [users]
+      operationId: getUser
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        '200':
+          description: User details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      summary: Remove a user (reclaim seat)
+      description: >-
+        Soft-deletes a user (`state='removed'`), immediately dropping them from
+        the entitlement-based billed-seat count. The operation is idempotent.
+        Removal reclaims the seat but does NOT permanently exclude the user:
+        because users are resurrected on their next successful login, permanent
+        exclusion requires IdP-side revocation — this is surfaced in the response
+        `note`. A non-existent or cross-org id returns `404`. Requires operator
+        access (`settings:update`).
+      tags: [users]
+      operationId: deleteUser
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        '200':
+          description: User removed / seat reclaimed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteUserResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # -------------------------------------------------------------------------
   # Projects
   # -------------------------------------------------------------------------
   /api/v1/projects:
@@ -1705,6 +2090,490 @@ paths:
                 $ref: '#/components/schemas/NamespaceListResponse'
         '404':
           $ref: '#/components/responses/NotFound'
+
+  # -------------------------------------------------------------------------
+  # Agents
+  # -------------------------------------------------------------------------
+  /api/v1/agents/status:
+    get:
+      summary: Get kagent presence status
+      description: >-
+        Returns the kagent installation status for the AI Agents workspace. Presence
+        requires both the agents.kagent.dev CRD and a healthy kagent
+        controller. Any authenticated user can read. Always responds 200 —
+        a degraded check is a structured payload, never a 5xx.
+      tags: [agents]
+      operationId: getAgentsStatus
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: kagent presence status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentsStatusResponse'
+
+  /api/v1/agents:
+    get:
+      summary: List agents
+      description: >-
+        Returns the kagent Agent custom resources (agents.kagent.dev) in the
+        caller's Casbin-accessible namespaces as a single list, filtered
+        server-side via the Casbin-derived accessible-namespace set (the same
+        single enforcement layer as GET /api/v1/instances). The `agents` array
+        defaults to []. A caller with zero accessible namespaces receives an
+        empty list (fail-closed) — there is no global agent surface.
+      tags: [agents]
+      operationId: listAgents
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Agents visible to the caller
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/agents/templates:
+    get:
+      summary: List agent templates (RGDs discovered by Kind)
+      description: >-
+        Returns the agent-template ResourceGraphDefinitions, discovered by
+        schema.kind == KnodexAgentTemplate rather than the catalog annotation
+        (`knodex.io/catalog`). These RGDs are intentionally absent from the main
+        catalog list, but the watcher still ingests them by Kind so each stays
+        deployable via the standard Deploy flow (GET /api/v1/rgds/{name} →
+        POST instance). Same envelope as GET /api/v1/rgds; project/org visibility
+        applies.
+      tags: [agents]
+      operationId: listAgentTemplates
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Agent-template RGDs visible to the caller
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListRGDsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/agents/models:
+    get:
+      summary: List models (kagent ModelConfigs)
+      description: >-
+        Returns the kagent ModelConfig custom resources (modelconfigs.kagent.dev)
+        in the caller's Casbin-accessible namespaces — the Models tab list. Each
+        entry is name + namespace + resolved {provider, model} only; the
+        apiKeySecretRef and any secret value are NEVER returned (NFR-A4). Filtered
+        server-side via the same single Casbin accessible-namespace layer as GET
+        /api/v1/agents. Zero accessible namespaces ⇒ empty list (fail-closed);
+        CRD-absent ⇒ 200 empty. Sorted by (namespace, name).
+      tags: [agents]
+      operationId: listModels
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Models visible to the caller
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      summary: Create a model (Secret + ModelConfig)
+      description: >-
+        Orchestrates, behind a single POST: validate → authorize (target
+        namespace ∈ the caller's accessible set AND explicit Casbin secrets-create
+        on secrets/{namespace}/{name}) → create the API-key Secret directly (key
+        `apiKey`) → create the agents.knodex.io/v1alpha1 KnodexAgentModelConfig
+        instance directly (KRO reconciles it into a kagent ModelConfig referencing the
+        Secret) → on instance-create failure, best-effort delete the orphaned
+        Secret. The apiKey is write-only and is NEVER echoed back (NFR-A4).
+      tags: [agents]
+      operationId: createModel
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateModelRequest'
+      responses:
+        '201':
+          description: Model created (summary, never the apiKey)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelSummary'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: A Secret or model with this name already exists in the namespace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/agents/{namespace}/{name}/modelconfigs:
+    get:
+      summary: List ModelConfigs available to an agent's namespace
+      description: >-
+        Returns the kagent ModelConfig custom resources (modelconfigs.kagent.dev)
+        in {namespace} — the pool an agent can be repointed at via the model
+        editor. Each entry is name + resolved {provider, model} only; secret
+        references are never returned (NFR-A4). The {name} segment scopes
+        authorization to a specific agent via the single Casbin
+        accessible-namespace check. A denied namespace and a missing agent both
+        return 404 (existence non-leak).
+      tags: [agents]
+      operationId: listAgentModelConfigs
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Namespace of the agent (and of the ModelConfig pool).
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Agent CR name (scopes authorization).
+      responses:
+        '200':
+          description: ModelConfigs in the namespace, sorted by name
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelConfigsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/agents/{namespace}/{name}/model:
+    patch:
+      summary: Change an agent's model
+      description: >-
+        Patches ONLY spec.declarative.modelConfig on the Agent CR — the system
+        message, tools, and type are curated agent behaviour and are never
+        modified here. The target ModelConfig must already exist in {namespace}
+        (verified before patching; a missing one returns 404 so the UI surfaces a
+        clear error instead of breaking the agent with a dangling reference).
+        Authorization matches the modelconfigs list: the single Casbin
+        accessible-namespace check.
+      tags: [agents]
+      operationId: editAgentModel
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Namespace of the agent.
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Agent CR name.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EditAgentModelRequest'
+      responses:
+        '200':
+          description: The agent's new resolved model identity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentModel'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/agents/runs:
+    get:
+      summary: List agent run history
+      description: >-
+        Returns the history of agent invocations, newest-first. Visibility is
+        the Casbin-derived accessible-namespace set applied server-side (the
+        same single enforcement layer as GET /api/v1/agents): a run is visible
+        only when its agent namespace matches the caller's set (fail-closed).
+        Pagination is applied after the visibility filter, so page numbers are
+        stable per-caller. Run records are written by Knodex at invocation
+        time — there is no kagent CRD behind this endpoint. OSS storage is
+        ephemeral (capped count + TTL in Redis).
+      tags: [agents]
+      operationId: listAgentRuns
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: agentType
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Exact-match filter on the agent identifier.
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [running, completed, failed]
+          description: Exact-match filter on run status.
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          description: 1-based page number.
+        - name: pageSize
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          description: Page size (max 100).
+      responses:
+        '200':
+          description: Agent runs visible to the caller, newest-first
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentRunsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/agents/runs/{id}/result:
+    get:
+      summary: Get the full result of an agent run
+      description: >-
+        Returns the FULL terminal payload of an agent invocation (Story 50.1)
+        — the complete agent response text, unlike the run record's
+        recommendationSummary which is truncated to 1024 characters. Returns
+        404 while no result exists: an in-flight run and an unknown run id
+        are indistinguishable by design. Visibility mirrors the runs-list
+        filter: a result is readable only when its agentNamespace matches the
+        caller's Casbin-derived accessible-namespace set (fail-closed, 404
+        non-leak). Results are ephemeral (24h TTL in Redis).
+      tags: [agents]
+      operationId: getAgentRunResult
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Run record UUID.
+      responses:
+        '200':
+          description: The terminal result (completed or failed).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentRunResult'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: >-
+            No result available — the run is still in-flight, the id is
+            unknown, or the caller lacks namespace access (non-leak).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/agents/{namespace}/{name}/invoke:
+    post:
+      summary: Invoke an agent
+      description: >-
+        Invokes a deployed kagent agent via the server-side A2A bridge. The
+        browser only ever talks to the Knodex server — the kagent endpoint,
+        cluster credentials, and LLM keys never reach the frontend. A run
+        record is written (status running) BEFORE kagent is called and the
+        endpoint returns 202 with that record immediately; the A2A call
+        completes in the background and updates the record to
+        completed/failed (pushed over WebSocket as agent_run_update and
+        readable via GET /api/v1/agents/runs). Authorization is the
+        Casbin-derived accessible-namespace set: a denied namespace and a
+        nonexistent agent both return the same 404 (existence non-leak).
+      tags: [agents]
+      operationId: invokeAgent
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Namespace of the kagent Agent CR.
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Name of the kagent Agent CR.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentInvokeRequest'
+      responses:
+        '202':
+          description: >-
+            Invocation accepted — the run record (status running) is returned
+            and the agent call completes asynchronously.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentRun'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: >-
+            Agent not found — returned both when the agent does not exist and
+            when the caller lacks namespace access (existence non-leak).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/agents/sessions:
+    get:
+      summary: List agent chat sessions
+      description: >-
+        Returns past chat conversations, most-recent-first (Story 50.6). A
+        session is a server-side VIEW over the run store: Knodex-owned run
+        records are grouped by a Knodex-side conversationId (runs with an empty
+        conversationId each form a singleton session keyed by their run id, so
+        legacy runs are listed and never dropped). There is NO read-back from
+        kagent's session store. Visibility reuses the same Casbin-derived
+        accessible-namespace filter as GET /api/v1/agents/runs (a session is
+        visible only when its agent namespace matches the caller's set,
+        fail-closed), applied to runs BEFORE grouping. Pagination is applied
+        after grouping.
+      tags: [agents]
+      operationId: listAgentSessions
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: agentType
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Exact-match filter on the agent identifier.
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          description: 1-based page number.
+        - name: pageSize
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          description: Page size (max 100).
+      responses:
+        '200':
+          description: Chat sessions visible to the caller, most-recent-first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentSessionsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/agents/sessions/{id}:
+    get:
+      summary: Get a chat session for replay
+      description: >-
+        Returns the full run records of a chat session ordered oldest→newest
+        (Story 50.6), the source for read-only conversation replay. Visibility
+        is enforced (the same namespace filter as the sessions list) BEFORE the
+        lookup, so an unknown id and a denied id both return the same 404
+        (existence non-leak). The web reconstructs each turn and fetches each
+        run's full response via GET /api/v1/agents/runs/{id}/result; when a
+        run's result has expired, replay degrades to its recommendationSummary.
+      tags: [agents]
+      operationId: getAgentSession
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Session id (the conversationId, or a run id for legacy singletons).
+      responses:
+        '200':
+          description: The session's runs, oldest→newest.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentSession'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: >-
+            Unknown session id, or the caller lacks namespace access (non-leak).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   # -------------------------------------------------------------------------
   # Settings
@@ -2472,6 +3341,20 @@ components:
       description: Project name
       schema:
         type: string
+    TeamName:
+      name: name
+      in: path
+      required: true
+      description: Team name (DNS-1123 subdomain)
+      schema:
+        type: string
+    UserId:
+      name: id
+      in: path
+      required: true
+      description: User ULID (26-char Crockford base32)
+      schema:
+        type: string
     RoleName:
       name: role
       in: path
@@ -2707,6 +3590,39 @@ components:
           type: integer
         pageSize:
           type: integer
+
+    CreateRGDRequest:
+      type: object
+      required: [yaml]
+      properties:
+        name:
+          type: string
+          description: Overrides the YAML's metadata.name (DNS-1123 subdomain)
+        namespace:
+          type: string
+          description: Overrides the YAML's metadata.namespace (DNS-1123 label, defaults to "default")
+        yaml:
+          type: string
+          description: The full ResourceGraphDefinition manifest (kro.run/v1alpha1 only)
+        runId:
+          type: string
+          description: Originating RGD Builder run id — stamps the run's actionTaken field (best-effort)
+
+    CreateRGDResponse:
+      type: object
+      properties:
+        name:
+          type: string
+          example: webapp-stack
+        namespace:
+          type: string
+          example: default
+        kind:
+          type: string
+          example: ResourceGraphDefinition
+        apiVersion:
+          type: string
+          example: kro.run/v1alpha1
 
     ResourceGraphResponse:
       type: object
@@ -3096,6 +4012,451 @@ components:
         count:
           type: integer
 
+    # --- Agents ---
+    AgentsStatusResponse:
+      type: object
+      required: [status, message]
+      properties:
+        status:
+          type: string
+          enum: [ready, not_installed, degraded]
+          description: >-
+            ready = CRD present AND controller healthy; not_installed = a check
+            answered definitively negative; degraded = a check errored without
+            a definitive answer (retryable).
+        crdPresent:
+          type: boolean
+          nullable: true
+          description: Whether the agents.kagent.dev CRD exists. Null when the check was indeterminate or not performed.
+        controllerHealthy:
+          type: boolean
+          nullable: true
+          description: Whether the kagent controller /health returned 200. Null when the check was short-circuited or indeterminate.
+        message:
+          type: string
+          description: Human-readable explanation of the status.
+
+    AgentModel:
+      type: object
+      required: [provider, name]
+      description: >-
+        Resolved AI model identity for an agent (Story 50.4). Provider label
+        and model name ONLY — never an API key, provider endpoint, or secret
+        reference (NFR-A4/A7). Surfaced as a transparency feature (UX-DR3).
+      properties:
+        provider:
+          type: string
+          description: Model provider label, e.g. "OpenAI", "Anthropic".
+        name:
+          type: string
+          description: Model name, e.g. "gpt-4.1-mini".
+
+    InstalledAgent:
+      type: object
+      required: [name, namespace, description, createdAt]
+      properties:
+        name:
+          type: string
+          description: Agent CR name.
+        namespace:
+          type: string
+          description: Namespace the Agent CR is deployed in.
+        description:
+          type: string
+          description: Agent spec.description; empty string when absent.
+        createdAt:
+          type: string
+          description: RFC3339 creation timestamp; empty string when unknown.
+        model:
+          allOf:
+            - $ref: '#/components/schemas/AgentModel'
+          description: >-
+            Resolved AI model (Story 50.4). Omitted when the model cannot be
+            resolved (no ModelConfig, CRD absent, RBAC denied) — the agent
+            stays fully listable.
+        modelConfig:
+          type: string
+          description: >-
+            Bound spec.declarative.modelConfig name; omitted for non-declarative
+            agents. The model editor pre-selects this exact config by name.
+
+    AgentsResponse:
+      type: object
+      required: [agents]
+      properties:
+        agents:
+          type: array
+          description: >-
+            The caller's Casbin-accessible agents, sorted by namespace then
+            name. Always present (default []).
+          items:
+            $ref: '#/components/schemas/InstalledAgent'
+
+    ModelConfigSummary:
+      type: object
+      required: [name, provider, model]
+      description: >-
+        A kagent ModelConfig an agent can be repointed at: name plus resolved
+        {provider, model} label. No secret reference is ever included (NFR-A4).
+      properties:
+        name:
+          type: string
+          description: ModelConfig CR name (the value written to the agent).
+        provider:
+          type: string
+          description: Provider label, e.g. "openai", "azure".
+        model:
+          type: string
+          description: Model identifier, e.g. "gpt-4o".
+
+    ModelConfigsResponse:
+      type: object
+      required: [modelConfigs]
+      properties:
+        modelConfigs:
+          type: array
+          description: ModelConfigs in the namespace, sorted by name. Default [].
+          items:
+            $ref: '#/components/schemas/ModelConfigSummary'
+
+    ModelSummary:
+      type: object
+      required: [name, namespace, provider, model]
+      description: >-
+        A kagent ModelConfig in the Models tab: identity plus resolved
+        {provider, model}. The apiKeySecretRef and any secret value are NEVER
+        included (NFR-A4).
+      properties:
+        name:
+          type: string
+          description: ModelConfig CR name.
+        namespace:
+          type: string
+          description: Namespace the ModelConfig lives in.
+        provider:
+          type: string
+          description: Provider label, e.g. "openai", "azure".
+        model:
+          type: string
+          description: Model identifier, e.g. "gpt-4o".
+
+    ModelsResponse:
+      type: object
+      required: [models]
+      properties:
+        models:
+          type: array
+          description: >-
+            The caller's Casbin-accessible models, sorted by (namespace, name).
+            Always present (default []).
+          items:
+            $ref: '#/components/schemas/ModelSummary'
+
+    CreateModelRequest:
+      type: object
+      required: [name, provider, model, namespace, apiKey]
+      description: >-
+        Create a model: mints an API-key Secret (key `apiKey`) and a
+        KnodexAgentModelConfig instance that KRO reconciles into a kagent ModelConfig.
+      properties:
+        name:
+          type: string
+          description: >-
+            Model (and Secret) name. Must be a valid DNS-1123 subdomain.
+        provider:
+          type: string
+          description: kagent provider name (openai, azure, gemini, anthropic).
+        model:
+          type: string
+          description: Model identifier as understood by the provider, e.g. "gpt-4o".
+        namespace:
+          type: string
+          description: >-
+            Target namespace. Must be a valid DNS-1123 label and in the caller's
+            Casbin-accessible set.
+        apiKey:
+          type: string
+          format: password
+          writeOnly: true
+          description: >-
+            Provider API key. Write-only — stored in the minted Secret and NEVER
+            returned by any endpoint.
+
+    EditAgentModelRequest:
+      type: object
+      required: [modelConfig]
+      properties:
+        modelConfig:
+          type: string
+          description: >-
+            Name of the ModelConfig to repoint the agent at. Must be a valid
+            DNS-1123 subdomain and already exist in the agent's namespace.
+
+    AgentInvokeRequest:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+          minLength: 1
+          maxLength: 8192
+          description: User message for the agent (control characters are stripped).
+        contextRef:
+          type: string
+          maxLength: 512
+          description: >-
+            Optional context reference recorded on the run, e.g.
+            "instance:{group}/{version}/{namespace}/{kind}/{name}" or
+            "rgd:{name}".
+        conversationId:
+          type: string
+          maxLength: 128
+          description: >-
+            Optional Knodex-side chat-session grouping key (Story 50.6). All
+            turns of one mounted chat carry the same conversationId so they
+            group into a single session. Distinct from kagentSessionId.
+
+    AgentRun:
+      type: object
+      required: [id, actor, agentType, agentNamespace, contextRef, kagentSessionId, conversationId, inputSummary, recommendationSummary, actionTaken, timestamp, status, triggerType]
+      properties:
+        id:
+          type: string
+          description: Run record UUID.
+        actor:
+          type: string
+          description: >-
+            Authenticated Knodex user identity at invocation time (email,
+            falling back to subject/user ID). Never sourced from kagent.
+        agentType:
+          type: string
+          description: Agent identifier — the Agent CR name.
+        agentNamespace:
+          type: string
+          description: >-
+            Namespace of the Agent CR. Visible only when it matches the
+            caller's Casbin-accessible namespace set (an empty namespace on a
+            legacy run is not globally visible).
+        contextRef:
+          type: string
+          description: Optional context reference supplied at invocation.
+        kagentSessionId:
+          type: string
+          description: kagent session id (A2A response contextId). Empty while running.
+        conversationId:
+          type: string
+          description: >-
+            Knodex-side chat-session grouping key (Story 50.6). Empty for
+            legacy runs persisted before 50.6 (each forms a singleton session).
+        inputSummary:
+          type: string
+          description: Truncated user message (first 256 characters).
+        recommendationSummary:
+          type: string
+          description: >-
+            Truncated agent answer (first 1024 characters), or the error
+            summary when the run failed. Empty while running.
+        actionTaken:
+          type: string
+          description: Reserved for future stories; always empty in 49.4.
+        timestamp:
+          type: string
+          format: date-time
+          description: Invocation time.
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Terminal-state time; absent while running.
+        status:
+          type: string
+          enum: [running, completed, failed]
+        triggerType:
+          type: string
+          description: How the run was triggered. Always "on_demand" in 49.4.
+
+    AgentRunsResponse:
+      type: object
+      required: [items, total, page, pageSize]
+      properties:
+        items:
+          type: array
+          description: The requested page of visible runs, newest-first.
+          items:
+            $ref: '#/components/schemas/AgentRun'
+        total:
+          type: integer
+          description: Total visible runs after the namespace-visibility filter.
+        page:
+          type: integer
+        pageSize:
+          type: integer
+
+    SessionSummary:
+      type: object
+      required: [id, agentType, agentNamespace, firstPrompt, startedAt, lastActivityAt, runCount, status]
+      properties:
+        id:
+          type: string
+          description: >-
+            Session id — the conversationId, or a run id for legacy singleton
+            sessions (runs with no conversationId).
+        agentType:
+          type: string
+          description: The conversation's agent identifier.
+        agentNamespace:
+          type: string
+          description: The conversation's agent namespace.
+        firstPrompt:
+          type: string
+          description: The oldest run's truncated input — identifies the conversation.
+        startedAt:
+          type: string
+          format: date-time
+          description: Oldest run's invocation time.
+        lastActivityAt:
+          type: string
+          format: date-time
+          description: Newest run's invocation time (the sort key, descending).
+        runCount:
+          type: integer
+          description: Number of runs (turns) in the conversation.
+        status:
+          type: string
+          enum: [running, completed, failed]
+          description: The newest run's status.
+
+    AgentSessionsResponse:
+      type: object
+      required: [items, total, page, pageSize]
+      properties:
+        items:
+          type: array
+          description: The requested page of visible sessions, most-recent-first.
+          items:
+            $ref: '#/components/schemas/SessionSummary'
+        total:
+          type: integer
+          description: Total visible sessions after the namespace-visibility filter.
+        page:
+          type: integer
+        pageSize:
+          type: integer
+
+    AgentSession:
+      type: object
+      required: [id, agentType, agentNamespace, runs]
+      properties:
+        id:
+          type: string
+          description: Session id (conversationId or legacy singleton run id).
+        agentType:
+          type: string
+        agentNamespace:
+          type: string
+        runs:
+          type: array
+          description: The conversation's run records, ordered oldest→newest for replay.
+          items:
+            $ref: '#/components/schemas/AgentRun'
+
+    AgentRunResult:
+      type: object
+      required: [runId, agentNamespace, status, response, error, completedAt]
+      properties:
+        runId:
+          type: string
+          description: Run record UUID this result belongs to.
+        agentNamespace:
+          type: string
+          description: >-
+            Namespace of the Agent CR; readable only when it matches the
+            caller's Casbin-accessible namespace set.
+        status:
+          type: string
+          enum: [completed, failed]
+          description: Terminal run status — results only exist once terminal.
+        response:
+          type: string
+          description: >-
+            The FULL agent response text (completed runs). Empty on failure.
+        error:
+          type: string
+          description: Failure description (failed runs). Empty on success.
+        completedAt:
+          type: string
+          format: date-time
+          description: Terminal-state time.
+        policyValidation:
+          $ref: '#/components/schemas/PolicyValidation'
+
+    PolicyValidation:
+      type: object
+      description: >-
+        Gatekeeper policy-validation outcome for a generated RGD spec (Story
+        50.3, Enterprise). ABSENT on OSS builds and on Enterprise builds
+        without a valid compliance license — the UI keys its
+        Enterprise-license notice on that absence. Validation is server-side:
+        one AdmissionReview per generated object is POSTed directly to
+        Gatekeeper's validating webhook before the result is persisted.
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [passed, failed, unavailable]
+          description: >-
+            "passed" — every reviewed object allowed; "failed" — at least one
+            constraint rejected/warned (see violations); "unavailable" —
+            Gatekeeper not installed or unreachable (the spec is still
+            returned; an unreachable Gatekeeper never fails the run).
+        reason:
+          type: string
+          description: >-
+            Stable explanation for an "unavailable" status (e.g. "Gatekeeper
+            unreachable"). Never contains internal endpoints.
+        violations:
+          type: array
+          description: Constraint violations when status is "failed".
+          items:
+            $ref: '#/components/schemas/PolicyViolation'
+        revisedResponse:
+          type: string
+          description: >-
+            Full agent text of the single automatic revision attempt (failed
+            validations only; absent when the revision invoke failed).
+        revisedStatus:
+          type: string
+          enum: [passed, failed, unavailable]
+          description: Re-validation outcome of the revised spec.
+        revisedViolations:
+          type: array
+          description: Violations of the revised spec when revisedStatus is "failed".
+          items:
+            $ref: '#/components/schemas/PolicyViolation'
+
+    PolicyViolation:
+      type: object
+      description: One Gatekeeper constraint violation against a reviewed object.
+      required: [constraint, message]
+      properties:
+        constraint:
+          type: string
+          description: Violated constraint's name (empty when the denial was unparseable).
+        constraintKind:
+          type: string
+          description: Constraint kind, enriched from the constraint cache.
+        enforcementAction:
+          type: string
+          description: The constraint's enforcement action ("deny", "warn", ...).
+        message:
+          type: string
+          description: Human-readable violation message from the policy.
+        resourceId:
+          type: string
+          description: >-
+            The spec.resources[].id the reviewed object came from; empty when
+            the violation is against the RGD object itself.
+
     # --- Settings ---
     SettingsResponse:
       type: object
@@ -3255,6 +4616,50 @@ components:
           type: string
         message:
           type: string
+        seats:
+          # STORY-465: per-org seat-usage snapshot. Present on EE builds (even at
+          # cold start — `lastUpdated` is "" then); omitted entirely on OSS so
+          # consumers can use field presence as a feature probe.
+          $ref: '#/components/schemas/SeatUsage'
+
+    SeatUsage:
+      type: object
+      description: |
+        Active-user seat usage for the current organization, compared against the
+        license.MaxUsers claim (STORY-465 AC #8). Observability only — this story
+        does NOT introduce hard enforcement on top of these signals.
+      properties:
+        used:
+          type: integer
+          format: int64
+          description: Distinct users active in the trailing `windowDays`.
+        allowed:
+          type: integer
+          description: Mirrors `license.maxUsers` (0 = unlimited).
+        windowDays:
+          type: integer
+          description: Trailing-window length, currently hard-coded to 30.
+        percent:
+          type: number
+          format: double
+          description: used / allowed (0.0 when allowed = 0).
+        threshold:
+          type: string
+          enum: [ok, warn, exceeded]
+          description: |
+            "ok" when allowed == 0 OR percent < 0.80; "warn" when 0.80 <=
+            percent < 1.0; "exceeded" when percent >= 1.0.
+        lastUpdated:
+          type: string
+          description: |
+            RFC3339 timestamp of the latest reconciliation, or "" when the
+            reconciler has never successfully run (cold start). The UI renders
+            "Active users: calculating…" in that case.
+        advisoryOnly:
+          type: boolean
+          description: |
+            True in cloud-tenant deployments where the control plane is the
+            authoritative seat enforcer; the UI substitutes softer copy.
 
     # --- Compliance ---
     ComplianceStatus:
@@ -3527,6 +4932,278 @@ components:
           type: object
         cacheManager:
           type: object
+
+    ObservedGroup:
+      type: object
+      properties:
+        name:
+          type: string
+          description: The observed OIDC group identifier.
+        lastSeen:
+          type: string
+          format: date-time
+          description: When this group string was most recently seen in a login token.
+
+    ObservedGroupsResponse:
+      type: object
+      properties:
+        groups:
+          type: array
+          items:
+            $ref: '#/components/schemas/ObservedGroup'
+
+    IntegrationMember:
+      type: object
+      description: >-
+        A team roster entry. Populated only in cloud-tenant builds (best-effort
+        control-plane enrichment); omitted in OSS/non-cloud builds.
+      properties:
+        userId:
+          type: string
+          description: The member's user id.
+        email:
+          type: string
+          description: The member's email address.
+        name:
+          type: string
+          description: The member's display name.
+
+    IntegrationTeam:
+      type: object
+      required: [name, groupIdentifiers]
+      description: Replicator-facing view of a Team (decoupled from the UI TeamResponse).
+      properties:
+        name:
+          type: string
+          description: Cluster-scoped Team name.
+        description:
+          type: string
+          description: Human-readable description of the team.
+        groupIdentifiers:
+          type: array
+          description: >-
+            The team's Keycloak group identifier(s) (`spec.oidcGroups`, e.g.
+            `kx-team-<org>-<slug>`). This is the cross-tool join key
+            (group identifier ↔ Grafana team). Always present (never null).
+          items:
+            type: string
+        members:
+          type: array
+          description: >-
+            Best-effort roster (cloud-tenant builds only). Omitted in OSS /
+            non-cloud builds and when the control-plane roster fetch fails.
+          items:
+            $ref: '#/components/schemas/IntegrationMember'
+
+    IntegrationTeamListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/IntegrationTeam'
+        totalCount:
+          type: integer
+
+    IntegrationTeamBinding:
+      type: object
+      required: [role, teams, groupIdentifiers]
+      description: >-
+        A project role and the teams bound to it (from `spec.roles[].teams[]`),
+        with each bound team's group identifiers resolved for the replicator.
+      properties:
+        role:
+          type: string
+          description: The project role name.
+        teams:
+          type: array
+          description: The Team names bound to this role.
+          items:
+            type: string
+        groupIdentifiers:
+          type: array
+          description: >-
+            The group identifiers the bound teams resolve to (the join key). A
+            team with no matching Team CRD contributes nothing (empty, not null).
+          items:
+            type: string
+
+    IntegrationProject:
+      type: object
+      required: [name, destinations, teamBindings]
+      description: >-
+        Replicator-facing view of a Project. The replicator maps each project to
+        a Grafana org (project ↔ Grafana org).
+      properties:
+        name:
+          type: string
+          description: Project name.
+        type:
+          type: string
+          description: Project tier (`app` or `platform`).
+        description:
+          type: string
+          description: Human-readable description of the project.
+        destinations:
+          type: array
+          description: The project's allowed deployment namespaces.
+          items:
+            type: string
+        teamBindings:
+          type: array
+          description: Team→role bindings derived from `spec.roles[].teams[]`.
+          items:
+            $ref: '#/components/schemas/IntegrationTeamBinding'
+
+    IntegrationProjectListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/IntegrationProject'
+        totalCount:
+          type: integer
+
+    TeamResponse:
+      type: object
+      required: [name, oidcGroups]
+      properties:
+        name:
+          type: string
+          description: Cluster-scoped Team name (DNS-1123 subdomain).
+        description:
+          type: string
+          description: Human-readable description of the team.
+        oidcGroups:
+          type: array
+          description: The OIDC groups this team represents.
+          items:
+            type: string
+
+    TeamListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TeamResponse'
+        totalCount:
+          type: integer
+
+    CreateTeamRequest:
+      type: object
+      required: [name, oidcGroups]
+      properties:
+        name:
+          type: string
+          description: Team name (DNS-1123 subdomain, immutable after creation).
+        description:
+          type: string
+        oidcGroups:
+          type: array
+          description: At least one non-empty OIDC group (≤253 chars each, no duplicates).
+          minItems: 1
+          items:
+            type: string
+
+    UpdateTeamRequest:
+      type: object
+      required: [oidcGroups]
+      properties:
+        description:
+          type: string
+        oidcGroups:
+          type: array
+          description: At least one non-empty OIDC group (≤253 chars each, no duplicates).
+          minItems: 1
+          items:
+            type: string
+
+    FederatedIdentityResponse:
+      type: object
+      description: >-
+        One federated identity behind a user. IdP-side opaque ids (externalId,
+        sourceConnectorId) are deliberately omitted from the public API surface.
+      required: [issuer, sub, providerKind, sourceKind, createdAt, updatedAt]
+      properties:
+        issuer:
+          type: string
+          description: OIDC issuer URL.
+        sub:
+          type: string
+          description: OIDC subject (empty for SCIM-pushed rows not yet logged in).
+        providerKind:
+          type: string
+          description: Provider kind (e.g. "oidc").
+        sourceKind:
+          type: string
+          enum: [oidc_jit, keycloak_projection, scim_push]
+          description: How this identity row was materialised.
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    UserResponse:
+      type: object
+      required: [id, email, displayName, state, isInactive, firstSeenAt, lastSeenAt, federatedIdentities]
+      properties:
+        id:
+          type: string
+          description: User ULID (26-char Crockford base32).
+        email:
+          type: string
+        displayName:
+          type: string
+        state:
+          type: string
+          enum: [active, removed]
+          description: Soft-delete state; resurrected on next login.
+        isInactive:
+          type: boolean
+          description: >-
+            Display-only — lastSeenAt older than IDENTITY_INACTIVE_THRESHOLD_DAYS.
+            Orthogonal to state and never used for billing.
+        firstSeenAt:
+          type: string
+          format: date-time
+        lastSeenAt:
+          type: string
+          format: date-time
+        federatedIdentities:
+          type: array
+          description: Expanded federated identities (empty array, never null).
+          items:
+            $ref: '#/components/schemas/FederatedIdentityResponse'
+
+    UsersListResponse:
+      type: object
+      required: [users]
+      properties:
+        users:
+          type: array
+          description: Page of users (empty array, never null).
+          items:
+            $ref: '#/components/schemas/UserResponse'
+        nextPageToken:
+          type: string
+          description: Opaque keyset cursor for the next page; omitted on the last page.
+
+    DeleteUserResponse:
+      type: object
+      required: [id, state, note]
+      properties:
+        id:
+          type: string
+        state:
+          type: string
+          enum: [removed]
+        note:
+          type: string
+          description: Reclaim-semantics note (permanent exclusion requires IdP-side revocation).
 
 security:
   - bearerAuth: []

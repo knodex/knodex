@@ -93,10 +93,10 @@ describe("EditSecretDialog", () => {
     // Submit
     await user.click(screen.getByText("Update"));
 
-    // Only keys with non-empty values are sent (partial update)
+    // Only keys with non-empty values are sent (partial update). Namespace
+    // is the URL-routed access boundary — no project param.
     expect(mockMutateAsync).toHaveBeenCalledWith({
       name: "db-credentials",
-      project: "alpha",
       namespace: "alpha-ns",
       data: {
         username: "newadmin",
@@ -111,9 +111,12 @@ describe("EditSecretDialog", () => {
     renderDialog();
 
     // Submit without typing any values (all keys have empty values)
+    // and without touching metadata. The dialog rejects the no-op save.
     await user.click(screen.getByText("Update"));
 
-    expect(screen.getByText("At least one key must have a new value")).toBeInTheDocument();
+    expect(
+      screen.getByText("Enter a new value or change a metadata field to save"),
+    ).toBeInTheDocument();
     expect(mockMutateAsync).not.toHaveBeenCalled();
   });
 
@@ -134,10 +137,9 @@ describe("EditSecretDialog", () => {
 
     await user.click(screen.getByText("Update"));
 
-    // Only the key with a value should be sent
+    // Only the key with a value should be sent (no project param)
     expect(mockMutateAsync).toHaveBeenCalledWith({
       name: "db-credentials",
-      project: "alpha",
       namespace: "alpha-ns",
       data: {
         password: "newpass",

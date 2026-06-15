@@ -1,6 +1,7 @@
 # Production Project - Strict access control for production environment
 # This project has tight restrictions on who can deploy and what resources
-# Apply with: kubectl apply -f <this-file> -n <knodex-namespace>
+# Apply with: kubectl apply -f production-teams.yaml -n <knodex-namespace>
+#             kubectl apply -f <this-file> -n <knodex-namespace>
 apiVersion: knodex.io/v1alpha1
 kind: Project
 metadata:
@@ -46,7 +47,7 @@ spec:
         - "p, proj:proj-production:release-manager, instance, deploy, proj-production/prod-*, allow"
         - "p, proj:proj-production:release-manager, instance, view, proj-production/*, allow"
         - "p, proj:proj-production:release-manager, rgd, view, *, allow"
-      groups:
+      teams:
         - release-managers
 
     - name: sre
@@ -55,7 +56,7 @@ spec:
         - "p, proj:proj-production:sre, project, *, proj-production, allow"
         - "p, proj:proj-production:sre, instance, *, proj-production/*, allow"
         - "p, proj:proj-production:sre, rgd, view, *, allow"
-      groups:
+      teams:
         - sre-team
 
     - name: oncall
@@ -64,5 +65,5 @@ spec:
         - "p, proj:proj-production:oncall, project, view, proj-production, allow"
         - "p, proj:proj-production:oncall, instance, view, proj-production/*, allow"
         - "p, proj:proj-production:oncall, rgd, view, *, allow"
-      groups:
+      teams:
         - oncall-engineers

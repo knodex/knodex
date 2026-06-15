@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { useState, useCallback } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ShieldAlert } from "@/lib/icons";
 import { AxiosError } from "axios";
@@ -16,21 +15,20 @@ import {
 import { RepositoryList } from "./RepositoryList";
 import { RepositoryForm } from "./RepositoryForm";
 import { DeleteRepositoryDialog } from "./DeleteRepositoryDialog";
-import {
-  listRepositories,
-  createRepository,
-  updateRepository,
-  deleteRepository,
-  testConnection,
-} from "@/api/repository";
+import { testConnection } from "@/api/repository";
 import type {
   RepositoryConfig,
   CreateRepositoryRequest,
   TestConnectionRequest,
   TestConnectionResponse,
-  UpdateRepositoryRequest,
 } from "@/types/repository";
 import { useProjects } from "@/hooks/useProjects";
+import {
+  useRepositories,
+  useCreateRepository,
+  useUpdateRepository,
+  useDeleteRepository,
+} from "@/hooks/useRepositories";
 
 interface RepositorySectionProps {
   canManage?: boolean;
@@ -47,16 +45,11 @@ export function RepositorySection({
   const [editingRepo, setEditingRepo] = useState<RepositoryConfig | null>(null);
   const [deletingRepo, setDeletingRepo] = useState<RepositoryConfig | null>(null);
 
-  const queryClient = useQueryClient();
-
   const {
     data: repositoriesData,
     isLoading,
     error,
-  } = useQuery({
-    queryKey: ["repositories"],
-    queryFn: () => listRepositories(),
-  });
+  } = useRepositories();
 
   const { data: projectsData } = useProjects();
   const projects = projectsData?.items ?? [];
@@ -66,51 +59,37 @@ export function RepositorySection({
     setEditingRepo(null);
   }, []);
 
-  const createMutation = useMutation({
-    mutationFn: (data: CreateRepositoryRequest) => createRepository(data),
-    onSuccess: (_, data) => {
-      queryClient.invalidateQueries({ queryKey: ["repositories"] });
-      closeDialog();
-      toast.success(`Repository "${data.name}" added successfully`);
-    },
-    onError: (err: Error) => {
-      toast.error(err.message || "Failed to add repository");
-    },
-  });
-
-  const updateMutation = useMutation({
-    mutationFn: ({ repoId, data }: { repoId: string; data: UpdateRepositoryRequest }) =>
-      updateRepository(repoId, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["repositories"] });
-      closeDialog();
-      toast.success("Repository updated successfully");
-    },
-    onError: (err: Error) => {
-      toast.error(err.message || "Failed to update repository");
-    },
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: (repoId: string) => deleteRepository(repoId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["repositories"] });
-      toast.success(`Repository "${deletingRepo?.name}" deleted`);
-      setDeletingRepo(null);
-    },
-    onError: (err: Error) => {
-      toast.error(err.message || "Failed to delete repository");
-    },
-  });
+  const createMutation = useCreateRepository();
+  const updateMutation = useUpdateRepository();
+  const deleteMutation = useDeleteRepository();
 
   const handleFormSubmit = async (data: CreateRepositoryRequest) => {
     if (editingRepo) {
-      await updateMutation.mutateAsync({
-        repoId: editingRepo.id,
-        data: { name: data.name, defaultBranch: data.defaultBranch },
-      });
+      await updateMutation.mutateAsync(
+        {
+          id: editingRepo.id,
+          request: { name: data.name, defaultBranch: data.defaultBranch },
+        },
+        {
+          onSuccess: () => {
+            closeDialog();
+            toast.success("Repository updated successfully");
+          },
+          onError: (err: Error) => {
+            toast.error(err.message || "Failed to update repository");
+          },
+        },
+      );
     } else {
-      await createMutation.mutateAsync(data);
+      await createMutation.mutateAsync(data, {
+        onSuccess: () => {
+          closeDialog();
+          toast.success(`Repository "${data.name}" added successfully`);
+        },
+        onError: (err: Error) => {
+          toast.error(err.message || "Failed to add repository");
+        },
+      });
     }
   };
 
@@ -195,7 +174,17 @@ export function RepositorySection({
       {deletingRepo && (
         <DeleteRepositoryDialog
           repository={deletingRepo}
-          onConfirm={() => deleteMutation.mutateAsync(deletingRepo.id)}
+          onConfirm={() =>
+            deleteMutation.mutateAsync(deletingRepo.id, {
+              onSuccess: () => {
+                toast.success(`Repository "${deletingRepo.name}" deleted`);
+                setDeletingRepo(null);
+              },
+              onError: (err: Error) => {
+                toast.error(err.message || "Failed to delete repository");
+              },
+            })
+          }
           onCancel={() => setDeletingRepo(null)}
           isOpen={!!deletingRepo}
           isDeleting={deleteMutation.isPending}

@@ -1911,9 +1911,10 @@ func TestDirectDeploy_IrregularPlural_UsesDiscovery(t *testing.T) {
 	// Set up RGD watcher with a Proxy RGD
 	rgdCache := watcher.NewRGDCache()
 	rgdCache.Set(&models.CatalogRGD{
-		Name:       "proxy-rgd",
-		APIVersion: "example.com/v1",
-		Kind:       "proxy",
+		Name:        "proxy-rgd",
+		APIVersion:  "example.com/v1",
+		Kind:        "proxy",
+		Annotations: map[string]string{models.CatalogAnnotation: "true"},
 	})
 
 	rgdWatcher := watcher.NewRGDWatcherWithCache(rgdCache)
@@ -2460,6 +2461,7 @@ func TestCreateInstance_ClusterScoped_NamespaceNotRequired(t *testing.T) {
 		Kind:            "ClusterConfig",
 		APIVersion:      "kro.run/v1alpha1",
 		IsClusterScoped: true,
+		Annotations:     map[string]string{models.CatalogAnnotation: "true"},
 	})
 	rgdWatcher := watcher.NewRGDWatcherWithCache(rgdCache)
 	scheme := runtime.NewScheme()
@@ -2497,6 +2499,7 @@ func TestCreateInstance_NamespaceScoped_RequiresNamespace(t *testing.T) {
 		Kind:            "Application",
 		APIVersion:      "kro.run/v1alpha1",
 		IsClusterScoped: false,
+		Annotations:     map[string]string{models.CatalogAnnotation: "true"},
 	})
 	rgdWatcher := watcher.NewRGDWatcherWithCache(rgdCache)
 	scheme := runtime.NewScheme()
@@ -2536,6 +2539,7 @@ func TestCreateInstance_ClusterScoped_NoNamespaceInManifest(t *testing.T) {
 		Kind:            "Clusterpolicy",
 		APIVersion:      "kro.run/v1alpha1",
 		IsClusterScoped: true,
+		Annotations:     map[string]string{models.CatalogAnnotation: "true"},
 	})
 	rgdWatcher := watcher.NewRGDWatcherWithCache(rgdCache)
 	scheme := runtime.NewScheme()
@@ -2582,6 +2586,7 @@ func TestCreateInstance_ClusterScoped_ProjectLabelInjected(t *testing.T) {
 		Kind:            "ClusterConfig",
 		APIVersion:      "kro.run/v1alpha1",
 		IsClusterScoped: true,
+		Annotations:     map[string]string{models.CatalogAnnotation: "true"},
 	})
 	rgdWatcher := watcher.NewRGDWatcherWithCache(rgdCache)
 	scheme := runtime.NewScheme()
@@ -2643,6 +2648,7 @@ func TestCreateInstance_ClusterScoped_AnnotationsInjected(t *testing.T) {
 		Kind:            "ClusterConfig",
 		APIVersion:      "kro.run/v1alpha1",
 		IsClusterScoped: true,
+		Annotations:     map[string]string{models.CatalogAnnotation: "true"},
 	})
 	rgdWatcher := watcher.NewRGDWatcherWithCache(rgdCache)
 	scheme := runtime.NewScheme()
@@ -3175,7 +3181,7 @@ func TestBatchEnrichInstanceDrift(t *testing.T) {
 
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	driftSvc := drift.NewService(client, nil, "")
+	driftSvc := drift.NewService(client, nil, "default")
 
 	// Store drift for two instances — one drifted, one reconciled
 	driftedSpec := map[string]interface{}{"replicas": float64(5)}
@@ -3687,10 +3693,11 @@ func TestCreateInstance_PathGroupMismatch_Returns400(t *testing.T) {
 
 	rgdCache := watcher.NewRGDCache()
 	rgdCache.Set(&models.CatalogRGD{
-		Name:       "webapp-rgd",
-		Namespace:  "kro-system",
-		Kind:       "Webapp",
-		APIVersion: "apps.example.com/v1",
+		Name:        "webapp-rgd",
+		Namespace:   "kro-system",
+		Kind:        "Webapp",
+		APIVersion:  "apps.example.com/v1",
+		Annotations: map[string]string{models.CatalogAnnotation: "true"},
 	})
 	rgdWatcher := watcher.NewRGDWatcherWithCache(rgdCache)
 
@@ -3952,6 +3959,7 @@ func TestGetInstanceChildren_Success(t *testing.T) {
 				},
 			},
 		},
+		Annotations: map[string]string{models.CatalogAnnotation: "true"},
 	})
 	rgdWatcher := watcher.NewRGDWatcherWithCache(rgdCache)
 
@@ -3996,5 +4004,38 @@ func TestGetInstanceChildren_Success(t *testing.T) {
 	}
 	if body.InstanceNamespace != "default" {
 		t.Errorf("InstanceNamespace = %q, want %q", body.InstanceNamespace, "default")
+	}
+}
+
+func TestCreateInstance_NoCatalogAnnotation_Returns404(t *testing.T) {
+	t.Parallel()
+
+	rgdCache := watcher.NewRGDCache()
+	rgdCache.Set(&models.CatalogRGD{
+		Name:       "internal-rgd",
+		Namespace:  "kro-system",
+		Kind:       "InternalThing",
+		APIVersion: "kro.run/v1alpha1",
+	})
+	rgdWatcher := watcher.NewRGDWatcherWithCache(rgdCache)
+	scheme := runtime.NewScheme()
+	fakeDynClient := fakedynamic.NewSimpleDynamicClient(scheme)
+
+	handler := NewInstanceDeploymentHandler(InstanceDeploymentHandlerConfig{
+		RGDWatcher:    rgdWatcher,
+		DynamicClient: fakeDynClient,
+	})
+
+	body := `{"name": "my-instance", "rgdName": "internal-rgd", "spec": {}}`
+	userCtx := &middleware.UserContext{UserID: "admin", Email: "admin@test.local"}
+	req := newRequestWithUserContext(http.MethodPost, "/api/v1/apigroups/kro.run/instances/InternalThing", []byte(body), userCtx)
+	req.SetPathValue("group", "kro.run")
+	req.SetPathValue("kind", "InternalThing")
+	rec := httptest.NewRecorder()
+
+	handler.CreateInstance(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d; body: %s", rec.Code, rec.Body.String())
 	}
 }

@@ -26,8 +26,12 @@ import {
 } from "@/components/ui/select";
 import { KeyValueEditor } from "./KeyValueEditor";
 import { createPairId, type KeyValuePair } from "./keyValueTypes";
+import { SecretMetadataFields } from "./SecretMetadataFields";
 import { useCurrentProject } from "@/hooks/useAuth";
 import { useProjects } from "@/hooks/useProjects";
+import { dateInputToExpiresAt, emptyMetadataValue, type SecretMetadataFormValue } from "@/lib/secret-metadata";
+import type { SecretMetadata } from "@/types/secret";
+import { validateDocsUrl } from "@/lib/url-utils";
 
 interface CreateSecretDialogProps {
   open: boolean;
@@ -46,6 +50,7 @@ export function CreateSecretDialog({ open, onOpenChange }: CreateSecretDialogPro
   const [name, setName] = useState("");
   const [namespace, setNamespace] = useState("");
   const [pairs, setPairs] = useState<KeyValuePair[]>(createInitialPairs);
+  const [metadata, setMetadata] = useState<SecretMetadataFormValue>(emptyMetadataValue);
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
 
   const { data: projectsData, isLoading: projectsLoading } = useProjects();
@@ -61,6 +66,7 @@ export function CreateSecretDialog({ open, onOpenChange }: CreateSecretDialogPro
     setName("");
     setNamespace("");
     setPairs(createInitialPairs());
+    setMetadata(emptyMetadataValue);
     setValidationErrors({});
   }, [globalProject]);
 
@@ -111,9 +117,16 @@ export function CreateSecretDialog({ open, onOpenChange }: CreateSecretDialogPro
       }
     }
 
+    // Metadata fields are OPTIONAL. We only sanity-check the URL shape
+    // when the user actually entered one; everything blank is valid.
+    if (metadata.docsUrl) {
+      const msg = validateDocsUrl(metadata.docsUrl);
+      if (msg) errors["metadata:docsUrl"] = msg;
+    }
+
     setValidationErrors(errors);
     return Object.keys(errors).length === 0;
-  }, [project, name, namespace, pairs]);
+  }, [project, name, namespace, pairs, metadata]);
 
   const handleSubmit = useCallback(async () => {
     if (!validate()) return;
@@ -127,8 +140,28 @@ export function CreateSecretDialog({ open, onOpenChange }: CreateSecretDialogPro
       }
     }
 
+    // Build the metadata payload only when the user touched at least one
+    // field — keeps the wire shape clean and lets the server skip writing
+    // empty labels/annotations.
+    const md: SecretMetadata = {};
+    if (metadata.rotation) md.rotation = metadata.rotation;
+    if (metadata.docsUrl.trim()) md.docsUrl = metadata.docsUrl.trim();
+    const expiresAt = dateInputToExpiresAt(metadata.expiresAtDate);
+    if (expiresAt) md.expiresAt = expiresAt;
+    const metadataPayload = Object.keys(md).length > 0 ? md : undefined;
+
     try {
-      await createMutation.mutateAsync({ project, name: name.trim(), namespace, data });
+      // Namespace is the access boundary on the server (secrets are
+      // namespace-keyed under the unified Casbin model). The Project
+      // selector above only narrows the namespace dropdown to namespaces
+      // declared on the chosen project's destinations — the audit lens
+      // is set globally by the apiClient interceptor.
+      await createMutation.mutateAsync({
+        name: name.trim(),
+        namespace,
+        data,
+        metadata: metadataPayload,
+      });
       toast.success(`Secret "${name.trim()}" created successfully`);
       handleOpenChange(false);
     } catch (err) {
@@ -144,11 +177,11 @@ export function CreateSecretDialog({ open, onOpenChange }: CreateSecretDialogPro
         toast.error("Failed to create secret");
       }
     }
-  }, [validate, pairs, name, namespace, project, createMutation, handleOpenChange]);
+  }, [validate, pairs, name, namespace, metadata, createMutation, handleOpenChange]);
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-[600px]">
+      <DialogContent className="sm:max-w-[600px] max-h-[90vh] flex flex-col overflow-hidden">
         <DialogHeader>
           <DialogTitle>Create Secret</DialogTitle>
           <DialogDescription>
@@ -161,8 +194,9 @@ export function CreateSecretDialog({ open, onOpenChange }: CreateSecretDialogPro
             e.preventDefault();
             handleSubmit();
           }}
+          className="flex min-h-0 flex-1 flex-col"
         >
-          <div className="space-y-4 py-2">
+          <div className="flex-1 space-y-4 overflow-y-auto py-2 pr-1">
             {/* Project */}
             <div className="space-y-2">
               <Label htmlFor="secret-project">Project</Label>
@@ -246,6 +280,14 @@ export function CreateSecretDialog({ open, onOpenChange }: CreateSecretDialogPro
                 errors={validationErrors}
               />
             </div>
+
+            {/* Optional metadata: rotation policy, docs URL, expiration */}
+            <SecretMetadataFields
+              value={metadata}
+              onChange={setMetadata}
+              errors={validationErrors}
+              idPrefix="create-secret-metadata"
+            />
           </div>
 
           <DialogFooter>

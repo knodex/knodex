@@ -215,6 +215,16 @@ func (r *ProjectRole) Validate() error {
 	if len(r.Policies) == 0 {
 		return fmt.Errorf("role must have at least one policy")
 	}
+	// Validate team-name references for FORMAT only (DNS-1123 subdomain), not
+	// existence: a team may be applied after the project (GitOps ordering), and
+	// the missing-team runtime behavior is handled at policy-generation time
+	// (Story 10.2 AC #3). Reuse ValidateTeamName so the rule stays in lockstep
+	// with the Team CRD's own name validation.
+	for i, team := range r.Teams {
+		if err := ValidateTeamName(team); err != nil {
+			return fmt.Errorf("roles[%s].teams[%d]: %w", r.Name, i, err)
+		}
+	}
 	return nil
 }
 

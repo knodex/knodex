@@ -28,3 +28,11 @@ dependencies:
     version: 16.7.27
     repository: https://charts.bitnami.com/bitnami
     condition: postgresql.enabled
+  - name: kagent
+    version: 0.9.6
+    repository: oci://ghcr.io/kagent-dev/kagent/helm
+    condition: kagent.enabled
+  - name: kagent-crds
+    version: 0.9.6
+    repository: oci://ghcr.io/kagent-dev/kagent/helm
+    condition: kagent.crds.enabled

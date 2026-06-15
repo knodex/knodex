@@ -1,0 +1,18 @@
+# CI fixture — AC #3: postgresql.forceEnable overrides the auto-detect guard.
+#
+# An external supply is present (externalPostgresql.existingSecret) AND
+# postgresql.forceEnable=true. The override must win: the embedded subchart's
+# parent resources render (the embedded DSN Secret <release>-knodex-postgres-url
+# is created) and DATABASE_URL resolves to the EMBEDDED DSN, not the external
+# Secret. Contrast with values-postgres-autodetect.yaml (same inputs, no
+# forceEnable ⇒ embedded suppressed).
+#
+# Used in CI via:
+#   helm template knodex ./deploy/charts/knodex \
+#     --values ./deploy/charts/knodex/ci/values-postgres-forceenable.yaml
+
+postgresql:
+  forceEnable: true
+
+externalPostgresql:
+  existingSecret: "my-external-db-secret"

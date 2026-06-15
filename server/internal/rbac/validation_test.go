@@ -528,11 +528,11 @@ func TestProjectRole_Validate(t *testing.T) {
 			expectError: false,
 		},
 		{
-			name: "valid role with groups",
+			name: "valid role with teams",
 			role: ProjectRole{
 				Name:     "viewer",
 				Policies: []string{"p, proj:test:viewer, applications, get, */*, allow"},
-				Groups:   []string{"myorg:engineering"},
+				Teams:    []string{"myorg-engineering"},
 			},
 			expectError: false,
 		},

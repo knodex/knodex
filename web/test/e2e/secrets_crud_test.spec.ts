@@ -19,7 +19,10 @@ test.describe('Secrets CRUD Workflow', () => {
   test.use({ authenticateAs: TestUserRole.GLOBAL_ADMIN });
 
   const secretName = `e2e-test-secret-${Date.now()}`;
-  const project = 'proj-alpha-team';
+  // Secrets are namespace-keyed under the unified Casbin model — the test
+  // URLs target /api/v1/namespaces/{namespace}/secrets. The default namespace
+  // is used because the GLOBAL_ADMIN fixture has access to every namespace.
+  const namespace = 'default';
 
   test('AC-SEC-01: Admin can create a secret', async ({ page }) => {
     await page.goto('/secrets');
@@ -75,11 +78,11 @@ test.describe('Secrets CRUD Workflow', () => {
     await page.goto('/');
     await page.waitForLoadState('networkidle', { timeout: 15000 });
 
-    // Create
+    // Create — namespace in the URL path, no project query.
     const createResp = await page.evaluate(
-      async ({ name, project }) => {
+      async ({ name, namespace }) => {
         const token = localStorage.getItem('jwt_token');
-        const resp = await fetch(`/api/v1/secrets?project=${project}`, {
+        const resp = await fetch(`/api/v1/namespaces/${namespace}/secrets`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -87,13 +90,12 @@ test.describe('Secrets CRUD Workflow', () => {
           },
           body: JSON.stringify({
             name,
-            namespace: 'default',
             data: { username: 'admin', password: 'test123' },
           }),
         });
         return { status: resp.status, body: await resp.json() };
       },
-      { name: secretName, project },
+      { name: secretName, namespace },
     );
     expect(createResp.status).toBe(201);
     expect(createResp.body.name).toBe(secretName);
@@ -102,61 +104,63 @@ test.describe('Secrets CRUD Workflow', () => {
     // Values must NOT be in response
     expect(JSON.stringify(createResp.body)).not.toContain('test123');
 
-    // List
-    const listResp = await page.evaluate(async (project) => {
+    // List — single namespace-agnostic list, server filters to accessible.
+    const listResp = await page.evaluate(async () => {
       const token = localStorage.getItem('jwt_token');
-      const resp = await fetch(`/api/v1/secrets?project=${project}`, {
+      const resp = await fetch('/api/v1/secrets', {
         headers: token ? { 'Authorization': `Bearer ${token}` } : {},
       });
       return { status: resp.status, body: await resp.json() };
-    }, project);
+    });
     expect(listResp.status).toBe(200);
     expect(listResp.body.items.some((s: { name: string }) => s.name === secretName)).toBe(true);
 
     // Get (with values)
     const getResp = await page.evaluate(
-      async ({ name, project }) => {
+      async ({ name, namespace }) => {
         const token = localStorage.getItem('jwt_token');
         const resp = await fetch(
-          `/api/v1/secrets/${encodeURIComponent(name)}?project=${project}&namespace=default`,
+          `/api/v1/namespaces/${namespace}/secrets/${encodeURIComponent(name)}`,
           { headers: token ? { 'Authorization': `Bearer ${token}` } : {} },
         );
         return { status: resp.status, body: await resp.json() };
       },
-      { name: secretName, project },
+      { name: secretName, namespace },
     );
     expect(getResp.status).toBe(200);
     expect(getResp.body.data.username).toBe('admin');
     expect(getResp.body.data.password).toBe('test123');
 
-    // Update
+    // Update — namespace in URL, body carries only data (and optional metadata).
     const updateResp = await page.evaluate(
-      async ({ name, project }) => {
+      async ({ name, namespace }) => {
         const token = localStorage.getItem('jwt_token');
-        const resp = await fetch(`/api/v1/secrets/${encodeURIComponent(name)}?project=${project}`, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+        const resp = await fetch(
+          `/api/v1/namespaces/${namespace}/secrets/${encodeURIComponent(name)}`,
+          {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+            },
+            body: JSON.stringify({
+              data: { username: 'admin', password: 'updated123', api_key: 'newkey' },
+            }),
           },
-          body: JSON.stringify({
-            namespace: 'default',
-            data: { username: 'admin', password: 'updated123', api_key: 'newkey' },
-          }),
-        });
+        );
         return { status: resp.status, body: await resp.json() };
       },
-      { name: secretName, project },
+      { name: secretName, namespace },
     );
     expect(updateResp.status).toBe(200);
     expect(updateResp.body.keys).toContain('api_key');
 
     // Delete
     const deleteResp = await page.evaluate(
-      async ({ name, project }) => {
+      async ({ name, namespace }) => {
         const token = localStorage.getItem('jwt_token');
         const resp = await fetch(
-          `/api/v1/secrets/${encodeURIComponent(name)}?project=${project}&namespace=default`,
+          `/api/v1/namespaces/${namespace}/secrets/${encodeURIComponent(name)}`,
           {
             method: 'DELETE',
             headers: token ? { 'Authorization': `Bearer ${token}` } : {},
@@ -164,22 +168,22 @@ test.describe('Secrets CRUD Workflow', () => {
         );
         return { status: resp.status, body: await resp.json() };
       },
-      { name: secretName, project },
+      { name: secretName, namespace },
     );
     expect(deleteResp.status).toBe(200);
     expect(deleteResp.body.deleted).toBe(true);
 
     // Verify deleted
     const verifyResp = await page.evaluate(
-      async ({ name, project }) => {
+      async ({ name, namespace }) => {
         const token = localStorage.getItem('jwt_token');
         const resp = await fetch(
-          `/api/v1/secrets/${encodeURIComponent(name)}?project=${project}&namespace=default`,
+          `/api/v1/namespaces/${namespace}/secrets/${encodeURIComponent(name)}`,
           { headers: token ? { 'Authorization': `Bearer ${token}` } : {} },
         );
         return { status: resp.status };
       },
-      { name: secretName, project },
+      { name: secretName, namespace },
     );
     expect(verifyResp.status).toBe(404);
 

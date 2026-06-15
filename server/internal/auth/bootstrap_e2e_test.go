@@ -104,22 +104,16 @@ func TestE2E_AdminBootstrap_FirstLogin(t *testing.T) {
 	require.NotEmpty(t, project.Spec.Destinations, "Project should have destinations")
 	assert.Equal(t, auth.DefaultProjectNamespace, project.Spec.Destinations[0].Namespace)
 
-	// AC-6: Admin should have platform-admin role (via OIDC group in role's Groups)
-	adminUserID := "user-local-admin"
-	adminGroup := fmt.Sprintf("admin:%s", adminUserID)
+	// AC-6: platform-admin role should exist (team binding is operator's responsibility; Story 10.6)
 	foundAdminRole := false
 	for _, role := range project.Spec.Roles {
 		if role.Name == "platform-admin" {
-			for _, group := range role.Groups {
-				if group == adminGroup {
-					foundAdminRole = true
-					break
-				}
-			}
+			foundAdminRole = true
+			assert.NotEmpty(t, role.Policies, "platform-admin role should have policies")
 			break
 		}
 	}
-	assert.True(t, foundAdminRole, "Admin should have platform-admin role via group binding")
+	assert.True(t, foundAdminRole, "platform-admin role should exist after bootstrap")
 }
 
 // TestE2E_AdminBootstrap_Idempotency tests multiple admin logins are idempotent
@@ -148,7 +142,7 @@ func TestE2E_AdminBootstrap_Idempotency(t *testing.T) {
 	var initialGroupCount int
 	for _, role := range project1.Spec.Roles {
 		if role.Name == "platform-admin" {
-			initialGroupCount = len(role.Groups)
+			initialGroupCount = len(role.Teams)
 			break
 		}
 	}
@@ -190,28 +184,21 @@ func TestE2E_AdminBootstrap_Idempotency(t *testing.T) {
 	var currentGroupCount int
 	for _, role := range project2.Spec.Roles {
 		if role.Name == "platform-admin" {
-			currentGroupCount = len(role.Groups)
+			currentGroupCount = len(role.Teams)
 			break
 		}
 	}
 	assert.Equal(t, initialGroupCount, currentGroupCount, "Group count should remain the same")
 
-	// AC-10: Admin should still be in platform-admin role
-	adminUserID := "user-local-admin"
-	adminGroup := fmt.Sprintf("admin:%s", adminUserID)
+	// AC-10: platform-admin role should still exist (team binding is operator's responsibility)
 	foundAdmin := false
 	for _, role := range project2.Spec.Roles {
 		if role.Name == "platform-admin" {
-			for _, group := range role.Groups {
-				if group == adminGroup {
-					foundAdmin = true
-					break
-				}
-			}
+			foundAdmin = true
 			break
 		}
 	}
-	assert.True(t, foundAdmin)
+	assert.True(t, foundAdmin, "platform-admin role should still exist after second login")
 }
 
 // TestE2E_OIDCUserEvaluation tests OIDC user evaluation (ephemeral users)
@@ -292,7 +279,7 @@ func TestE2E_OIDCUserEvaluation(t *testing.T) {
 	// OIDC users are evaluated (ephemeral), not provisioned to CRD
 	provisioningSvc := auth.NewOIDCProvisioningService(projectService, nil, casbinEnforcer, "")
 	oidcGroups := []string{"engineering", "developers"}
-	result, err := provisioningSvc.EvaluateOIDCUser(ctx, "oidc-subject-123", "newuser@example.com", "New User", oidcGroups)
+	result, err := provisioningSvc.EvaluateOIDCUser(ctx, "oidc-subject-123", "newuser@example.com", "New User", oidcGroups, "https://idp.example.com", true)
 	require.NoError(t, err, "OIDC user evaluation should succeed")
 
 	// Verify OIDCUserInfo is populated correctly
@@ -353,12 +340,12 @@ func TestE2E_AdminRemovedAndReAdded(t *testing.T) {
 	for i, role := range project.Spec.Roles {
 		if role.Name == "platform-admin" {
 			filteredGroups := []string{}
-			for _, group := range role.Groups {
+			for _, group := range role.Teams {
 				if group != adminGroup {
 					filteredGroups = append(filteredGroups, group)
 				}
 			}
-			project.Spec.Roles[i].Groups = filteredGroups
+			project.Spec.Roles[i].Teams = filteredGroups
 			break
 		}
 	}
@@ -372,14 +359,15 @@ func TestE2E_AdminRemovedAndReAdded(t *testing.T) {
 	require.NoError(t, err)
 	for _, role := range updatedProject.Spec.Roles {
 		if role.Name == "platform-admin" {
-			for _, group := range role.Groups {
+			for _, group := range role.Teams {
 				assert.NotEqual(t, adminGroup, group, "Admin group should be removed")
 			}
 			break
 		}
 	}
 
-	// Login again - admin should be re-added
+	// Login again - with Teams-only binding, the admin's group is NOT automatically re-added.
+	// The platform-admin role must still exist (ensureAdminRole only creates the role if missing).
 	resp2, err := http.Post(server.URL+"/api/v1/auth/local/login", "application/json", bytes.NewReader(reqBody))
 	require.NoError(t, err)
 	defer resp2.Body.Close()
@@ -387,23 +375,18 @@ func TestE2E_AdminRemovedAndReAdded(t *testing.T) {
 	// Login should still succeed
 	assert.Equal(t, http.StatusOK, resp2.StatusCode)
 
-	// Verify admin was re-added
+	// Verify platform-admin role still exists (team binding is operator's responsibility per Story 10.6)
 	finalProject, err := projectService.GetProject(ctx, auth.DefaultProjectName)
 	require.NoError(t, err)
 
-	foundAdmin := false
+	foundRole := false
 	for _, role := range finalProject.Spec.Roles {
 		if role.Name == "platform-admin" {
-			for _, group := range role.Groups {
-				if group == adminGroup {
-					foundAdmin = true
-					break
-				}
-			}
+			foundRole = true
 			break
 		}
 	}
-	assert.True(t, foundAdmin, "Admin should be re-added to platform-admin role")
+	assert.True(t, foundRole, "platform-admin role should still exist after second login")
 }
 
 // setupE2EAuthServer creates a complete E2E test server with auth configured

@@ -26,13 +26,23 @@ export function TopBar({ onMobileMenuToggle, onCommandPaletteOpen, isSidebarColl
     <TooltipProvider>
       <header
         className={cn(
-          "fixed top-0 left-0 right-0 z-30 h-[52px] border-b border-[var(--border-subtle)] bg-background/90 backdrop-blur-md",
-          isSidebarCollapsed ? "lg:pl-16" : "lg:pl-[260px]"
+          // z-[60] so the topbar sits ABOVE Radix Dialog overlays (z-50)
+          // like the Deploy drawer's backdrop — keeps the breadcrumb crisp
+          // instead of dimmed.
+          //
+          // At lg+ the desktop sidebar is fixed on the left, so the topbar
+          // must START at the sidebar's right edge (NOT just pl-* the inner
+          // content). When the header spanned `left-0 right-0` it overlaid
+          // the sidebar's top 52px — burying the logo and collapse trigger
+          // and swallowing their clicks. Anchor the left edge to the
+          // sidebar width instead.
+          "fixed top-0 left-0 right-0 z-[60] h-[52px] border-b border-[var(--border-subtle)] bg-background/90 backdrop-blur-md",
+          isSidebarCollapsed ? "lg:left-16" : "lg:left-[260px]"
         )}
       >
         <div
           className={cn(
-            "relative flex h-full items-center justify-between gap-3 px-6 lg:px-10 mx-auto",
+            "flex h-full items-center gap-3 px-6 lg:px-10 mx-auto",
             isSidebarCollapsed ? "max-w-none" : "max-w-[1280px]"
           )}
         >
@@ -69,13 +79,14 @@ export function TopBar({ onMobileMenuToggle, onCommandPaletteOpen, isSidebarColl
             <Breadcrumbs className="min-w-0" hideHome />
           </div>
 
-          {/* Centered search trigger — absolutely positioned so left/right
-              clusters don't pull it off-center. Hidden on narrow widths where
-              it would overlap the breadcrumb. */}
-          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 hidden md:block pointer-events-none">
-            <div className="pointer-events-auto">
-              <CmdKTrigger onOpen={onCommandPaletteOpen} />
-            </div>
+          {/* Spacer pushes the CmdK trigger toward center-right and keeps the
+              right cluster pinned to the edge without absolute positioning. */}
+          <div className="flex-1" aria-hidden="true" />
+
+          {/* Inline CmdK trigger — min-w-[220px] keeps the trigger's footprint
+              stable so it doesn't crush the breadcrumb at 1024–1100px. */}
+          <div className="hidden md:block min-w-[220px]">
+            <CmdKTrigger onOpen={onCommandPaletteOpen} />
           </div>
 
           {/* Right cluster: project filter */}

@@ -51,7 +51,7 @@ async function safeGetToken(
         await page.waitForTimeout(1000);
         try {
           await page.waitForLoadState("load", { timeout: 5000 });
-        } catch (e) {
+        } catch {
           // Ignore wait errors
         }
       }

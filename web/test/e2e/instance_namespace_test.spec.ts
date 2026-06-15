@@ -29,7 +29,7 @@
  */
 
 import { test, expect, TestUserRole } from '../fixture'
-import { setupAuth, generateTestToken, TEST_USERS, authenticateAs } from '../fixture/auth-helper'
+import { authenticateAs } from '../fixture/auth-helper'
 import * as fs from 'fs'
 import * as path from 'path'
 import { fileURLToPath } from 'url'
@@ -128,7 +128,7 @@ async function navigateWithAuth(page: Page, url: string, role: TestUserRole): Pr
         // Wait for load state to stabilize
         try {
           await page.waitForLoadState('load', { timeout: 5000 })
-        } catch (e) {
+        } catch {
           // Ignore timeout, page might be navigating again
         }
 
@@ -187,7 +187,7 @@ async function navigateWithAuth(page: Page, url: string, role: TestUserRole): Pr
   // Final wait for page to stabilize
   try {
     await page.waitForLoadState('load', { timeout: 10000 })
-  } catch (e) {
+  } catch {
     // Might timeout, that's ok
   }
 
@@ -209,7 +209,7 @@ async function safeGetToken(page: Page, maxRetries = 3): Promise<string | null> 
         // Wait for page to stabilize
         try {
           await page.waitForLoadState('load', { timeout: 5000 })
-        } catch (e) {
+        } catch {
           // Ignore
         }
       }

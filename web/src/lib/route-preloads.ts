@@ -16,6 +16,9 @@ export const RepositoriesSettings = lazyWithPreload(() => import("@/routes/Repos
 export const ProjectsSettings = lazyWithPreload(() => import("@/routes/ProjectsSettings").then(m => ({ default: m.ProjectsSettings })));
 export const ProjectDetail = lazyWithPreload(() => import("@/routes/ProjectDetail").then(m => ({ default: m.ProjectDetail })));
 export const SSOSettings = lazyWithPreload(() => import("@/routes/SSOSettings").then(m => ({ default: m.SSOSettings })));
+export const TeamsSettings = lazyWithPreload(() => import("@/routes/TeamsSettings").then(m => ({ default: m.TeamsSettings })));
+export const UsersSettings = lazyWithPreload(() => import("@/routes/UsersSettings").then(m => ({ default: m.UsersSettings })));
+export const RoleTemplatesSettings = lazyWithPreload(() => import("@/routes/RoleTemplatesSettings").then(m => ({ default: m.RoleTemplatesSettings })));
 export const AuditSettings = lazyWithPreload(() => import("@/routes/AuditSettings").then(m => ({ default: m.AuditSettings })));
 export const LicenseSettings = lazyWithPreload(() => import("@/routes/LicenseSettings").then(m => ({ default: m.LicenseSettings })));
 export const AuditPage = lazyWithPreload(() => import("@/routes/AuditPage"));
@@ -30,7 +33,15 @@ export const SecretDetailRoute = lazyWithPreload(() => import("@/routes/SecretsR
 export const CategoryPage = lazyWithPreload(() => import("@/components/categories/CategoryPage").then(m => ({ default: m.CategoryPage })));
 export const UserInfoPage = lazyWithPreload(() => import("@/components/account/UserInfoPage").then(m => ({ default: m.UserInfoPage })));
 export const DeployRoute = lazyWithPreload(() => import("@/routes/DeployRoute"));
+export const DeployRGDRoute = lazyWithPreload(() => import("@/routes/DeployRGDRoute"));
 export const DeployDisabledRoute = lazyWithPreload(() => import("@/routes/DeployDisabled"));
+export const AgentsRoute = lazyWithPreload(() => import("@/routes/AgentsRoute"));
+export const AgentsListRoute = lazyWithPreload(() => import("@/components/agents/AgentsListPage").then(m => ({ default: m.AgentsListPage })));
+export const AgentsModelsRoute = lazyWithPreload(() => import("@/components/agents/AgentsModelsPage").then(m => ({ default: m.AgentsModelsPage })));
+export const AgentsTemplatesRoute = lazyWithPreload(() => import("@/components/agents/AgentsTemplatesPage").then(m => ({ default: m.AgentsTemplatesPage })));
+export const AgentChatLayoutRoute = lazyWithPreload(() => import("@/components/agents/AgentChatLayout").then(m => ({ default: m.AgentChatLayout })));
+export const AgentChatRoute = lazyWithPreload(() => import("@/components/agents/AgentChatPage").then(m => ({ default: m.AgentChatPage })));
+export const SessionsListRoute = lazyWithPreload(() => import("@/components/agents/SessionsListPage").then(m => ({ default: m.SessionsListPage })));
 
 /** Route preload map — used by Sidebar to trigger chunk downloads on hover.
  *  Prefetches both the JS chunk AND the initial data query to eliminate
@@ -44,6 +55,7 @@ export const routePreloads: Record<string, () => Promise<unknown>> = {
     InstancesRoute.preload();
     return queryClient.prefetchQuery({ queryKey: ["instances", undefined], queryFn: () => listInstances(), staleTime: STALE_TIME.FREQUENT });
   },
+  "/agents": AgentsRoute.preload,
   "/secrets": SecretsRoute.preload,
   "/compliance": ComplianceDashboard.preload,
   "/audit": AuditPage.preload,

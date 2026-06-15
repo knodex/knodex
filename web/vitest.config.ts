@@ -6,6 +6,10 @@ export default defineConfig({
   plugins: [react()],
   define: {
     __APP_VERSION__: JSON.stringify('0.0.0-test'),
+    // Build-time edition literal (mirrors vite.config.ts). Tests run as the
+    // OSS default; isEnterprise() is mocked per-suite where enterprise behavior
+    // is exercised.
+    __ENTERPRISE__: JSON.stringify(false),
   },
   test: {
     globals: true,
@@ -23,10 +27,10 @@ export default defineConfig({
         '**/types/**',
       ],
       thresholds: {
-        statements: 58,
-        branches: 58,
-        functions: 58,
-        lines: 58,
+        statements: 70,
+        branches: 69,
+        functions: 70,
+        lines: 70,
       },
     },
   },

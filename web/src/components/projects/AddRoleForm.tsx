@@ -9,9 +9,10 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { PolicyRulesTable } from "./PolicyRulesTable";
-import { OIDCGroupsManager } from "./OIDCGroupsManager";
+import { TeamPicker } from "@/components/teams/TeamPicker";
 import { DestinationScopeSelector } from "./DestinationScopeSelector";
-import { ROLE_PRESETS, resolvePresetPolicies } from "@/lib/role-presets";
+import { resolvePresetPolicies } from "@/lib/role-presets";
+import { useRoleTemplates } from "@/hooks/useRoleTemplates";
 import type { ProjectRole, Destination } from "@/types/project";
 import type { RoleAdditionState } from "./hooks/useRoleAddition";
 
@@ -37,8 +38,8 @@ export function AddRoleForm({
     setNewRoleDescription,
     newRolePolicies,
     setNewRolePolicies,
-    newRoleGroups,
-    setNewRoleGroups,
+    newRoleTeams,
+    setNewRoleTeams,
     newRoleDestinations,
     setNewRoleDestinations,
     isAdding,
@@ -46,6 +47,10 @@ export function AddRoleForm({
     setAddRoleError,
     handleAddRole: onAdd,
   } = addition;
+  // Presets come from the server-backed catalog (Story 18.1). While the query
+  // loads (or if it 403s for a non-operator) the preset buttons are simply
+  // absent — "Custom Role" is always available, so role creation never blocks.
+  const { data: presets = [] } = useRoleTemplates();
   return (
     <Card>
       <CardHeader>
@@ -57,7 +62,7 @@ export function AddRoleForm({
       <CardContent className="space-y-4">
         {/* Preset Buttons */}
         <div className="flex flex-wrap gap-2">
-          {ROLE_PRESETS.map((preset) => {
+          {presets.map((preset) => {
             const exists = roles.some(r => r.name === preset.name);
             return (
               <Tooltip key={preset.name}>
@@ -70,9 +75,9 @@ export function AddRoleForm({
                       disabled={exists || isAdding}
                       onClick={() => {
                         setNewRoleName(preset.name);
-                        setNewRoleDescription(preset.description);
+                        setNewRoleDescription(preset.description ?? "");
                         setNewRolePolicies(resolvePresetPolicies(preset, projectName));
-                        setNewRoleGroups([]);
+                        setNewRoleTeams([]);
                         if (addRoleError) setAddRoleError(null);
                       }}
                     >
@@ -94,7 +99,7 @@ export function AddRoleForm({
               setNewRoleName("");
               setNewRoleDescription("");
               setNewRolePolicies([]);
-              setNewRoleGroups([]);
+              setNewRoleTeams([]);
               if (addRoleError) setAddRoleError(null);
             }}
           >
@@ -142,12 +147,11 @@ export function AddRoleForm({
           />
         </div>
 
-        {/* OIDC Groups */}
-        <OIDCGroupsManager
-          groups={newRoleGroups}
-          onGroupsChange={setNewRoleGroups}
-          canEdit={true}
-          isLoading={isAdding}
+        {/* Teams (resolve to OIDC groups server-side; reusable) */}
+        <TeamPicker
+          selected={newRoleTeams}
+          onChange={setNewRoleTeams}
+          canEdit={!isAdding}
         />
 
         {/* Destination Scope */}

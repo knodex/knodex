@@ -29,6 +29,17 @@ rules:
   - apiGroups: ["knodex.io"]
     resources: ["projects/status"]
     verbs: ["get", "update", "patch"]
+  # Cluster-scoped Team CRD (Epic D): the TeamWatcher watches teams and resolves
+  # roles[].teams[] into project RBAC; the cloud-tenant team-bridge (11.2)
+  # materializes/removes the federated Team mirror on managed-team create/delete.
+  # Without watch+create/delete here the watcher informer is forbidden and the
+  # bridge cannot write the mirror — caught by the 11.4 lifecycle E2E gate.
+  - apiGroups: ["knodex.io"]
+    resources: ["teams"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["knodex.io"]
+    resources: ["teams/status"]
+    verbs: ["get", "update", "patch"]
   # Manage instances (CRs created by Kro)
   - apiGroups: ["kro.run"]
     resources: ["*"]

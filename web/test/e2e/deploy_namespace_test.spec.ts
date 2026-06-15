@@ -16,7 +16,7 @@
  */
 
 import { test, expect, TestUserRole } from '../fixture'
-import { authenticateAs, TEST_USERS, generateTestToken, setupAuthAndNavigate, setupPermissionMocking } from '../fixture/auth-helper'
+import { TEST_USERS, generateTestToken, setupAuthAndNavigate, setupPermissionMocking } from '../fixture/auth-helper'
 import * as fs from 'fs'
 import * as path from 'path'
 import { fileURLToPath } from 'url'
@@ -58,9 +58,9 @@ async function getAuthToken(role: TestUserRole): Promise<string> {
 }
 
 /**
- * Click the deploy button for an RGD in the catalog
+ * Click the deploy button for an RGD in the catalog (kept for future tests).
  */
-async function clickDeployOnRGD(page: Page, rgdName: string): Promise<void> {
+async function _clickDeployOnRGD(page: Page, rgdName: string): Promise<void> {
   // Find the RGD card and click deploy
   const rgdCard = page.locator(`[data-testid="rgd-card-${rgdName}"]`)
   if (await rgdCard.isVisible()) {

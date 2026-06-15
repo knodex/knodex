@@ -12,9 +12,33 @@ export const HEALTH_TO_STATUS: Record<InstanceHealth, StatusIndicatorStatus> = {
   Unknown: "unknown",
 };
 
+// Grid-card (StatusCard) left border. Stays Partial: `Unknown` is intentionally
+// omitted so an unresolved-health card keeps the neutral default border (no
+// colored override). The desktop grid colors all four resolved states (48.3).
 export const LEFT_BORDER_COLOR: Partial<Record<InstanceHealth, string>> = {
-  Unhealthy: "var(--status-error)",
+  Healthy: "var(--status-healthy)",
+  Progressing: "var(--status-info)",
   Degraded: "var(--status-warning)",
+  Unhealthy: "var(--status-error)",
+};
+
+// Mobile-card (MobileInstanceCard) left border. Intentionally "alert-only" — a
+// colored border appears ONLY for problem states, preserving the pre-48.3 mobile
+// rendering verbatim. The desktop grid uses the 4-state LEFT_BORDER_COLOR above;
+// mobile must NOT pick up Healthy/Progressing borders (mobile is out of 48.3 scope).
+export const ALERT_BORDER_COLOR: Partial<Record<InstanceHealth, string>> = {
+  Degraded: "var(--status-warning)",
+  Unhealthy: "var(--status-error)",
+};
+
+// List-row health stripe (inset box-shadow). Exhaustive — every row gets a visible
+// stripe, including a neutral grey for `Unknown`, so the column never has a gap.
+export const STRIPE_COLOR: Record<InstanceHealth, string> = {
+  Healthy: "var(--status-healthy)",
+  Progressing: "var(--status-info)",
+  Degraded: "var(--status-warning)",
+  Unhealthy: "var(--status-error)",
+  Unknown: "var(--status-inactive)",
 };
 
 export function getInstanceUrl(instance: Instance): string | undefined {

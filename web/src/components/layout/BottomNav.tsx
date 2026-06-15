@@ -25,6 +25,11 @@ const NAV_ITEMS: NavItem[] = [
     match: (p) => p.startsWith("/catalog"),
   },
   {
+    ...SHARED_NAV_ITEMS.agents,
+    to: SHARED_NAV_ITEMS.agents.path,
+    match: (p) => p.startsWith("/agents"),
+  },
+  {
     ...SHARED_NAV_ITEMS.projects,
     to: SHARED_NAV_ITEMS.projects.path,
     match: (p) => p.startsWith("/projects"),

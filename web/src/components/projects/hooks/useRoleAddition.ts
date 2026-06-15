@@ -19,7 +19,7 @@ export function useRoleAddition({ projectName, roles, onUpdate, onSuccess }: Use
   const [newRoleName, setNewRoleName] = useState("");
   const [newRoleDescription, setNewRoleDescription] = useState("");
   const [newRolePolicies, setNewRolePolicies] = useState<string[]>([]);
-  const [newRoleGroups, setNewRoleGroups] = useState<string[]>([]);
+  const [newRoleTeams, setNewRoleTeams] = useState<string[]>([]);
   const [newRoleDestinations, setNewRoleDestinations] = useState<string[]>([]);
   const [isAdding, setIsAdding] = useState(false);
   const [addRoleError, setAddRoleError] = useState<string | null>(null);
@@ -28,7 +28,7 @@ export function useRoleAddition({ projectName, roles, onUpdate, onSuccess }: Use
     setNewRoleName("");
     setNewRoleDescription("");
     setNewRolePolicies([]);
-    setNewRoleGroups([]);
+    setNewRoleTeams([]);
     setNewRoleDestinations([]);
     setAddRoleError(null);
   }, []);
@@ -51,7 +51,7 @@ export function useRoleAddition({ projectName, roles, onUpdate, onSuccess }: Use
       name: roleName,
       description: newRoleDescription.trim() || undefined,
       policies,
-      groups: newRoleGroups.length > 0 ? newRoleGroups : [],
+      teams: newRoleTeams.length > 0 ? newRoleTeams : undefined,
       destinations: newRoleDestinations.length > 0 ? newRoleDestinations : undefined,
     };
 
@@ -69,7 +69,7 @@ export function useRoleAddition({ projectName, roles, onUpdate, onSuccess }: Use
     } finally {
       setIsAdding(false);
     }
-  }, [newRoleName, isAdding, roles, newRolePolicies, projectName, newRoleDescription, newRoleGroups, newRoleDestinations, onUpdate, resetForm, onSuccess]);
+  }, [newRoleName, isAdding, roles, newRolePolicies, projectName, newRoleDescription, newRoleTeams, newRoleDestinations, onUpdate, resetForm, onSuccess]);
 
   return {
     showAddForm,
@@ -80,8 +80,8 @@ export function useRoleAddition({ projectName, roles, onUpdate, onSuccess }: Use
     setNewRoleDescription,
     newRolePolicies,
     setNewRolePolicies,
-    newRoleGroups,
-    setNewRoleGroups,
+    newRoleTeams,
+    setNewRoleTeams,
     newRoleDestinations,
     setNewRoleDestinations,
     isAdding,

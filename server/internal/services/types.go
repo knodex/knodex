@@ -95,6 +95,11 @@ type RGDFilters struct {
 	// ProducesGroup narrows ProducesKind filtering to a specific API group (optional)
 	ProducesGroup string
 
+	// SchemaKind filters RGDs by their schema.kind (the generated CRD Kind),
+	// discovering by Kind instead of the catalog annotation. Used by the
+	// Agents → Templates list.
+	SchemaKind string
+
 	// Status filters RGDs by status (e.g., "Active", "Inactive"). Empty = all statuses.
 	Status string
 

@@ -5,6 +5,7 @@ import { useState, useCallback, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Download, ShieldAlert } from "@/lib/icons";
 import { AxiosError } from "axios";
+import { ApiError } from "@/api/client";
 import { Button } from "@/components/ui/button";
 import { isEnterprise } from "@/hooks/useCompliance";
 import { EnterpriseRequired } from "@/components/compliance";
@@ -14,7 +15,7 @@ import { AuditStats } from "@/components/settings/audit/AuditStats";
 import { AuditFilters } from "@/components/settings/audit/AuditFilters";
 import { AuditEventsTable } from "@/components/settings/audit/AuditEventsTable";
 import { AuditEventDetail } from "@/components/settings/audit/AuditEventDetail";
-import { PageHeader } from "@/components/layout/PageHeader";
+import { ListFooter } from "@/components/ui/list-footer";
 import type { AuditEvent, AuditEventFilter, AuditSortField } from "@/types/audit";
 
 /** Escape a CSV field value, quoting if it contains commas, quotes, or newlines. */
@@ -118,6 +119,15 @@ export default function AuditPage() {
   // Hooks have `enabled: isEnterprise()` so they won't fire API calls in OSS builds
   const { data, isLoading, error } = useAuditEvents(filters);
   const { data: stats, isLoading: statsLoading, error: statsError } = useAuditStats();
+
+  // Footer summary over the VISIBLE page (data.events is one page; data.total is
+  // the full server-side count). "events shown" = the current page's rows.
+  // The non-success bucket folds `denied`, `error`, and any unexpected value.
+  const { successCount, deniedErroredCount } = useMemo(() => {
+    const events = data?.events ?? [];
+    const success = events.filter((e) => e.result === "success").length;
+    return { successCount: success, deniedErroredCount: events.length - success };
+  }, [data?.events]);
 
   const handleFilterChange = useCallback(
     (key: string, value: string) => {
@@ -223,8 +233,13 @@ export default function AuditPage() {
     );
   }
 
-  // Handle 403 Access Denied
-  const is403Error = error && (error as AxiosError)?.response?.status === 403;
+  // Handle 403 Access Denied. The apiClient interceptor rethrows backend
+  // errors as ApiError (flat `.status`), so check it first; keep the raw
+  // AxiosError shape as a fallback for errors that bypass the interceptor.
+  const is403Error =
+    error != null &&
+    ((error as ApiError)?.status === 403 ||
+      (error as AxiosError)?.response?.status === 403);
 
   if (is403Error) {
     return (
@@ -240,9 +255,6 @@ export default function AuditPage() {
 
   return (
     <section className="space-y-6">
-      {/* Header */}
-      <PageHeader title="Audit Trail" />
-
       {/* Stats cards */}
       <AuditStats stats={stats} isLoading={statsLoading} error={statsError} />
 
@@ -297,6 +309,21 @@ export default function AuditPage() {
         onSortChange={handleSortChange}
         onRowClick={handleRowClick}
       />
+
+      {/* List footer — summarizes the events shown on the current page.
+          Complementary to the table's own pagination row ({total} events · Page X of Y). */}
+      {!isLoading && (data?.events?.length ?? 0) > 0 && (
+        <div data-testid="audit-list-footer">
+          <ListFooter
+            total={data!.events.length}
+            totalLabel="events shown"
+            breakdown={[
+              ["success", successCount],
+              ["denied / errored", deniedErroredCount],
+            ]}
+          />
+        </div>
+      )}
 
       {/* Event detail slide-over */}
       <AuditEventDetail

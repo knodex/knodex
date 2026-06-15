@@ -4,7 +4,6 @@
 import { useCanI } from "@/hooks/useCanI";
 import { useCurrentProject } from "@/hooks/useAuth";
 import { RepositorySection } from "@/components/repositories/RepositorySection";
-import { PageHeader } from "@/components/layout/PageHeader";
 
 export function RepositoriesSettings() {
   const currentProject = useCurrentProject();
@@ -17,7 +16,6 @@ export function RepositoriesSettings() {
 
   return (
     <section className="space-y-6">
-      <PageHeader title="Repositories" />
       <RepositorySection canManage={canManageRepos} isLoadingPermission={isLoadingRepoPermission} isErrorPermission={isErrorRepoPermission} />
     </section>
   );

@@ -382,7 +382,9 @@ func TestService_IsLocalLoginEnabled_HonorsFlag(t *testing.T) {
 		want              bool
 	}{
 		{"enabled with password", true, "ValidPass123!", true},
-		{"enabled without password", true, "", false},
+		// Password is zeroed after construction (NewService persists it to AccountStore).
+		// IsLocalLoginEnabled therefore relies on the flag alone.
+		{"enabled without password", true, "", true},
 		{"disabled with password", false, "ValidPass123!", false},
 		{"disabled without password", false, "", false},
 	}

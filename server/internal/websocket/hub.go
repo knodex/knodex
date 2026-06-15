@@ -6,6 +6,7 @@ package websocket
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -215,11 +216,14 @@ func (h *Hub) handleBroadcast(message *Message) {
 	h.totalMessages++
 	h.connectionsMu.Unlock()
 
-	// Extract projectID once before iterating clients to avoid N×JSON deserialization
+	// Extract routing identifiers once before iterating clients to avoid
+	// N×JSON deserialization (projectID for project-scoped messages, actorID
+	// for agent run messages).
 	projectID := h.extractProjectID(message)
+	actorID := h.extractAgentRunActorID(message)
 
 	for client := range h.clients {
-		if h.shouldSendToClient(client, message, projectID) {
+		if h.shouldSendToClient(client, message, projectID, actorID) {
 			select {
 			case client.send <- message:
 			default:
@@ -274,9 +278,27 @@ func (h *Hub) extractProjectID(message *Message) string {
 	return projectID
 }
 
+// extractAgentRunActorID extracts the actor's UserID from an agent run
+// message. Parallel to extractProjectID: called once per broadcast so the
+// per-client filter never re-deserializes the payload. Returns "" for every
+// other message type.
+func (h *Hub) extractAgentRunActorID(message *Message) string {
+	if message.Type != MessageTypeAgentRunUpdate {
+		return ""
+	}
+	var data AgentRunUpdateData
+	if err := json.Unmarshal(message.Data, &data); err != nil {
+		h.logger.Warn("failed to unmarshal agent run message data for actor ID extraction",
+			"error", err)
+		return ""
+	}
+	return data.ActorID
+}
+
 // shouldSendToClient checks if a message should be sent to a specific client.
-// projectID is pre-extracted from the message to avoid per-client JSON deserialization.
-func (h *Hub) shouldSendToClient(client *Client, message *Message, projectID string) bool {
+// projectID and actorID are pre-extracted from the message to avoid per-client
+// JSON deserialization.
+func (h *Hub) shouldSendToClient(client *Client, message *Message, projectID, actorID string) bool {
 	// Always send error messages and pong
 	if message.Type == MessageTypeError || message.Type == MessageTypePong {
 		return true
@@ -287,6 +309,7 @@ func (h *Hub) shouldSendToClient(client *Client, message *Message, projectID str
 		client.subscriptions["instance"] || client.subscriptions["instances"] ||
 		client.subscriptions["rgd"] || client.subscriptions["rgds"]
 	hasViolationSubscription := client.subscriptions["all"] || client.subscriptions["violations"]
+	hasAgentRunSubscription := client.subscriptions["all"] || client.subscriptions["agent_runs"]
 	client.subMu.RUnlock()
 
 	// Check if client has appropriate subscription for message type
@@ -298,6 +321,10 @@ func (h *Hub) shouldSendToClient(client *Client, message *Message, projectID str
 		}
 	case MessageTypeInstanceUpdate, MessageTypeRGDUpdate, MessageTypeDriftUpdate, MessageTypeRevisionUpdate, MessageTypeResourceEvent:
 		if !hasResourceSubscription {
+			return false
+		}
+	case MessageTypeAgentRunUpdate:
+		if !hasAgentRunSubscription {
 			return false
 		}
 	default:
@@ -312,6 +339,15 @@ func (h *Hub) shouldSendToClient(client *Client, message *Message, projectID str
 	// Users with "*:*" permission have global admin access to all resources
 	if client.CachedHasGlobalAccess(h.ctx) {
 		return true
+	}
+
+	// Agent run messages are actor-or-global-admin (Story 49.4): a run has no
+	// projectID, so falling through to the projectID == "" drop below would
+	// blackhole every event. Actor-match is fail-closed and needs zero
+	// namespace→project resolution (the hub has none); non-actors' run tables
+	// still converge via the web hook's conditional refetch interval.
+	if message.Type == MessageTypeAgentRunUpdate {
+		return actorID != "" && userID == actorID
 	}
 
 	// Compliance messages (violations, templates, constraints) are always sent to subscribed admins only
@@ -479,6 +515,26 @@ func (h *Hub) BroadcastConstraintUpdate(action Action, kind, name, enforcementAc
 	}
 
 	h.enqueue(msg, "type", "constraint", "kind", kind, "name", name)
+}
+
+// BroadcastAgentRunUpdate sends an agent run lifecycle transition to the
+// invoking actor and global admins (Story 49.4). The debounce key includes
+// action AND status: a fast-failing run emits add→update milliseconds apart,
+// and a run-ID-only key would swallow the completing update inside
+// DebounceInterval. Lifecycle transitions must always pass.
+func (h *Hub) BroadcastAgentRunUpdate(action Action, data AgentRunUpdateData) {
+	key := fmt.Sprintf("agentrun/%s/%s/%s", data.RunID, action, data.Status)
+	if !h.shouldBroadcast(key) {
+		return
+	}
+
+	msg, err := NewAgentRunUpdateMessage(action, data)
+	if err != nil {
+		h.logger.Error("Failed to create agent run update message", "error", err)
+		return
+	}
+
+	h.enqueue(msg, "type", "agent_run", "runId", data.RunID, "agentType", data.AgentType, "status", data.Status)
 }
 
 // BroadcastRevisionUpdate sends a GraphRevision update to all subscribed clients.

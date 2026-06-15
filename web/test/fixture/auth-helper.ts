@@ -179,7 +179,7 @@ export async function authenticateAs(page: Page, role: TestUserRole): Promise<vo
 
   // Inject token into localStorage (must match frontend's userStore)
   await page.evaluate(
-    ({ token, user }) => {
+    ({ token, user: _user }) => {
       // Frontend expects 'jwt_token' for Bearer header fallback (see client.ts request interceptor)
       localStorage.setItem('jwt_token', token)
 

@@ -5,6 +5,7 @@ import { useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { AlertCircle, Copy, RotateCcw, Trash2 } from "@/lib/icons";
 import { toast } from "sonner";
+import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 import type { Instance } from "@/types/rgd";
 
 // --- K8s error mapping ---
@@ -65,14 +66,14 @@ interface CopyErrorButtonProps {
 }
 
 export function CopyErrorButton({ rawMessage }: CopyErrorButtonProps) {
-  const handleCopy = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(rawMessage);
-      toast.success("Error copied to clipboard");
-    } catch {
-      toast.error("Failed to copy");
-    }
-  }, [rawMessage]);
+  const { copy } = useCopyToClipboard({
+    onSuccess: () => toast.success("Error copied to clipboard"),
+    onError: () => toast.error("Failed to copy"),
+  });
+
+  const handleCopy = useCallback(() => {
+    void copy(rawMessage);
+  }, [copy, rawMessage]);
 
   return (
     <button

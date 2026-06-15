@@ -134,32 +134,6 @@ func loadBuiltinPoliciesLocked(e *casbin.Enforcer) error {
 		}
 	}
 
-	// ========================================
-	// OPERATOR - category-scoped RGD access
-	// ========================================
-	for _, policyStr := range getBuiltInOperatorPolicies() {
-		parts := strings.SplitN(policyStr, ",", 3)
-		if len(parts) != 3 {
-			return fmt.Errorf("invalid operator policy format: %q", policyStr)
-		}
-		if _, err := e.AddPolicy("role:operator", strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), strings.TrimSpace(parts[2])); err != nil {
-			return fmt.Errorf("failed to add operator policy %q: %w", policyStr, err)
-		}
-	}
-
-	// ========================================
-	// DEVELOPER - category-scoped RGD access
-	// ========================================
-	for _, policyStr := range getBuiltInDeveloperPolicies() {
-		parts := strings.SplitN(policyStr, ",", 3)
-		if len(parts) != 3 {
-			return fmt.Errorf("invalid developer policy format: %q", policyStr)
-		}
-		if _, err := e.AddPolicy("role:developer", strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), strings.TrimSpace(parts[2])); err != nil {
-			return fmt.Errorf("failed to add developer policy %q: %w", policyStr, err)
-		}
-	}
-
 	return nil
 }
 

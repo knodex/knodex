@@ -1,0 +1,20 @@
+# Teams for platform-project.yaml
+# Apply with: kubectl apply -f <this-file> -n <knodex-namespace>
+---
+apiVersion: knodex.io/v1alpha1
+kind: Team
+metadata:
+  name: platform-admins
+spec:
+  description: "Platform administrators"
+  oidcGroups:
+    - platform-admins
+---
+apiVersion: knodex.io/v1alpha1
+kind: Team
+metadata:
+  name: platform-operators
+spec:
+  description: "Platform operators"
+  oidcGroups:
+    - platform-operators

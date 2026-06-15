@@ -5,7 +5,7 @@ import { renderHook, act, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { useWebSocket } from "./useWebSocket";
-import type { InstanceUpdateData, RevisionUpdateData } from "@/types/websocket";
+import type { AgentRunUpdateData, InstanceUpdateData, RevisionUpdateData } from "@/types/websocket";
 
 // Mock getWebSocketTicket API call
 vi.mock("@/api/auth", () => ({
@@ -322,6 +322,97 @@ describe("useWebSocket", () => {
           exact: true,
         });
       });
+    });
+  });
+
+  describe("agent_run_update cache handling (Story 49.4, AC #2)", () => {
+    function agentRunMessage(overrides: Partial<AgentRunUpdateData> = {}) {
+      return {
+        type: "agent_run_update",
+        timestamp: new Date().toISOString(),
+        data: {
+          action: "update",
+          runId: "run-1",
+          agentType: "helper",
+          agentNamespace: "alpha-apps",
+          status: "completed",
+          actorId: "user-123",
+          actor: "dev@example.com",
+          timestamp: new Date().toISOString(),
+          ...overrides,
+        } as AgentRunUpdateData,
+      };
+    }
+
+    it("invalidates the ['agents', 'runs'] prefix so the table and the running-indicator update without a refresh", async () => {
+      const { wrapper, queryClient } = createTestWrapper();
+      const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+      renderHook(() => useWebSocket({ autoConnect: true }), { wrapper });
+
+      await waitFor(() => {
+        expect(mockWebSocketInstance?.readyState).toBe(MockWebSocket.OPEN);
+      });
+
+      act(() => {
+        mockWebSocketInstance?.simulateMessage(agentRunMessage());
+      });
+
+      await waitFor(() => {
+        // Prefix invalidation (no `exact`) covers every params variant:
+        // the paginated/filtered table key ["agents","runs", params] AND the
+        // card running-indicator key ["agents","runs",{status:"running",...}].
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["agents", "runs"] });
+      });
+    });
+
+    it("invalidates on both lifecycle transitions (add → update) of the same run", async () => {
+      const { wrapper, queryClient } = createTestWrapper();
+      const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+      renderHook(() => useWebSocket({ autoConnect: true }), { wrapper });
+
+      await waitFor(() => {
+        expect(mockWebSocketInstance?.readyState).toBe(MockWebSocket.OPEN);
+      });
+
+      act(() => {
+        mockWebSocketInstance?.simulateMessage(agentRunMessage({ action: "add", status: "running" }));
+        mockWebSocketInstance?.simulateMessage(agentRunMessage({ action: "update", status: "failed" }));
+      });
+
+      await waitFor(() => {
+        const runsCalls = invalidateSpy.mock.calls.filter((call) => {
+          const key = (call[0] as { queryKey?: unknown[] }).queryKey;
+          return Array.isArray(key) && key[0] === "agents" && key[1] === "runs";
+        });
+        expect(runsCalls).toHaveLength(2);
+      });
+    });
+
+    it("does not touch the unrelated agents status/installed query keys", async () => {
+      const { wrapper, queryClient } = createTestWrapper();
+      const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+      renderHook(() => useWebSocket({ autoConnect: true }), { wrapper });
+
+      await waitFor(() => {
+        expect(mockWebSocketInstance?.readyState).toBe(MockWebSocket.OPEN);
+      });
+
+      act(() => {
+        mockWebSocketInstance?.simulateMessage(agentRunMessage());
+      });
+
+      await waitFor(() => {
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["agents", "runs"] });
+      });
+
+      const otherAgentsCalls = invalidateSpy.mock.calls.filter((call) => {
+        const key = (call[0] as { queryKey?: unknown[] }).queryKey;
+        return Array.isArray(key) && key[0] === "agents" && key[1] !== "runs";
+      });
+      expect(otherAgentsCalls).toHaveLength(0);
     });
   });
 

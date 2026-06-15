@@ -473,9 +473,16 @@ func (s *OIDCService) ExchangeCodeForToken(ctx context.Context, providerName, co
 	// Create OIDC subject identifier (provider:subject)
 	oidcSubject := fmt.Sprintf("%s:%s", providerName, claims.Subject)
 
-	// Evaluate OIDC user (no CRD persistence - uses JWT claims directly)
-	// This evaluates group mappings and assigns Casbin roles without creating User CRD
-	userInfo, err := s.provisioningService.EvaluateOIDCUser(ctx, oidcSubject, claims.Email, displayName, claims.Groups)
+	// Evaluate OIDC user: assign Casbin roles from group claims and persist the
+	// canonical user record (Story 15.2). The issuer + email_verified claim are
+	// plumbed through so the identity store can key (org, issuer, sub) and gate
+	// verified-email updates. email_verified absent (nil) is treated as unverified.
+	issuer := ""
+	if provider.config != nil {
+		issuer = provider.config.IssuerURL
+	}
+	emailVerified := claims.EmailVerified != nil && *claims.EmailVerified
+	userInfo, err := s.provisioningService.EvaluateOIDCUser(ctx, oidcSubject, claims.Email, displayName, claims.Groups, issuer, emailVerified)
 	if err != nil {
 		slog.Error("failed to evaluate OIDC user",
 			"error", err,

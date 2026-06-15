@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { PolicyRulesTable } from "./PolicyRulesTable";
-import { OIDCGroupsManager } from "./OIDCGroupsManager";
+import { TeamPicker } from "@/components/teams/TeamPicker";
 import { DestinationScopeSelector, DestinationScopeBadge } from "./DestinationScopeSelector";
 import type { ProjectRole, Destination } from "@/types/project";
 
@@ -30,7 +30,7 @@ interface RoleListItemProps {
   onCancelEdit: (roleName: string) => void;
   onDelete: (roleName: string) => void;
   onPoliciesChange: (roleName: string, policies: string[]) => void;
-  onGroupsChange: (roleName: string, groups: string[]) => void;
+  onTeamsChange: (roleName: string, teams: string[]) => void;
   onDestinationsChange: (roleName: string, destinations: string[]) => void;
 }
 
@@ -50,7 +50,7 @@ export const RoleListItem = memo(function RoleListItem({
   onCancelEdit,
   onDelete,
   onPoliciesChange,
-  onGroupsChange,
+  onTeamsChange,
   onDestinationsChange,
 }: RoleListItemProps) {
   const roleName = originalRole.name;
@@ -61,9 +61,9 @@ export const RoleListItem = memo(function RoleListItem({
     [onPoliciesChange, roleName]
   );
 
-  const handleGroupsChange = useCallback(
-    (groups: string[]) => onGroupsChange(roleName, groups),
-    [onGroupsChange, roleName]
+  const handleTeamsChange = useCallback(
+    (teams: string[]) => onTeamsChange(roleName, teams),
+    [onTeamsChange, roleName]
   );
 
   const handleDestinationsChange = useCallback(
@@ -118,7 +118,7 @@ export const RoleListItem = memo(function RoleListItem({
               {role.policies?.length || 0} policies
             </Badge>
             <Badge variant="outline">
-              {role.groups?.length || 0} groups
+              {role.teams?.length || 0} teams
             </Badge>
             <DestinationScopeBadge destinations={role.destinations} />
             {canManage && (
@@ -189,12 +189,11 @@ export const RoleListItem = memo(function RoleListItem({
               />
             </div>
 
-            {/* OIDC Groups Manager */}
-            <OIDCGroupsManager
-              groups={role.groups || []}
-              onGroupsChange={handleGroupsChange}
+            {/* Teams (resolve to OIDC groups server-side; reusable) */}
+            <TeamPicker
+              selected={role.teams || []}
+              onChange={handleTeamsChange}
               canEdit={canManage && (isEditing || hasChanges)}
-              isLoading={isUpdating}
             />
 
             {/* Destination Scope */}

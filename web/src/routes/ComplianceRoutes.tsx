@@ -7,7 +7,6 @@ import {
   EnterpriseRequired,
   GatekeeperUnavailable,
 } from "@/components/compliance";
-import { PageHeader } from "@/components/layout/PageHeader";
 import { useComplianceSummary, isEnterprise } from "@/hooks/useCompliance";
 import { isEnterpriseRequired, isGatekeeperUnavailable } from "@/api/compliance";
 import { useIsFeatureEnabled } from "@/hooks/useLicense";
@@ -86,11 +85,6 @@ export function ComplianceDashboard() {
 
   return (
     <div className="space-y-6 p-6">
-      {/* Page Header */}
-      <PageHeader
-        title="Policy Compliance"
-      />
-
       {/* Summary Cards */}
       <ComplianceSummaryCards summary={summary} isLoading={isLoading} />
 

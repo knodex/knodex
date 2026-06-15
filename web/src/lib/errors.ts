@@ -111,3 +111,28 @@ export function toUserFriendlyError(message: string): string {
   }
   return message;
 }
+
+/**
+ * Check whether an error carries a given HTTP status code.
+ *
+ * Handles both shapes: the `ApiError` instance (status directly on the object)
+ * and raw axios errors (status nested under `response.status`).
+ */
+function hasStatus(error: unknown, code: number): boolean {
+  if (error && typeof error === "object") {
+    if ("status" in error && (error as { status?: number }).status === code) {
+      return true;
+    }
+    if ("response" in error) {
+      return (error as { response?: { status?: number } }).response?.status === code;
+    }
+  }
+  return false;
+}
+
+export const is401 = (e: unknown) => hasStatus(e, 401);
+export const is402 = (e: unknown) => hasStatus(e, 402);
+export const is403 = (e: unknown) => hasStatus(e, 403);
+export const is404 = (e: unknown) => hasStatus(e, 404);
+export const is409 = (e: unknown) => hasStatus(e, 409);
+export const is503 = (e: unknown) => hasStatus(e, 503);

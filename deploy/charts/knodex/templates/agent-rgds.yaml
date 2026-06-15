@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Agent RGDs (files/agents/*.yaml) — the KRO ResourceGraphDefinitions backing
+# the Agents Hub: kagent-agent (Create Agent), kagent-model-config (Models
+# page / CreateModel handler), kagent-model-provider-config, and
+# kagent-rgd-builder-agent. Shipped raw via Files.Get — the ${...} CEL
+# expressions inside are KRO syntax, not Helm template syntax.
+#
+# Requires the kro.run RGD CRD at install time. The RGDs stay Inactive until
+# the kagent CRDs are also installed (KRO cannot activate an RGD whose
+# produced kind's CRD is absent) — harmless, they activate as soon as kagent
+# lands. Disable via kagent.rgds.enabled=false on clusters without KRO.
+{{- if .Values.kagent.rgds.enabled }}
+{{- range $path, $_ := .Files.Glob "files/agents/*.yaml" }}
+---
+{{ $.Files.Get $path }}
+{{- end }}
+{{- end }}

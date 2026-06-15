@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { useState, useCallback, useEffect, useMemo } from "react";
-import { RefreshCw, LayoutGrid, List } from "@/lib/icons";
+import { useNavigate } from "react-router-dom";
+import { RefreshCw, LayoutGrid, List, Plus } from "@/lib/icons";
 import { useRGDList, useRGDFilters } from "@/hooks/useRGDs";
 import type { CatalogRGD, RGDListParams } from "@/types/rgd";
 import { CatalogCard } from "./catalog-card";
@@ -12,12 +13,14 @@ import { Pagination } from "./Pagination";
 import { CatalogFilters, type FilterState } from "./CatalogFilters";
 import { CatalogListView } from "./CatalogListView";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { ListFooter } from "@/components/ui/list-footer";
 import { getCatalogFiltersFromURL, setCatalogFiltersToURL } from "@/lib/url-utils";
 import { getSafeErrorMessage } from "@/lib/errors";
 import { cn } from "@/lib/utils";
-import { PageHeader } from "@/components/layout/PageHeader";
 import { usePreferencesStore } from "@/stores/preferencesStore";
 import { useCurrentProject } from "@/hooks/useAuth";
+import { useCanI } from "@/hooks/useCanI";
 
 const PAGE_SIZE = 20;
 const CATALOG_VIEW_KEY = "catalog-view-mode";
@@ -29,6 +32,8 @@ interface CatalogPageProps {
 
 export function CatalogPage({ onRGDClick }: CatalogPageProps) {
   const currentProject = useCurrentProject();
+  const navigate = useNavigate();
+  const { allowed: canDeploy } = useCanI("instances", "create", "-");
   const [filters, setFilters] = useState<FilterState>(getCatalogFiltersFromURL);
   const [page, setPage] = useState(1);
 
@@ -166,11 +171,26 @@ export function CatalogPage({ onRGDClick }: CatalogPageProps) {
     );
   }
 
+  // Same totalCount expression as Pagination — keeps the two numbers consistent
+  // when the project-scoped client filter is on.
+  const listFooterTotal = filters.projectScoped
+    ? filteredItems.length
+    : data?.totalCount ?? filteredItems.length;
+  const listFooter = (
+    <div data-testid="catalog-list-footer">
+      <ListFooter
+        total={listFooterTotal}
+        totalLabel="resources"
+        breakdown={[
+          ["categories", availableCategories.length],
+          ["live instances", filteredItems.reduce((sum, r) => sum + (r.instances ?? 0), 0)],
+        ]}
+      />
+    </div>
+  );
+
   return (
     <section className="space-y-6">
-      {/* Page header (sr-only title) */}
-      <PageHeader title="Catalog" />
-
       {/* Filters + View Toggle (same row) */}
       <div className="flex items-start gap-3">
         <div className="flex-1 min-w-0">
@@ -185,6 +205,17 @@ export function CatalogPage({ onRGDClick }: CatalogPageProps) {
             <span className="flex items-center gap-2 text-xs text-muted-foreground">
               <RefreshCw className="h-3 w-3 animate-spin" />
             </span>
+          )}
+          {canDeploy && (
+            <Button
+              size="sm"
+              data-testid="catalog-deploy-button"
+              aria-label="Deploy a resource"
+              onClick={() => navigate("/instances?action=deploy")}
+            >
+              <Plus className="h-4 w-4" />
+              Deploy
+            </Button>
           )}
           <div className="flex items-center h-9 border border-[var(--border-default)] rounded-[var(--radius-token-md)] p-0.5" role="group" aria-label="View mode">
             <button
@@ -304,10 +335,11 @@ export function CatalogPage({ onRGDClick }: CatalogPageProps) {
             <Pagination
               page={data.page}
               pageSize={data.pageSize}
-              totalCount={filters.projectScoped ? filteredItems.length : data?.totalCount ?? filteredItems.length}
+              totalCount={listFooterTotal}
               onPageChange={handlePageChange}
             />
           )}
+          {listFooter}
         </>
       ) : (
         <>
@@ -331,10 +363,11 @@ export function CatalogPage({ onRGDClick }: CatalogPageProps) {
             <Pagination
               page={data.page}
               pageSize={data.pageSize}
-              totalCount={filters.projectScoped ? filteredItems.length : data?.totalCount ?? filteredItems.length}
+              totalCount={listFooterTotal}
               onPageChange={handlePageChange}
             />
           )}
+          {listFooter}
         </>
       )}
 

@@ -1,7 +1,7 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, memo } from "react";
 import { Globe } from "@/lib/icons";
 import type { CatalogRGD } from "@/types/rgd";
 
@@ -25,7 +25,7 @@ interface CatalogListViewProps {
   compact?: boolean;
 }
 
-export function CatalogListView({ items, onRGDClick, compact = false }: CatalogListViewProps) {
+export const CatalogListView = memo(function CatalogListView({ items, onRGDClick, compact = false }: CatalogListViewProps) {
   const [sortField, setSortField] = useState<SortField>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
 
@@ -121,4 +121,4 @@ export function CatalogListView({ items, onRGDClick, compact = false }: CatalogL
       </Table>
     </ListTableShell>
   );
-}
+});

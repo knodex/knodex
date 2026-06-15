@@ -15,20 +15,23 @@ import { toast } from "sonner";
 import { AlertCircle, X } from "@/lib/icons";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
-import { PageHeader } from "@/components/layout/PageHeader";
-import { PageSkeleton } from "@/components/ui/page-skeleton";
+import { DeployFormSkeleton } from "./DeployFormSkeleton";
+import {
+  Sheet,
+  SheetContent,
+  SheetTitle,
+  SheetDescription,
+} from "@/components/ui/sheet";
+import * as VisuallyHiddenPrimitive from "@radix-ui/react-visually-hidden";
 import { useRGD, useRGDSchema } from "@/hooks/useRGDs";
 import { useProjects } from "@/hooks/useProjects";
 import { useCurrentProject } from "@/hooks/useAuth";
 import { buildFormSchema, getDefaultValues } from "@/lib/schema-to-zod";
 import { validateInstanceName } from "@/lib/validate-instance-name";
-import { buildTabsFromSchema, RESERVED_BASICS_KEYS } from "@/lib/build-tabs";
-import { createInstance, preflightInstance } from "@/api/rgd";
+import { buildTabsFromSchema, RESERVED_BASICS_KEYS } from "./buildTabsFromSchema";
+import { createInstance } from "@/api/rgd";
 import { buildInstanceRoute } from "@/lib/instancePath";
-import {
-  validateCompliance,
-  type ComplianceValidateViolation,
-} from "@/api/compliance";
+import { useComplianceValidation } from "./useComplianceValidation";
 import type { CreateInstanceRequest } from "@/types/rgd";
 import type { DeploymentMode } from "@/types/deployment";
 import type { CatalogRGD, FormSchema } from "@/types/rgd";
@@ -50,25 +53,113 @@ interface PrefillState {
   namespace?: string;
 }
 
-/** Recursively sort object keys so JSON.stringify produces a stable hash. */
-function sortKeysDeep(value: unknown): unknown {
-  if (value === null || value === undefined) return value;
-  if (Array.isArray(value)) return value.map(sortKeysDeep);
-  if (typeof value === "object") {
-    const obj = value as Record<string, unknown>;
-    const sorted: Record<string, unknown> = {};
-    for (const k of Object.keys(obj).sort()) {
-      sorted[k] = sortKeysDeep(obj[k]);
-    }
-    return sorted;
-  }
-  return value;
-}
-
 function stripReserved(values: Record<string, unknown>): Record<string, unknown> {
   const copy = { ...values };
   for (const k of RESERVED_BASICS_KEYS) delete copy[k];
   return copy;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Drawer chrome shared by every render path (loading skeleton, error state,
+// the main wizard). Keeps the prototype's eyebrow + title header + close
+// affordance consistent so the panel "shape" never changes between states.
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface DeployDrawerShellProps {
+  eyebrow: string;
+  title: string;
+  onClose: () => void;
+  closeDisabled?: boolean;
+  /**
+   * Optional content rendered to the right of the title (docs button, etc).
+   * The close X is always rendered as the rightmost item by this shell.
+   */
+  headerAction?: React.ReactNode;
+  /**
+   * Optional band rendered between the header and the body (e.g. the DeployTabs
+   * strip). When omitted, no separator is rendered.
+   */
+  belowHeader?: React.ReactNode;
+  /**
+   * Optional sticky footer (e.g. DeployActionFooter). Rendered outside the
+   * scroll region so action affordances stay pinned.
+   */
+  footer?: React.ReactNode;
+  children: React.ReactNode;
+}
+
+export function DeployDrawerShell({
+  eyebrow,
+  title,
+  onClose,
+  closeDisabled = false,
+  headerAction,
+  belowHeader,
+  footer,
+  children,
+}: DeployDrawerShellProps) {
+  const titleId = "deploy-drawer-title";
+  return (
+    <Sheet
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      <SheetContent
+        side="right"
+        aria-labelledby={titleId}
+        // [&>button:last-child]:hidden suppresses the default Radix Dialog close
+        // button (rendered by SheetContent) so the header's own close affordance
+        // is the only one — see DeployDrawerShell header below.
+        className="w-full p-0 sm:max-w-[640px] lg:max-w-[760px] flex flex-col gap-0 overflow-hidden [&>button:last-child]:hidden"
+      >
+        <VisuallyHiddenPrimitive.Root>
+          <SheetTitle id={titleId}>
+            {eyebrow} — {title}
+          </SheetTitle>
+          <SheetDescription>
+            Configure and deploy a new instance of {title}.
+          </SheetDescription>
+        </VisuallyHiddenPrimitive.Root>
+
+        <div className="flex items-start justify-between gap-4 border-b border-[var(--border-subtle)] px-6 pt-6 pb-5">
+          <div className="min-w-0">
+            <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground">
+              {eyebrow}
+            </div>
+            <div className="mt-1 truncate text-xl font-semibold text-foreground">
+              {title}
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {headerAction}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={onClose}
+              disabled={closeDisabled}
+              aria-label="Close"
+              data-testid="deploy-header-close"
+            >
+              <X className="h-5 w-5" />
+            </Button>
+          </div>
+        </div>
+
+        {belowHeader && (
+          <div className="border-b border-[var(--border-subtle)] px-6 py-3">
+            {belowHeader}
+          </div>
+        )}
+
+        <div className="flex-1 overflow-y-auto px-6 py-5">{children}</div>
+
+        {footer}
+      </SheetContent>
+    </Sheet>
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -82,30 +173,75 @@ export function DeployPage({ rgdName }: DeployPageProps) {
   const location = useLocation();
   const currentProject = useCurrentProject();
 
-  const { data: rgd, isLoading: rgdLoading } = useRGD(rgdName);
-  const { data: schemaResponse, isLoading: schemaLoading } = useRGDSchema(rgdName);
+  const { data: rgd, isLoading: rgdLoading, isError: rgdError, error: rgdFetchError, refetch: refetchRgd } = useRGD(rgdName);
+  const { data: schemaResponse, isLoading: schemaLoading, isError: schemaError, error: schemaFetchError, refetch: refetchSchema } = useRGDSchema(rgdName);
   const { data: projectsData, isLoading: projectsLoading } = useProjects();
 
   const schema = schemaResponse?.schema ?? null;
 
+  // Loading + error states render INSIDE the drawer so the panel slides in
+  // immediately on /deploy/{rgd} instead of waiting for the data fetch. The
+  // close button on both intermediate states routes through navigate(-1) so
+  // users land back where they came from (catalog or RGD detail).
   if (rgdLoading || schemaLoading || projectsLoading) {
-    return <PageSkeleton />;
+    return (
+      <DeployDrawerShell
+        eyebrow="Deploy resource"
+        title={rgdName}
+        onClose={() => navigate(-1)}
+      >
+        <DeployFormSkeleton />
+      </DeployDrawerShell>
+    );
+  }
+
+  if (rgdError || schemaError) {
+    const errorMsg = (rgdFetchError ?? schemaFetchError) instanceof Error
+      ? (rgdFetchError ?? schemaFetchError)!.message
+      : 'Unknown error';
+    return (
+      <DeployDrawerShell
+        eyebrow="Deploy resource"
+        title={rgdName}
+        onClose={() => navigate(-1)}
+      >
+        <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
+          <AlertCircle className="h-12 w-12 text-destructive" />
+          <div className="text-center">
+            <h2 className="text-lg font-semibold">Failed to load deployment configuration</h2>
+            <p className="text-sm text-muted-foreground">{errorMsg}</p>
+          </div>
+          <button
+            onClick={() => { void refetchRgd?.(); void refetchSchema?.(); }}
+            className="text-sm underline"
+          >
+            Retry
+          </button>
+        </div>
+      </DeployDrawerShell>
+    );
   }
 
   if (!schema) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
-        <AlertCircle className="h-12 w-12 text-destructive" />
-        <div className="text-center">
-          <h2 className="text-lg font-semibold">Schema unavailable for RGD</h2>
-          <p className="text-sm text-muted-foreground">
-            The schema for &ldquo;{rgdName}&rdquo; could not be loaded.
-          </p>
+      <DeployDrawerShell
+        eyebrow="Deploy resource"
+        title={rgdName}
+        onClose={() => navigate(-1)}
+      >
+        <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
+          <AlertCircle className="h-12 w-12 text-destructive" />
+          <div className="text-center">
+            <h2 className="text-lg font-semibold">Schema unavailable for RGD</h2>
+            <p className="text-sm text-muted-foreground">
+              The schema for &ldquo;{rgdName}&rdquo; could not be loaded.
+            </p>
+          </div>
+          <Button onClick={() => navigate("/catalog")} variant="default">
+            Back to Catalog
+          </Button>
         </div>
-        <Button onClick={() => navigate("/catalog")} variant="default">
-          Back to Catalog
-        </Button>
-      </div>
+      </DeployDrawerShell>
     );
   }
 
@@ -198,6 +334,7 @@ function DeployPageContent({
     () => new Set([activeTabId])
   );
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- functional updater with early-return guard; only updates when tab is new; no cascade risk
     setVisitedIds((prev) => {
       if (prev.has(activeTabId)) return prev;
       const next = new Set(prev);
@@ -206,109 +343,59 @@ function DeployPageContent({
     });
   }, [activeTabId]);
 
-  // Compliance + preflight state.
-  const [complianceResult, setComplianceResult] =
-    useState<"pass" | "warning" | "block">("pass");
-  const [complianceViolations, setComplianceViolations] = useState<
-    ComplianceValidateViolation[]
-  >([]);
-  const [warningsAcknowledged, setWarningsAcknowledged] = useState(false);
-  const [preflightValid, setPreflightValid] = useState(true);
-  const [preflightMessage, setPreflightMessage] = useState<string | undefined>();
-  const [isValidating, setIsValidating] = useState(false);
-  const [isPreflighting, setIsPreflighting] = useState(false);
-  const lastFetchedHashRef = useRef<string>("");
+  // Validate the LEAVING tab whenever the active tab changes. Errors populate
+  // in formState so the tab badge turns red on the tab the user just left —
+  // and the inline error markers are visible when they navigate back to fix
+  // missing required fields. Non-blocking: navigation still completes.
+  const prevTabIdRef = useRef(activeTabId);
+  useEffect(() => {
+    const previous = prevTabIdRef.current;
+    prevTabIdRef.current = activeTabId;
+    if (previous === activeTabId) return;
+
+    const leavingTab = tabs.find((t) => t.id === previous);
+    if (!leavingTab) return;
+
+    let fields: string[] = [];
+    switch (leavingTab.kind) {
+      case "general": {
+        const knodex = ["instanceName", "project"];
+        if (!isClusterScoped) knodex.push("namespace");
+        fields = [...knodex, ...Object.keys(leavingTab.properties ?? {})];
+        break;
+      }
+      case "schema":
+        fields = Object.keys(leavingTab.properties ?? {}).map(
+          (k) => `${leavingTab.id}.${k}`
+        );
+        break;
+    }
+    if (fields.length > 0) {
+      void form.trigger(fields as Parameters<typeof form.trigger>[0]);
+    }
+  }, [activeTabId, tabs, form, isClusterScoped]);
+
+  // Compliance + preflight — extracted to useComplianceValidation.
+  const {
+    complianceResult,
+    complianceViolations,
+    warningsAcknowledged,
+    setWarningsAcknowledged,
+    preflightValid,
+    preflightMessage,
+    isValidating,
+    isPreflighting,
+  } = useComplianceValidation({
+    activeTabId,
+    form,
+    schema,
+    isClusterScoped,
+    rgdName,
+    reservedKeys: RESERVED_BASICS_KEYS,
+  });
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [justSubmitted, setJustSubmitted] = useState(false);
-
-  // Re-run compliance + preflight when entering Review tab or when form values change.
-  // Using form.watch subscription (non-render) avoids re-rendering DeployPageContent on
-  // every keystroke, which would propagate to GeneralTab and cause Radix Select's SlotClone
-  // to create a new composeRefs function every render (triggering an infinite setState loop).
-  useEffect(() => {
-    if (activeTabId !== "review") return;
-
-    const ac = new AbortController();
-    let debounceTimer: ReturnType<typeof setTimeout> | undefined;
-
-    const runChecks = () => {
-      clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
-        const allValues = form.getValues() as Record<string, unknown>;
-        const runHash = JSON.stringify(sortKeysDeep(allValues));
-        if (runHash === lastFetchedHashRef.current) return;
-        lastFetchedHashRef.current = runHash;
-
-        const namespace =
-          (form.getValues("namespace") as string | undefined) ?? "";
-        const project = (form.getValues("project") as string | undefined) ?? "";
-        const spec = stripReserved(allValues);
-
-        setIsValidating(true);
-        setIsPreflighting(true);
-        setWarningsAcknowledged(false);
-
-        void validateCompliance({
-          rgdName,
-          project,
-          namespace: isClusterScoped ? undefined : namespace || undefined,
-          values: allValues,
-        })
-          .then((res) => {
-            if (ac.signal.aborted) return;
-            setComplianceResult(res.result);
-            setComplianceViolations(res.violations);
-          })
-          .catch(() => {
-            if (ac.signal.aborted) return;
-            setComplianceResult("pass");
-            setComplianceViolations([]);
-          })
-          .finally(() => {
-            if (ac.signal.aborted) return;
-            setIsValidating(false);
-          });
-
-        void preflightInstance(schema.group, schema.kind, {
-          name: "preflight-check",
-          namespace: isClusterScoped ? undefined : namespace || undefined,
-          projectId: project,
-          rgdName,
-          spec,
-        })
-          .then((res) => {
-            if (ac.signal.aborted) return;
-            setPreflightValid(res.valid);
-            setPreflightMessage(res.message);
-          })
-          .catch(() => {
-            if (ac.signal.aborted) return;
-            setPreflightValid(true);
-            setPreflightMessage(undefined);
-          })
-          .finally(() => {
-            if (ac.signal.aborted) return;
-            setIsPreflighting(false);
-          });
-      }, 250);
-    };
-
-    // Run immediately when entering Review tab.
-    runChecks();
-
-    // Subscribe to form value changes while on Review tab (non-render subscription).
-    // eslint-disable-next-line react-hooks/incompatible-library -- intentional: subscribing without re-rendering, see comment above
-    const subscription = form.watch(() => {
-      if (!ac.signal.aborted) runChecks();
-    });
-
-    return () => {
-      clearTimeout(debounceTimer);
-      ac.abort();
-      subscription.unsubscribe();
-    };
-  }, [activeTabId, form, schema, isClusterScoped, rgdName]);
 
   const canDeploy =
     form.formState.isValid &&
@@ -378,39 +465,13 @@ function DeployPageContent({
     if (reviewTab) setActiveTab(reviewTab.id);
   }, [tabs, setActiveTab]);
 
-  const { trigger } = form;
-  const handleNext = useCallback(async () => {
+  const handleNext = useCallback(() => {
     if (activeIndex >= tabs.length - 1) return;
-
-    const currentTab = tabs[activeIndex];
-    let fieldsToValidate: string[] = [];
-
-    switch (currentTab.kind) {
-      case "general": {
-        // General owns Knodex plumbing fields PLUS top-level RGD scalars
-        // (and the folded-in top-level `externalRef` object, if present).
-        const knodex = ["instanceName", "project"];
-        if (!isClusterScoped) knodex.push("namespace");
-        fieldsToValidate = [
-          ...knodex,
-          ...Object.keys(currentTab.properties ?? {}),
-        ];
-        break;
-      }
-      case "schema":
-        fieldsToValidate = Object.keys(currentTab.properties ?? {}).map(
-          (k) => `${currentTab.id}.${k}`
-        );
-        break;
-    }
-
-    if (fieldsToValidate.length > 0) {
-      const isValid = await trigger(fieldsToValidate as Parameters<typeof trigger>[0]);
-      if (!isValid) return;
-    }
-
+    // Validation of the leaving tab is handled by the useEffect on
+    // `activeTabId` — Next is non-blocking so users can move forward and
+    // come back to fix red-flagged tabs after seeing the Review summary.
     setActiveTab(tabs[activeIndex + 1].id);
-  }, [activeIndex, tabs, setActiveTab, trigger, isClusterScoped]);
+  }, [activeIndex, tabs, setActiveTab]);
 
   const handleCancel = useCallback(() => {
     navigate(`/catalog/${encodeURIComponent(rgdName)}`);
@@ -420,91 +481,62 @@ function DeployPageContent({
 
   return (
     <FormProvider {...form}>
-      <PageHeader
-        title={schema.title ?? rgd?.title ?? rgdName}
-        leftActions={
-          <h2 className="text-lg font-semibold leading-none">
-            Deploy{" "}
-            <span className="text-muted-foreground font-normal">
-              {rgd?.title ?? rgdName}
-            </span>
-          </h2>
+      <DeployDrawerShell
+        eyebrow="Deploy resource"
+        title={rgd?.title ?? rgdName}
+        onClose={handleCancel}
+        closeDisabled={isSubmitting}
+        headerAction={
+          <DocsButton
+            docsUrl={rgd?.docsUrl}
+            rgdLabel={rgd?.title ?? rgdName}
+          />
         }
-        actions={
-          <div className="flex items-center gap-2">
-            <DocsButton
-              docsUrl={rgd?.docsUrl}
-              rgdLabel={rgd?.title ?? rgdName}
-            />
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              onClick={handleCancel}
-              disabled={isSubmitting}
-              aria-label="Close"
-              data-testid="deploy-header-close"
-            >
-              <X className="h-5 w-5" />
-            </Button>
-          </div>
-        }
-      />
-      <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-4 pb-24">
-        <div className="space-y-4">
+        belowHeader={
           <DeployTabs
             tabs={tabs}
             activeId={activeTabId}
             onSelect={setActiveTab}
             visitedIds={visitedIds}
           />
-
-          <div
-            className="rounded-md border p-5"
-            style={{
-              backgroundColor: "var(--surface-primary)",
-              borderColor: "rgba(255,255,255,0.06)",
-            }}
-          >
-            {activeTab?.kind === "general" && (
-              <GeneralTab
-                schema={schema}
-                tab={activeTab}
-                allowedDeploymentModes={rgd?.allowedDeploymentModes}
-              />
-            )}
-            {activeTab?.kind === "schema" && (
-              <SchemaTab tab={activeTab} />
-            )}
-            {activeTab?.kind === "review" && (
-              <ReviewTab
-                tabs={tabs}
-                onEditTab={setActiveTab}
-                complianceResult={complianceResult}
-                complianceViolations={complianceViolations}
-                warningsAcknowledged={warningsAcknowledged}
-                setWarningsAcknowledged={setWarningsAcknowledged}
-                preflightValid={preflightValid}
-                preflightMessage={preflightMessage}
-                isValidating={isValidating}
-                isPreflighting={isPreflighting}
-                isClusterScoped={isClusterScoped}
-              />
-            )}
-          </div>
-        </div>
-      </div>
-
-      <DeployActionFooter
-        onPrev={handlePrev}
-        onNext={handleNext}
-        onDeploy={handleDeploy}
-        onGoToReview={handleGoToReview}
-        isOnFirst={isOnFirst}
-        isOnReview={isOnReview}
-        canDeploy={canDeploy}
-        isSubmitting={isSubmitting}
-      />
+        }
+        footer={
+          <DeployActionFooter
+            onPrev={handlePrev}
+            onNext={handleNext}
+            onDeploy={handleDeploy}
+            onGoToReview={handleGoToReview}
+            isOnFirst={isOnFirst}
+            isOnReview={isOnReview}
+            canDeploy={canDeploy}
+            isSubmitting={isSubmitting}
+          />
+        }
+      >
+        {activeTab?.kind === "general" && (
+          <GeneralTab
+            schema={schema}
+            tab={activeTab}
+            allowedDeploymentModes={rgd?.allowedDeploymentModes}
+          />
+        )}
+        {activeTab?.kind === "schema" && <SchemaTab tab={activeTab} />}
+        {activeTab?.kind === "review" && (
+          <ReviewTab
+            tabs={tabs}
+            onEditTab={setActiveTab}
+            complianceResult={complianceResult}
+            complianceViolations={complianceViolations}
+            warningsAcknowledged={warningsAcknowledged}
+            setWarningsAcknowledged={setWarningsAcknowledged}
+            preflightValid={preflightValid}
+            preflightMessage={preflightMessage}
+            isValidating={isValidating}
+            isPreflighting={isPreflighting}
+            isClusterScoped={isClusterScoped}
+          />
+        )}
+      </DeployDrawerShell>
 
       <DiscardDialog
         hasUnsavedChanges={form.formState.isDirty && !justSubmitted}

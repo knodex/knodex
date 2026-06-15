@@ -7,6 +7,7 @@ import { ExternalLink, Copy, Check } from "@/lib/icons";
 import type { Instance } from "@/types/rgd";
 import { StatusIndicator } from "@/components/ui/status-indicator";
 import { formatDistanceToNow } from "@/lib/date";
+import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 import { cn } from "@/lib/utils";
 import { buildInstanceRoute } from "@/lib/instancePath";
 import { HEALTH_TO_STATUS, LEFT_BORDER_COLOR, getInstanceUrl, safeHostname } from "./instance-utils";
@@ -24,7 +25,7 @@ export const StatusCard = React.memo(function StatusCard({
   hideKind = false,
 }: StatusCardProps) {
   const navigate = useNavigate();
-  const [copied, setCopied] = React.useState(false);
+  const { copied, copy } = useCopyToClipboard({ resetDelay: 1500 });
   const status = HEALTH_TO_STATUS[instance.health] ?? "unknown";
   const leftBorderColor = LEFT_BORDER_COLOR[instance.health];
   const serviceUrl = getInstanceUrl(instance);
@@ -45,11 +46,8 @@ export const StatusCard = React.memo(function StatusCard({
   const handleCopyUrl = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     if (!serviceUrl) return;
-    navigator.clipboard.writeText(serviceUrl).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
-  }, [serviceUrl]);
+    void copy(serviceUrl);
+  }, [serviceUrl, copy]);
 
   return (
     <div
@@ -63,7 +61,7 @@ export const StatusCard = React.memo(function StatusCard({
         "transition-all duration-200 ease-out",
         "hover:shadow-[var(--shadow-card-hover)] hover:translate-y-[-1px]",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-primary)]/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--surface-bg)]",
-        leftBorderColor ? "border-l-2 border-[var(--border-default)]" : "border-[var(--border-default)]"
+        leftBorderColor ? "border-l-[3px] border-[var(--border-default)]" : "border-[var(--border-default)]"
       )}
       style={{
         borderLeftColor: leftBorderColor || undefined,

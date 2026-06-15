@@ -6,7 +6,6 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { AlertTriangle, Loader2 } from "@/lib/icons";
 import { useDeleteSecret } from "@/hooks/useSecrets";
-import { useCurrentProject } from "@/hooks/useAuth";
 import { ApiError } from "@/api/client";
 import {
   AlertDialog,
@@ -35,7 +34,6 @@ export function DeleteSecretDialog({
   secretNamespace,
   navigateOnDelete = true,
 }: DeleteSecretDialogProps) {
-  const project = useCurrentProject() ?? "";
   const navigate = useNavigate();
   const deleteMutation = useDeleteSecret();
   const [postDeleteWarnings, setPostDeleteWarnings] = useState<string[]>([]);
@@ -56,7 +54,6 @@ export function DeleteSecretDialog({
     try {
       const result = await deleteMutation.mutateAsync({
         name: secretName,
-        project,
         namespace: secretNamespace,
       });
 
@@ -84,7 +81,7 @@ export function DeleteSecretDialog({
         toast.error("Failed to delete secret");
       }
     }
-  }, [secretName, secretNamespace, project, deleteMutation, onOpenChange, navigate, navigateOnDelete, secretsListUrl]);
+  }, [secretName, secretNamespace, deleteMutation, onOpenChange, navigate, navigateOnDelete, secretsListUrl]);
 
   const handleDismissWarnings = useCallback(() => {
     setPostDeleteWarnings([]);

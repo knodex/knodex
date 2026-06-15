@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Knodex — Instance Detail Redesign Mockup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  /* ── Knodex design tokens (web/src/design-tokens/tokens.json) ── */
+  :root {
+    --surface-bg: #141722;
+    --surface-primary: #1e2230;
+    --surface-elevated: #262b3a;
+    --status-healthy: #22c55e;
+    --status-warning: #f59e0b;
+    --status-error: #f43f5e;
+    --status-info: #3b82f6;
+    --status-inactive: #6b7280;
+    --brand-primary: #2dd4bf;
+    --brand-hover: #5eead4;
+    --text-primary: #f0f0f2;
+    --text-secondary: #a1a1aa;
+    --text-muted: #52525b;
+    --border-subtle: rgba(255,255,255,0.05);
+    --border-default: rgba(255,255,255,0.08);
+    --border-hover: rgba(255,255,255,0.14);
+    --radius-sm: 6px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+    --shadow-md: 0 2px 4px rgba(0,0,0,0.3), 0 8px 16px rgba(0,0,0,0.25);
+    --font-sans: 'Geist', ui-sans-serif, system-ui, sans-serif;
+    --font-mono: 'Geist Mono', ui-monospace, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { font-size: 16px; }
+  body {
+    font-family: var(--font-sans);
+    background: var(--surface-bg);
+    color: var(--text-primary);
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+  }
+  svg { display: block; flex-shrink: 0; }
+  a { color: inherit; text-decoration: none; }
+
+  .shell { display: grid; grid-template-columns: 262px 1fr; min-height: 100vh; }
+
+  /* ── Sidebar (unchanged from app, for context) ── */
+  .sidebar {
+    border-right: 1px solid var(--border-subtle);
+    padding: 20px 14px;
+    display: flex; flex-direction: column; gap: 4px;
+    background: var(--surface-bg);
+  }
+  .logo { display:flex; align-items:center; gap:10px; padding: 4px 10px 24px; font-weight: 600; font-size: 15px; }
+  .logo-mark { color: var(--brand-primary); font-weight: 700; font-size: 22px; letter-spacing: -2px; }
+  .nav-item {
+    display: flex; align-items: center; gap: 12px;
+    padding: 9px 12px; border-radius: var(--radius-md);
+    color: var(--text-secondary); font-size: 13.5px; cursor: pointer;
+  }
+  .nav-item:hover { background: rgba(255,255,255,0.03); color: var(--text-primary); }
+  .nav-item.active { background: var(--surface-elevated); color: var(--text-primary); box-shadow: inset 2px 0 0 var(--brand-primary); }
+  .nav-sep { height: 1px; background: var(--border-subtle); margin: 10px 4px; }
+  .sidebar-spacer { flex: 1; }
+  .user-chip { display:flex; align-items:center; gap:10px; padding: 9px 12px; color: var(--text-secondary); font-size: 13.5px; }
+  .user-avatar { width: 22px; height: 22px; border-radius: 50%; background: var(--surface-elevated); display:flex;align-items:center;justify-content:center; font-size: 10px; }
+
+  /* ── Topbar ── */
+  .main { display: flex; flex-direction: column; min-width: 0; }
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 28px; gap: 16px;
+  }
+  .crumbs { display: flex; align-items: center; gap: 8px; font-size: 13.5px; min-width: 0; }
+  .crumbs .dim { color: var(--text-secondary); }
+  .crumbs .sep { color: var(--text-muted); }
+  .crumb-chip { font-family: var(--font-mono); font-size: 12.5px; color: var(--text-secondary); background: var(--surface-primary); border: 1px solid var(--border-subtle); padding: 2px 8px; border-radius: var(--radius-sm); }
+  .topbar-right { display: flex; gap: 10px; align-items: center; }
+  .search {
+    display:flex; align-items:center; gap:8px;
+    background: var(--surface-primary); border: 1px solid var(--border-default);
+    border-radius: var(--radius-md); padding: 7px 12px; width: 220px;
+    color: var(--text-muted); font-size: 13px;
+  }
+  .kbd { margin-left:auto; font-size: 10.5px; border: 1px solid var(--border-default); padding: 1px 5px; border-radius: 4px; color: var(--text-muted); }
+
+  .content { padding: 20px 28px 48px; max-width: 1280px; width: 100%; margin: 0 auto; }
+
+  /* ══ REDESIGNED HEADER ══ */
+  .header-card {
+    background: var(--surface-primary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+  }
+  .header-top {
+    display: flex; align-items: flex-start; gap: 16px;
+    padding: 20px 24px 16px;
+  }
+  .rgd-icon {
+    width: 44px; height: 44px; border-radius: var(--radius-md);
+    background: var(--surface-elevated); border: 1px solid var(--border-subtle);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .header-id { min-width: 0; flex: 1; }
+  .title-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .title-row h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.01em; }
+  .health-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 12px; font-weight: 500; color: var(--status-healthy);
+    background: rgba(34,197,94,0.10); border: 1px solid rgba(34,197,94,0.25);
+    padding: 3px 10px; border-radius: 999px;
+  }
+  .health-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--status-healthy); box-shadow: 0 0 6px rgba(34,197,94,0.7); }
+  .desc { color: var(--text-secondary); font-size: 13.5px; margin-top: 5px; line-height: 1.5; }
+  .header-actions { display: flex; gap: 8px; align-items: center; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-family: var(--font-sans); font-size: 13px; font-weight: 500;
+    padding: 7px 14px; border-radius: var(--radius-md); cursor: pointer;
+    border: 1px solid var(--border-default); background: var(--surface-elevated); color: var(--text-primary);
+    transition: border-color .15s, background .15s;
+  }
+  .btn:hover { border-color: var(--border-hover); }
+  .btn-primary { background: rgba(45,212,191,0.12); border-color: rgba(45,212,191,0.3); color: var(--brand-primary); }
+  .btn-primary:hover { background: rgba(45,212,191,0.18); border-color: rgba(45,212,191,0.45); }
+  .btn-icon { padding: 7px 9px; color: var(--text-secondary); }
+
+  /* meta chip strip — replaces the old half-empty 2-col grid + Source row */
+  .meta-strip {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 0 24px 18px;
+  }
+  .meta-chip {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-size: 12.5px; color: var(--text-secondary);
+    background: var(--surface-bg); border: 1px solid var(--border-subtle);
+    padding: 5px 11px; border-radius: var(--radius-sm);
+  }
+  .meta-chip .k { color: var(--text-muted); font-size: 11.5px; }
+  .meta-chip .v { font-family: var(--font-mono); font-size: 12px; color: var(--text-primary); }
+  .meta-chip .v.link { color: var(--brand-primary); cursor: pointer; }
+  .meta-chip .v.link:hover { text-decoration: underline; }
+  .rev-pill { font-size: 11px; font-family: var(--font-mono); border: 1px solid var(--border-default); border-radius: 999px; padding: 1px 8px; color: var(--text-secondary); cursor: pointer; }
+  .rev-pill:hover { color: var(--brand-primary); border-color: rgba(45,212,191,0.4); }
+
+  /* ══ HEALTH ROLLUP STRIP — the "is everything actually fine?" answer ══ */
+  .rollup {
+    display: grid; grid-template-columns: repeat(4, 1fr);
+    border-top: 1px solid var(--border-subtle);
+    background: var(--surface-bg);
+  }
+  .rollup-cell {
+    padding: 14px 24px; display: flex; flex-direction: column; gap: 4px;
+    border-right: 1px solid var(--border-subtle); cursor: pointer;
+  }
+  .rollup-cell:last-child { border-right: none; }
+  .rollup-cell:hover { background: rgba(255,255,255,0.015); }
+  .rollup-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-muted); font-weight: 500; }
+  .rollup-value { display: flex; align-items: baseline; gap: 8px; font-size: 15px; font-weight: 600; }
+  .rollup-value .sub { font-size: 12px; font-weight: 400; color: var(--text-secondary); }
+  .rollup-ok { color: var(--status-healthy); }
+  .rollup-warn { color: var(--status-error); }
+
+  /* attention banner — failing child resource surfaced at page level */
+  .attention {
+    display: flex; align-items: center; gap: 12px;
+    margin-top: 14px; padding: 11px 16px;
+    background: rgba(244,63,94,0.07);
+    border: 1px solid rgba(244,63,94,0.22);
+    border-radius: var(--radius-md);
+    font-size: 13px;
+  }
+  .attention .msg { color: var(--text-primary); }
+  .attention .msg b { font-family: var(--font-mono); font-weight: 500; font-size: 12.5px; }
+  .attention .when { color: var(--text-secondary); font-size: 12px; }
+  .attention a { margin-left: auto; color: var(--status-error); font-weight: 500; font-size: 12.5px; white-space: nowrap; cursor: pointer; }
+  .attention a:hover { text-decoration: underline; }
+
+  /* ══ TABS — consistent counts ══ */
+  .tabs {
+    display: flex; gap: 2px; margin-top: 22px;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .tab {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 16px; font-size: 13.5px; color: var(--text-secondary);
+    border-bottom: 2px solid transparent; cursor: pointer; margin-bottom: -1px;
+  }
+  .tab:hover { color: var(--text-primary); }
+  .tab.active { color: var(--text-primary); border-bottom-color: var(--brand-primary); }
+  .tab .count {
+    font-size: 11px; font-family: var(--font-mono);
+    background: var(--surface-elevated); border-radius: 999px; padding: 1px 7px;
+    color: var(--text-secondary);
+  }
+  .tab.active .count { background: rgba(45,212,191,0.12); color: var(--brand-primary); }
+  .tab .count.warn { background: rgba(244,63,94,0.12); color: var(--status-error); }
+
+  /* ══ OVERVIEW LAYOUT — main column + activity rail ══ */
+  .overview { display: grid; grid-template-columns: 1fr 320px; gap: 16px; margin-top: 18px; align-items: start; }
+
+  .card {
+    background: var(--surface-primary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+  }
+  .card-head {
+    display: flex; align-items: center; gap: 10px;
+    padding: 13px 18px; border-bottom: 1px solid var(--border-subtle);
+  }
+  .card-head h3 { font-size: 13px; font-weight: 600; }
+  .card-head .hint { font-size: 12px; color: var(--text-muted); }
+  .card-head .right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+
+  /* conditions as a compact passing checklist */
+  .conditions { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--border-subtle); }
+  .cond {
+    background: var(--surface-primary); padding: 13px 16px;
+    display: flex; flex-direction: column; gap: 3px;
+  }
+  .cond-name { display: flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 600; }
+  .cond-msg { font-size: 11.5px; color: var(--text-muted); line-height: 1.45; }
+  .check { width: 15px; height: 15px; border-radius: 50%; background: rgba(34,197,94,0.13); color: var(--status-healthy); display: flex; align-items: center; justify-content: center; }
+
+  /* outputs — grouped, leaf-emphasized, copy per row */
+  .out-group { padding: 4px 0; }
+  .out-group + .out-group { border-top: 1px solid var(--border-subtle); }
+  .out-group-label {
+    padding: 10px 18px 4px; font-size: 10.5px; font-weight: 600;
+    letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted);
+  }
+  .out-row {
+    display: grid; grid-template-columns: 172px 1fr 28px; align-items: center; gap: 12px;
+    padding: 7px 18px;
+  }
+  .out-row:hover { background: rgba(255,255,255,0.018); }
+  .out-row:hover .copy-btn { opacity: 1; }
+  .out-key { font-size: 12.5px; color: var(--text-secondary); }
+  .out-val { font-family: var(--font-mono); font-size: 12px; color: var(--text-primary); min-width: 0; display: flex; align-items: center; }
+  .out-val .path { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; }
+  .out-val .leaf { color: var(--text-primary); white-space: nowrap; }
+  .copy-btn {
+    opacity: 0; border: none; background: none; color: var(--text-muted);
+    cursor: pointer; padding: 4px; border-radius: 4px; transition: opacity .12s;
+  }
+  .copy-btn:hover { color: var(--brand-primary); background: rgba(45,212,191,0.08); }
+
+  /* activity rail */
+  .rail { display: flex; flex-direction: column; gap: 16px; }
+  .res-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 16px; font-size: 12.5px;
+  }
+  .res-row:hover { background: rgba(255,255,255,0.018); cursor: pointer; }
+  .res-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--status-healthy); }
+  .res-dot.err { background: var(--status-error); box-shadow: 0 0 5px rgba(244,63,94,0.6); }
+  .res-name { font-family: var(--font-mono); font-size: 12px; }
+  .res-kind { color: var(--text-muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .res-state { margin-left: auto; font-size: 11px; font-family: var(--font-mono); color: var(--text-secondary); }
+  .res-state.err { color: var(--status-error); }
+
+  .ev-row { display: flex; gap: 11px; padding: 10px 16px; }
+  .ev-line { display: flex; flex-direction: column; align-items: center; }
+  .ev-node { width: 8px; height: 8px; border-radius: 50%; border: 2px solid var(--status-info); margin-top: 4px; }
+  .ev-node.ok { border-color: var(--status-healthy); }
+  .ev-stem { width: 1px; flex: 1; background: var(--border-default); margin-top: 4px; }
+  .ev-body { min-width: 0; padding-bottom: 2px; }
+  .ev-title { font-size: 12.5px; font-weight: 500; }
+  .ev-meta { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+  .ev-msg { font-size: 11.5px; color: var(--text-secondary); margin-top: 3px; line-height: 1.45; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .view-all { display: block; text-align: center; padding: 10px; font-size: 12px; color: var(--brand-primary); border-top: 1px solid var(--border-subtle); cursor: pointer; }
+  .view-all:hover { background: rgba(45,212,191,0.04); }
+
+  .footnote { margin-top: 28px; text-align: center; color: var(--text-muted); font-size: 11.5px; }
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <!-- ── Sidebar (app shell context) ── -->
+  <aside class="sidebar">
+    <div class="logo"><span class="logo-mark">|&lt;</span> Knodex</div>
+    <div class="nav-item"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/></svg>Agents</div>
+    <div class="nav-item"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>Catalog</div>
+    <div class="nav-item active"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>Instances</div>
+    <div class="nav-sep"></div>
+    <div class="nav-item"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>Secrets</div>
+    <div class="nav-item"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>Projects</div>
+    <div class="nav-item"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg>Repositories</div>
+    <div class="nav-sep"></div>
+    <div class="nav-item"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>Compliance</div>
+    <div class="nav-item"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>Audit</div>
+    <div class="sidebar-spacer"></div>
+    <div class="user-chip"><span class="user-avatar">T</span> tparis</div>
+  </aside>
+
+  <!-- ── Main ── -->
+  <div class="main">
+    <div class="topbar">
+      <div class="crumbs">
+        <span class="dim">Instances</span><span class="sep">/</span>
+        <span class="crumb-chip">demo</span><span class="sep">/</span>
+        <span class="crumb-chip">ALZSpokeVNet</span><span class="sep">/</span>
+        <span style="font-weight:600">demo</span>
+      </div>
+      <div class="topbar-right">
+        <div class="search"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>Search…<span class="kbd">⌘K</span></div>
+        <button class="btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>All Projects <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
+      </div>
+    </div>
+
+    <div class="content">
+
+      <!-- ══ Header: identity + actions + meta chips + health rollup, one card ══ -->
+      <div class="header-card">
+        <div class="header-top">
+          <div class="rgd-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M12 3 4 18h5l4-8 2.5 5H13l-1.6 3H20L12 3z" fill="#60a5fa"/></svg>
+          </div>
+          <div class="header-id">
+            <div class="title-row">
+              <h1>demo</h1>
+              <span class="health-badge"><span class="health-dot"></span>Healthy</span>
+            </div>
+            <p class="desc">Spoke VNet peered to ALZ hub network with NSG and route table for egress control through the hub firewall.</p>
+          </div>
+          <div class="header-actions">
+            <button class="btn btn-primary"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>Edit Spec</button>
+            <button class="btn btn-icon" title="More actions"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"/><circle cx="5" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button>
+          </div>
+        </div>
+
+        <div class="meta-strip">
+          <span class="meta-chip"><span class="k">Kind</span><span class="v link">ALZSpokeVNet</span><span class="rev-pill">⎇ Rev 3</span></span>
+          <span class="meta-chip"><span class="k">Namespace</span><span class="v">demo</span></span>
+          <span class="meta-chip"><span class="k">Source</span><span class="v" style="font-family:var(--font-sans)">Direct deployment</span></span>
+          <span class="meta-chip"><span class="k">Created</span><span class="v" style="font-family:var(--font-sans)">14 days ago</span></span>
+        </div>
+
+        <!-- Health rollup: every signal that previously needed a tab visit -->
+        <div class="rollup">
+          <div class="rollup-cell">
+            <span class="rollup-label">Conditions</span>
+            <span class="rollup-value rollup-ok">4/4 <span class="sub">passing</span></span>
+          </div>
+          <div class="rollup-cell">
+            <span class="rollup-label">Resources</span>
+            <span class="rollup-value rollup-warn">6/7 <span class="sub">ready · 1 failing</span></span>
+          </div>
+          <div class="rollup-cell">
+            <span class="rollup-label">Events · 1h</span>
+            <span class="rollup-value">16 <span class="sub">0 warnings</span></span>
+          </div>
+          <div class="rollup-cell">
+            <span class="rollup-label">Last reconciled</span>
+            <span class="rollup-value" style="font-weight:500">30m ago <span class="sub">by kro</span></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- failing child resource — previously invisible until Resources tab -->
+      <div class="attention">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--status-error)" stroke-width="2"><path d="m21.73 18-8-14a2 2 0 0 0-3.46 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+        <span class="msg"><b>peeringFromHub</b> (VirtualNetworksVirtualNetworkPeering) is not ready — 0/2 replicas reconciled</span>
+        <span class="when">first seen 56m ago</span>
+        <a>Inspect resource →</a>
+      </div>
+
+      <!-- ══ Tabs: uniform counts, "Overview" no longer collides with the Status field ══ -->
+      <div class="tabs">
+        <div class="tab active">Overview</div>
+        <div class="tab">Resources <span class="count warn">6/7</span></div>
+        <div class="tab">Events <span class="count">16</span></div>
+        <div class="tab">References <span class="count">1</span></div>
+        <div class="tab">History <span class="count">40</span></div>
+        <div class="tab">Spec</div>
+      </div>
+
+      <div class="overview">
+        <!-- main column -->
+        <div style="display:flex;flex-direction:column;gap:16px">
+
+          <!-- conditions first: the "is it working" signal -->
+          <div class="card">
+            <div class="card-head"><h3>Conditions</h3><span class="hint">all passing</span></div>
+            <div class="conditions">
+              <div class="cond">
+                <span class="cond-name"><span class="check"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5"/></svg></span>Ready</span>
+                <span class="cond-msg">instance reconciled</span>
+              </div>
+              <div class="cond">
+                <span class="cond-name"><span class="check"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5"/></svg></span>InstanceManaged</span>
+                <span class="cond-msg">finalizers and labels in place</span>
+              </div>
+              <div class="cond">
+                <span class="cond-name"><span class="check"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5"/></svg></span>GraphResolved</span>
+                <span class="cond-msg">runtime graph resolved</span>
+              </div>
+              <div class="cond">
+                <span class="cond-name"><span class="check"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5"/></svg></span>ResourcesReady</span>
+                <span class="cond-msg">all resources created</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- outputs: grouped, leaf-first Azure IDs, copy on hover -->
+          <div class="card">
+            <div class="card-head">
+              <h3>Outputs</h3><span class="hint">11 fields</span>
+              <div class="right">
+                <span class="hint" style="display:flex;align-items:center;gap:6px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>Filter</span>
+                <span class="hint" style="display:flex;align-items:center;gap:6px;color:var(--text-secondary);cursor:pointer"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy all</span>
+              </div>
+            </div>
+
+            <div class="out-group">
+              <div class="out-group-label">Network</div>
+              <div class="out-row">
+                <span class="out-key">VNet</span>
+                <span class="out-val"><span class="path">/subscriptions/40e663df-a905-4408-b368-fa0f67c61245/resourceGroups/rg-demo-spoke/providers/Microsoft.Network/virtualNetworks/</span><span class="leaf">vnet-demo</span></span>
+                <button class="copy-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+              </div>
+              <div class="out-row">
+                <span class="out-key">Hub VNet</span>
+                <span class="out-val"><span class="path">/subscriptions/40e663df-a905-4408-b368-fa0f67c61245/resourceGroups/rg-demo-hub/providers/Microsoft.Network/virtualNetworks/</span><span class="leaf">vnet-demo-hub</span></span>
+                <button class="copy-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+              </div>
+              <div class="out-row">
+                <span class="out-key">AKS subnet</span>
+                <span class="out-val"><span class="path">/subscriptions/40e663df-a905-4408-b368-fa0f67c61245/resourceGroups/rg-demo-spoke/providers/Microsoft.Network/virtualNetworks/vnet-demo/subnets/</span><span class="leaf">snet-aks</span></span>
+                <button class="copy-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+              </div>
+              <div class="out-row">
+                <span class="out-key">Default subnet</span>
+                <span class="out-val"><span class="path">/subscriptions/40e663df-a905-4408-b368-fa0f67c61245/resourceGroups/rg-demo-spoke/providers/Microsoft.Network/virtualNetworks/vnet-demo/subnets/</span><span class="leaf">snet-private-endpoints</span></span>
+                <button class="copy-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+              </div>
+              <div class="out-row">
+                <span class="out-key">NSG</span>
+                <span class="out-val"><span class="path">/subscriptions/40e663df-a905-4408-b368-fa0f67c61245/resourceGroups/rg-demo-spoke/providers/Microsoft.Network/networkSecurityGroups/</span><span class="leaf">nsg-demo-default</span></span>
+                <button class="copy-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+              </div>
+            </div>
+
+            <div class="out-group">
+              <div class="out-group-label">Peering</div>
+              <div class="out-row">
+                <span class="out-key">To hub</span>
+                <span class="out-val"><span class="leaf">peer-to-vnet-demo-hub</span></span>
+                <button class="copy-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+              </div>
+              <div class="out-row">
+                <span class="out-key">From hub</span>
+                <span class="out-val"><span class="leaf">peer-to-demo</span></span>
+                <button class="copy-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+              </div>
+            </div>
+
+            <div class="out-group">
+              <div class="out-group-label">General</div>
+              <div class="out-row">
+                <span class="out-key">Location</span>
+                <span class="out-val"><span class="leaf">canadacentral</span></span>
+                <button class="copy-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+              </div>
+              <div class="out-row">
+                <span class="out-key">Resource group</span>
+                <span class="out-val"><span class="leaf">rg-demo-spoke</span></span>
+                <button class="copy-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+              </div>
+              <div class="out-row">
+                <span class="out-key">Credential secret</span>
+                <span class="out-val"><span class="leaf">aso-credential</span></span>
+                <button class="copy-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- activity rail: uses the dead horizontal space -->
+        <div class="rail">
+          <div class="card">
+            <div class="card-head"><h3>Resources</h3><div class="right"><span class="hint" style="color:var(--status-error)">1 failing</span></div></div>
+            <div class="res-row"><span class="res-dot err"></span><span class="res-name">peeringFromHub</span><span class="res-kind">VNetPeering</span><span class="res-state err">0/2</span></div>
+            <div class="res-row"><span class="res-dot"></span><span class="res-name">spokeVnet</span><span class="res-kind">VirtualNetwork</span><span class="res-state">1/1</span></div>
+            <div class="res-row"><span class="res-dot"></span><span class="res-name">peeringToHub</span><span class="res-kind">VNetPeering</span><span class="res-state">2/2</span></div>
+            <div class="res-row"><span class="res-dot"></span><span class="res-name">aksNsg</span><span class="res-kind">NetworkSecurityGroup</span><span class="res-state">2/2</span></div>
+            <div class="res-row"><span class="res-dot"></span><span class="res-name">defaultNsg</span><span class="res-kind">NetworkSecurityGroup</span><span class="res-state">2/2</span></div>
+            <div class="res-row"><span class="res-dot"></span><span class="res-name">resourceGroup</span><span class="res-kind">ResourceGroup</span><span class="res-state">1/1</span></div>
+            <a class="view-all">All 7 resources →</a>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h3>Recent activity</h3></div>
+            <div style="padding-top:6px">
+              <div class="ev-row">
+                <div class="ev-line"><div class="ev-node ok"></div><div class="ev-stem"></div></div>
+                <div class="ev-body">
+                  <div class="ev-title">Status changed</div>
+                  <div class="ev-meta">30m ago · system</div>
+                  <div class="ev-msg">Unhealthy → Healthy</div>
+                </div>
+              </div>
+              <div class="ev-row">
+                <div class="ev-line"><div class="ev-node"></div><div class="ev-stem"></div></div>
+                <div class="ev-body">
+                  <div class="ev-title">BeginCreateOrUpdate</div>
+                  <div class="ev-meta">30m ago · VirtualNetwork/vnet-demo</div>
+                  <div class="ev-msg">Successfully sent resource to Azure</div>
+                </div>
+              </div>
+              <div class="ev-row">
+                <div class="ev-line"><div class="ev-node"></div></div>
+                <div class="ev-body">
+                  <div class="ev-title">CredentialFrom</div>
+                  <div class="ev-meta">33m ago · VirtualNetworksSubnet</div>
+                  <div class="ev-msg">Using credential from "demo/aso-credential"</div>
+                </div>
+              </div>
+            </div>
+            <a class="view-all">All 16 events →</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="footnote">Mockup — Knodex instance detail redesign · built from web/src/design-tokens/tokens.json</div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

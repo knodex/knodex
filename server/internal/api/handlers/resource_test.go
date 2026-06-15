@@ -208,3 +208,47 @@ func TestGetResourceGraph_CollectionFields(t *testing.T) {
 		t.Error("expected non-empty forEach on collection node")
 	}
 }
+
+func TestGetDefinitionGraph_NoCatalogAnnotation_Returns404(t *testing.T) {
+	t.Parallel()
+
+	cache := watcher.NewRGDCache()
+	cache.Set(&models.CatalogRGD{
+		Name:      "internal-rgd",
+		Namespace: "kro-system",
+		RawSpec:   plainRGDSpec(),
+	})
+	handler := NewResourceHandler(watcher.NewRGDWatcherWithCache(cache))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/rgds/internal-rgd/graph", nil)
+	req.SetPathValue("name", "internal-rgd")
+	rec := httptest.NewRecorder()
+
+	handler.GetDefinitionGraph(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", rec.Code)
+	}
+}
+
+func TestGetResourceGraph_NoCatalogAnnotation_Returns404(t *testing.T) {
+	t.Parallel()
+
+	cache := watcher.NewRGDCache()
+	cache.Set(&models.CatalogRGD{
+		Name:      "internal-rgd",
+		Namespace: "kro-system",
+		RawSpec:   plainRGDSpec(),
+	})
+	handler := NewResourceHandler(watcher.NewRGDWatcherWithCache(cache))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/rgds/internal-rgd/resources", nil)
+	req.SetPathValue("name", "internal-rgd")
+	rec := httptest.NewRecorder()
+
+	handler.GetResourceGraph(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", rec.Code)
+	}
+}

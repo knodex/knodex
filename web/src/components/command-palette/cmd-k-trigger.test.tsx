@@ -9,9 +9,9 @@ describe('CmdKTrigger', () => {
   it('renders with the default placeholder', () => {
     render(<CmdKTrigger onOpen={vi.fn()} />);
 
-    const trigger = screen.getByTestId('cmd-k-trigger');
+    const trigger = screen.getByTestId('cmdk-trigger');
     expect(trigger).toBeInTheDocument();
-    expect(trigger).toHaveTextContent('Search, deploy, jump');
+    expect(trigger).toHaveTextContent('Search…');
   });
 
   it('renders with a custom placeholder', () => {
@@ -24,7 +24,7 @@ describe('CmdKTrigger', () => {
     const onOpen = vi.fn();
     render(<CmdKTrigger onOpen={onOpen} />);
 
-    fireEvent.click(screen.getByTestId('cmd-k-trigger'));
+    fireEvent.click(screen.getByTestId('cmdk-trigger'));
 
     expect(onOpen).toHaveBeenCalledTimes(1);
   });
@@ -32,7 +32,7 @@ describe('CmdKTrigger', () => {
   it('exposes an aria-keyshortcuts attribute for assistive tech', () => {
     render(<CmdKTrigger onOpen={vi.fn()} />);
 
-    const trigger = screen.getByTestId('cmd-k-trigger');
+    const trigger = screen.getByTestId('cmdk-trigger');
     const value = trigger.getAttribute('aria-keyshortcuts');
     expect(value).toMatch(/(Meta|Control)\+K/);
   });
@@ -40,7 +40,7 @@ describe('CmdKTrigger', () => {
   it('renders a keyboard shortcut hint inside a <kbd> element', () => {
     render(<CmdKTrigger onOpen={vi.fn()} />);
 
-    const trigger = screen.getByTestId('cmd-k-trigger');
+    const trigger = screen.getByTestId('cmdk-trigger');
     const kbd = trigger.querySelector('kbd');
     expect(kbd).toBeTruthy();
     // Hint copy depends on the test runner's reported platform — either ⌘K or Ctrl K
@@ -64,9 +64,9 @@ describe('CmdKTrigger', () => {
 
     try {
       render(<CmdKTrigger onOpen={vi.fn()} />);
-      const kbd = screen.getByTestId('cmd-k-trigger').querySelector('kbd');
+      const kbd = screen.getByTestId('cmdk-trigger').querySelector('kbd');
       expect(kbd?.textContent).toBe('⌘K');
-      expect(screen.getByTestId('cmd-k-trigger')).toHaveAttribute(
+      expect(screen.getByTestId('cmdk-trigger')).toHaveAttribute(
         'aria-keyshortcuts',
         'Meta+K',
       );
@@ -90,9 +90,9 @@ describe('CmdKTrigger', () => {
 
     try {
       render(<CmdKTrigger onOpen={vi.fn()} />);
-      const kbd = screen.getByTestId('cmd-k-trigger').querySelector('kbd');
+      const kbd = screen.getByTestId('cmdk-trigger').querySelector('kbd');
       expect(kbd?.textContent).toBe('Ctrl K');
-      expect(screen.getByTestId('cmd-k-trigger')).toHaveAttribute(
+      expect(screen.getByTestId('cmdk-trigger')).toHaveAttribute(
         'aria-keyshortcuts',
         'Control+K',
       );

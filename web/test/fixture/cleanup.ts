@@ -82,7 +82,7 @@ export async function cleanupTestInstances(): Promise<void> {
         await execAsync(
           `kubectl delete simpleapp,webapp,microservicesplatform --all -n ${ns} --ignore-not-found=true 2>&1 || true`
         );
-      } catch (error) {
+      } catch {
         // Ignore errors - namespace might not exist or have no instances
       }
     }
@@ -125,7 +125,7 @@ export async function cleanupTestNamespaces(): Promise<void> {
           );
           console.log(`[Cleanup] Deleted empty namespace: ${ns}`);
         }
-      } catch (error) {
+      } catch {
         // Ignore errors
       }
     }

@@ -1,6 +1,36 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
+/**
+ * Secret rotation policy. Stored server-side as the
+ * `knodex.io/rotation` label.
+ */
+export type SecretRotation = "manual" | "auto";
+
+/**
+ * Server-computed expiry status. Derived from
+ * `metadata.expiresAt` with a 30-day "expiring soon" window.
+ * Empty/absent means no expiration date is set.
+ */
+export type SecretStatus = "active" | "expiring-soon" | "expired";
+
+/**
+ * Typed metadata exposed alongside the raw labels map.
+ * Mirrors the SecretMetadata wire shape produced by the server.
+ *
+ * On the underlying K8s Secret:
+ *  - `rotation` is stored as the `knodex.io/rotation` label
+ *  - `docsUrl`  is stored as the `knodex.io/docs-url` annotation
+ *  - `expiresAt` is stored as the `knodex.io/expires-at` annotation (RFC3339)
+ */
+export interface SecretMetadata {
+  rotation?: SecretRotation;
+  docsUrl?: string;
+  /** RFC3339 timestamp. The Create/Edit form models this as a date input
+   *  and submits an end-of-day UTC timestamp. */
+  expiresAt?: string;
+}
+
 export interface Secret {
   name: string;
   namespace: string;
@@ -8,6 +38,8 @@ export interface Secret {
   createdAt: string;
   updatedAt?: string;
   labels?: Record<string, string>;
+  metadata?: SecretMetadata;
+  status?: SecretStatus;
 }
 
 export interface SecretDetail {
@@ -17,17 +49,31 @@ export interface SecretDetail {
   createdAt: string;
   updatedAt?: string;
   labels?: Record<string, string>;
+  metadata?: SecretMetadata;
+  status?: SecretStatus;
 }
 
+/**
+ * Create payload. The namespace is carried in the URL path
+ * (/api/v1/namespaces/{ns}/secrets), NOT in the body — mirroring Instances.
+ */
 export interface CreateSecretRequest {
   name: string;
-  namespace: string;
   data: Record<string, string>;
+  metadata?: SecretMetadata;
 }
 
+/**
+ * Update semantics for `metadata`:
+ *  - omitted/undefined → leave existing metadata on the K8s object untouched
+ *  - present → treated as a full replacement; empty-string fields CLEAR the
+ *    corresponding label/annotation on the server
+ *
+ * The namespace is carried in the URL path, NOT in the body.
+ */
 export interface UpdateSecretRequest {
-  namespace: string;
   data: Record<string, string>;
+  metadata?: SecretMetadata;
 }
 
 export interface SecretListResponse {

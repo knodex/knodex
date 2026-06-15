@@ -20,22 +20,35 @@ import (
 
 // Config holds all application configuration
 type Config struct {
-	Server               Server
-	Kubernetes           Kubernetes
-	Redis                Redis
-	Log                  Log
-	Auth                 Auth
-	RateLimit            RateLimit
-	PolicyCache          PolicyCache
-	CasbinRoles          CasbinRoles
-	License              License
-	Compliance           Compliance
-	Database             Database // PostgreSQL configuration for enterprise features. Empty URL = OSS safe.
-	Organization         string   // Organization identity for multi-tenant deployments. Default: "default".
-	KnodexNamespace      string   // Namespace where Knodex CRDs (Projects) live. Default: POD_NAMESPACE or "knodex-system".
-	SwaggerEnabled       bool     // Enable Swagger UI at /swagger/. Default: false. Env: SWAGGER_UI_ENABLED.
-	Cookie               Cookie   // Session cookie configuration
-	CatalogPackageFilter []string // Restrict catalog to RGDs with matching knodex.io/package label. Empty = no filtering. Env: CATALOG_PACKAGE_FILTER.
+	Server          Server
+	Kubernetes      Kubernetes
+	Redis           Redis
+	Log             Log
+	Auth            Auth
+	RateLimit       RateLimit
+	PolicyCache     PolicyCache
+	CasbinRoles     CasbinRoles
+	License         License
+	Compliance      Compliance
+	Database        Database // PostgreSQL configuration for enterprise features. Empty URL = OSS safe.
+	Organization    string   // Organization identity for multi-tenant deployments. Default: "default".
+	KnodexNamespace string   // Namespace where Knodex CRDs (Projects) live. Default: POD_NAMESPACE or "knodex-system".
+	// BootstrapProjectName is the resource name of the auto-created default project.
+	// Default: "default-project". Env: KNODEX_BOOTSTRAP_PROJECT_NAME. A cloud tenant
+	// can rename it; setting it empty is treated as a config error (see auth bootstrap).
+	BootstrapProjectName string
+	// BootstrapProjectNamespace is the namespace of the auto-created default project.
+	// Default: "default-project". Env: KNODEX_BOOTSTRAP_PROJECT_NAMESPACE.
+	BootstrapProjectNamespace string
+	SwaggerEnabled            bool     // Enable Swagger UI at /swagger/. Default: false. Env: SWAGGER_UI_ENABLED.
+	Cookie                    Cookie   // Session cookie configuration
+	CatalogPackageFilter      []string // Restrict catalog to RGDs with matching knodex.io/package label. Empty = no filtering. Env: CATALOG_PACKAGE_FILTER.
+	// KagentControllerBaseURL is the kagent controller REST base URL used for
+	// presence detection (Story 49.1) and A2A invocation (Epic 50). Making it
+	// configurable lets E2E/dev environments point at a mock.
+	// Default: http://kagent-controller.kagent.svc.cluster.local:8083.
+	// Env: KAGENT_CONTROLLER_BASE_URL.
+	KagentControllerBaseURL string
 }
 
 // Cookie holds session cookie configuration
@@ -289,13 +302,16 @@ func Load() (*Config, error) {
 		Database: Database{
 			URL: utilenv.GetString("DATABASE_URL", ""),
 		},
-		Organization:    utilenv.GetString("KNODEX_ORGANIZATION", "default"),
-		KnodexNamespace: utilenv.GetString("KNODEX_NAMESPACE", utilenv.GetString("POD_NAMESPACE", "knodex-system")),
-		SwaggerEnabled:  utilenv.GetBool("SWAGGER_UI_ENABLED", false),
+		Organization:              utilenv.GetString("KNODEX_ORGANIZATION", "default"),
+		KnodexNamespace:           utilenv.GetString("KNODEX_NAMESPACE", utilenv.GetString("POD_NAMESPACE", "knodex-system")),
+		BootstrapProjectName:      utilenv.GetString("KNODEX_BOOTSTRAP_PROJECT_NAME", "default-project"),
+		BootstrapProjectNamespace: utilenv.GetString("KNODEX_BOOTSTRAP_PROJECT_NAMESPACE", "default-project"),
+		SwaggerEnabled:            utilenv.GetBool("SWAGGER_UI_ENABLED", false),
 		Cookie: Cookie{
 			Secure: utilenv.GetBool("COOKIE_SECURE", true),
 			Domain: utilenv.GetString("COOKIE_DOMAIN", ""),
 		},
+		KagentControllerBaseURL: utilenv.GetString("KAGENT_CONTROLLER_BASE_URL", "http://kagent-controller.kagent.svc.cluster.local:8083"),
 	}
 
 	// Normalize catalog package filter: lowercase, trimmed, deduplicated

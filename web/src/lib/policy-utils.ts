@@ -7,14 +7,14 @@
  */
 import { logger } from '@/lib/logger';
 
-// Available resources in Knodex (ArgoCD-aligned)
+// Available resources in Knodex
 export const RESOURCES = [
   "projects",
   "rgds",
   "instances",
-  "applications",
   "repositories",
   "settings",
+  "compliance",
 ] as const;
 
 // Available actions (ArgoCD-aligned with Knodex additions)
@@ -90,6 +90,39 @@ export function formatPolicyString(
 ): string {
   const subject = `proj:${projectId}:${roleName}`;
   return `p, ${subject}, ${rule.resource}, ${rule.action}, ${rule.object}, ${rule.permission}`;
+}
+
+/**
+ * RGD category scoping.
+ *
+ * An `rgds` policy's object segment controls which catalog categories the role
+ * can browse. Object `*` grants every category; a category-scoped policy uses
+ * object `{slug}/*`, which the server expands to the Casbin object
+ * `rgds/{slug}/*` (see FormatRGDObject / addProjectScopedPolicyFromStringWithDests
+ * on the Go side). Category visibility in the sidebar and catalog is then a pure
+ * keyMatch against that object — no extra enforcement layer. This is the only
+ * knob needed to filter role templates by category.
+ */
+export const RGDS_ALL_CATEGORIES = "*";
+
+/**
+ * Derive the category slug (a Select value) from an `rgds` policy object.
+ * `*` → RGDS_ALL_CATEGORIES (all categories). `{slug}/*` → `slug`. Any other
+ * shape is returned verbatim so unknown/legacy values still round-trip.
+ */
+export function rgdsObjectToCategory(object: string): string {
+  if (!object || object === RGDS_ALL_CATEGORIES) return RGDS_ALL_CATEGORIES;
+  const slug = object.endsWith("/*") ? object.slice(0, -2) : object;
+  return slug || RGDS_ALL_CATEGORIES;
+}
+
+/**
+ * Build an `rgds` policy object from a category slug (a Select value).
+ * RGDS_ALL_CATEGORIES → `*`. A slug → `{slug}/*`.
+ */
+export function categoryToRgdsObject(category: string): string {
+  if (!category || category === RGDS_ALL_CATEGORIES) return RGDS_ALL_CATEGORIES;
+  return `${category}/*`;
 }
 
 /**

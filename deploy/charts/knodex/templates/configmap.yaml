@@ -15,3 +15,9 @@ data:
   {{- if .Values.server.auth.oidc.groupMappings }}
   OIDC_GROUP_MAPPINGS: {{ .Values.server.auth.oidc.groupMappings | toJson | quote }}
   {{- end }}
+  # kagent controller base URL (for Agents Hub presence detection and A2A invocation)
+  {{- if .Values.kagent.controllerBaseURL }}
+  KAGENT_CONTROLLER_BASE_URL: {{ .Values.kagent.controllerBaseURL | quote }}
+  {{- else if .Values.kagent.enabled }}
+  KAGENT_CONTROLLER_BASE_URL: {{ printf "http://kagent-controller.%s.svc.cluster.local:8083" .Release.Namespace | quote }}
+  {{- end }}

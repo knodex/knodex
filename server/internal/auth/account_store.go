@@ -148,10 +148,19 @@ type AccountStore struct {
 // Value type: Redis sorted set (score = Unix timestamp in seconds)
 const rateLimitRedisKeyPrefix = "ratelimit:login:"
 
-// NewAccountStore creates a new AccountStore
+// NewAccountStore creates a new AccountStore.
+//
+// The namespace scopes the ConfigMap/Secret reads that back account lookups.
+// An empty namespace is a configuration error: rather than silently coercing
+// it to "default" — which would read accounts from the wrong namespace — the
+// store keeps the empty value and logs the misconfiguration (audit G-17). The
+// downstream Kubernetes calls then fail closed (a namespaced Get with an empty
+// namespace is rejected by the API server) instead of authenticating against
+// an unintended namespace.
 func NewAccountStore(k8sClient kubernetes.Interface, namespace string) *AccountStore {
 	if namespace == "" {
-		namespace = "default"
+		slog.Error("account store received an empty namespace (configuration error); " +
+			"account ConfigMap/Secret reads will fail closed")
 	}
 	return &AccountStore{
 		k8sClient:             k8sClient,

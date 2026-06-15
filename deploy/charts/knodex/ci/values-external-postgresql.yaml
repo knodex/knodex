@@ -1,0 +1,17 @@
+# CI fixture — AC #2 path (b) + AC #6: externalPostgresql opt-out (existingSecret).
+#
+# A fresh install pointed at a pre-provisioned external database via an existing
+# Secret holding the DSN. The embedded subchart is explicitly disabled (the
+# documented external-DB contract) so no embedded StatefulSet renders; DATABASE_URL
+# resolves to the external Secret.
+#
+# Used in CI via:
+#   helm template knodex ./deploy/charts/knodex \
+#     --values ./deploy/charts/knodex/ci/values-external-postgresql.yaml
+
+postgresql:
+  enabled: false
+
+externalPostgresql:
+  existingSecret: "my-external-db-secret"
+  existingSecretKey: "DATABASE_URL"

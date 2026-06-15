@@ -27,7 +27,12 @@ export function DeployActionFooter({
 }: DeployActionFooterProps) {
   return (
     <div
-      className="fixed bottom-0 left-0 right-0 z-10 flex items-center justify-between gap-3 border-t bg-background px-6 py-4 lg:left-[260px]"
+      // Rendered as a flex item inside the DeployDrawerShell's flex column —
+      // sits at the bottom of the drawer naturally without `position: fixed`.
+      // (Previously this was `fixed bottom-0 left-0 right-0 lg:left-[260px]`,
+      // which made the action bar span the full viewport including the
+      // sidebar/background, instead of being scoped to the drawer width.)
+      className="flex shrink-0 items-center justify-between gap-3 border-t bg-background px-6 py-4"
       style={{ borderColor: "rgba(255,255,255,0.08)" }}
     >
       <div className="flex items-center gap-3">

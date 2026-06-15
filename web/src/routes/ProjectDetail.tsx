@@ -3,12 +3,15 @@
 
 import { useMemo } from "react";
 import { useParams, Link } from "react-router-dom";
-import { ArrowLeft, Shield, ShieldAlert, Users, MapPin, Layers, Loader2, Settings } from "@/lib/icons";
+import { ArrowLeft, Shield, ShieldAlert, Users, MapPin, Layers, Settings, Package } from "@/lib/icons";
+import { ProjectDetailSkeleton } from "@/components/projects/ProjectDetailSkeleton";
 import { AxiosError } from "axios";
 import { useCanI } from "@/hooks/useCanI";
 import { useProject, useUpdateProject } from "@/hooks/useProjects";
+import { useInstanceList } from "@/hooks/useInstances";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { avatarInitials, avatarToneIndex } from "@/components/ui/avatar";
 import type { UpdateProjectRequest } from "@/types/project";
 import { isMultiCluster } from "@/types/project";
 import { formatDateTime } from "@/lib/date";
@@ -18,15 +21,17 @@ import type { Tab } from "@/hooks/useDynamicTabs";
 
 // Tab components
 import { ProjectOverviewTab } from "@/components/projects/tabs/ProjectOverviewTab";
-import { ProjectRolesTab } from "@/components/projects/tabs/ProjectRolesTab";
+import { ProjectInstancesTab } from "@/components/projects/tabs/ProjectInstancesTab";
+import { ProjectAccessTab } from "@/components/projects/tabs/ProjectAccessTab";
 import { ProjectDestinationsTab } from "@/components/projects/tabs/ProjectDestinationsTab";
 import { ProjectResourcesTab } from "@/components/projects/tabs/ProjectResourcesTab";
 
-type ProjectTabId = "overview" | "roles" | "destinations" | "resources";
+type ProjectTabId = "overview" | "instances" | "roles" | "destinations" | "resources";
 
 const BASE_TABS: Tab<ProjectTabId>[] = [
   { id: "overview", label: "Overview", icon: <Settings className="h-4 w-4" /> },
-  { id: "roles", label: "Roles", icon: <Users className="h-4 w-4" /> },
+  { id: "instances", label: "Instances", icon: <Package className="h-4 w-4" /> },
+  { id: "roles", label: "Access", icon: <Users className="h-4 w-4" /> },
   { id: "destinations", label: "Destinations", icon: <MapPin className="h-4 w-4" /> },
 ];
 
@@ -43,6 +48,12 @@ export function ProjectDetail() {
 
   // Fetch project data
   const { data: project, isLoading, error } = useProject(name || "");
+  // Derived instance stats source (Overview + Instances tabs). Fetched once at
+  // the detail level; matched client-side by namespace membership. Server-
+  // paginated + single-exact namespace param → large clusters may paginate
+  // beyond this page (flagged for a future server-side "by project" filter).
+  const { data: instancesData } = useInstanceList({ pageSize: 200 });
+  const instances = useMemo(() => instancesData?.items || [], [instancesData]);
   const updateMutation = useUpdateProject();
 
   const showResourcesTab = project ? isMultiCluster(project) : false;
@@ -56,13 +67,10 @@ export function ProjectDetail() {
 
   const { tabs, activeTab, setActiveTab } = useDynamicTabs(BASE_TABS, conditionalTabs, "overview" as ProjectTabId);
 
-  // Loading state
+  // Loading state — skeleton mirrors the avatar/header/tab-bar layout so the
+  // page composition stays stable when the project fetch resolves.
   if (isLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
-    );
+    return <ProjectDetailSkeleton />;
   }
 
   // 403 Access Denied
@@ -152,7 +160,19 @@ export function ProjectDetail() {
       {/* Header — Vercel-style flat, no card wrapper */}
       <div className="mb-6">
         <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
+          <div className="flex items-start gap-3 min-w-0">
+            <span
+              aria-hidden="true"
+              data-tone={avatarToneIndex(project.name)}
+              className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl text-lg font-semibold select-none mt-0.5"
+              style={{
+                backgroundColor: `hsl(var(--avatar-tone-${avatarToneIndex(project.name)}-bg-hsl) / 0.18)`,
+                color: `var(--avatar-tone-${avatarToneIndex(project.name)}-fg)`,
+              }}
+            >
+              {avatarInitials(project.name)}
+            </span>
+            <div className="min-w-0">
             <h1 className="text-2xl font-semibold tracking-tight text-foreground">
               {project.name}
             </h1>
@@ -170,6 +190,7 @@ export function ProjectDetail() {
                 </span>
               )}
             </p>
+            </div>
           </div>
         </div>
       </div>
@@ -182,14 +203,19 @@ export function ProjectDetail() {
         {activeTab === "overview" && (
           <ProjectOverviewTab
             project={project}
+            instances={instances}
             onUpdate={handleUpdate}
             isUpdating={updateMutation.isPending}
             canManage={isLoadingManage || isErrorManage || canManageProject}
           />
         )}
 
+        {activeTab === "instances" && (
+          <ProjectInstancesTab project={project} instances={instances} />
+        )}
+
         {activeTab === "roles" && (
-          <ProjectRolesTab
+          <ProjectAccessTab
             project={project}
             onUpdate={handleUpdate}
             isUpdating={updateMutation.isPending}

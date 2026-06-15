@@ -236,7 +236,7 @@ test.describe("RBAC: Instance Feature Tests", () => {
       const instanceCount = await page
         .getByRole("button", { name: /View details for/ })
         .count();
-      const emptyState = page.locator("text=/no instance|empty|not found/i");
+      const _emptyState = page.locator("text=/no instance|empty|not found/i");
 
       console.log(`No-projects user sees ${instanceCount} instances`);
       expect(instanceCount).toBe(0);

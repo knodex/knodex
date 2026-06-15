@@ -76,6 +76,53 @@ A read-only policy:
 secrets/*, get, allow
 ```
 
+### Operational Metadata
+
+Each Knodex-managed secret carries three optional metadata fields that help operators keep track of what each credential is and when it needs attention. **These fields are purely informational — Knodex does not run a rotation engine, send expiration emails, or take any automatic action.** They exist so the team can scan the Secrets list and immediately see which credentials are rotated manually, which have a documentation runbook, and which are about to expire.
+
+| Form field | Storage | Key | Notes |
+|------------|---------|-----|-------|
+| Rotation | Label | `knodex.io/rotation` | Either `manual` or `auto`. Stored as a label so operators can query with `kubectl get secrets -l knodex.io/rotation=auto`. |
+| Documentation URL | Annotation | `knodex.io/docs-url` | A link to a runbook, owner page, or wiki entry. Must be `http` or `https`. Annotation because URLs contain characters illegal in label values. |
+| Expiration date | Annotation | `knodex.io/expires-at` | RFC3339 timestamp. The Create/Edit form models this as a day; the value is stored as end-of-day UTC. Past dates are accepted — the secret is simply reported as expired. |
+
+A fully decorated secret:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: payments-stripe-key
+  namespace: alpha-apps
+  labels:
+    knodex.io/managed-by: knodex
+    knodex.io/project: "alpha"
+    knodex.io/rotation: "manual"
+  annotations:
+    knodex.io/docs-url: "https://wiki.example.com/payments/stripe-rotation"
+    knodex.io/expires-at: "2026-12-31T23:59:59Z"
+type: Opaque
+data:
+  STRIPE_API_KEY: c2tfbGl2ZV8xMjM=
+```
+
+The Secrets list surfaces this metadata as three additional columns:
+
+- **Rotation** — a chip showing `Auto`, `Manual`, or `—` when unset. Sortable.
+- **Status** — a server-computed colored badge derived from `expires-at`:
+  - `Active` — expiration is more than 30 days away (or no expiration set returns `—`)
+  - `Expiring soon` — expiration is within 30 days
+  - `Expired` — expiration is at or before now
+- **Docs URL** — when set, a small external-link icon appears next to the secret name.
+
+The 30-day "expiring soon" window is fixed in the server (see `expiringSoonWindow` in `server/internal/api/handlers/secrets_models.go`).
+
+#### Editing metadata independently of values
+
+The Edit dialog lets you change any metadata field without rotating the secret's keys. Simply update Rotation/Docs URL/Expiration and click Update — the existing secret values are kept as-is.
+
+Sending an update **without** a `metadata` field on the request body leaves the existing labels/annotations untouched. Sending a `metadata` object with an empty string for a field clears that field. This means you can clear an expiration date from the UI by emptying the date input and saving.
+
 ### Size Limits
 
 Kubernetes enforces a 1 MiB size limit per Secret. Knodex does not impose additional limits but validates that secret data does not exceed this threshold.

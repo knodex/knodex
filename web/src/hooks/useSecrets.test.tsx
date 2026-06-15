@@ -32,11 +32,11 @@ describe("useSecrets hooks", () => {
   });
 
   describe("useSecretList", () => {
-    it("fetches secrets list when project provided", async () => {
+    it("fetches secrets list with no namespace filter", async () => {
       const mockResponse = { items: [], pageCount: 0, hasMore: false };
       vi.mocked(secretsApi.listSecrets).mockResolvedValue(mockResponse);
 
-      const { result } = renderHook(() => useSecretList("my-project"), {
+      const { result } = renderHook(() => useSecretList(), {
         wrapper: createWrapper(),
       });
 
@@ -44,27 +44,32 @@ describe("useSecrets hooks", () => {
         expect(result.current.isSuccess).toBe(true);
       });
 
-      expect(secretsApi.listSecrets).toHaveBeenCalledWith("my-project", undefined);
+      expect(secretsApi.listSecrets).toHaveBeenCalledWith(undefined);
     });
 
-    it("does NOT fetch when project is empty", async () => {
-      const { result } = renderHook(() => useSecretList(""), {
-        wrapper: createWrapper(),
+    it("forwards namespace filter when provided", async () => {
+      const mockResponse = { items: [], pageCount: 0, hasMore: false };
+      vi.mocked(secretsApi.listSecrets).mockResolvedValue(mockResponse);
+
+      const { result } = renderHook(
+        () => useSecretList({ namespace: "xxx-shared" }),
+        { wrapper: createWrapper() },
+      );
+
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true);
       });
 
-      await new Promise(resolve => setTimeout(resolve, 100));
-
-      expect(result.current.fetchStatus).toBe("idle");
-      expect(secretsApi.listSecrets).not.toHaveBeenCalled();
+      expect(secretsApi.listSecrets).toHaveBeenCalledWith({ namespace: "xxx-shared" });
     });
   });
 
   describe("useSecretExists", () => {
-    it("checks existence when all params provided", async () => {
+    it("checks existence with (name, namespace) — no project param", async () => {
       vi.mocked(secretsApi.checkSecretExists).mockResolvedValue(undefined);
 
       const { result } = renderHook(
-        () => useSecretExists("my-secret", "my-project", "default"),
+        () => useSecretExists("my-secret", "default"),
         { wrapper: createWrapper() }
       );
 
@@ -73,7 +78,7 @@ describe("useSecrets hooks", () => {
       });
 
       expect(result.current.exists).toBe(true);
-      expect(secretsApi.checkSecretExists).toHaveBeenCalledWith("my-secret", "my-project", "default");
+      expect(secretsApi.checkSecretExists).toHaveBeenCalledWith("my-secret", "default");
     });
 
     it("returns exists=false on 404", async () => {
@@ -88,7 +93,7 @@ describe("useSecrets hooks", () => {
       vi.mocked(secretsApi.checkSecretExists).mockRejectedValue(notFoundError);
 
       const { result } = renderHook(
-        () => useSecretExists("missing-secret", "my-project", "default"),
+        () => useSecretExists("missing-secret", "default"),
         { wrapper: createWrapper() }
       );
 
@@ -103,7 +108,7 @@ describe("useSecrets hooks", () => {
 
     it("does NOT fetch when any required param is empty", async () => {
       const { result } = renderHook(
-        () => useSecretExists("my-secret", "", "default"),
+        () => useSecretExists("my-secret", ""),
         { wrapper: createWrapper() }
       );
 

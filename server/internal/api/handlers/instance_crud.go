@@ -29,7 +29,6 @@ import (
 	"github.com/knodex/knodex/server/internal/kro/children"
 	kroadapter "github.com/knodex/knodex/server/internal/kro/graph"
 	"github.com/knodex/knodex/server/internal/kro/parser"
-	"github.com/knodex/knodex/server/internal/kro/watcher"
 	"github.com/knodex/knodex/server/internal/models"
 	"github.com/knodex/knodex/server/internal/rbac"
 	"github.com/knodex/knodex/server/internal/repository"
@@ -74,8 +73,8 @@ type UpdateInstanceResponse struct {
 
 // InstanceCRUDHandler handles basic CRUD operations for instances
 type InstanceCRUDHandler struct {
-	instanceTracker      *watcher.InstanceTracker
-	rgdWatcher           *watcher.RGDWatcher
+	instanceTracker      InstanceReader
+	rgdWatcher           RGDReader
 	resourceParser       *parser.ResourceParser
 	dynamicClient        dynamic.Interface
 	k8sClient            kubernetes.Interface
@@ -90,8 +89,8 @@ type InstanceCRUDHandler struct {
 
 // InstanceCRUDHandlerConfig holds configuration for creating an InstanceCRUDHandler
 type InstanceCRUDHandlerConfig struct {
-	InstanceTracker      *watcher.InstanceTracker
-	RGDWatcher           *watcher.RGDWatcher
+	InstanceTracker      InstanceReader
+	RGDWatcher           RGDReader
 	DynamicClient        dynamic.Interface
 	K8sClient            kubernetes.Interface
 	AuthService          *services.AuthorizationService
@@ -1479,6 +1478,12 @@ func (h *InstanceCRUDHandler) GetInstanceEvents(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	userCtx, ok := middleware.GetUserContext(r)
+	if !ok {
+		response.WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "User context not found", nil)
+		return
+	}
+
 	group := r.PathValue("group")
 	namespace := r.PathValue("namespace")
 	kind := r.PathValue("kind")
@@ -1492,9 +1497,28 @@ func (h *InstanceCRUDHandler) GetInstanceEvents(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	// Get user's accessible namespaces for RBAC filtering
+	userNamespaces, err := h.getAccessibleNamespaces(r.Context(), userCtx)
+	if err != nil {
+		h.logger.Error("failed to get accessible namespaces", "error", err)
+		response.InternalError(w, "Failed to get user namespaces")
+		return
+	}
+
 	// Get the instance to find its UID
 	instance, found := h.instanceTracker.GetInstance(group, namespace, kind, name)
 	if !found {
+		response.NotFound(w, "Instance", instanceNotFoundID(group, namespace, kind, name))
+		return
+	}
+
+	authorized, authErr := h.authorizeInstanceAccess(r.Context(), userCtx, instance, userNamespaces)
+	if authErr != nil {
+		h.logger.Error("failed to check instance access", "error", authErr)
+		response.InternalError(w, "Failed to check instance access")
+		return
+	}
+	if !authorized {
 		response.NotFound(w, "Instance", instanceNotFoundID(group, namespace, kind, name))
 		return
 	}

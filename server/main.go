@@ -80,10 +80,25 @@ func main() {
 	a.SetViolationHistoryInitFunc(InitViolationHistoryService)
 	a.SetCategoryInitFunc(InitCategoryService)
 	a.SetAuditRecorderInitFunc(InitAuditRecorder)
+	a.SetAgentRunStoreWrapFunc(WrapAgentRunStore)
+	a.SetAgentSpecValidatorInitFunc(InitAgentSpecValidator)
 	a.SetAuditLoginMiddlewareInitFunc(InitAuditLoginMiddleware)
 	a.SetAuditMiddlewareInitFunc(InitAuditMiddleware)
 	a.SetAuditAPIServiceInitFunc(InitAuditAPIService)
 	a.SetDatabaseManagerInitFunc(InitDatabaseManager)
+
+	// EE license seat reconciler (build-tag dispatch, STORY-465): in EE builds
+	// the factory builds the reconciler on the shared seat store (set up by
+	// the audit recorder init), wires it into the LicenseService, and returns
+	// its Run loop; in OSS builds it returns nil (the license service returns
+	// the cold-start sentinel).
+	a.SetSeatReconcilerInitFunc(InitSeatReconciler)
+
+	// Identity store (Story 15.2): the source_kind is a constant ("oidc_jit");
+	// the hooks are EE audit-emitting or OSS zero-value. The composition root is
+	// the only edition-aware place (AC24).
+	a.SetIdentitySourceKind(IdentitySourceKind)
+	a.SetIdentityHooksInitFunc(InitIdentityHooks)
 
 	if err := a.Run(context.Background()); err != nil {
 		slog.Error("server failed", "error", err)

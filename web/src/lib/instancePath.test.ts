@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { describe, it, expect } from "vitest";
-import { buildInstanceRoute, apiGroupOf } from "./instancePath";
+import { buildInstanceRoute, apiGroupOf, versionOf } from "./instancePath";
 
 describe("buildInstanceRoute", () => {
-  it("builds a namespaced route with group, ns, kind, name", () => {
+  it("builds a namespaced route with group, version, ns, kind, name", () => {
     expect(
       buildInstanceRoute({
         apiVersion: "apps.example.com/v1",
@@ -13,7 +13,7 @@ describe("buildInstanceRoute", () => {
         kind: "WebApp",
         name: "my-app",
       })
-    ).toBe("/instances/group/apps.example.com/ns/default/WebApp/my-app");
+    ).toBe("/instances/apps.example.com/v1/default/WebApp/my-app");
   });
 
   it("builds a cluster-scoped route when namespace is absent", () => {
@@ -23,7 +23,7 @@ describe("buildInstanceRoute", () => {
         kind: "Certificate",
         name: "wildcard",
       })
-    ).toBe("/instances/group/cert-manager.io/cluster/Certificate/wildcard");
+    ).toBe("/instances/cert-manager.io/v1/Certificate/wildcard");
   });
 
   it("treats empty-string namespace as cluster-scoped", () => {
@@ -34,18 +34,18 @@ describe("buildInstanceRoute", () => {
         kind: "GlobalPolicy",
         name: "default-policy",
       })
-    ).toBe("/instances/group/policy.example.com/cluster/GlobalPolicy/default-policy");
+    ).toBe("/instances/policy.example.com/v1alpha1/GlobalPolicy/default-policy");
   });
 
-  it("URL-encodes group, namespace, kind, and name", () => {
+  it("URL-encodes group, namespace, kind, and name (spaces and slashes)", () => {
     expect(
       buildInstanceRoute({
-        apiVersion: "ex amp/le.com/v1",
+        apiVersion: "my group.com/v1",
         namespace: "my ns",
         kind: "My Kind",
         name: "my/name",
       })
-    ).toBe("/instances/group/ex%20amp/ns/my%20ns/My%20Kind/my%2Fname");
+    ).toBe("/instances/my%20group.com/v1/my%20ns/My%20Kind/my%2Fname");
   });
 
   it("throws when apiVersion is core-group (no slash, e.g. 'v1')", () => {
@@ -81,5 +81,16 @@ describe("apiGroupOf", () => {
     ["", ""],
   ])("apiGroupOf(%j) === %j", (input, expected) => {
     expect(apiGroupOf(input)).toBe(expected);
+  });
+});
+
+describe("versionOf", () => {
+  it.each([
+    ["apps.example.com/v1", "v1"],
+    ["kro.run/v1alpha1", "v1alpha1"],
+    ["v1", "v1"],
+    ["v1beta1", "v1beta1"],
+  ])("versionOf(%j) === %j", (input, expected) => {
+    expect(versionOf(input)).toBe(expected);
   });
 });

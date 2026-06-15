@@ -50,8 +50,9 @@ type RoleRequest struct {
 	// Policies is the list of Casbin policy strings defining permissions
 	// Format: p, proj:{project}:{role}, {resource}, {action}, {object}, {effect}
 	Policies []string `json:"policies,omitempty"`
-	// Groups is the list of OIDC groups assigned to this role
-	Groups []string `json:"groups,omitempty"`
+	// Teams is the list of Team names bound to this role; resolved to OIDC
+	// groups at policy-generation time via resolveRoleTeamGroups
+	Teams []string `json:"teams,omitempty"`
 	// Destinations is an optional list of namespace patterns scoping this role
 	Destinations []string `json:"destinations,omitempty"`
 }
@@ -94,8 +95,8 @@ type RoleResponse struct {
 	Description string `json:"description,omitempty"`
 	// Policies is the list of policy strings defining permissions
 	Policies []string `json:"policies,omitempty"`
-	// Groups is the list of OIDC groups assigned to this role
-	Groups []string `json:"groups,omitempty"`
+	// Teams is the list of Team names bound to this role
+	Teams []string `json:"teams,omitempty"`
 	// Destinations is the list of namespace patterns this role is scoped to
 	Destinations []string `json:"destinations,omitempty"`
 }
@@ -133,7 +134,7 @@ func toProjectResponse(p *rbac.Project) ProjectResponse {
 			Name:         r.Name,
 			Description:  r.Description,
 			Policies:     r.Policies,
-			Groups:       r.Groups,
+			Teams:        r.Teams,
 			Destinations: r.Destinations,
 		})
 	}
@@ -176,7 +177,7 @@ func toProjectSpec(req *CreateProjectRequest) rbac.ProjectSpec {
 			Name:         r.Name,
 			Description:  r.Description,
 			Policies:     r.Policies,
-			Groups:       r.Groups,
+			Teams:        r.Teams,
 			Destinations: r.Destinations,
 		})
 	}
@@ -208,7 +209,7 @@ func applyUpdateToProject(project *rbac.Project, req *UpdateProjectRequest) {
 	}
 
 	// Update roles if provided (empty array is a no-op — cannot clear all roles via API)
-	// Project admins can update role policies, groups, and destinations
+	// Project admins can update role policies, teams, and destinations
 	if len(req.Roles) > 0 {
 		project.Spec.Roles = make([]rbac.ProjectRole, 0, len(req.Roles))
 		for _, r := range req.Roles {
@@ -216,7 +217,7 @@ func applyUpdateToProject(project *rbac.Project, req *UpdateProjectRequest) {
 				Name:         r.Name,
 				Description:  r.Description,
 				Policies:     r.Policies,
-				Groups:       r.Groups,
+				Teams:        r.Teams,
 				Destinations: r.Destinations,
 			})
 		}

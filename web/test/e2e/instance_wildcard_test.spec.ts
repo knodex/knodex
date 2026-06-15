@@ -26,7 +26,7 @@
  */
 
 import { test, expect, TestUserRole } from '../fixture'
-import { authenticateAs, TEST_USERS } from '../fixture/auth-helper'
+import { authenticateAs } from '../fixture/auth-helper'
 import * as fs from 'fs'
 import * as path from 'path'
 import { fileURLToPath } from 'url'
@@ -121,7 +121,7 @@ async function navigateWithAuth(page: Page, url: string, role: TestUserRole): Pr
   // Final wait for page stability
   try {
     await page.waitForLoadState('networkidle', { timeout: 5000 })
-  } catch (e) {
+  } catch {
     // Might timeout on long-polling, that's ok
   }
   await page.waitForTimeout(500)
@@ -140,7 +140,7 @@ async function safeGetToken(page: Page, maxRetries = 3): Promise<string | null> 
         await page.waitForTimeout(1000)
         try {
           await page.waitForLoadState('load', { timeout: 5000 })
-        } catch (e) {
+        } catch {
           // Ignore
         }
       }

@@ -13,7 +13,7 @@
 version: "2"
 
 run:
-  go: '1.24'
+  go: '1.26'
   tests: false  # Exclude test files from linting
   allow-parallel-runners: true
 
@@ -49,7 +49,6 @@ linters:
         - G101  # Hardcoded credentials (false positives on secret key names)
         - G104  # Audit errors not checked (covered by errcheck)
         - G115  # Integer overflow conversion (too noisy)
-        - G304  # File path from variable (intentional for CRD loading)
         - G404  # Weak random number generator - acceptable for non-crypto use
         - G602  # Slice bounds check (false positives in base64 decoding)
 
@@ -112,6 +111,21 @@ linters:
       - path: generated
         linters:
           - gosec
+
+      # G304: file path from variable — intentional in these three locations,
+      # each of which sanitizes the path with filepath.Clean before the read.
+      - path: internal/config/config\.go
+        linters:
+          - gosec
+        text: "G304"
+      - path: internal/dex/file\.go
+        linters:
+          - gosec
+        text: "G304"
+      - path: ee/license/service\.go
+        linters:
+          - gosec
+        text: "G304"
 
 formatters:
   enable:

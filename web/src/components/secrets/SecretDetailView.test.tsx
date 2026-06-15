@@ -16,10 +16,6 @@ vi.mock("@/hooks/useCanI", () => ({
   useCanI: vi.fn(),
 }));
 
-vi.mock("@/hooks/useAuth", () => ({
-  useCurrentProject: vi.fn(() => "alpha"),
-}));
-
 vi.mock("@/hooks/useSecrets", () => ({
   useUpdateSecret: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
   useDeleteSecret: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
@@ -96,7 +92,8 @@ describe("SecretDetailView", () => {
     await user.click(screen.getByRole("button", { name: /load values/i }));
 
     await waitFor(() => {
-      expect(secretsApi.getSecret).toHaveBeenCalledWith("db-credentials", "alpha", "alpha-ns");
+      // Namespace is the URL-routed access boundary — no project param.
+      expect(secretsApi.getSecret).toHaveBeenCalledWith("db-credentials", "alpha-ns");
     });
 
     await waitFor(() => {

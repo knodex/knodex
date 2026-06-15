@@ -7,6 +7,23 @@
  */
 
 /**
+ * Returns an error message if the docs URL is non-empty and not a safe
+ * http(s) URL, else null. Callers should only invoke this when the user
+ * actually entered a value (blank is valid).
+ */
+export function validateDocsUrl(url: string): string | null {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== "http:" && u.protocol !== "https:") {
+      return "Documentation URL must be http or https";
+    }
+    return null;
+  } catch {
+    return "Documentation URL is not a valid URL";
+  }
+}
+
+/**
  * Sanitize URL parameter value
  * Strips all characters outside a safe whitelist to prevent injection attacks.
  */

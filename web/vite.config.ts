@@ -14,8 +14,11 @@ try {
 
 // https://vite.dev/config/
 export default defineConfig(async ({ mode }) => {
-  const isEnterprise = mode === "enterprise";
+  const isEnterprise =
+    mode === "enterprise" ||
+    process.env.VITE_ENTERPRISE === "true";
   const analyze = process.env.ANALYZE === "true";
+  const proxyTarget = process.env.VITE_PROXY_TARGET || "http://localhost:8088";
 
   const plugins: PluginOption[] = [
     react(),
@@ -83,7 +86,9 @@ export default defineConfig(async ({ mode }) => {
       ],
     },
     server: {
-      port: 3000,
+      // Dev server port + backend proxy target are env-overridable.
+      // Defaults preserve the original behavior (port 3000 -> server :8088).
+      port: Number(process.env.VITE_DEV_PORT) || 3000,
       warmup: {
         clientFiles: [
           "./src/main.tsx",
@@ -92,18 +97,18 @@ export default defineConfig(async ({ mode }) => {
       },
       proxy: {
         "/api": {
-          target: "http://localhost:8088",
+          target: proxyTarget,
           changeOrigin: true,
         },
         "/ws": {
-          target: "ws://localhost:8088",
+          target: proxyTarget.replace(/^http/, "ws"),
           ws: true,
         },
         "/healthz": {
-          target: "http://localhost:8088",
+          target: proxyTarget,
         },
         "/readyz": {
-          target: "http://localhost:8088",
+          target: proxyTarget,
         },
       },
     },

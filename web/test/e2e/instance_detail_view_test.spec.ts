@@ -245,7 +245,7 @@ test.describe('Instance Detail View', () => {
 
       // Namespace explicitly labeled
       await expect(page.getByText('Namespace')).toBeVisible()
-      await expect(page.getByText('team-alpha', { exact: true })).toBeVisible()
+      await expect(page.getByTestId('instance-header-card').getByText('team-alpha', { exact: true })).toBeVisible()
     })
 
     test('shows RGD description as subtitle', async ({ page }) => {
@@ -281,12 +281,12 @@ test.describe('Instance Detail View', () => {
       await setupMocks(page, gitopsInstance)
       await page.goto(buildInstanceRoute(gitopsInstance))
 
-      // Source row is the thin metadata bar above the tabs (not the Deployment Information card)
-      const sourceRow = page.locator('[style*="border-bottom"]').filter({ hasText: 'Source' })
-      await expect(sourceRow).toBeVisible()
-      // Branch chip and path chip should not appear in the source row
-      await expect(sourceRow.getByText('main')).not.toBeVisible()
-      await expect(sourceRow.getByText('instances/team-alpha')).not.toBeVisible()
+      // Source chip is in the header card meta strip (not the Deployment Information card)
+      const headerCard = page.getByTestId('instance-header-card')
+      await expect(headerCard.getByText('Source', { exact: true })).toBeVisible()
+      // Branch chip and path chip should not appear in the source chip area
+      await expect(headerCard.getByText('main')).not.toBeVisible()
+      await expect(headerCard.getByText('instances/team-alpha')).not.toBeVisible()
     })
   })
 
@@ -296,10 +296,13 @@ test.describe('Instance Detail View', () => {
       await page.goto(buildInstanceRoute(gitopsInstance))
 
       // Expand the Deployment Information card (collapsed by default)
-      await page.getByRole('button', { name: 'Deployment Information' }).click()
+      const deploymentBtn = page.getByRole('button', { name: 'Deployment Information' })
+      await deploymentBtn.click()
 
-      await expect(page.getByText('Synchronisation')).toBeVisible()
-      await expect(page.getByText('Synced')).toBeVisible()
+      // Scope to the card to avoid ambiguity with the k8s "Synced" condition type
+      const deploymentCard = deploymentBtn.locator('..')
+      await expect(deploymentCard.getByText('Synchronisation')).toBeVisible()
+      await expect(deploymentCard.getByText('Synced', { exact: true })).toBeVisible()
       await expect(page.getByText('Suspended')).not.toBeVisible()
     })
 
@@ -308,12 +311,15 @@ test.describe('Instance Detail View', () => {
       await page.goto(buildInstanceRoute(suspendedInstance))
 
       // Expand the Deployment Information card (collapsed by default)
-      await page.getByRole('button', { name: 'Deployment Information' }).click()
+      const deploymentBtn = page.getByRole('button', { name: 'Deployment Information' })
+      await deploymentBtn.click()
 
-      await expect(page.getByText('Synchronisation')).toBeVisible()
+      // Scope to the card to avoid ambiguity with the k8s "Synced" condition type
+      const deploymentCard = deploymentBtn.locator('..')
+      await expect(deploymentCard.getByText('Synchronisation')).toBeVisible()
       // Use exact match to avoid matching the "suspended-api" instance name heading
-      await expect(page.getByText('Suspended', { exact: true })).toBeVisible()
-      await expect(page.getByText('Synced', { exact: true })).not.toBeVisible()
+      await expect(deploymentCard.getByText('Suspended', { exact: true })).toBeVisible()
+      await expect(deploymentCard.getByText('Synced', { exact: true })).not.toBeVisible()
     })
 
     test('shows Repository row linking to repo root', async ({ page }) => {
@@ -338,36 +344,27 @@ test.describe('Instance Detail View', () => {
   })
 
   test.describe('Conditions', () => {
-    test('shows collapsed conditions with count when all healthy', async ({ page }) => {
+    test('shows conditions card with all conditions and rollup count when healthy', async ({ page }) => {
       await setupMocks(page, detailInstance)
       await page.goto(buildInstanceRoute(detailInstance))
 
-      // Conditions summary visible
+      // Header rollup summary visible
       await expect(page.getByText('2/2')).toBeVisible()
 
-      // Individual conditions NOT visible (collapsed)
-      await expect(page.getByText('AllReady')).not.toBeVisible()
+      // Conditions card always shows every condition (no collapse)
+      const conditions = page.getByTestId('instance-conditions-card')
+      await expect(conditions.getByText('Ready', { exact: true })).toBeVisible()
+      await expect(conditions.getByText('All resources ready')).toBeVisible()
+      await expect(conditions.getByText('all passing')).toBeVisible()
     })
 
-    test('expands conditions on click', async ({ page }) => {
-      await setupMocks(page, detailInstance)
-      await page.goto(buildInstanceRoute(detailInstance))
-
-      // Click the conditions toggle
-      await page.getByRole('button', { name: /conditions/i }).click()
-
-      // Now individual conditions are visible
-      await expect(page.getByText('Ready', { exact: true })).toBeVisible()
-      await expect(page.getByText('All resources ready')).toBeVisible()
-    })
-
-    test('auto-expands conditions when any is failing', async ({ page }) => {
+    test('surfaces failing condition message and count', async ({ page }) => {
       await setupMocks(page, unhealthyInstance)
       await page.goto(buildInstanceRoute(unhealthyInstance))
 
-      // Failing condition visible immediately (auto-expanded)
+      // Failing condition visible immediately in the conditions card
       await expect(page.getByText('Deployment failed: OOMKilled')).toBeVisible()
-      await expect(page.getByText('1/2')).toBeVisible()
+      await expect(page.getByText('1/2 passing')).toBeVisible()
     })
   })
 
@@ -379,9 +376,9 @@ test.describe('Instance Detail View', () => {
       // Navigate to Spec tab
       await page.getByRole('tab', { name: /spec/i }).click()
 
-      // Spec content visible
+      // Spec content visible (rendered as YAML, not JSON)
       await expect(page.getByTestId('spec-content')).toBeVisible()
-      await expect(page.getByText('"replicas": 3')).toBeVisible()
+      await expect(page.getByText(/replicas:\s*3/)).toBeVisible()
 
       // Copy button present
       await expect(page.getByRole('button', { name: /copy/i })).toBeVisible()
@@ -389,22 +386,21 @@ test.describe('Instance Detail View', () => {
   })
 
   test.describe('Tab navigation', () => {
-    test('defaults to Status tab', async ({ page }) => {
+    test('defaults to Overview tab', async ({ page }) => {
       await setupMocks(page, detailInstance)
       await page.goto(buildInstanceRoute(detailInstance))
 
-      const statusTab = page.getByRole('tab', { name: /^Status$/i })
-      await expect(statusTab).toHaveAttribute('aria-selected', 'true')
+      const overviewTab = page.getByRole('tab', { name: /^Overview$/i })
+      await expect(overviewTab).toHaveAttribute('aria-selected', 'true')
     })
 
-    test('switches to Deployment History tab', async ({ page }) => {
+    test('switches to History tab', async ({ page }) => {
       await setupMocks(page, detailInstance)
       await page.goto(buildInstanceRoute(detailInstance))
 
-      await page.getByRole('tab', { name: /deployment history/i }).click()
+      await page.getByRole('tab', { name: /history/i }).click()
 
-      // Deployment History content area visible
-      const historyTab = page.getByRole('tab', { name: /deployment history/i })
+      const historyTab = page.getByRole('tab', { name: /history/i })
       await expect(historyTab).toHaveAttribute('aria-selected', 'true')
     })
   })

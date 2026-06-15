@@ -8,9 +8,10 @@ import { Label } from "@/components/ui/label";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { Destination, ProjectRole } from "@/types/project";
 import { PolicyRulesTable } from "../PolicyRulesTable";
-import { OIDCGroupsManager } from "../OIDCGroupsManager";
+import { TeamPicker } from "@/components/teams/TeamPicker";
 import { DestinationScopeSelector } from "../DestinationScopeSelector";
-import { ROLE_PRESETS, resolvePreset } from "@/lib/role-presets";
+import { resolvePreset } from "@/lib/role-presets";
+import { useRoleTemplates } from "@/hooks/useRoleTemplates";
 
 interface RolesStepProps {
   projectName: string;
@@ -31,22 +32,27 @@ export function RolesStep({
     roles.length > 0 ? 0 : null,
   );
 
+  // Presets come from the server-backed catalog (Story 18.1). While the query
+  // loads (or 403s for a non-operator) the preset buttons are simply absent —
+  // "Custom Role" is always available, so role creation never blocks.
+  const { data: presets = [] } = useRoleTemplates();
+
   const addPresetRole = useCallback(
     (presetName: string) => {
-      const preset = ROLE_PRESETS.find((p) => p.name === presetName);
+      const preset = presets.find((p) => p.name === presetName);
       if (!preset) return;
       const role = resolvePreset(preset, projectName);
       const newRoles = [...roles, role];
       onRolesChange(newRoles);
       setExpandedIndex(newRoles.length - 1);
     },
-    [roles, projectName, onRolesChange],
+    [presets, roles, projectName, onRolesChange],
   );
 
   const addCustomRole = useCallback(() => {
     const newRoles = [
       ...roles,
-      { name: "", description: "", policies: [], groups: [] },
+      { name: "", description: "", policies: [] },
     ];
     onRolesChange(newRoles);
     setExpandedIndex(newRoles.length - 1);
@@ -94,7 +100,7 @@ export function RolesStep({
 
       {/* Preset buttons */}
       <div className="flex flex-wrap gap-2">
-        {ROLE_PRESETS.map((preset) => {
+        {presets.map((preset) => {
           const exists = roles.some((r) => r.name === preset.name);
           return (
             <Tooltip key={preset.name}>
@@ -147,7 +153,7 @@ export function RolesStep({
         <div className="space-y-2">
           {roles.map((role, index) => {
             const isExpanded = expandedIndex === index;
-            const isPreset = ROLE_PRESETS.some((p) => p.name === role.name);
+            const isPreset = presets.some((p) => p.name === role.name);
 
             return (
               <div
@@ -199,7 +205,7 @@ export function RolesStep({
                         color: "var(--text-muted)",
                       }}
                     >
-                      {role.groups?.length || 0} groups
+                      {role.teams?.length || 0} teams
                     </span>
                     <button
                       type="button"
@@ -272,11 +278,13 @@ export function RolesStep({
                       />
                     </div>
 
-                    {/* OIDC Groups */}
-                    <OIDCGroupsManager
-                      groups={role.groups || []}
-                      onGroupsChange={(groups) =>
-                        updateRole(index, { groups })
+                    {/* Teams (resolve to OIDC groups server-side; reusable) */}
+                    <TeamPicker
+                      selected={role.teams || []}
+                      onChange={(teams) =>
+                        updateRole(index, {
+                          teams: teams.length > 0 ? teams : undefined,
+                        })
                       }
                       canEdit={true}
                     />

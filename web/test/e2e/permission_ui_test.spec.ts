@@ -388,8 +388,9 @@ test.describe(' Projects Settings - Permission-Based UI', () => {
     });
 
     // Verify Create Project button is visible.
-    // Empty state shows "Create Project"; non-empty state shows "Create" in the header.
-    const createButton = page.locator('button').filter({ hasText: /^Create(?: Project)?$/i }).first();
+    // List CTA is "New project" (renamed in commit 4471140a); modal submit
+    // is "Create Project". The regex matches all three legitimate variants.
+    const createButton = page.locator('button').filter({ hasText: /^(?:New project|Create(?: Project)?)$/i }).first();
     await expect(createButton).toBeVisible({ timeout: 10000 });
 
     console.log('✓ AC6: Global Admin sees Create Project button');
@@ -405,13 +406,13 @@ test.describe(' Projects Settings - Permission-Based UI', () => {
       fullPage: true,
     });
 
-    // Verify page loaded (Projects heading visible)
-    const pageTitle = page.locator('h1, h2').filter({ hasText: /Projects/i }).first();
-    await expect(pageTitle).toBeVisible({ timeout: 10000 });
+    // Verify page loaded — page identity is on TopBar breadcrumb leaf (Story 48.12)
+    await expect(page.getByTestId('topbar-breadcrumb-leaf').filter({ hasText: /Projects/i })).toBeVisible({ timeout: 10000 });
 
     // Should see Create button due to projects:create permission.
-    // Empty state shows "Create Project"; non-empty state shows "Create" in the header.
-    const createButton = page.locator('button').filter({ hasText: /^Create(?: Project)?$/i }).first();
+    // List CTA is "New project" (renamed in commit 4471140a); modal submit
+    // is "Create Project". The regex matches all three legitimate variants.
+    const createButton = page.locator('button').filter({ hasText: /^(?:New project|Create(?: Project)?)$/i }).first();
     await expect(createButton).toBeVisible({ timeout: 10000 });
 
     console.log('✓ AC6: Project Creator sees Create Project button via useCanI');
@@ -427,12 +428,11 @@ test.describe(' Projects Settings - Permission-Based UI', () => {
       fullPage: true,
     });
 
-    // Verify page loaded (Projects heading visible)
-    const pageTitle = page.locator('h1, h2').filter({ hasText: /Projects/i }).first();
-    await expect(pageTitle).toBeVisible({ timeout: 10000 });
+    // Verify page loaded — page identity is on TopBar breadcrumb leaf (Story 48.12)
+    await expect(page.getByTestId('topbar-breadcrumb-leaf').filter({ hasText: /Projects/i })).toBeVisible({ timeout: 10000 });
 
-    // Viewer should NOT see Create button
-    const createButton = page.locator('button').filter({ hasText: /^Create$/i });
+    // Viewer should NOT see the list-level CTA (renamed to "New project").
+    const createButton = page.locator('button').filter({ hasText: /^New project$/i });
     await expect(createButton).not.toBeVisible({ timeout: 5000 });
 
     console.log('✓ AC6: Viewer does NOT see Create Project button');
@@ -519,8 +519,8 @@ test.describe(' Catalog - Deploy Button Permission Checks', () => {
       fullPage: true,
     });
 
-    // Verify catalog page loaded
-    const pageTitle = page.locator('h1, h2').filter({ hasText: /Catalog|RGD/i }).first();
+    // Verify catalog page loaded — 48.12 removed the Catalog H1; the breadcrumb leaf carries the page identity now.
+    const pageTitle = page.getByTestId('topbar-breadcrumb-leaf').filter({ hasText: /Catalog|RGD/i });
     const titleVisible = await pageTitle.isVisible({ timeout: 5000 }).catch(() => false);
 
     if (titleVisible) {
@@ -731,7 +731,7 @@ test.describe(' Edge Cases', () => {
     // Use exact accessible-name match so chrome elements that *contain* the
     // word (e.g. cmd-k trigger placeholder "Search, deploy, jump…") don't
     // cause false positives.
-    const createButton = page.getByRole('button', { name: 'Create', exact: true }).first();
+    const createButton = page.getByRole('button', { name: 'New project', exact: true }).first();
     const deployButton = page.getByRole('button', { name: 'Deploy', exact: true }).first();
     const deleteButton = page.getByRole('button', { name: 'Delete', exact: true }).first();
 

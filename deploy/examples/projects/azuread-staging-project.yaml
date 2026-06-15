@@ -1,6 +1,7 @@
 # Azure EntraID Staging Project - OIDC group-based RBAC
-# Maps Azure AD (Microsoft Entra ID) security groups to project roles
-# Apply with: kubectl apply -f <this-file> -n <knodex-namespace>
+# Maps Azure AD (Microsoft Entra ID) security groups to project roles via Teams
+# Apply with: kubectl apply -f azuread-staging-teams.yaml -n <knodex-namespace>
+#             kubectl apply -f <this-file> -n <knodex-namespace>
 apiVersion: knodex.io/v1alpha1
 kind: Project
 metadata:
@@ -61,8 +62,8 @@ spec:
         - "p, proj:proj-azuread-staging:admin, settings, get, *, allow"
         # Compliance management - view and update constraint enforcement (STORY-181)
         - "p, proj:proj-azuread-staging:admin, compliance, *, *, allow"
-      groups:
-        - "7e24cb11-e404-4b4d-9e2c-96d6e7b4733c"
+      teams:
+        - azuread-staging-admins
 
     # Reader role - view-only access
     # Azure EntraID Group Object ID: a9563419-38a1-4f85-92f2-5133f99d0ebd
@@ -81,5 +82,5 @@ spec:
         # RGD catalog read access - scoped to this project
         - "p, proj:proj-azuread-staging:reader, rgds, get, proj-azuread-staging/*, allow"
         - "p, proj:proj-azuread-staging:reader, rgds, list, proj-azuread-staging/*, allow"
-      groups:
-        - "a9563419-38a1-4f85-92f2-5133f99d0ebd"
+      teams:
+        - azuread-staging-readers

@@ -130,7 +130,7 @@ func (h *RoleBindingHandler) AssignUserRole(w http.ResponseWriter, r *http.Reque
 
 	// Note: We do NOT call reloadProjectPolicies here because:
 	// 1. AssignUserRoles already added the user-role mapping to Casbin in-memory
-	// 2. LoadProjectPolicies would wipe out this mapping (it only restores role.Groups, not user bindings)
+	// 2. LoadProjectPolicies would wipe out this mapping (it only restores team-resolved group bindings, not user bindings)
 	// 3. The in-memory Casbin binding provides immediate permission effect
 	// 4. The watcher will sync from CRD annotations for persistence across restarts
 

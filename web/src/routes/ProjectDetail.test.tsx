@@ -25,12 +25,19 @@ vi.mock("@/hooks/useCanI", () => ({
   })),
 }));
 
+vi.mock("@/hooks/useInstances", () => ({
+  useInstanceList: vi.fn(() => ({ data: { items: [] }, isLoading: false })),
+}));
+
 // Mock tab components to simplify rendering
 vi.mock("@/components/projects/tabs/ProjectOverviewTab", () => ({
   ProjectOverviewTab: () => <div data-testid="overview-tab">Overview</div>,
 }));
-vi.mock("@/components/projects/tabs/ProjectRolesTab", () => ({
-  ProjectRolesTab: () => <div data-testid="roles-tab">Roles</div>,
+vi.mock("@/components/projects/tabs/ProjectInstancesTab", () => ({
+  ProjectInstancesTab: () => <div data-testid="instances-tab">Instances</div>,
+}));
+vi.mock("@/components/projects/tabs/ProjectAccessTab", () => ({
+  ProjectAccessTab: () => <div data-testid="access-tab">Access</div>,
 }));
 vi.mock("@/components/projects/tabs/ProjectDestinationsTab", () => ({
   ProjectDestinationsTab: () => (
@@ -97,9 +104,10 @@ describe("ProjectDetail — Resources tab visibility", () => {
 
     renderProjectDetail("mono-app");
 
-    // Tab triggers: Overview, Roles, Destinations should be present
+    // Tab triggers: Overview, Instances, Access, Destinations should be present
     expect(screen.getByRole("tab", { name: /Overview/i })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /Roles/i })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /Instances/i })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /Access/i })).toBeInTheDocument();
     expect(
       screen.getByRole("tab", { name: /Destinations/i })
     ).toBeInTheDocument();
@@ -122,7 +130,7 @@ describe("ProjectDetail — Resources tab visibility", () => {
 
     // All 4 tabs should be present
     expect(screen.getByRole("tab", { name: /Overview/i })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /Roles/i })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /Access/i })).toBeInTheDocument();
     expect(
       screen.getByRole("tab", { name: /Destinations/i })
     ).toBeInTheDocument();
@@ -142,7 +150,7 @@ describe("ProjectDetail — Resources tab visibility", () => {
     renderProjectDetail("mono-app");
 
     const tabs = screen.getAllByRole("tab");
-    expect(tabs).toHaveLength(3);
+    expect(tabs).toHaveLength(4);
   });
 
   it("renders 4 tabs for multi-cluster projects", async () => {
@@ -156,6 +164,6 @@ describe("ProjectDetail — Resources tab visibility", () => {
     renderProjectDetail("multi-app");
 
     const tabs = screen.getAllByRole("tab");
-    expect(tabs).toHaveLength(4);
+    expect(tabs).toHaveLength(5);
   });
 });

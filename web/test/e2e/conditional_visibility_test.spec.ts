@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { test, expect, TestUserRole, TEST_USERS, setupPermissionMocking } from '../fixture'
-import { API_PATHS } from '../fixture/mock-data'
 import { selectShadcnOption } from './fixtures/select'
 
 /**

@@ -28,6 +28,7 @@ KRO lets you define complex multi-resource Kubernetes deployments as a single cu
 | **OIDC Authentication** | SSO via any OpenID Connect provider |
 | **Deployment Modes** | Direct, GitOps, or Hybrid deployment strategies |
 | **Repository Management** | Connect Git repositories for GitOps workflows |
+| **AI Agents** | Dedicated Agents hub — built-in RGD Builder (describe your infrastructure in natural language, get a cluster-grounded RGD spec ready to review and deploy), deploy community [kagent](https://kagent.dev) agents from the Catalog into your projects, and track agent run history |
 
 ## Quick Start
 
@@ -69,7 +70,9 @@ Knodex Enterprise adds features for organizations that need advanced governance 
 | GitOps Deployment Mode | x | x |
 | Compliance Dashboard (OPA) | | x |
 | Deployment Compliance Auditing | | Coming soon |
-| AI Template Builder | | Coming soon |
+| AI RGD Builder (cluster-grounded) | x | x |
+| RGD Builder Policy Validation (Gatekeeper) | | x |
+| Agent Run Audit Trail | | x |
 
 Learn more at [knodex.io](https://knodex.io).
 

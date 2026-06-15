@@ -70,7 +70,7 @@ func TestProjectDeepCopyObject(t *testing.T) {
 						Name:        "developer",
 						Description: "Developer role",
 						Policies:    []string{"p, proj:test:developer, applications, *, test/*, allow"},
-						Groups:      []string{"dev-team"},
+						Teams:       []string{"dev-team"},
 					},
 				},
 			},
@@ -112,8 +112,8 @@ func TestProjectDeepCopyObject(t *testing.T) {
 		if len(copy.Spec.Roles[0].Policies) != 1 {
 			t.Errorf("Expected 1 policy, got %d", len(copy.Spec.Roles[0].Policies))
 		}
-		if len(copy.Spec.Roles[0].Groups) != 1 {
-			t.Errorf("Expected 1 group, got %d", len(copy.Spec.Roles[0].Groups))
+		if len(copy.Spec.Roles[0].Teams) != 1 {
+			t.Errorf("Expected 1 team, got %d", len(copy.Spec.Roles[0].Teams))
 		}
 
 		// Verify conditions deep copy

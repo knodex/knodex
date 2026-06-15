@@ -1,0 +1,21 @@
+# Teams for azuread-staging-project.yaml
+# Replace oidcGroups values with your actual Azure AD Group Object IDs.
+# Apply with: kubectl apply -f <this-file> -n <knodex-namespace>
+---
+apiVersion: knodex.io/v1alpha1
+kind: Team
+metadata:
+  name: azuread-staging-admins
+spec:
+  description: "Azure EntraID staging project administrators"
+  oidcGroups:
+    - "7e24cb11-e404-4b4d-9e2c-96d6e7b4733c"
+---
+apiVersion: knodex.io/v1alpha1
+kind: Team
+metadata:
+  name: azuread-staging-readers
+spec:
+  description: "Azure EntraID staging project readers"
+  oidcGroups:
+    - "a9563419-38a1-4f85-92f2-5133f99d0ebd"

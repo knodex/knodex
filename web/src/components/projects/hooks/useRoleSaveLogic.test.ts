@@ -7,8 +7,8 @@ import { useRoleSaveLogic } from './useRoleSaveLogic';
 
 describe('useRoleSaveLogic', () => {
   const roles = [
-    { name: 'admin', description: 'Admin role', policies: ['p1'], groups: ['g1'] },
-    { name: 'viewer', description: 'Viewer role', policies: ['p2'], groups: ['g2'] },
+    { name: 'admin', description: 'Admin role', policies: ['p1'], teams: ['t1'] },
+    { name: 'viewer', description: 'Viewer role', policies: ['p2'], teams: ['t2'] },
   ];
   const defaultOptions = {
     roles,
@@ -36,13 +36,13 @@ describe('useRoleSaveLogic', () => {
     expect(result.current.getRoleData('admin')?.policies).toEqual(['p1', 'p3']);
   });
 
-  it('tracks pending group changes', () => {
+  it('tracks pending teams changes', () => {
     const { result } = renderHook(() => useRoleSaveLogic(defaultOptions));
 
-    act(() => result.current.handleGroupsChange('viewer', ['g2', 'g3']));
+    act(() => result.current.handleTeamsChange('viewer', ['t2', 't3']));
 
     expect(result.current.hasUnsavedChanges('viewer')).toBe(true);
-    expect(result.current.getRoleData('viewer')?.groups).toEqual(['g2', 'g3']);
+    expect(result.current.getRoleData('viewer')?.teams).toEqual(['t2', 't3']);
   });
 
   it('saves role and clears pending changes', async () => {
@@ -92,7 +92,7 @@ describe('useRoleSaveLogic', () => {
 
     act(() => {
       result.current.handlePoliciesChange('admin', ['new']);
-      result.current.handleGroupsChange('viewer', ['new']);
+      result.current.handleTeamsChange('viewer', ['new-team']);
     });
     act(() => result.current.clearAllPendingChanges());
 

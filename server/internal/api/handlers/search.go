@@ -10,7 +10,6 @@ import (
 
 	"github.com/knodex/knodex/server/internal/api/helpers"
 	"github.com/knodex/knodex/server/internal/api/response"
-	"github.com/knodex/knodex/server/internal/kro/watcher"
 	"github.com/knodex/knodex/server/internal/models"
 	"github.com/knodex/knodex/server/internal/rbac"
 	"github.com/knodex/knodex/server/internal/services"
@@ -72,7 +71,7 @@ type ProjectSearchResult struct {
 type SearchHandlerConfig struct {
 	AuthService     *services.AuthorizationService
 	CatalogService  *services.CatalogService
-	InstanceTracker *watcher.InstanceTracker
+	InstanceTracker InstanceReader
 	ProjectService  rbac.ProjectServiceInterface
 	Logger          *slog.Logger
 }
@@ -81,7 +80,7 @@ type SearchHandlerConfig struct {
 type SearchHandler struct {
 	authService     *services.AuthorizationService
 	catalogService  *services.CatalogService
-	instanceTracker *watcher.InstanceTracker
+	instanceTracker InstanceReader
 	projectService  rbac.ProjectServiceInterface
 	logger          *slog.Logger
 }

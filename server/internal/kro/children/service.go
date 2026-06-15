@@ -444,7 +444,11 @@ func groupByNodeID(children []models.ChildResource) []models.ChildResourceGroup 
 
 		group.Resources = append(group.Resources, child)
 		group.Count++
-		if child.Health == models.HealthHealthy {
+		// HealthNone resources (ConfigMap, Secret, Service, etc.) have no health
+		// concept — ready by definition once they exist. Count them as ready so
+		// they don't drag the "X/Y ready" rollup below total. Mirrors
+		// AggregateGroupHealth, which excludes HealthNone from health assessment.
+		if child.Health == models.HealthHealthy || child.Health == models.HealthNone {
 			group.ReadyCount++
 		}
 	}

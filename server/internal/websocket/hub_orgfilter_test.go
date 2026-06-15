@@ -124,7 +124,7 @@ func TestShouldSendToClient_GlobalAdmin(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := hub.shouldSendToClient(globalAdmin, tt.message, hub.extractProjectID(tt.message))
+			got := hub.shouldSendToClient(globalAdmin, tt.message, hub.extractProjectID(tt.message), hub.extractAgentRunActorID(tt.message))
 			if got != tt.want {
 				t.Errorf("shouldSendToClient() = %v, want %v", got, tt.want)
 			}
@@ -209,7 +209,7 @@ func TestShouldSendToClient_RegularUser_SingleProject(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := hub.shouldSendToClient(user, tt.message, hub.extractProjectID(tt.message))
+			got := hub.shouldSendToClient(user, tt.message, hub.extractProjectID(tt.message), hub.extractAgentRunActorID(tt.message))
 			if got != tt.want {
 				t.Errorf("shouldSendToClient() = %v, want %v", got, tt.want)
 			}
@@ -286,7 +286,7 @@ func TestShouldSendToClient_RegularUser_MultipleProjects(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := hub.shouldSendToClient(user, tt.message, hub.extractProjectID(tt.message))
+			got := hub.shouldSendToClient(user, tt.message, hub.extractProjectID(tt.message), hub.extractAgentRunActorID(tt.message))
 			if got != tt.want {
 				t.Errorf("shouldSendToClient() = %v, want %v", got, tt.want)
 			}
@@ -315,7 +315,7 @@ func TestShouldSendToClient_NoSubscription(t *testing.T) {
 		Data:      mustMarshal(InstanceUpdateData{Action: ActionAdd, Namespace: "project-a", Name: "instance-1", ProjectID: "project-a"}),
 	}
 
-	got := hub.shouldSendToClient(client, message, hub.extractProjectID(message))
+	got := hub.shouldSendToClient(client, message, hub.extractProjectID(message), hub.extractAgentRunActorID(message))
 	if got != false {
 		t.Errorf("shouldSendToClient() = %v, want false (no subscription)", got)
 	}
@@ -327,7 +327,7 @@ func TestShouldSendToClient_NoSubscription(t *testing.T) {
 		Data:      mustMarshal(ErrorData{Code: "TEST", Message: "test"}),
 	}
 
-	got = hub.shouldSendToClient(client, errorMsg, hub.extractProjectID(errorMsg))
+	got = hub.shouldSendToClient(client, errorMsg, hub.extractProjectID(errorMsg), hub.extractAgentRunActorID(errorMsg))
 	if got != true {
 		t.Errorf("shouldSendToClient() = %v, want true (error message always sent)", got)
 	}
@@ -344,7 +344,7 @@ func TestShouldSendToClient_InvalidMessageType(t *testing.T) {
 		Data:      json.RawMessage(`{"test": "data"}`),
 	}
 
-	got := hub.shouldSendToClient(user, message, hub.extractProjectID(message))
+	got := hub.shouldSendToClient(user, message, hub.extractProjectID(message), hub.extractAgentRunActorID(message))
 	if got != false {
 		t.Errorf("shouldSendToClient() = %v, want false (unknown message type)", got)
 	}
@@ -362,7 +362,7 @@ func TestShouldSendToClient_MalformedData(t *testing.T) {
 	}
 
 	// Should return false when data can't be unmarshaled
-	got := hub.shouldSendToClient(user, message, hub.extractProjectID(message))
+	got := hub.shouldSendToClient(user, message, hub.extractProjectID(message), hub.extractAgentRunActorID(message))
 	if got != false {
 		t.Errorf("shouldSendToClient() = %v, want false (malformed data)", got)
 	}
@@ -383,12 +383,12 @@ func TestShouldSendToClient_IsolationBetweenUsers(t *testing.T) {
 	}
 
 	// User A should receive
-	if got := hub.shouldSendToClient(userA, messageProjectA, hub.extractProjectID(messageProjectA)); !got {
+	if got := hub.shouldSendToClient(userA, messageProjectA, hub.extractProjectID(messageProjectA), hub.extractAgentRunActorID(messageProjectA)); !got {
 		t.Error("User A should receive message from their project")
 	}
 
 	// User B should NOT receive
-	if got := hub.shouldSendToClient(userB, messageProjectA, hub.extractProjectID(messageProjectA)); got {
+	if got := hub.shouldSendToClient(userB, messageProjectA, hub.extractProjectID(messageProjectA), hub.extractAgentRunActorID(messageProjectA)); got {
 		t.Error("User B should NOT receive message from different project (isolation violated)")
 	}
 
@@ -400,12 +400,12 @@ func TestShouldSendToClient_IsolationBetweenUsers(t *testing.T) {
 	}
 
 	// User B should receive
-	if got := hub.shouldSendToClient(userB, messageProjectB, hub.extractProjectID(messageProjectB)); !got {
+	if got := hub.shouldSendToClient(userB, messageProjectB, hub.extractProjectID(messageProjectB), hub.extractAgentRunActorID(messageProjectB)); !got {
 		t.Error("User B should receive message from their project")
 	}
 
 	// User A should NOT receive
-	if got := hub.shouldSendToClient(userA, messageProjectB, hub.extractProjectID(messageProjectB)); got {
+	if got := hub.shouldSendToClient(userA, messageProjectB, hub.extractProjectID(messageProjectB), hub.extractAgentRunActorID(messageProjectB)); got {
 		t.Error("User A should NOT receive message from different project (isolation violated)")
 	}
 }
@@ -481,7 +481,7 @@ func TestShouldSendToClient_ViolationUpdate_GlobalAdmin(t *testing.T) {
 		}),
 	}
 
-	got := hub.shouldSendToClient(globalAdmin, violationMsg, hub.extractProjectID(violationMsg))
+	got := hub.shouldSendToClient(globalAdmin, violationMsg, hub.extractProjectID(violationMsg), hub.extractAgentRunActorID(violationMsg))
 	if !got {
 		t.Error("Global admin with violations subscription should receive violation updates")
 	}
@@ -506,7 +506,7 @@ func TestShouldSendToClient_ViolationUpdate_GlobalAdmin_AllSubscription(t *testi
 		}),
 	}
 
-	got := hub.shouldSendToClient(globalAdmin, violationMsg, hub.extractProjectID(violationMsg))
+	got := hub.shouldSendToClient(globalAdmin, violationMsg, hub.extractProjectID(violationMsg), hub.extractAgentRunActorID(violationMsg))
 	if !got {
 		t.Error("Global admin with 'all' subscription should receive violation updates")
 	}
@@ -532,7 +532,7 @@ func TestShouldSendToClient_ViolationUpdate_NonAdmin_Denied(t *testing.T) {
 		}),
 	}
 
-	got := hub.shouldSendToClient(regularUser, violationMsg, hub.extractProjectID(violationMsg))
+	got := hub.shouldSendToClient(regularUser, violationMsg, hub.extractProjectID(violationMsg), hub.extractAgentRunActorID(violationMsg))
 	if got {
 		t.Error("Non-admin user should NOT receive violation updates (compliance is admin-only)")
 	}
@@ -557,7 +557,7 @@ func TestShouldSendToClient_ViolationUpdate_NonAdmin_AllSubscription_Denied(t *t
 		}),
 	}
 
-	got := hub.shouldSendToClient(regularUser, violationMsg, hub.extractProjectID(violationMsg))
+	got := hub.shouldSendToClient(regularUser, violationMsg, hub.extractProjectID(violationMsg), hub.extractAgentRunActorID(violationMsg))
 	if got {
 		t.Error("Non-admin user with 'all' subscription should still NOT receive violation updates")
 	}
@@ -582,7 +582,7 @@ func TestShouldSendToClient_ViolationUpdate_NoSubscription(t *testing.T) {
 		}),
 	}
 
-	got := hub.shouldSendToClient(globalAdminNoSub, violationMsg, hub.extractProjectID(violationMsg))
+	got := hub.shouldSendToClient(globalAdminNoSub, violationMsg, hub.extractProjectID(violationMsg), hub.extractAgentRunActorID(violationMsg))
 	if got {
 		t.Error("Global admin without violations subscription should NOT receive violation updates")
 	}
@@ -607,7 +607,7 @@ func TestShouldSendToClient_ViolationUpdate_ResolvedAction(t *testing.T) {
 		}),
 	}
 
-	got := hub.shouldSendToClient(globalAdmin, resolvedViolationMsg, hub.extractProjectID(resolvedViolationMsg))
+	got := hub.shouldSendToClient(globalAdmin, resolvedViolationMsg, hub.extractProjectID(resolvedViolationMsg), hub.extractAgentRunActorID(resolvedViolationMsg))
 	if !got {
 		t.Error("Global admin should receive resolved (delete action) violation updates")
 	}
@@ -635,17 +635,17 @@ func TestShouldSendToClient_ViolationUpdate_MultipleAdmins(t *testing.T) {
 	}
 
 	// Admin 1 should receive
-	if got := hub.shouldSendToClient(admin1, violationMsg, hub.extractProjectID(violationMsg)); !got {
+	if got := hub.shouldSendToClient(admin1, violationMsg, hub.extractProjectID(violationMsg), hub.extractAgentRunActorID(violationMsg)); !got {
 		t.Error("Admin 1 with violations subscription should receive violation updates")
 	}
 
 	// Admin 2 should receive (via "all" subscription)
-	if got := hub.shouldSendToClient(admin2, violationMsg, hub.extractProjectID(violationMsg)); !got {
+	if got := hub.shouldSendToClient(admin2, violationMsg, hub.extractProjectID(violationMsg), hub.extractAgentRunActorID(violationMsg)); !got {
 		t.Error("Admin 2 with 'all' subscription should receive violation updates")
 	}
 
 	// Regular user should NOT receive (compliance is admin-only)
-	if got := hub.shouldSendToClient(regularUser, violationMsg, hub.extractProjectID(violationMsg)); got {
+	if got := hub.shouldSendToClient(regularUser, violationMsg, hub.extractProjectID(violationMsg), hub.extractAgentRunActorID(violationMsg)); got {
 		t.Error("Regular user should NOT receive violation updates even with both subscriptions")
 	}
 }
@@ -678,7 +678,7 @@ func TestShouldSendToClient_ViolationUpdate_EmptySubscriptions(t *testing.T) {
 		}),
 	}
 
-	got := hub.shouldSendToClient(adminNoSubs, violationMsg, hub.extractProjectID(violationMsg))
+	got := hub.shouldSendToClient(adminNoSubs, violationMsg, hub.extractProjectID(violationMsg), hub.extractAgentRunActorID(violationMsg))
 	if got {
 		t.Error("Admin with no subscriptions should NOT receive violation updates")
 	}
@@ -697,12 +697,12 @@ func TestShouldSendToClient_DriftUpdate_ProjectScoped(t *testing.T) {
 	}
 
 	// User A (in project-a) should receive
-	if got := hub.shouldSendToClient(userA, driftMsg, hub.extractProjectID(driftMsg)); !got {
+	if got := hub.shouldSendToClient(userA, driftMsg, hub.extractProjectID(driftMsg), hub.extractAgentRunActorID(driftMsg)); !got {
 		t.Error("User A should receive drift update from their project")
 	}
 
 	// User B (in project-b) should NOT receive
-	if got := hub.shouldSendToClient(userB, driftMsg, hub.extractProjectID(driftMsg)); got {
+	if got := hub.shouldSendToClient(userB, driftMsg, hub.extractProjectID(driftMsg), hub.extractAgentRunActorID(driftMsg)); got {
 		t.Error("User B should NOT receive drift update from different project")
 	}
 }
@@ -719,7 +719,7 @@ func TestShouldSendToClient_DriftUpdate_GlobalAdmin(t *testing.T) {
 	}
 
 	// Global admin should receive drift updates from any project
-	if got := hub.shouldSendToClient(admin, driftMsg, hub.extractProjectID(driftMsg)); !got {
+	if got := hub.shouldSendToClient(admin, driftMsg, hub.extractProjectID(driftMsg), hub.extractAgentRunActorID(driftMsg)); !got {
 		t.Error("Global admin should receive drift update from any project")
 	}
 }
@@ -736,7 +736,7 @@ func TestShouldSendToClient_DriftUpdate_NoSubscription(t *testing.T) {
 		Data:      mustMarshal(DriftUpdateData{Namespace: "default", Kind: "WebApp", Name: "my-app", Drifted: false, ProjectID: "project-a"}),
 	}
 
-	if got := hub.shouldSendToClient(client, driftMsg, hub.extractProjectID(driftMsg)); got {
+	if got := hub.shouldSendToClient(client, driftMsg, hub.extractProjectID(driftMsg), hub.extractAgentRunActorID(driftMsg)); got {
 		t.Error("Client with no subscriptions should NOT receive drift updates")
 	}
 }

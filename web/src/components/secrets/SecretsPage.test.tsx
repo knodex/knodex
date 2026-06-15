@@ -116,6 +116,79 @@ describe("SecretsPage", () => {
     expect(screen.getByText("key")).toBeInTheDocument();
   });
 
+  it("renders ListFooter with counts computed over the visible rows", async () => {
+    vi.mocked(useCanIModule.useCanI).mockReturnValue({
+      allowed: true,
+      isLoading: false,
+      isError: false,
+    });
+    vi.mocked(useProjectsModule.useProjects).mockReturnValue({
+      data: mockProjects,
+      isLoading: false,
+    } as ReturnType<typeof useProjectsModule.useProjects>);
+    vi.mocked(useSecretsModule.useSecretList).mockReturnValue({
+      data: mockSecrets,
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    } as unknown as ReturnType<typeof useSecretsModule.useSecretList>);
+    vi.mocked(useSecretsModule.useCreateSecret).mockReturnValue({
+      mutateAsync: vi.fn(),
+      isPending: false,
+    } as unknown as ReturnType<typeof useSecretsModule.useCreateSecret>);
+
+    renderPage();
+
+    // Fixture: 2 secrets, keys 2+1=3. (Distinct-namespace count was dropped;
+    // each secret lives in exactly one namespace so an aggregate is misleading.)
+    const footer = await screen.findByTestId("secrets-list-footer");
+    expect(footer).toHaveTextContent("2 secrets");
+    expect(footer).toHaveTextContent("3 keys");
+    expect(footer).not.toHaveTextContent(/namespaces?/);
+  });
+
+  it("footer counts track the search-filtered rows, not the full list", async () => {
+    const user = userEvent.setup();
+
+    vi.mocked(useCanIModule.useCanI).mockReturnValue({
+      allowed: true,
+      isLoading: false,
+      isError: false,
+    });
+    vi.mocked(useProjectsModule.useProjects).mockReturnValue({
+      data: mockProjects,
+      isLoading: false,
+    } as ReturnType<typeof useProjectsModule.useProjects>);
+    vi.mocked(useSecretsModule.useSecretList).mockReturnValue({
+      data: mockSecrets,
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    } as unknown as ReturnType<typeof useSecretsModule.useSecretList>);
+    vi.mocked(useSecretsModule.useCreateSecret).mockReturnValue({
+      mutateAsync: vi.fn(),
+      isPending: false,
+    } as unknown as ReturnType<typeof useSecretsModule.useCreateSecret>);
+
+    renderPage();
+
+    const footer = await screen.findByTestId("secrets-list-footer");
+    expect(footer).toHaveTextContent("2 secrets");
+
+    // Narrow the search to a single secret (db-credentials → 2 keys, alpha-ns).
+    // The footer must follow the visible (filtered) `sorted` array; if it counted
+    // the unfiltered `data.items` it would still read "2 secrets" and fail here.
+    await user.type(screen.getByLabelText("Search secrets"), "db-credentials");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("secrets-list-footer")).toHaveTextContent("1 secrets");
+    });
+    expect(screen.getByTestId("secrets-list-footer")).toHaveTextContent("2 keys");
+    expect(screen.getByTestId("secrets-list-footer")).not.toHaveTextContent(/namespaces?/);
+  });
+
   it("shows loading skeletons", () => {
     vi.mocked(useCanIModule.useCanI).mockReturnValue({
       allowed: true,
@@ -170,6 +243,8 @@ describe("SecretsPage", () => {
     await waitFor(() => {
       expect(screen.getByText("No secrets yet")).toBeInTheDocument();
     });
+    // Footer must not render in the empty-state branch.
+    expect(screen.queryByTestId("secrets-list-footer")).not.toBeInTheDocument();
   });
 
   it("shows access denied when user lacks permission", async () => {
@@ -322,7 +397,7 @@ describe("SecretsPage", () => {
     expect(screen.getByLabelText("Delete api-key")).toBeInTheDocument();
   });
 
-  it("uses global project from useCurrentProject hook", async () => {
+  it("calls useSecretList with no namespace filter (server-filtered to accessible namespaces)", async () => {
     vi.mocked(useCanIModule.useCanI).mockReturnValue({
       allowed: true,
       isLoading: false,
@@ -355,8 +430,9 @@ describe("SecretsPage", () => {
     await waitFor(() => {
       expect(screen.getByText("db-credentials")).toBeInTheDocument();
     });
-    // useSecretList should have been called with "alpha" (from useCurrentProject mock)
-    expect(useSecretsModule.useSecretList).toHaveBeenCalledWith("alpha");
+    // The page makes a single namespace-agnostic list call — secrets are
+    // namespace-keyed and the server filters to accessible namespaces.
+    expect(useSecretsModule.useSecretList).toHaveBeenCalledWith();
   });
 
   it("navigates to detail view with correct URL on row click", async () => {

@@ -11,6 +11,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/knodex/knodex/server/internal/audit"
+	"github.com/knodex/knodex/server/internal/kagent/runs"
 	"github.com/knodex/knodex/server/internal/rbac"
 	"github.com/knodex/knodex/server/internal/services"
 )
@@ -19,6 +20,13 @@ import (
 // Handlers use audit.RecordEvent() which is nil-safe.
 func InitAuditRecorder(_ context.Context, _ kubernetes.Interface, _ string, _ string) audit.Recorder {
 	return nil
+}
+
+// WrapAgentRunStore is the identity function for OSS builds (Story 49.5):
+// the run store is returned unchanged — no audit decoration, zero Postgres
+// interaction in the run path.
+func WrapAgentRunStore(inner runs.Store, _ audit.Recorder) runs.Store {
+	return inner
 }
 
 // InitAuditLoginMiddleware returns nil for OSS builds.

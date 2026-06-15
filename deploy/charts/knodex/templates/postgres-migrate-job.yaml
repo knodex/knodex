@@ -10,17 +10,20 @@ The Job runs the same EE image as the server Deployment (just with
 `--migrate-only`), so there is no second image to build, scan, or pull.
 */ -}}
 
-{{- /* Validation: deploymentMode must be one of "", "shared", "per-org". */ -}}
+{{- /* Validation: deploymentMode (DEPRECATED knob) must be one of "", "shared",
+       "per-org". The former enterprise.enabled requirement was removed — Postgres
+       is mandatory on every edition now (R5-5), not an enterprise-only feature. */ -}}
 {{- if .Values.enterprise.postgres.deploymentMode -}}
 {{-   if and (ne .Values.enterprise.postgres.deploymentMode "shared") (ne .Values.enterprise.postgres.deploymentMode "per-org") -}}
 {{-     fail "enterprise.postgres.deploymentMode must be one of: shared, per-org, or empty" -}}
 {{-   end -}}
-{{-   if not .Values.enterprise.enabled -}}
-{{-     fail "enterprise.postgres.deploymentMode requires enterprise.enabled: true — Postgres is an enterprise-only feature" -}}
-{{-   end -}}
-{{-   if and (not .Values.postgresql.enabled) (not .Values.enterprise.postgres.connectionString) (not .Values.enterprise.postgres.connectionStringSecret.name) -}}
-{{-     fail "enterprise.postgres requires either enterprise.postgres.connectionStringSecret.name (referencing an existing Secret with key `DATABASE_URL`), an inline enterprise.postgres.connectionString, or postgresql.enabled: true for the embedded subchart" -}}
-{{-   end -}}
+{{- end -}}
+
+{{- /* A Postgres supply must resolve (it always does by default — the embedded
+       subchart is default-on). This guards the edge case where an operator
+       disables the embedded subchart without supplying any external DB. */ -}}
+{{- if not (include "knodex.postgresEnabled" .) -}}
+{{-   fail "Postgres is required on every edition (R5-5). Enable the embedded subchart (postgresql.enabled: true), or supply an external DB via externalPostgresql.existingSecret / externalPostgresql.host (or the deprecated enterprise.postgres.connectionString*)." -}}
 {{- end -}}
 
 {{- if and (include "knodex.postgresEnabled" .) .Values.enterprise.postgres.migrations.runJob }}

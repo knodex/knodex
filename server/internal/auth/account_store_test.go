@@ -409,3 +409,14 @@ func TestRedisRateLimit_NilClient_UsesInMemory(t *testing.T) {
 		t.Fatalf("expected ErrRateLimited, got %T: %v", err, err)
 	}
 }
+
+// TestNewAccountStore_EmptyNamespaceNotCoerced asserts the audit G-17 fix: an
+// empty namespace is NOT silently coerced to "default". The store keeps the
+// empty value so downstream namespaced Kubernetes reads fail closed instead of
+// authenticating against an unintended namespace.
+func TestNewAccountStore_EmptyNamespaceNotCoerced(t *testing.T) {
+	store := NewAccountStore(nil, "")
+	if store.namespace != "" {
+		t.Fatalf("expected empty namespace to be preserved (fail-closed), got %q", store.namespace)
+	}
+}

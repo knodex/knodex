@@ -80,10 +80,10 @@ describe('BottomNav', () => {
     expect(nav).toBeInTheDocument();
   });
 
-  it('renders exactly 4 links', () => {
+  it('renders exactly 5 links', () => {
     renderBottomNav();
 
     const links = screen.getAllByRole('link');
-    expect(links).toHaveLength(4);
+    expect(links).toHaveLength(5);
   });
 });

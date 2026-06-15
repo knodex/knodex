@@ -9,18 +9,17 @@ import (
 	"github.com/knodex/knodex/server/internal/api/response"
 	kroadapter "github.com/knodex/knodex/server/internal/kro/graph"
 	"github.com/knodex/knodex/server/internal/kro/parser"
-	"github.com/knodex/knodex/server/internal/kro/watcher"
 	"github.com/knodex/knodex/server/internal/models"
 )
 
 // ResourceHandler handles RGD resource graph HTTP requests
 type ResourceHandler struct {
-	rgdWatcher     *watcher.RGDWatcher
+	rgdWatcher     RGDReader
 	resourceParser *parser.ResourceParser
 }
 
 // NewResourceHandler creates a new resource handler
-func NewResourceHandler(rgdWatcher *watcher.RGDWatcher) *ResourceHandler {
+func NewResourceHandler(rgdWatcher RGDReader) *ResourceHandler {
 	return &ResourceHandler{
 		rgdWatcher:     rgdWatcher,
 		resourceParser: parser.NewResourceParser(),
@@ -187,6 +186,11 @@ func (h *ResourceHandler) GetResourceGraph(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	if !rgd.IsCatalog() {
+		response.NotFound(w, "RGD", name)
+		return
+	}
+
 	resourceGraph, topoOrder, err := h.getResourceGraph(rgd)
 	if err != nil {
 		response.InternalError(w, "failed to parse RGD resources: "+err.Error())
@@ -239,6 +243,11 @@ func (h *ResourceHandler) GetDefinitionGraph(w http.ResponseWriter, r *http.Requ
 	}
 
 	if !found || rgd == nil {
+		response.NotFound(w, "RGD", name)
+		return
+	}
+
+	if !rgd.IsCatalog() {
 		response.NotFound(w, "RGD", name)
 		return
 	}

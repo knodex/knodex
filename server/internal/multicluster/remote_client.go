@@ -65,19 +65,3 @@ func restConfigFromCAPI(ctx context.Context, k8sClient kubernetes.Interface, clu
 
 	return restConfig, nil
 }
-
-// buildRemoteClientFromCAPI reads a CAPI kubeconfig secret and builds a K8s client for the remote cluster.
-// Shared by NamespaceProvisioner and NamespaceReaper.
-func buildRemoteClientFromCAPI(ctx context.Context, k8sClient kubernetes.Interface, clusterName string) (kubernetes.Interface, error) {
-	restConfig, err := restConfigFromCAPI(ctx, k8sClient, clusterName)
-	if err != nil {
-		return nil, err
-	}
-
-	client, err := kubernetes.NewForConfig(restConfig)
-	if err != nil {
-		return nil, fmt.Errorf("create client from kubeconfig for %q: %w", clusterName, err)
-	}
-
-	return client, nil
-}

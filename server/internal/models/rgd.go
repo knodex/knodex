@@ -117,6 +117,14 @@ type CatalogRGD struct {
 	RawSpec map[string]interface{} `json:"-"`
 }
 
+// IsCatalog reports whether the RGD is part of the catalog (annotation
+// knodex.io/catalog == "true"). Single source of truth for the catalog gate —
+// the list filter and every direct-lookup endpoint must agree, so they all
+// route through here rather than re-deriving the predicate.
+func (r *CatalogRGD) IsCatalog() bool {
+	return r.Annotations[CatalogAnnotation] == "true"
+}
+
 // CatalogRGDList represents a paginated list of RGDs
 type CatalogRGDList struct {
 	Items      []CatalogRGD `json:"items"`
@@ -162,6 +170,10 @@ type ListOptions struct {
 	// ProducesGroup narrows ProducesKind filtering to a specific API group (optional)
 	// Only consulted when ProducesKind is also set.
 	ProducesGroup string
+	// SchemaKind filters RGDs by their schema.kind (the generated CRD Kind).
+	// When set, discovery is by Kind: the catalog-annotation gate is bypassed so
+	// agent RGDs (KnodexAgentTemplate, etc.) surface even without catalog:true.
+	SchemaKind string
 	// Page is the page number (1-indexed)
 	Page int
 	// PageSize is the number of items per page

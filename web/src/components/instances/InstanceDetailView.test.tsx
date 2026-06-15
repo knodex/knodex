@@ -13,6 +13,11 @@ import type { Instance } from '@/types/rgd';
 // Mock hooks
 vi.mock('@/hooks/useInstances', () => ({
   useDeleteInstance: vi.fn(),
+  useInstanceChildren: vi.fn().mockReturnValue({
+    data: undefined,
+    isLoading: false,
+    error: null,
+  }),
 }));
 
 vi.mock('@/hooks/useCanI', () => ({
@@ -30,6 +35,11 @@ vi.mock('@/hooks/useHistory', () => ({
     isLoading: false,
     error: null,
     refetch: vi.fn(),
+  }),
+  useInstanceTimeline: vi.fn().mockReturnValue({
+    data: undefined,
+    isLoading: false,
+    error: null,
   }),
 }));
 
@@ -201,15 +211,12 @@ describe('InstanceDetailView', () => {
       expect(kindLink).toHaveAttribute('href', '/catalog/test-rgd');
     });
 
-    it('renders health status in header without health-badge component', () => {
+    it('renders health badge in the header title row', () => {
       renderWithProviders(
         <InstanceDetailView instance={mockInstance} />
       );
 
-      // Health is displayed inline in InstanceHeaderCard's Status row
-      expect(screen.getAllByText('Healthy').length).toBeGreaterThanOrEqual(1);
-      // HealthBadge component is not used — health is rendered inline
-      expect(screen.queryByTestId('health-badge')).not.toBeInTheDocument();
+      expect(screen.getByTestId('health-badge')).toHaveTextContent('Healthy');
     });
 
     it('renders git status display for gitops instances', () => {
@@ -239,14 +246,14 @@ describe('InstanceDetailView', () => {
       expect(screen.getByText('Direct deployment')).toBeInTheDocument();
     });
 
-    it('renders deployment timeline in Deployment History tab', async () => {
+    it('renders deployment timeline in History tab', async () => {
       const user = userEvent.setup();
       renderWithProviders(
         <InstanceDetailView instance={mockInstance} />
       );
 
-      // Deployment timeline is behind the Deployment History tab
-      await user.click(screen.getByRole('tab', { name: /deployment history/i }));
+      // Deployment timeline is behind the History tab
+      await user.click(screen.getByRole('tab', { name: /history/i }));
       expect(screen.getByTestId('deployment-timeline')).toBeInTheDocument();
     });
   });
@@ -498,13 +505,15 @@ describe('InstanceDetailView', () => {
       expect(screen.getByTestId('instance-status-card')).toBeInTheDocument();
     });
 
-    it('passes conditions to status card', () => {
+    it('renders conditions in the dedicated conditions card', () => {
       renderWithProviders(
         <InstanceDetailView instance={mockInstance} />
       );
 
-      // Mock renders condition count
-      expect(screen.getByText('Conditions: 1')).toBeInTheDocument();
+      // Conditions moved out of the status card into InstanceConditionsCard
+      const card = screen.getByTestId('instance-conditions-card');
+      expect(within(card).getByText('Ready')).toBeInTheDocument();
+      expect(within(card).getByText('all passing')).toBeInTheDocument();
     });
 
     it('passes status to status card', () => {
@@ -537,8 +546,8 @@ describe('InstanceDetailView', () => {
         <InstanceDetailView instance={mockInstance} />
       );
 
-      // Status tab exists and is active (has border-primary class)
-      const statusTab = screen.getByRole('tab', { name: /^Status$/i });
+      // Overview tab exists and is active (has border-primary class)
+      const statusTab = screen.getByRole('tab', { name: /^Overview$/i });
       expect(statusTab).toBeInTheDocument();
       expect(statusTab.className).toContain('border-primary');
 
@@ -560,13 +569,13 @@ describe('InstanceDetailView', () => {
       expect(screen.queryByTestId('status-timeline')).not.toBeInTheDocument();
     });
 
-    it('switches to Deployment History tab and shows timeline', async () => {
+    it('switches to History tab and shows timeline', async () => {
       const user = userEvent.setup();
       renderWithProviders(
         <InstanceDetailView instance={mockInstance} />
       );
 
-      await user.click(screen.getByRole('tab', { name: /deployment history/i }));
+      await user.click(screen.getByRole('tab', { name: /history/i }));
 
       expect(screen.getByTestId('deployment-timeline')).toBeInTheDocument();
       // Status content should be hidden
@@ -585,7 +594,7 @@ describe('InstanceDetailView', () => {
         <InstanceDetailView instance={mockInstance} />
       );
 
-      expect(screen.getByRole('tab', { name: /add-ons \(2\)/i })).toBeInTheDocument();
+      expect(screen.getByRole('tab', { name: /add-ons/i })).toBeInTheDocument();
     });
 
     it('hides Add-ons tab when add-ons count is 0', () => {
@@ -609,7 +618,7 @@ describe('InstanceDetailView', () => {
         <InstanceDetailView instance={mockInstance} />
       );
 
-      await user.click(screen.getByRole('tab', { name: /add-ons \(2\)/i }));
+      await user.click(screen.getByRole('tab', { name: /add-ons/i }));
 
       expect(screen.getByTestId('instance-add-ons')).toBeInTheDocument();
       expect(screen.queryByTestId('git-status-display')).not.toBeInTheDocument();
@@ -658,11 +667,11 @@ describe('InstanceDetailView', () => {
       await user.click(screen.getByRole('tab', { name: /^Spec$/i }));
 
       const specContent = screen.getByTestId('spec-content');
-      expect(within(specContent).getByText(/"replicas": 3/)).toBeInTheDocument();
-      expect(within(specContent).getByText(/"image": "nginx:latest"/)).toBeInTheDocument();
+      expect(within(specContent).getByText(/replicas: 3/)).toBeInTheDocument();
+      expect(within(specContent).getByText(/image: nginx:latest/)).toBeInTheDocument();
     });
 
-    it('renders tabs in correct order: Status, Events, Add-ons, Deployment History, Resources, Spec', async () => {
+    it('renders tabs in correct order: Overview, Resources, Events, History, Add-ons, Spec', async () => {
       const { useRGDList } = await import('@/hooks/useRGDs');
       vi.mocked(useRGDList).mockReturnValue({
         data: { items: [{ name: 'addon-1' }], totalCount: 1 },
@@ -676,11 +685,11 @@ describe('InstanceDetailView', () => {
 
       const tabButtons = screen.getAllByRole('tab');
       expect(tabButtons).toHaveLength(6);
-      expect(tabButtons[0]).toHaveTextContent(/^Status$/);
-      expect(tabButtons[1]).toHaveTextContent(/^Events/);
-      expect(tabButtons[2]).toHaveTextContent(/^Add-ons/);
-      expect(tabButtons[3]).toHaveTextContent(/^Deployment History$/);
-      expect(tabButtons[4]).toHaveTextContent(/^Resources$/);
+      expect(tabButtons[0]).toHaveTextContent(/^Overview$/);
+      expect(tabButtons[1]).toHaveTextContent(/^Resources$/);
+      expect(tabButtons[2]).toHaveTextContent(/^Events/);
+      expect(tabButtons[3]).toHaveTextContent(/^History$/);
+      expect(tabButtons[4]).toHaveTextContent(/^Add-ons/);
       expect(tabButtons[5]).toHaveTextContent(/^Spec$/);
     });
 
@@ -727,7 +736,7 @@ describe('InstanceDetailView', () => {
       );
 
       // Navigate to Add-ons tab
-      await user.click(screen.getByRole('tab', { name: /add-ons \(2\)/i }));
+      await user.click(screen.getByRole('tab', { name: /add-ons/i }));
       expect(screen.queryByTestId('git-status-display')).not.toBeInTheDocument();
 
       // Simulate add-ons count dropping to 0 (background re-fetch returns empty)
@@ -765,7 +774,7 @@ describe('InstanceDetailView', () => {
         <InstanceDetailView instance={clusterScopedInstance} />
       );
 
-      expect(screen.getByText('Cluster-Scoped')).toBeInTheDocument();
+      expect(screen.getByText('Cluster')).toBeInTheDocument();
       expect(screen.queryByText('test-namespace')).not.toBeInTheDocument();
     });
 
@@ -775,7 +784,7 @@ describe('InstanceDetailView', () => {
       );
 
       expect(screen.getByText('test-namespace')).toBeInTheDocument();
-      expect(screen.queryByText('Cluster-Scoped')).not.toBeInTheDocument();
+      expect(screen.queryByText('Scope')).not.toBeInTheDocument();
     });
 
     it('calls delete mutation with empty namespace for cluster-scoped instances', async () => {

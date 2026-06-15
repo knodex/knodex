@@ -1,8 +1,6 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { Link } from "react-router-dom";
-import { ArrowLeft, ScrollText } from "@/lib/icons";
 import { isEnterprise } from "@/hooks/useCompliance";
 import { EnterpriseRequired } from "@/components/compliance";
 import { AuditConfigForm } from "@/components/settings/audit/AuditConfigForm";
@@ -27,30 +25,11 @@ export function AuditSettings() {
   }
 
   return (
-    <div className="py-6">
-      {/* Header */}
-      <div className="mb-8">
-        <Link
-          to="/settings"
-          className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground mb-4"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back to Settings
-        </Link>
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
-            <ScrollText className="h-5 w-5" />
-          </div>
-          <div>
-            <h2 className="text-sm font-medium text-foreground">Audit Configuration</h2>
-            <p className="text-muted-foreground">
-              Configure audit trail settings
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* Configuration form */}
+    <div>
+      {/* Configuration form — the real enabled + retentionDays fields. The
+          prototype's Events-24h stat, Storage, and Forwarding sections have no
+          production backend and are intentionally NOT built (flagged in the PR
+          for design-owner confirmation). */}
       <AuditConfigForm />
     </div>
   );

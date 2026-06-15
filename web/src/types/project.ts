@@ -27,10 +27,14 @@ export interface ProjectRole {
   description?: string;
   /** Policy strings defining permissions */
   policies?: string[];
-  /** OIDC groups assigned to this role */
-  groups?: string[];
   /** Optional namespace patterns scoping this role to specific destinations */
   destinations?: string[];
+  /**
+   * Team names bound to this role. Each Team resolves to its OIDC groups
+   * server-side (Story 10.2), so binding a team is equivalent to binding all
+   * of its groups — but reusable and named.
+   */
+  teams?: string[];
 }
 
 /**
@@ -147,14 +151,13 @@ export interface CreateProjectRequest {
 
 /**
  * Request body for updating a project
- * Added roles for project admin to update policies and groups
  */
 export interface UpdateProjectRequest {
   /** Human-readable description of the project */
   description?: string;
   /** Allowed deployment destinations */
   destinations?: Destination[];
-  /** Roles to update (project admins can update role policies and groups) */
+  /** Roles to update */
   roles?: ProjectRole[];
   /** Resource version for optimistic locking */
   resourceVersion: string;

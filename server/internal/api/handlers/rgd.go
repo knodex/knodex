@@ -12,6 +12,7 @@ import (
 
 	"github.com/knodex/knodex/server/internal/api/middleware"
 	"github.com/knodex/knodex/server/internal/api/response"
+	"github.com/knodex/knodex/server/internal/kro"
 	"github.com/knodex/knodex/server/internal/services"
 	"github.com/knodex/knodex/server/internal/util/collection"
 )
@@ -106,6 +107,43 @@ func (h *RGDHandler) ListRGDs(w http.ResponseWriter, r *http.Request) {
 	result, err := h.catalogService.ListRGDs(r.Context(), authCtx, filters)
 	if err != nil {
 		h.handleServiceError(w, err, "list RGDs")
+		return
+	}
+
+	resp := ListRGDsResponse{
+		Items:      result.Items,
+		TotalCount: result.TotalCount,
+		Page:       result.Page,
+		PageSize:   result.PageSize,
+	}
+
+	response.WriteJSON(w, http.StatusOK, resp)
+}
+
+// ListAgentTemplates handles GET /api/v1/agents/templates. Discovers RGDs by
+// schema.kind == KnodexAgentTemplate (not the catalog annotation) and returns
+// them in the same envelope as the catalog list so the frontend can reuse the
+// Deploy drawer (Deploy routes to /deploy/{name}, served by GetRGD).
+func (h *RGDHandler) ListAgentTemplates(w http.ResponseWriter, r *http.Request) {
+	if h.catalogService == nil {
+		response.ServiceUnavailable(w, "RGD service not available")
+		return
+	}
+
+	authCtx, err := h.getAuthContext(r)
+	if err != nil {
+		h.logger.Error("failed to get auth context", "error", err)
+		response.InternalError(w, "authorization error")
+		return
+	}
+
+	filters := services.DefaultRGDFilters()
+	filters.SchemaKind = kro.AgentTemplateKind
+	filters.PageSize = 100
+
+	result, err := h.catalogService.ListRGDs(r.Context(), authCtx, filters)
+	if err != nil {
+		h.handleServiceError(w, err, "list agent templates")
 		return
 	}
 

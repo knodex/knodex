@@ -3,10 +3,10 @@
 
 import { useCallback } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
-import { RGDDetailView } from "@/components/detail";
+import { RGDDetailView, RGDDetailSkeleton } from "@/components/detail";
 import { useRGD } from "@/hooks/useRGDs";
 import { useCanI } from "@/hooks/useCanI";
-import { Loader2, AlertCircle } from "@/lib/icons";
+import { AlertCircle } from "@/lib/icons";
 
 export default function RGDDetailRoute() {
   const { rgdName } = useParams<{ rgdName: string }>();
@@ -22,11 +22,9 @@ export default function RGDDetailRoute() {
   }, [navigate]);
 
   if (isLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
-    );
+    // Skeleton matches RGDDetailView's header + tab bar + tabpanel shape so
+    // the page doesn't jump when the RGD fetch resolves.
+    return <RGDDetailSkeleton />;
   }
 
   if (error || !rgd) {

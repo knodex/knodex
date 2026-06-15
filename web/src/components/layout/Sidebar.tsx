@@ -25,9 +25,10 @@ import type { LucideProps } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { getLucideIcon } from "@/lib/icons";
 import { NAV_ITEMS } from "@/lib/nav-items";
+import { getAgentsNavItems, resolveActiveAgentsId } from "@/components/agents/agents-nav";
 import { routePreloads } from "@/lib/route-preloads";
 import { useRGDList } from "@/hooks/useRGDs";
-import { useViolationCount, isEnterprise } from "@/hooks/useCompliance";
+import { useViolationCount, useComplianceSummary, isEnterprise } from "@/hooks/useCompliance";
 import { useCategoriesEnabled } from "@/hooks/useCategories";
 import { useCanI } from "@/hooks/useCanI";
 import { useAuth } from "@/hooks/useAuth";
@@ -145,7 +146,13 @@ function CollapsedNavIcon({
           <Icon className="h-5 w-5" aria-hidden="true" />
           {item.badge !== undefined && item.badge > 0 && (
             <span
-              className="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--brand-primary)] px-1 text-[10px] font-medium text-white"
+              className={cn(
+                "absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-medium",
+                item.badgeVariant === 'warning'
+                  ? undefined
+                  : "bg-[var(--brand-primary)] text-white"
+              )}
+              style={item.badgeVariant === 'warning' ? WARNING_BADGE_STYLE : undefined}
               aria-label={`${item.badge} items`}
             >
               {item.badge}
@@ -164,8 +171,17 @@ interface NavItem {
   label: string;
   icon: React.ComponentType<LucideProps>;
   badge?: number;
+  /** Visual treatment for the badge. 'warning' fills with the amber status token. */
+  badgeVariant?: 'neutral' | 'warning';
   to: string;
 }
+
+// Inline style for the warning badge — avoids Tailwind v4 CSS-var alpha
+// shorthand quirks. Used wherever item.badgeVariant === 'warning' && item.badge > 0.
+const WARNING_BADGE_STYLE = {
+  backgroundColor: 'hsl(var(--status-warning-hsl) / 0.18)',
+  color: 'var(--status-warning)',
+} as const;
 
 /**
  * NavItemLink — extracted as a standalone component to avoid recreating on every
@@ -207,10 +223,13 @@ const NavItemLink = React.memo(function NavItemLink({
         <span
           className={cn(
             "flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-xs font-medium",
-            isActive
-              ? "bg-[rgba(255,255,255,0.1)] text-[var(--text-secondary)]"
-              : "bg-[rgba(255,255,255,0.06)] text-[var(--text-muted)]"
+            item.badgeVariant === 'warning'
+              ? undefined
+              : isActive
+                ? "bg-[rgba(255,255,255,0.1)] text-[var(--text-secondary)]"
+                : "bg-[rgba(255,255,255,0.06)] text-[var(--text-muted)]"
           )}
+          style={item.badgeVariant === 'warning' ? WARNING_BADGE_STYLE : undefined}
           aria-label={`${item.badge} items`}
         >
           {item.badge}
@@ -304,15 +323,24 @@ const UserMenu = React.memo(function UserMenu({
         side={isCollapsed ? "right" : "top"}
         align={isCollapsed ? "end" : "start"}
         sideOffset={8}
-        className="w-[244px]"
+        // z-[70] so the menu sits ABOVE the sidebar (z-[60]). Radix portals
+        // the content to <body> with the primitive's default z-50, which
+        // landed UNDER the lifted sidebar and made the menu invisible even
+        // though it opened.
+        className="z-[70] w-[244px]"
       >
-        <DropdownMenuItem onSelect={handleProfile} data-testid="user-menu-profile">
+        <DropdownMenuItem
+          onSelect={handleProfile}
+          data-testid="user-menu-profile"
+          aria-label="My Access"
+        >
           <User className="h-4 w-4" aria-hidden="true" />
           <div className="flex flex-col min-w-0">
             <span className="truncate text-sm font-medium">{displayName}</span>
             {user.email && (
               <span className="truncate text-xs text-muted-foreground">{user.email}</span>
             )}
+            <span className="truncate text-xs text-muted-foreground">My Access</span>
           </div>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
@@ -361,8 +389,9 @@ export function SidebarNav({ onNavItemClick, onToggleCollapse, isCollapsed }: Si
     location.pathname.startsWith('/compliance') ? 'compliance' :
     location.pathname.startsWith('/secrets') ? 'secrets' :
     location.pathname.startsWith('/catalog') ? 'catalog' :
-    location.pathname.startsWith('/deploy') ? 'catalog' :
+    location.pathname.startsWith('/deploy/') ? 'catalog' :
     location.pathname.startsWith('/instances') ? 'instances' :
+    location.pathname.startsWith('/agents') ? 'agents' :
     'instances';
 
   const handleNavItemClick = useCallback(() => {
@@ -370,6 +399,10 @@ export function SidebarNav({ onNavItemClick, onToggleCollapse, isCollapsed }: Si
   }, [onNavItemClick]);
 
   const { data: violationCount } = useViolationCount();
+  // Compliance sub-nav count chips (Templates/Constraints). Deduped by React
+  // Query with useViolationCount() above — same queryKey ["compliance","summary"]
+  // — so this adds no extra network request.
+  const { data: complianceSummary } = useComplianceSummary();
 
   // Cached RGD list — used to map an RGD detail route back to its category for
   // sidebar highlighting. Called with no params so the query stays disabled
@@ -390,6 +423,8 @@ export function SidebarNav({ onNavItemClick, onToggleCollapse, isCollapsed }: Si
   // --- Section definitions ---
 
   const infrastructureItems: NavItem[] = useMemo(() => [
+    // Story 49.1: Agents hub — same section as Catalog (equal visual weight, UX-DR1).
+    { ...NAV_ITEMS.agents, to: NAV_ITEMS.agents.path },
     { ...NAV_ITEMS.catalog, to: NAV_ITEMS.catalog.path },
     { ...NAV_ITEMS.instances, to: NAV_ITEMS.instances.path },
   ], []);
@@ -407,7 +442,7 @@ export function SidebarNav({ onNavItemClick, onToggleCollapse, isCollapsed }: Si
   const enterpriseItems: NavItem[] = useMemo(() => {
     if (!isEnterprise()) return [];
     return [
-      { ...NAV_ITEMS.compliance, to: NAV_ITEMS.compliance.path, badge: violationCount },
+      { ...NAV_ITEMS.compliance, to: NAV_ITEMS.compliance.path, badge: violationCount, badgeVariant: 'warning' as const },
       { ...NAV_ITEMS.audit, to: NAV_ITEMS.audit.path },
     ];
   }, [violationCount]);
@@ -461,7 +496,13 @@ export function SidebarNav({ onNavItemClick, onToggleCollapse, isCollapsed }: Si
     </div>
   );
 
-  const isOnCatalogRoute = location.pathname.startsWith('/catalog');
+  // /deploy/:rgdName opens as a drawer on top of the catalog; keep the catalog
+  // sub-sidebar visible so the user doesn't lose category context. /deploy-rgd
+  // is a standalone page (generated spec hand-off) and must NOT trigger the
+  // catalog sub-sidebar.
+  const isOnCatalogRoute =
+    location.pathname.startsWith('/catalog') ||
+    location.pathname.startsWith('/deploy/');
   const isOnComplianceRoute = location.pathname.startsWith('/compliance');
 
   // Catalog sub-nav: "All Resources" + each Casbin-filtered category
@@ -505,16 +546,36 @@ export function SidebarNav({ onNavItemClick, onToggleCollapse, isCollapsed }: Si
 
   const complianceSubNav: NavItem[] = useMemo(() => [
     { id: "compliance-overview", label: "Overview", icon: NAV_ITEMS.compliance.icon, to: "/compliance" },
-    { id: "compliance-templates", label: "Templates", icon: FileText, to: "/compliance/templates" },
-    { id: "compliance-constraints", label: "Constraints", icon: Shield, to: "/compliance/constraints" },
-    { id: "compliance-violations", label: "Violations", icon: AlertTriangle, badge: violationCount, to: "/compliance/violations" },
-  ], [violationCount]);
+    { id: "compliance-templates", label: "Templates", icon: FileText, badge: complianceSummary?.totalTemplates, badgeVariant: 'neutral' as const, to: "/compliance/templates" },
+    { id: "compliance-constraints", label: "Constraints", icon: Shield, badge: complianceSummary?.totalConstraints, badgeVariant: 'neutral' as const, to: "/compliance/constraints" },
+    { id: "compliance-violations", label: "Violations", icon: AlertTriangle, badge: violationCount, badgeVariant: 'warning' as const, to: "/compliance/violations" },
+  ], [violationCount, complianceSummary]);
 
   const complianceActiveTab = useMemo(() => {
     if (location.pathname.startsWith('/compliance/templates')) return "compliance-templates";
     if (location.pathname.startsWith('/compliance/constraints')) return "compliance-constraints";
     if (location.pathname.startsWith('/compliance/violations')) return "compliance-violations";
     return "compliance-overview";
+  }, [location.pathname]);
+
+  // Agents sub-sidebar — mirrors the Catalog secondary sidebar. Items come from
+  // the shared agents nav model (Overview/Agents/Models); intentionally no count
+  // badges. Active highlighting reuses resolveActiveAgentsId so a deep chat route
+  // (/agents/list/:ns/:name/...) keeps "Agents" lit.
+  const isOnAgentsRoute = location.pathname.startsWith('/agents');
+  const agentsSubNav: NavItem[] = useMemo(
+    () =>
+      getAgentsNavItems().map((it) => ({
+        id: `agents-${it.id}`,
+        label: it.label,
+        icon: it.icon,
+        to: it.to,
+      })),
+    [],
+  );
+  const agentsActiveTab = useMemo(() => {
+    const id = resolveActiveAgentsId(location.pathname, getAgentsNavItems());
+    return id ? `agents-${id}` : "agents-overview";
   }, [location.pathname]);
 
   // Collapsed icon rail — overrides catalog/compliance sub-navs when collapsed.
@@ -558,125 +619,83 @@ export function SidebarNav({ onNavItemClick, onToggleCollapse, isCollapsed }: Si
     </div>
   );
 
-  // Catalog sub-sidebar — shown when navigating within /catalog/*
-  if (isOnCatalogRoute && catalogSubNav.length > 1) {
-    return (
-      <div className="flex h-full flex-col">
-        <LogoHeader onToggleCollapse={onToggleCollapse} isCollapsed={isCollapsed} />
+  // Shared secondary-sidebar shell (Catalog / Compliance / Agents). "Back"
+  // returns to /instances; items render with optional count badges (Agents
+  // passes none).
+  const renderSubSidebar = (ariaLabel: string, items: NavItem[], activeId: string) => (
+    <div className="flex h-full flex-col">
+      <LogoHeader onToggleCollapse={onToggleCollapse} isCollapsed={isCollapsed} />
 
-        <nav className="flex-1 overflow-y-auto px-2 py-2" aria-label="Catalog navigation">
-          <Link
-            to="/instances"
-            onClick={handleNavItemClick}
-            className="flex items-center gap-2 px-3 py-2 mb-2 text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
-          >
-            <ChevronLeft className="h-3.5 w-3.5" />
-            Back
-          </Link>
-          <div className="space-y-0.5">
-            {catalogSubNav.map((item) => {
-              const Icon = item.icon;
-              const isActive = catalogActiveTab === item.id;
-              return (
-                <Link
-                  key={item.id}
-                  to={item.to}
-                  onClick={handleNavItemClick}
-                  onMouseEnter={() => handlePreload(item.to)}
-                  onFocus={() => handlePreload(item.to)}
-                  className={cn(
-                    "w-full flex items-center gap-3 px-3 rounded-[var(--radius-token-md)] text-[14px] font-medium transition-all duration-150",
-                    "py-[9px]",
-                    isActive
-                      ? "bg-[rgba(255,255,255,0.1)] text-[var(--text-primary)]"
-                      : "text-[var(--text-secondary)] hover:bg-[rgba(255,255,255,0.04)] hover:text-[var(--text-primary)]"
-                  )}
-                  aria-current={isActive ? "page" : undefined}
-                >
-                  <Icon className="h-5 w-5 flex-shrink-0" aria-hidden="true" />
-                  <span className="flex-1 text-left whitespace-nowrap overflow-hidden text-ellipsis">
-                    {item.label}
-                  </span>
-                  {item.badge !== undefined && item.badge > 0 && (
-                    <span
-                      className={cn(
-                        "flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-xs font-medium",
-                        isActive
+      <nav className="flex-1 overflow-y-auto px-2 py-2" aria-label={ariaLabel}>
+        <Link
+          to="/instances"
+          onClick={handleNavItemClick}
+          className="flex items-center gap-2 px-3 py-2 mb-2 text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
+        >
+          <ChevronLeft className="h-3.5 w-3.5" />
+          Back
+        </Link>
+        <div className="space-y-0.5">
+          {items.map((item) => {
+            const Icon = item.icon;
+            const isActive = activeId === item.id;
+            return (
+              <Link
+                key={item.id}
+                to={item.to}
+                onClick={handleNavItemClick}
+                onMouseEnter={() => handlePreload(item.to)}
+                onFocus={() => handlePreload(item.to)}
+                className={cn(
+                  "w-full flex items-center gap-3 px-3 rounded-[var(--radius-token-md)] text-[14px] font-medium transition-all duration-150",
+                  "py-[9px]",
+                  isActive
+                    ? "bg-[rgba(255,255,255,0.1)] text-[var(--text-primary)]"
+                    : "text-[var(--text-secondary)] hover:bg-[rgba(255,255,255,0.04)] hover:text-[var(--text-primary)]"
+                )}
+                aria-current={isActive ? "page" : undefined}
+              >
+                <Icon className="h-5 w-5 flex-shrink-0" aria-hidden="true" />
+                <span className="flex-1 text-left whitespace-nowrap overflow-hidden text-ellipsis">
+                  {item.label}
+                </span>
+                {item.badge !== undefined && item.badge > 0 && (
+                  <span
+                    className={cn(
+                      "flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-xs font-medium",
+                      item.badgeVariant === 'warning'
+                        ? undefined
+                        : isActive
                           ? "bg-[rgba(255,255,255,0.1)] text-[var(--text-secondary)]"
                           : "bg-[rgba(255,255,255,0.06)] text-[var(--text-muted)]"
-                      )}
-                    >
-                      {item.badge}
-                    </span>
-                  )}
-                </Link>
-              );
-            })}
-          </div>
-        </nav>
+                    )}
+                    style={item.badgeVariant === 'warning' ? WARNING_BADGE_STYLE : undefined}
+                  >
+                    {item.badge}
+                  </span>
+                )}
+              </Link>
+            );
+          })}
+        </div>
+      </nav>
 
-        {renderUserMenuFooter()}
-      </div>
-    );
+      {renderUserMenuFooter()}
+    </div>
+  );
+
+  // Catalog sub-sidebar — shown when navigating within /catalog/*
+  if (isOnCatalogRoute && catalogSubNav.length > 1) {
+    return renderSubSidebar("Catalog navigation", catalogSubNav, catalogActiveTab);
+  }
+
+  // Agents sub-sidebar — shown when navigating within /agents/*
+  if (isOnAgentsRoute) {
+    return renderSubSidebar("Agents navigation", agentsSubNav, agentsActiveTab);
   }
 
   if (isOnComplianceRoute && isEnterprise()) {
-    return (
-      <div className="flex h-full flex-col">
-        <LogoHeader onToggleCollapse={onToggleCollapse} isCollapsed={isCollapsed} />
-
-        <nav className="flex-1 overflow-y-auto px-2 py-2" aria-label="Compliance navigation">
-          <Link
-            to="/instances"
-            onClick={handleNavItemClick}
-            className="flex items-center gap-2 px-3 py-2 mb-2 text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
-          >
-            <ChevronLeft className="h-3.5 w-3.5" />
-            Back
-          </Link>
-          <div className="space-y-0.5">
-            {complianceSubNav.map((item) => {
-              const Icon = item.icon;
-              const isActive = complianceActiveTab === item.id;
-              return (
-                <Link
-                  key={item.id}
-                  to={item.to}
-                  onClick={handleNavItemClick}
-                  className={cn(
-                    "w-full flex items-center gap-3 px-3 rounded-[var(--radius-token-md)] text-[14px] font-medium transition-all duration-150",
-                    "py-[9px]",
-                    isActive
-                      ? "bg-[rgba(255,255,255,0.1)] text-[var(--text-primary)]"
-                      : "text-[var(--text-secondary)] hover:bg-[rgba(255,255,255,0.04)] hover:text-[var(--text-primary)]"
-                  )}
-                  aria-current={isActive ? "page" : undefined}
-                >
-                  <Icon className="h-5 w-5 flex-shrink-0" aria-hidden="true" />
-                  <span className="flex-1 text-left whitespace-nowrap overflow-hidden text-ellipsis">
-                    {item.label}
-                  </span>
-                  {item.badge !== undefined && item.badge > 0 && (
-                    <span
-                      className={cn(
-                        "flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-xs font-medium",
-                        isActive
-                          ? "bg-[rgba(255,255,255,0.1)] text-[var(--text-secondary)]"
-                          : "bg-[rgba(255,255,255,0.06)] text-[var(--text-muted)]"
-                      )}
-                    >
-                      {item.badge}
-                    </span>
-                  )}
-                </Link>
-              );
-            })}
-          </div>
-        </nav>
-
-        {renderUserMenuFooter()}
-      </div>
-    );
+    return renderSubSidebar("Compliance navigation", complianceSubNav, complianceActiveTab);
   }
 
   return (
@@ -693,6 +712,9 @@ export function SidebarNav({ onNavItemClick, onToggleCollapse, isCollapsed }: Si
 
         {/* Enterprise Section — conditionally rendered */}
         {isEnterprise() && renderSection("nav-section-enterprise", "Enterprise", enterpriseItems, true)}
+
+        {/* Cloud-tenant feature pages (Plan/Billing/Marketplace/Team) are not in
+            the sidebar — they live under Settings (see getSettingsNavItems). */}
       </nav>
 
       {renderUserMenuFooter()}
@@ -713,7 +735,10 @@ export function Sidebar({ isCollapsed, onToggleCollapse }: SidebarProps = {}) {
   return (
     <aside
       className={cn(
-        "hidden lg:block fixed left-0 top-0 z-50 h-screen bg-background border-r border-[var(--border-default)]",
+        // z-[60] so the sidebar sits ABOVE Radix Dialog overlays (z-50) like
+        // the Deploy drawer's backdrop — without this the overlay portals
+        // after the sidebar in the DOM and dims it.
+        "hidden lg:block fixed left-0 top-0 z-[60] h-screen bg-background border-r border-[var(--border-default)]",
         "transition-[width] duration-200",
         isCollapsed ? "w-16" : "w-[260px]"
       )}

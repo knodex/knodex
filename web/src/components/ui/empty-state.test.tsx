@@ -201,11 +201,12 @@ describe("ProjectList empty states", () => {
   it("renders Create button when canManage and onCreate provided", () => {
     const onCreate = vi.fn();
     render(<ProjectList projects={[]} canManage={true} onCreate={onCreate} />);
-    expect(screen.getByText("Create Project")).toBeInTheDocument();
+    // The CTA was renamed from "Create Project" to "New project" in 4471138a.
+    expect(screen.getByText("New project")).toBeInTheDocument();
   });
 
   it("does not render Create button when canManage is false", () => {
     render(<ProjectList projects={[]} canManage={false} />);
-    expect(screen.queryByText("Create")).not.toBeInTheDocument();
+    expect(screen.queryByText(/new project/i)).not.toBeInTheDocument();
   });
 });

@@ -101,6 +101,43 @@ spec:
             limits:
               cpu: 10m
               memory: 16Mi
+        {{- if include "knodex.postgresEnabled" . }}
+        - name: wait-for-postgres
+          {{- $pgRepo := printf "%s/%s" (.Values.postgresql.image.registry | default "docker.io") (.Values.postgresql.image.repository | default "bitnami/postgresql") }}
+          {{- if .Values.postgresql.image.digest }}
+          image: "{{ $pgRepo }}@{{ .Values.postgresql.image.digest }}"
+          {{- else }}
+          image: "{{ $pgRepo }}:{{ .Values.postgresql.image.tag }}"
+          {{- end }}
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for Postgres at {{ include "knodex.postgresHost" . }}:{{ include "knodex.postgresPort" . }}..."
+              # pg_isready accepts the full DSN via -d, so this works for every
+              # supply mode (embedded subchart, externalPostgresql, inline DSN,
+              # external Secret) without needing host/port broken out.
+              until pg_isready -d "${DATABASE_URL}" >/dev/null 2>&1; do
+                echo "Postgres not ready, retrying in 2s..."
+                sleep 2
+              done
+              echo "Postgres is ready"
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "knodex.postgresSecretRef" . }}
+                  key: {{ include "knodex.postgresSecretKey" . }}
+          securityContext:
+            {{- toYaml .Values.server.securityContext | nindent 12 }}
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 10m
+              memory: 16Mi
+        {{- end }}
       containers:
         - name: server
           securityContext:
@@ -193,7 +230,8 @@ spec:
               value: {{ .Values.server.config.redisDB | quote }}
             {{- end }}
             {{- if include "knodex.postgresEnabled" . }}
-            # PostgreSQL configuration (Enterprise: durable audit + compliance store)
+            # PostgreSQL configuration (mandatory on every edition — R5-5:
+            # identity roster + EE audit/compliance store).
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:

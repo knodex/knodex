@@ -15,13 +15,14 @@ import { EmptyState } from "./EmptyState";
 import { Pagination } from "@/components/catalog/Pagination";
 import { InstanceFilters, type InstanceFilterState } from "./InstanceFilters";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
+import { ListFooter } from "@/components/ui/list-footer";
 import { StatusCardSkeleton } from "./StatusCardSkeleton";
 import { getInstanceFiltersFromURL, setInstanceFiltersToURL } from "@/lib/url-utils";
 import { getSafeErrorMessage } from "@/lib/errors";
 import { filterByProjectNamespaces } from "@/lib/project-utils";
 import { cn } from "@/lib/utils";
-import { PageHeader } from "@/components/layout/PageHeader";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { useCanI } from "@/hooks/useCanI";
 import { MobileInstanceCard } from "./MobileInstanceCard";
 
 const PAGE_SIZE = 20;
@@ -51,6 +52,7 @@ function readInitialViewMode(): ViewMode {
 export function InstancesPage({ onInstanceClick }: InstancesPageProps) {
   const isMobile = useIsMobile();
   const currentProject = useCurrentProject();
+  const { allowed: canDeploy } = useCanI("instances", "create", "-");
   const [filters, setFilters] = useState<InstanceFilterState>(() => {
     const urlFilters = getInstanceFiltersFromURL();
     return {
@@ -206,11 +208,26 @@ export function InstancesPage({ onInstanceClick }: InstancesPageProps) {
     );
   }
 
+  // Uniform end-of-list summary (48.1 ListFooter). `Degraded` + `Unhealthy` are
+  // merged into one "degraded / errored" bucket per the prototype; `Unknown` is
+  // intentionally not surfaced (transient ingestion gap, not user-actionable).
+  // Total uses the visible client-filtered count to stay consistent with Pagination.
+  const listFooter = (
+    <div data-testid="instances-list-footer">
+      <ListFooter
+        total={filteredItems.length}
+        totalLabel="total"
+        breakdown={[
+          ["healthy", healthCounts.Healthy],
+          ["progressing", healthCounts.Progressing],
+          ["degraded / errored", healthCounts.Degraded + healthCounts.Unhealthy],
+        ]}
+      />
+    </div>
+  );
+
   return (
     <section className="space-y-6">
-      {/* Page header (sr-only title) */}
-      <PageHeader title="Instances" />
-
       {/* Filters + View Toggle + Deploy (same row) */}
       <div className="flex items-start gap-3">
         <div className="flex-1 min-w-0">
@@ -255,14 +272,17 @@ export function InstancesPage({ onInstanceClick }: InstancesPageProps) {
                 <LayoutGrid className="h-3.5 w-3.5" />
               </button>
             </div>
-            <Link
-              to="/catalog"
-              className="inline-flex items-center h-8 gap-1.5 rounded-[var(--radius-token-md)] px-2.5 text-xs font-medium text-black transition-all duration-150 bg-[var(--brand-primary)] hover:bg-[var(--brand-hover)] active:scale-[0.97]"
-              data-testid="deploy-new-button"
-            >
-              <Plus className="h-3 w-3" />
-              Deploy
-            </Link>
+            {canDeploy && (
+              <Link
+                to="/catalog"
+                aria-label="Deploy a resource"
+                className="inline-flex items-center h-8 gap-1.5 rounded-[var(--radius-token-md)] px-2.5 text-xs font-medium text-black transition-all duration-150 bg-[var(--brand-primary)] hover:bg-[var(--brand-hover)] active:scale-[0.97]"
+                data-testid="deploy-new-button"
+              >
+                <Plus className="h-3 w-3" />
+                Deploy
+              </Link>
+            )}
           </div>
         )}
       </div>
@@ -304,7 +324,6 @@ export function InstancesPage({ onInstanceClick }: InstancesPageProps) {
       ) : viewMode === "list" ? (
         <>
           <InstancesListView items={filteredItems} onInstanceClick={handleInstanceClick} />
-          <SummaryFooter counts={healthCounts} total={filteredItems.length} />
           {data && (
             <Pagination
               page={data.page}
@@ -313,6 +332,7 @@ export function InstancesPage({ onInstanceClick }: InstancesPageProps) {
               onPageChange={handlePageChange}
             />
           )}
+          {listFooter}
         </>
       ) : (
         <>
@@ -338,44 +358,9 @@ export function InstancesPage({ onInstanceClick }: InstancesPageProps) {
               onPageChange={handlePageChange}
             />
           )}
+          {listFooter}
         </>
       )}
     </section>
-  );
-}
-
-interface SummaryFooterProps {
-  counts: Record<InstanceHealth, number>;
-  total: number;
-}
-
-/** Mini breakdown rendered at the foot of the table view. */
-function SummaryFooter({ counts, total }: SummaryFooterProps) {
-  if (total === 0) return null;
-  const items: { health: InstanceHealth; label: string }[] = [
-    { health: "Healthy", label: "healthy" },
-    { health: "Progressing", label: "progressing" },
-    { health: "Degraded", label: "degraded" },
-    { health: "Unhealthy", label: "unhealthy" },
-    { health: "Unknown", label: "unknown" },
-  ];
-  const visible = items.filter((i) => counts[i.health] > 0);
-
-  return (
-    <div
-      data-testid="instances-summary-footer"
-      className="flex items-center gap-2 text-xs text-muted-foreground"
-    >
-      <span className="text-foreground/80 font-medium">{total} total</span>
-      {visible.map((item) => (
-        <span key={item.health} className="inline-flex items-center gap-1">
-          <span aria-hidden>·</span>
-          <span>
-            <span className="text-foreground/90 font-medium">{counts[item.health]}</span>{" "}
-            {item.label}
-          </span>
-        </span>
-      ))}
-    </div>
   );
 }

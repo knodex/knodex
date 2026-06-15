@@ -112,4 +112,40 @@ describe("InstancesListView", () => {
     const nameColumnHeader = screen.getByRole("columnheader", { name: /^Name$/ });
     expect(nameColumnHeader).toHaveAttribute("aria-sort", "ascending");
   });
+
+  describe("health stripe (story 48.3 — first-cell box-shadow replaces HealthBadge)", () => {
+    it("renders a colored inset stripe on the first cell using the health token", () => {
+      render(<InstancesListView items={[createTestInstance({ name: "solo", health: "Healthy" })]} />);
+      const cell = screen.getByTestId("instance-row-health-stripe");
+      // JSDOM doesn't resolve CSS vars; assert the raw inline-style substring.
+      expect(cell.getAttribute("style")).toContain("var(--status-healthy)");
+      expect(cell.getAttribute("style")).toContain("inset 3px 0 0");
+    });
+
+    it("falls back to the inactive token for Unknown health", () => {
+      render(<InstancesListView items={[createTestInstance({ name: "solo", health: "Unknown" })]} />);
+      const cell = screen.getByTestId("instance-row-health-stripe");
+      expect(cell.getAttribute("style")).toContain("var(--status-inactive)");
+    });
+
+    it("exposes the health state via aria-label and renders no badge text in the first cell", () => {
+      render(<InstancesListView items={[createTestInstance({ name: "solo", health: "Degraded" })]} />);
+      const cell = screen.getByTestId("instance-row-health-stripe");
+      expect(cell).toHaveAttribute("aria-label", "Health: Degraded");
+      expect(cell).toHaveAttribute("data-health", "Degraded");
+      // Stripe is a box-shadow only — the cell carries no visible content.
+      expect(cell).toHaveTextContent("");
+    });
+
+    it("keeps the Status column sortable after the badge is replaced by the stripe", () => {
+      render(<InstancesListView items={items} />);
+      const statusHeader = screen.getByRole("button", { name: /Status/ });
+      fireEvent.click(statusHeader);
+      const rows = screen.getAllByRole("button", { name: /View details for/ });
+      // ascending health order: Healthy(0) < Degraded(2) < Unhealthy(4)
+      expect(rows[0]).toHaveAttribute("aria-label", "View details for alpha-instance");
+      expect(rows[1]).toHaveAttribute("aria-label", "View details for bravo-instance");
+      expect(rows[2]).toHaveAttribute("aria-label", "View details for charlie-instance");
+    });
+  });
 });

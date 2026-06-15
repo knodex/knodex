@@ -169,7 +169,7 @@ describe("InstanceExternalRefs", () => {
     const link = screen.getByRole("link");
     expect(link).toHaveAttribute(
       "href",
-      "/instances/group/kro.run/ns/default/AKSCluster/my-cluster",
+      "/instances/kro.run/v1alpha1/default/AKSCluster/my-cluster",
     );
 
     // Should show instance name and health badge

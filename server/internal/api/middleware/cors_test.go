@@ -29,7 +29,7 @@ func TestCORS_AllowedOrigin(t *testing.T) {
 	if got := rr.Header().Get("Access-Control-Allow-Methods"); got != "GET, POST, PUT, PATCH, DELETE, OPTIONS" {
 		t.Errorf("expected Access-Control-Allow-Methods header, got %q", got)
 	}
-	if got := rr.Header().Get("Access-Control-Allow-Headers"); got != "Authorization, Content-Type, X-Request-ID" {
+	if got := rr.Header().Get("Access-Control-Allow-Headers"); got != "Authorization, Content-Type, X-Request-ID, X-Knodex-Project" {
 		t.Errorf("expected Access-Control-Allow-Headers header, got %q", got)
 	}
 	if got := rr.Header().Get("Access-Control-Max-Age"); got != "3600" {
@@ -118,7 +118,7 @@ func TestCORS_PreflightAllowed(t *testing.T) {
 	if got := rr.Header().Get("Access-Control-Allow-Methods"); got != "GET, POST, PUT, PATCH, DELETE, OPTIONS" {
 		t.Errorf("expected Access-Control-Allow-Methods on preflight, got %q", got)
 	}
-	if got := rr.Header().Get("Access-Control-Allow-Headers"); got != "Authorization, Content-Type, X-Request-ID" {
+	if got := rr.Header().Get("Access-Control-Allow-Headers"); got != "Authorization, Content-Type, X-Request-ID, X-Knodex-Project" {
 		t.Errorf("expected Access-Control-Allow-Headers on preflight, got %q", got)
 	}
 	if got := rr.Header().Get("Access-Control-Max-Age"); got != "3600" {

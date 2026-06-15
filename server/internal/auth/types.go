@@ -83,6 +83,12 @@ type Config struct {
 	// OIDC configuration
 	OIDCEnabled   bool
 	OIDCProviders []OIDCProviderConfig
+
+	// BootstrapProjectName / BootstrapProjectNamespace configure the auto-created
+	// default project (audit G-15). Empty falls back to the DefaultProject*
+	// constants, preserving today's OSS/EE behavior.
+	BootstrapProjectName      string
+	BootstrapProjectNamespace string
 }
 
 // OIDCProviderConfig represents an OIDC provider configuration

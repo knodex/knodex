@@ -10,19 +10,26 @@ vi.mock('./PolicyRulesTable', () => ({
   PolicyRulesTable: () => <div data-testid="policy-rules-table" />,
 }));
 
-vi.mock('./OIDCGroupsManager', () => ({
-  OIDCGroupsManager: () => <div data-testid="oidc-groups-manager" />,
+vi.mock('@/components/teams/TeamPicker', () => ({
+  TeamPicker: () => <div data-testid="team-picker" />,
 }));
 
 vi.mock('./DestinationScopeSelector', () => ({
   DestinationScopeSelector: () => <div data-testid="destination-scope-selector" />,
 }));
 
+// Presets are now sourced from the server-backed catalog via useRoleTemplates
+// (Story 18.1) instead of the retired static ROLE_PRESETS array.
+vi.mock('@/hooks/useRoleTemplates', () => ({
+  useRoleTemplates: () => ({
+    data: [
+      { name: 'admin', label: 'Admin', description: 'Full access', policies: ['p, proj:{project}:admin, *, *, {project}/*, allow'] },
+      { name: 'viewer', label: 'Viewer', description: 'Read-only', policies: ['p, proj:{project}:viewer, *, get, {project}/*, allow'] },
+    ],
+  }),
+}));
+
 vi.mock('@/lib/role-presets', () => ({
-  ROLE_PRESETS: [
-    { name: 'admin', label: 'Admin', description: 'Full access', policies: ['p, proj:{project}:admin, *, *, {project}/*, allow'] },
-    { name: 'viewer', label: 'Viewer', description: 'Read-only', policies: ['p, proj:{project}:viewer, *, get, {project}/*, allow'] },
-  ],
   resolvePresetPolicies: vi.fn().mockReturnValue(['resolved-policy']),
 }));
 
@@ -45,8 +52,8 @@ const defaultAddition = {
   setNewRoleDescription: vi.fn(),
   newRolePolicies: [] as string[],
   setNewRolePolicies: vi.fn(),
-  newRoleGroups: [] as string[],
-  setNewRoleGroups: vi.fn(),
+  newRoleTeams: [] as string[],
+  setNewRoleTeams: vi.fn(),
   newRoleDestinations: [] as string[],
   setNewRoleDestinations: vi.fn(),
   isAdding: false,
@@ -72,6 +79,13 @@ describe('AddRoleForm', () => {
     expect(screen.getByLabelText('Description')).toBeInTheDocument();
   });
 
+  it('renders TeamPicker, not OIDCGroupsManager', () => {
+    render(<AddRoleForm {...defaultProps} />);
+
+    expect(screen.getByTestId('team-picker')).toBeInTheDocument();
+    expect(screen.queryByTestId('oidc-groups-manager')).not.toBeInTheDocument();
+  });
+
   it('renders preset buttons', () => {
     render(<AddRoleForm {...defaultProps} />);
 
@@ -83,7 +97,7 @@ describe('AddRoleForm', () => {
   it('disables preset button when role already exists', () => {
     const props = {
       ...defaultProps,
-      roles: [{ name: 'admin', policies: [], groups: [] }],
+      roles: [{ name: 'admin', policies: [] }],
     };
     render(<AddRoleForm {...props} />);
 

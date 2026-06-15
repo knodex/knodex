@@ -5,7 +5,7 @@ import { useState, useCallback } from "react";
 import { ArrowLeft, Eye, EyeOff, Pencil, Trash2, Clock, Tag, Copy, Check, Download, Loader2 } from "@/lib/icons";
 import { useNavigate } from "react-router-dom";
 import { useCanI } from "@/hooks/useCanI";
-import { useCurrentProject } from "@/hooks/useAuth";
+import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 import { formatDateTime } from "@/lib/date";
 import { toast } from "sonner";
 import { getSecret } from "@/api/secrets";
@@ -23,31 +23,38 @@ interface SecretDetailViewProps {
 }
 
 export function SecretDetailView({ name, namespace }: SecretDetailViewProps) {
-  const project = useCurrentProject() ?? "";
   const navigate = useNavigate();
   const [secretData, setSecretData] = useState<SecretDetail | null>(null);
   const [isLoadingValues, setIsLoadingValues] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [visibleKeys, setVisibleKeys] = useState<Set<string>>(new Set());
-  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const { copiedKey, copy } = useCopyToClipboard({
+    onError: () =>
+      toast.error(
+        "Failed to copy — clipboard access is blocked in this environment"
+      ),
+  });
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
 
-  const { allowed: canUpdate } = useCanI("secrets", "update", project || "-");
-  const { allowed: canDelete } = useCanI("secrets", "delete", project || "-");
+  // Secrets are namespace-keyed under the unified Casbin model — the
+  // namespace is the access boundary, not the project lens (which is
+  // captured by the apiClient interceptor for audit only).
+  const { allowed: canUpdate } = useCanI("secrets", "update", namespace);
+  const { allowed: canDelete } = useCanI("secrets", "delete", namespace);
 
   const handleLoadValues = useCallback(async () => {
     setIsLoadingValues(true);
     setLoadError(null);
     try {
-      const data = await getSecret(name, project, namespace);
+      const data = await getSecret(name, namespace);
       setSecretData(data);
     } catch (err) {
       setLoadError(getSafeErrorMessage(err));
     } finally {
       setIsLoadingValues(false);
     }
-  }, [name, project, namespace]);
+  }, [name, namespace]);
 
   const toggleKeyVisibility = (key: string) => {
     setVisibleKeys((prev) => {
@@ -61,14 +68,8 @@ export function SecretDetailView({ name, namespace }: SecretDetailViewProps) {
     });
   };
 
-  const handleCopy = async (key: string, value: string) => {
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopiedKey(key);
-      setTimeout(() => setCopiedKey(null), 2000);
-    } catch {
-      toast.error("Failed to copy — clipboard access is blocked in this environment");
-    }
+  const handleCopy = (key: string, value: string) => {
+    void copy(value, key);
   };
 
   const entries = secretData ? Object.entries(secretData.data) : null;

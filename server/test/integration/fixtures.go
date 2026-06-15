@@ -73,7 +73,7 @@ type RoleToValidate struct {
 	Name         string   `json:"name"`
 	Description  string   `json:"description,omitempty"`
 	Policies     []string `json:"policies,omitempty"`
-	Groups       []string `json:"groups,omitempty"`
+	Teams        []string `json:"teams,omitempty"`
 	Destinations []string `json:"destinations,omitempty"`
 }
 
@@ -107,7 +107,7 @@ type RoleResponse struct {
 	Name         string   `json:"name"`
 	Description  string   `json:"description,omitempty"`
 	Policies     []string `json:"policies,omitempty"`
-	Groups       []string `json:"groups,omitempty"`
+	Teams        []string `json:"teams,omitempty"`
 	Destinations []string `json:"destinations,omitempty"`
 }
 
@@ -235,7 +235,7 @@ func CreateValidationBody(fixture FixtureProject) ValidateProjectRequestBody {
 			Name:        role.Name,
 			Description: role.Description,
 			Policies:    role.Policies,
-			Groups:      role.Groups,
+			Teams:       role.Teams,
 		}
 	}
 

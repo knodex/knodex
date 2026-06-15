@@ -24,7 +24,6 @@ import (
 	"github.com/knodex/knodex/server/internal/audit"
 	"github.com/knodex/knodex/server/internal/deployment"
 	"github.com/knodex/knodex/server/internal/history"
-	"github.com/knodex/knodex/server/internal/kro/watcher"
 	"github.com/knodex/knodex/server/internal/models"
 	"github.com/knodex/knodex/server/internal/repository"
 	"github.com/knodex/knodex/server/internal/util/sanitize"
@@ -79,8 +78,8 @@ type CreateInstanceResponse struct {
 
 // InstanceDeploymentHandler handles instance deployment and creation
 type InstanceDeploymentHandler struct {
-	rgdWatcher           *watcher.RGDWatcher
-	instanceTracker      *watcher.InstanceTracker
+	rgdWatcher           RGDReader
+	instanceTracker      InstanceReader
 	dynamicClient        dynamic.Interface
 	kubeClient           kubernetes.Interface
 	deploymentController *deployment.Controller
@@ -92,8 +91,8 @@ type InstanceDeploymentHandler struct {
 
 // InstanceDeploymentHandlerConfig holds configuration for creating an InstanceDeploymentHandler.
 type InstanceDeploymentHandlerConfig struct {
-	RGDWatcher      *watcher.RGDWatcher
-	InstanceTracker *watcher.InstanceTracker
+	RGDWatcher      RGDReader
+	InstanceTracker InstanceReader
 	DynamicClient   dynamic.Interface
 	KubeClient      kubernetes.Interface
 	RepoService     *repository.Service
@@ -263,6 +262,11 @@ func (h *InstanceDeploymentHandler) CreateInstance(w http.ResponseWriter, r *htt
 		return
 	}
 
+	if !rgd.IsCatalog() {
+		response.NotFound(w, "RGD", req.RGDName)
+		return
+	}
+
 	// Validate path kind matches RGD kind early (before further processing)
 	if pathKind != "" && pathKind != rgd.Kind {
 		response.BadRequest(w, "kind in URL path does not match RGD kind", map[string]string{
@@ -391,9 +395,7 @@ func (h *InstanceDeploymentHandler) CreateInstance(w http.ResponseWriter, r *htt
 				"repository_id", req.RepositoryID,
 				"error", err,
 			)
-			response.BadRequest(w, "repository not found", map[string]string{
-				"repositoryId": "repository configuration not found: " + req.RepositoryID,
-			})
+			response.NotFound(w, "repository", req.RepositoryID)
 			return
 		}
 
@@ -634,6 +636,11 @@ func (h *InstanceDeploymentHandler) PreflightInstance(w http.ResponseWriter, r *
 		return
 	}
 
+	if !rgd.IsCatalog() {
+		response.NotFound(w, "RGD", req.RGDName)
+		return
+	}
+
 	if pathKind != "" && pathKind != rgd.Kind {
 		response.BadRequest(w, "kind in URL path does not match RGD kind", nil)
 		return
@@ -660,6 +667,24 @@ func (h *InstanceDeploymentHandler) PreflightInstance(w http.ResponseWriter, r *
 	}
 	apiVersion := apiGroup + "/" + version
 
+	type preflightResponse struct {
+		Valid   bool   `json:"valid"`
+		Message string `json:"message,omitempty"`
+	}
+
+	// Namespaced RGD with no namespace would post to /apis/<group>/<version>/<plural>
+	// (no namespace segment). The API server returns "the server could not find the
+	// requested resource", which parseAdmissionWebhookError used to rewrite as
+	// "resource type is not yet registered" — blaming the cluster for a missing
+	// form field. Reject the request explicitly so the UI can prompt the user.
+	if !rgd.IsClusterScoped && strings.TrimSpace(req.Namespace) == "" {
+		response.WriteJSON(w, http.StatusOK, preflightResponse{
+			Valid:   false,
+			Message: "Namespace is required for this resource. Pick a target namespace before running preflight.",
+		})
+		return
+	}
+
 	mb := deployment.NewInstanceMetadataBuilder(&deployment.DeployRequest{
 		Name:            req.Name,
 		Namespace:       req.Namespace,
@@ -685,11 +710,6 @@ func (h *InstanceDeploymentHandler) PreflightInstance(w http.ResponseWriter, r *
 		_, err = h.dynamicClient.Resource(gvr).Create(ctx, obj, dryRunOpts)
 	} else {
 		_, err = h.dynamicClient.Resource(gvr).Namespace(req.Namespace).Create(ctx, obj, dryRunOpts)
-	}
-
-	type preflightResponse struct {
-		Valid   bool   `json:"valid"`
-		Message string `json:"message,omitempty"`
 	}
 
 	if err != nil {

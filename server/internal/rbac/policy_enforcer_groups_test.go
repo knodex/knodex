@@ -13,16 +13,24 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// TestPolicyEnforcer_GroupMembership tests OIDC group to role mapping
+// identityTeamResolver maps each team name to itself as the sole group.
+// Used in tests where team name and OIDC group name are the same string.
+type identityTeamResolver struct{}
+
+func (identityTeamResolver) GetGroups(name string) ([]string, bool) {
+	return []string{name}, true
+}
+
+// TestPolicyEnforcer_GroupMembership tests team-to-role mapping via team resolution
 func TestPolicyEnforcer_GroupMembership(t *testing.T) {
 	t.Parallel()
 
 	enforcer, err := NewCasbinEnforcer()
 	require.NoError(t, err)
 
-	pe := NewPolicyEnforcer(enforcer, nil)
+	pe := NewPolicyEnforcerWithConfig(enforcer, nil, DefaultPolicyEnforcerConfig(), WithTeamResolver(identityTeamResolver{}))
 
-	// Create project with group-based role
+	// Create project with team-based role (team name = group name via identity resolver)
 	project := &Project{
 		ObjectMeta: metav1.ObjectMeta{Name: "team-project"},
 		Spec: ProjectSpec{
@@ -30,7 +38,7 @@ func TestPolicyEnforcer_GroupMembership(t *testing.T) {
 				{
 					Name:     "developer",
 					Policies: []string{"projects/team-project, get, allow"},
-					Groups:   []string{"engineering-team"},
+					Teams:    []string{"engineering-team"},
 				},
 			},
 		},
@@ -44,18 +52,17 @@ func TestPolicyEnforcer_GroupMembership(t *testing.T) {
 	require.NoError(t, err)
 
 	// User in the group should have access via project role
-	// Note: This requires the group -> role -> policy chain to work
 	// The LoadProjectPolicies adds: group:engineering-team -> proj:team-project:developer
 	allowed, err := pe.CanAccess(context.Background(), "user:groupmember", "projects/team-project", "get")
 	require.NoError(t, err)
-	assert.True(t, allowed, "User in group should have access via group membership")
+	assert.True(t, allowed, "User in group should have access via team membership")
 }
 
 // TestPolicyEnforcer_CanAccessWithGroups_UserPermission tests that direct user permission is checked first
 func TestPolicyEnforcer_CanAccessWithGroups_UserPermission(t *testing.T) {
 	t.Parallel()
 
-	pe := newTestEnforcer(t)
+	pe := newTestEnforcerWithTeams(t, identityTeamResolver{})
 	ctx := context.Background()
 
 	// Assign global admin role to user
@@ -78,7 +85,7 @@ func TestPolicyEnforcer_CanAccessWithGroups_UserPermission(t *testing.T) {
 func TestPolicyEnforcer_CanAccessWithGroups_GroupPermission(t *testing.T) {
 	t.Parallel()
 
-	pe := newTestEnforcer(t)
+	pe := newTestEnforcerWithTeams(t, identityTeamResolver{})
 	ctx := context.Background()
 
 	// Create a project with group-based role mapping
@@ -96,7 +103,7 @@ func TestPolicyEnforcer_CanAccessWithGroups_GroupPermission(t *testing.T) {
 						"instances/team-alpha-*, create, allow",
 						"rgds/*, get, allow",
 					},
-					Groups: []string{"alpha-developers"},
+					Teams: []string{"alpha-developers"},
 				},
 			},
 		},
@@ -127,7 +134,7 @@ func TestPolicyEnforcer_CanAccessWithGroups_GroupPermission(t *testing.T) {
 func TestPolicyEnforcer_CanAccessWithGroups_NoMatchingGroup(t *testing.T) {
 	t.Parallel()
 
-	pe := newTestEnforcer(t)
+	pe := newTestEnforcerWithTeams(t, identityTeamResolver{})
 	ctx := context.Background()
 
 	// Create a project with group-based role
@@ -138,7 +145,7 @@ func TestPolicyEnforcer_CanAccessWithGroups_NoMatchingGroup(t *testing.T) {
 				{
 					Name:     "admin",
 					Policies: []string{"projects/team-beta, *, allow"},
-					Groups:   []string{"beta-admins"},
+					Teams:    []string{"beta-admins"},
 				},
 			},
 		},
@@ -158,7 +165,7 @@ func TestPolicyEnforcer_CanAccessWithGroups_NoMatchingGroup(t *testing.T) {
 func TestPolicyEnforcer_CanAccessWithGroups_MultipleGroups(t *testing.T) {
 	t.Parallel()
 
-	pe := newTestEnforcer(t)
+	pe := newTestEnforcerWithTeams(t, identityTeamResolver{})
 	ctx := context.Background()
 
 	// Create two projects with different group mappings
@@ -169,7 +176,7 @@ func TestPolicyEnforcer_CanAccessWithGroups_MultipleGroups(t *testing.T) {
 				{
 					Name:     "viewer",
 					Policies: []string{"projects/project-a, get, allow"},
-					Groups:   []string{"team-a-viewers"},
+					Teams:    []string{"team-a-viewers"},
 				},
 			},
 		},
@@ -181,7 +188,7 @@ func TestPolicyEnforcer_CanAccessWithGroups_MultipleGroups(t *testing.T) {
 				{
 					Name:     "admin",
 					Policies: []string{"projects/project-b, *, allow"},
-					Groups:   []string{"team-b-admins"},
+					Teams:    []string{"team-b-admins"},
 				},
 			},
 		},
@@ -216,7 +223,7 @@ func TestPolicyEnforcer_CanAccessWithGroups_MultipleGroups(t *testing.T) {
 func TestPolicyEnforcer_CanAccessWithGroups_UserOverrideGroup(t *testing.T) {
 	t.Parallel()
 
-	pe := newTestEnforcer(t)
+	pe := newTestEnforcerWithTeams(t, identityTeamResolver{})
 	ctx := context.Background()
 
 	// Create project with group-based access
@@ -227,7 +234,7 @@ func TestPolicyEnforcer_CanAccessWithGroups_UserOverrideGroup(t *testing.T) {
 				{
 					Name:     "developer",
 					Policies: []string{"projects/shared-project, *, allow"},
-					Groups:   []string{"dev-team"},
+					Teams:    []string{"dev-team"},
 				},
 			},
 		},
@@ -251,7 +258,7 @@ func TestPolicyEnforcer_CanAccessWithGroups_UserOverrideGroup(t *testing.T) {
 func TestPolicyEnforcer_CanAccessWithGroups_EmptyGroups(t *testing.T) {
 	t.Parallel()
 
-	pe := newTestEnforcer(t)
+	pe := newTestEnforcerWithTeams(t, identityTeamResolver{})
 	ctx := context.Background()
 
 	// User without any roles or groups should not have access
@@ -270,7 +277,7 @@ func TestPolicyEnforcer_CanAccessWithGroups_EmptyGroups(t *testing.T) {
 func TestPolicyEnforcer_CanAccessWithGroups_InvalidInputs(t *testing.T) {
 	t.Parallel()
 
-	pe := newTestEnforcer(t)
+	pe := newTestEnforcerWithTeams(t, identityTeamResolver{})
 	ctx := context.Background()
 
 	tests := []struct {
@@ -306,7 +313,7 @@ func TestPolicyEnforcer_CanAccessWithGroups_InvalidInputs(t *testing.T) {
 func TestPolicyEnforcer_CanAccessWithGroups_InvalidGroupName(t *testing.T) {
 	t.Parallel()
 
-	pe := newTestEnforcer(t)
+	pe := newTestEnforcerWithTeams(t, identityTeamResolver{})
 	ctx := context.Background()
 
 	// Create project with valid group
@@ -317,7 +324,7 @@ func TestPolicyEnforcer_CanAccessWithGroups_InvalidGroupName(t *testing.T) {
 				{
 					Name:     "viewer",
 					Policies: []string{"projects/test-project, get, allow"},
-					Groups:   []string{"valid-group"},
+					Teams:    []string{"valid-group"},
 				},
 			},
 		},
@@ -351,10 +358,10 @@ func TestPolicyEnforcer_CanAccessWithGroups_CacheHitMiss(t *testing.T) {
 		CacheTTL:     5 * time.Minute,
 	}
 
-	pe := NewPolicyEnforcerWithConfig(enforcer, nil, config)
+	pe := NewPolicyEnforcerWithConfig(enforcer, nil, config, WithTeamResolver(identityTeamResolver{}))
 	ctx := context.Background()
 
-	// Create project with group
+	// Create project with team binding (identity resolver maps "cached-group" → ["cached-group"])
 	project := &Project{
 		ObjectMeta: metav1.ObjectMeta{Name: "cached-project"},
 		Spec: ProjectSpec{
@@ -362,7 +369,7 @@ func TestPolicyEnforcer_CanAccessWithGroups_CacheHitMiss(t *testing.T) {
 				{
 					Name:     "developer",
 					Policies: []string{"projects/cached-project, get, allow"},
-					Groups:   []string{"cached-group"},
+					Teams:    []string{"cached-group"},
 				},
 			},
 		},
@@ -390,7 +397,7 @@ func TestPolicyEnforcer_CanAccessWithGroups_CacheHitMiss(t *testing.T) {
 func TestPolicyEnforcer_CanAccessWithGroups_AzureADGroups(t *testing.T) {
 	t.Parallel()
 
-	pe := newTestEnforcer(t)
+	pe := newTestEnforcerWithTeams(t, identityTeamResolver{})
 	ctx := context.Background()
 
 	// Azure AD groups use UUIDs as group IDs
@@ -411,7 +418,7 @@ func TestPolicyEnforcer_CanAccessWithGroups_AzureADGroups(t *testing.T) {
 						"instances/proj-azuread-staging-*, *, allow",
 						"rgds/*, *, allow",
 					},
-					Groups: []string{azureAdminGroupID},
+					Teams: []string{azureAdminGroupID},
 				},
 				{
 					Name:        "reader",
@@ -421,7 +428,7 @@ func TestPolicyEnforcer_CanAccessWithGroups_AzureADGroups(t *testing.T) {
 						"instances/proj-azuread-staging-*, get, allow",
 						"rgds/*, get, allow",
 					},
-					Groups: []string{azureReaderGroupID},
+					Teams: []string{azureReaderGroupID},
 				},
 			},
 		},
@@ -451,7 +458,7 @@ func TestPolicyEnforcer_CanAccessWithGroups_AzureADGroups(t *testing.T) {
 func TestPolicyEnforcer_CanAccessWithGroups_GlobalAdmin(t *testing.T) {
 	t.Parallel()
 
-	pe := newTestEnforcer(t)
+	pe := newTestEnforcerWithTeams(t, identityTeamResolver{})
 	ctx := context.Background()
 
 	// Assign global admin role

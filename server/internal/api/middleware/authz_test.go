@@ -999,17 +999,23 @@ func TestInferCasbinObjectAndAction(t *testing.T) {
 			expectedAction: "update",
 		},
 		{
+			// POST-to-scoped-collection rule: the URL identifies the scope
+			// (namespace + kind), the request body identifies the to-be-
+			// created instance name. Casbin object represents the
+			// collection slot so per-scope policies ("instances/{ns}/*"
+			// or "instances/{proj}/{ns}/*" after FindProjectForNamespace
+			// rewrite) match natively via keyMatch.
 			name:           "create namespaced instance (K8s-aligned)",
 			method:         "POST",
 			path:           "/api/v1/namespaces/default/instances/WebApp",
-			expectedObject: "instances/default/WebApp",
+			expectedObject: "instances/default/WebApp/*",
 			expectedAction: "create",
 		},
 		{
 			name:           "create cluster-scoped instance (K8s-aligned)",
 			method:         "POST",
 			path:           "/api/v1/instances/ClusterConfig",
-			expectedObject: "instances/ClusterConfig",
+			expectedObject: "instances/ClusterConfig/*",
 			expectedAction: "create",
 		},
 		{
@@ -1039,14 +1045,14 @@ func TestInferCasbinObjectAndAction(t *testing.T) {
 			name:           "create namespaced instance (GVK-aware)",
 			method:         "POST",
 			path:           "/api/v1/apigroups/apps.example.com/namespaces/default/instances/WebApp",
-			expectedObject: "instances/default/WebApp",
+			expectedObject: "instances/default/WebApp/*",
 			expectedAction: "create",
 		},
 		{
 			name:           "create cluster-scoped instance (GVK-aware)",
 			method:         "POST",
 			path:           "/api/v1/apigroups/cert-manager.io/instances/ClusterIssuer",
-			expectedObject: "instances/ClusterIssuer",
+			expectedObject: "instances/ClusterIssuer/*",
 			expectedAction: "create",
 		},
 		{
@@ -1085,10 +1091,15 @@ func TestInferCasbinObjectAndAction(t *testing.T) {
 			expectedAction: "get",
 		},
 		{
+			// POST-to-scoped-collection rule: settings/sso/providers is a
+			// scoped collection — POST creates a new provider whose name
+			// is in the body. The Casbin object represents the collection
+			// slot. serveradmin policy "settings/*, *, allow" matches
+			// "settings/sso/providers/*" via keyMatch prefix.
 			name:           "create sso provider",
 			method:         "POST",
 			path:           "/api/v1/settings/sso/providers",
-			expectedObject: "settings/sso/providers",
+			expectedObject: "settings/sso/providers/*",
 			expectedAction: "create",
 		},
 		{
@@ -1103,6 +1114,45 @@ func TestInferCasbinObjectAndAction(t *testing.T) {
 			method:         "DELETE",
 			path:           "/api/v1/settings/sso/providers/google",
 			expectedObject: "settings/sso/providers/google",
+			expectedAction: "delete",
+		},
+		// --- Secrets: namespace-keyed (mirrors Instances post-normalization) ---
+		{
+			name:           "list secrets (collection)",
+			method:         "GET",
+			path:           "/api/v1/secrets",
+			expectedObject: "secrets/*",
+			expectedAction: "list",
+		},
+		{
+			// POST-to-scoped-collection: name is in the request body.
+			// Object represents the collection slot in this namespace so
+			// per-destination policies "secrets/{ns}/*" match via keyMatch.
+			name:           "create secret in namespace",
+			method:         "POST",
+			path:           "/api/v1/namespaces/default/secrets",
+			expectedObject: "secrets/default/*",
+			expectedAction: "create",
+		},
+		{
+			name:           "get specific secret",
+			method:         "GET",
+			path:           "/api/v1/namespaces/default/secrets/my-secret",
+			expectedObject: "secrets/default/my-secret",
+			expectedAction: "get",
+		},
+		{
+			name:           "update specific secret",
+			method:         "PUT",
+			path:           "/api/v1/namespaces/default/secrets/my-secret",
+			expectedObject: "secrets/default/my-secret",
+			expectedAction: "update",
+		},
+		{
+			name:           "delete specific secret",
+			method:         "DELETE",
+			path:           "/api/v1/namespaces/default/secrets/my-secret",
+			expectedObject: "secrets/default/my-secret",
 			expectedAction: "delete",
 		},
 	}

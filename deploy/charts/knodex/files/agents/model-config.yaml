@@ -1,0 +1,80 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# model-config — wraps kagent.dev/v1alpha2 ModelConfig.
+# References an existing provider Secret via externalRef (the Secret created by
+# the Models page / model-provider-config.yaml, or any Secret with an apiKey
+# key). kagent resolves apiKeySecret by NAME in the ModelConfig's OWN namespace,
+# so the referenced Secret MUST live in the same namespace as the instance.
+#
+# The resulting ModelConfig name is what gets set as
+# spec.declarative.modelConfig on Agent CRs (the value the Agents Hub
+# "Change model" editor writes).
+#
+# Field shape verified against kagent 0.9.6 (CRD modelconfigs.kagent.dev
+# v1alpha2): flat `apiKeySecret` (Secret NAME, same namespace) +
+# `apiKeySecretKey` (key inside the Secret). There is NO apiKeySecretRef
+# object in v1alpha2. provider is a strict enum (Anthropic, OpenAI,
+# AzureOpenAI, Ollama, Gemini, GeminiVertexAI, AnthropicVertexAI, Bedrock,
+# SAPAICore) — canonical capitalization required.
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: kagent-model-config
+  labels:
+    knodex.io/package: agents
+  # knodex.io/catalog:"true" is the single publishing gateway (the watcher only
+  # ingests annotated RGDs); schema.kind (KnodexAgentModelConfig) routes it to
+  # the Agents workspace and out of the main catalog list. The CreateModel
+  # handler hardcodes agentModelConfigGVR and creates instances directly; the
+  # RGD also remains deployable from the Deploy drawer against a pre-existing
+  # Secret.
+  annotations:
+    knodex.io/catalog: "true"
+    knodex.io/description: "Model config for kagent agents — points a provider/model at an existing API-key Secret"
+    knodex.io/tags: "ai,agent,kagent,model"
+    knodex.io/category: "ai-agents"
+spec:
+  schema:
+    # group + apiVersion form the generated CRD GVK
+    # (knodexagentmodelconfigs.agents.knodex.io/v1alpha1) — KRO validates
+    # apiVersion as version-only; the group is a separate field (default
+    # kro.run). agentModelConfigGVR in agents_models.go hardcodes this GVK.
+    apiVersion: v1alpha1
+    group: agents.knodex.io
+    kind: KnodexAgentModelConfig
+    spec:
+      provider: string | default="OpenAI" description="kagent provider enum (OpenAI, AzureOpenAI, Anthropic, Gemini, Ollama, Bedrock, ...) — canonical capitalization"
+      model: string | default="gpt-4o" description="Model identifier as understood by the provider"
+      externalRef:
+        providerSecret:
+          name: string | default="" description="Name of the Secret holding the API key under key 'apiKey' — must be in the SAME namespace as this instance"
+          namespace: string | default="" description="Namespace of the Secret — kagent requires it to equal this instance's namespace"
+    status:
+      modelConfigName: ${modelConfig.metadata.name}
+  resources:
+    - id: providerSecret
+      externalRef:
+        apiVersion: v1
+        kind: Secret
+        metadata:
+          name: ${schema.spec.externalRef.providerSecret.name}
+          namespace: ${schema.spec.externalRef.providerSecret.namespace}
+
+    - id: modelConfig
+      template:
+        apiVersion: kagent.dev/v1alpha2
+        kind: ModelConfig
+        metadata:
+          name: ${schema.metadata.name}
+          namespace: ${schema.metadata.namespace}
+          labels:
+            app.kubernetes.io/managed-by: knodex
+        spec:
+          provider: ${schema.spec.provider}
+          model: ${schema.spec.model}
+          # kagent v1alpha2: apiKeySecret is the Secret NAME (same namespace),
+          # apiKeySecretKey the key inside it. "apiKey" is the in-repo
+          # convention — both the CreateModel handler and
+          # model-provider-config.yaml write the credential under that key.
+          apiKeySecret: ${providerSecret.metadata.name}
+          apiKeySecretKey: apiKey

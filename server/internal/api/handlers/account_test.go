@@ -967,7 +967,12 @@ func TestExtractProjectName(t *testing.T) {
 func TestIsProjectScopedResource(t *testing.T) {
 	t.Parallel()
 	scoped := []string{"instances", "projects", "repositories", "rgds", "compliance", "applications"}
-	notScoped := []string{"settings", "users", "invalid"}
+	// Secrets are namespace-keyed (see projectScopedResources comment in
+	// account.go) — their can-i subresource is a K8s namespace, not a
+	// project name. They must NOT take the project-existence pre-check
+	// path; otherwise every namespace whose name differs from a project
+	// name would 404 the can-i query.
+	notScoped := []string{"settings", "users", "invalid", "secrets"}
 
 	for _, r := range scoped {
 		if !isProjectScopedResource(r) {
@@ -979,4 +984,120 @@ func TestIsProjectScopedResource(t *testing.T) {
 			t.Errorf("expected %q to NOT be project-scoped", r)
 		}
 	}
+}
+
+// decodeAccountInfo runs Info and decodes the response, asserting a 200.
+func decodeAccountInfo(t *testing.T, h *AccountHandler, userCtx *middleware.UserContext) AccountInfoResponse {
+	t.Helper()
+	req := createAccountInfoRequest(t, userCtx)
+	rr := httptest.NewRecorder()
+	h.Info(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, rr.Code)
+	}
+	var resp AccountInfoResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	return resp
+}
+
+// TestAccountHandler_Info_ApplicationRole covers the story 17.1 derivation:
+// applicationRole == "serveradmin" iff role:serveradmin ∈ CasbinRoles, else
+// "member". It is a pure derived display value — no role:member subject, no new
+// Enforce()/can-i resource (NFR-T1). Assert both cases plus the empty-roles floor.
+func TestAccountHandler_Info_ApplicationRole(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		casbinRoles []string
+		want        string
+	}{
+		{
+			name:        "serveradmin when role:serveradmin present",
+			casbinRoles: []string{"role:serveradmin"},
+			want:        "serveradmin",
+		},
+		{
+			name:        "serveradmin even alongside project roles",
+			casbinRoles: []string{"proj:acme:developer", "role:serveradmin"},
+			want:        "serveradmin",
+		},
+		{
+			name:        "member when only project-scoped roles",
+			casbinRoles: []string{"proj:acme:developer"},
+			want:        "member",
+		},
+		{
+			name:        "member when CasbinRoles empty",
+			casbinRoles: []string{},
+			want:        "member",
+		},
+		{
+			name:        "member when CasbinRoles nil",
+			casbinRoles: nil,
+			want:        "member",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			handler := NewAccountHandler(&mockCanIService{})
+			resp := decodeAccountInfo(t, handler, &middleware.UserContext{
+				UserID:      "oidc:user",
+				CasbinRoles: tt.casbinRoles,
+			})
+			if resp.ApplicationRole != tt.want {
+				t.Errorf("expected applicationRole %q, got %q", tt.want, resp.ApplicationRole)
+			}
+		})
+	}
+}
+
+// TestAccountHandler_Info_OrgIdentity covers the isOrgAdmin field: true iff
+// role:serveradmin is present in CasbinRoles (granted at login via the operator
+// globalAdmin mapping); read-only (false) for a member without that role.
+func TestAccountHandler_Info_OrgIdentity(t *testing.T) {
+	t.Parallel()
+
+	t.Run("isOrgAdmin=false without serveradmin role", func(t *testing.T) {
+		t.Parallel()
+		handler := NewAccountHandler(&mockCanIService{})
+		resp := decodeAccountInfo(t, handler, &middleware.UserContext{
+			UserID: "local:admin",
+			Groups: nil,
+		})
+		if resp.IsOrgAdmin {
+			t.Error("expected isOrgAdmin=false without serveradmin role")
+		}
+	})
+
+	t.Run("isOrgAdmin=true from role:serveradmin", func(t *testing.T) {
+		t.Parallel()
+		handler := NewAccountHandler(&mockCanIService{mappedGroups: []string{"kx-team-acme-admins"}})
+		resp := decodeAccountInfo(t, handler, &middleware.UserContext{
+			UserID:      "oidc:ada",
+			Groups:      []string{"kx-team-acme-admins"},
+			CasbinRoles: []string{"role:serveradmin"},
+		})
+		if !resp.IsOrgAdmin {
+			t.Error("expected isOrgAdmin=true for role:serveradmin")
+		}
+	})
+
+	t.Run("member without serveradmin role is read-only", func(t *testing.T) {
+		t.Parallel()
+		handler := NewAccountHandler(&mockCanIService{mappedGroups: []string{"kx-team-acme-platform-eng"}})
+		resp := decodeAccountInfo(t, handler, &middleware.UserContext{
+			UserID:      "oidc:grace",
+			Groups:      []string{"kx-team-acme-platform-eng"},
+			CasbinRoles: []string{"proj:acme:developer"},
+		})
+		if resp.IsOrgAdmin {
+			t.Error("expected isOrgAdmin=false for non-admin member")
+		}
+	})
 }

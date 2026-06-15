@@ -1,0 +1,78 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Agent-wrapping RGD: kagent Agent (the canonical "Create Agent" artifact).
+# The Agents tab's Create Agent button opens the Deploy drawer bound to this
+# RGD by its fixed name (kagent-agent). The single Agent template produces a
+# kagent.dev/v1alpha2 Agent that inherits the instance's (project) namespace —
+# deploying into a project namespace places the Agent there, where the
+# cluster-wide kagent controller picks it up automatically.
+#
+# Visibility: knodex.io/catalog:"true" is the single publishing gateway (the
+# watcher only ingests annotated RGDs; without it GET /api/v1/rgds/{name}
+# 404s and the Deploy drawer could not open). The agent schema kind
+# (KagentAgent) then routes it: excluded from the main catalog LIST, surfaced
+# through the Agents workspace instead.
+#
+# Prerequisite: the kagent operator must be installed in the cluster
+# (CRD agents.kagent.dev). The chart ships this RGD via kagent.rgds.enabled;
+# scripts/qa-deploy.sh applies the files/agents/ directory only when that CRD
+# is present — KRO cannot activate an RGD whose produced kind's CRD is absent.
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: kagent-agent
+  labels:
+    knodex.io/package: agents
+  annotations:
+    knodex.io/catalog: "true"
+    knodex.io/description: "Deploy a kagent AI agent into your project namespace"
+    knodex.io/tags: "ai,agent,kagent"
+    knodex.io/category: "ai-agents"
+    knodex.io/property-order: '{"": ["agentName", "description", "systemMessage", "externalRef"]}'
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: KagentAgent
+    spec:
+      agentName: string
+      description: string
+      systemMessage: string
+      # Paired name+namespace externalRef — the enricher maps this to a
+      # ModelConfig dropdown in the Deploy form (a name-only field would
+      # degrade to a plain text box). kagent resolves declarative.modelConfig
+      # by NAME within the Agent's own namespace, so pick a ModelConfig in the
+      # same namespace you deploy the agent into.
+      externalRef:
+        modelConfig:
+          name: string | default="" description="ModelConfig in the agent's namespace"
+          namespace: string | default="kagent" description="Namespace of the ModelConfig"
+
+  resources:
+    # externalRef read of the picked ModelConfig — its presence (paired
+    # name+namespace under spec.externalRef.modelConfig) is what makes the
+    # Deploy form render a ModelConfig picker instead of a text input.
+    - id: modelConfigRef
+      externalRef:
+        apiVersion: kagent.dev/v1alpha2
+        kind: ModelConfig
+        metadata:
+          name: ${schema.spec.externalRef.modelConfig.name}
+          namespace: ${schema.spec.externalRef.modelConfig.namespace}
+
+    # kagent Agent — no metadata.namespace so the template inherits the
+    # instance's namespace (this is what lands the Agent in the project
+    # namespace selected at deploy time).
+    - id: agent
+      template:
+        apiVersion: kagent.dev/v1alpha2
+        kind: Agent
+        metadata:
+          name: ${schema.spec.agentName}
+        spec:
+          description: ${schema.spec.description}
+          type: Declarative
+          declarative:
+            # A name resolved in the Agent's own namespace — set to the picked
+            # ModelConfig's name.
+            modelConfig: ${schema.spec.externalRef.modelConfig.name}
+            systemMessage: ${schema.spec.systemMessage}

@@ -72,7 +72,7 @@ func (m *MockProjectService) GetProject(ctx context.Context, projectID string) (
 	return project, nil
 }
 
-func (m *MockProjectService) AddGroupToRole(ctx context.Context, projectID, roleName, groupName, addedBy string) (*rbac.Project, error) {
+func (m *MockProjectService) AddTeamToRole(ctx context.Context, projectID, roleName, groupName, addedBy string) (*rbac.Project, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -85,12 +85,12 @@ func (m *MockProjectService) AddGroupToRole(ctx context.Context, projectID, role
 	for i, role := range project.Spec.Roles {
 		if role.Name == roleName {
 			// Check if group already exists
-			for _, g := range role.Groups {
+			for _, g := range role.Teams {
 				if g == groupName {
 					return nil, fmt.Errorf("group %s already in role %s", groupName, roleName)
 				}
 			}
-			project.Spec.Roles[i].Groups = append(project.Spec.Roles[i].Groups, groupName)
+			project.Spec.Roles[i].Teams = append(project.Spec.Roles[i].Teams, groupName)
 			return project, nil
 		}
 	}
@@ -110,6 +110,14 @@ func newMockRedisClient() *redis.Client {
 // setupAuthTestServer creates a test HTTP server with auth configured
 // Updated to use AccountStore instead of UserService
 func setupAuthTestServer(t *testing.T) (*httptest.Server, *auth.Service) {
+	return setupAuthTestServerWithConfig(t, nil)
+}
+
+// setupAuthTestServerWithConfig is setupAuthTestServer with an optional
+// RouterConfig mutation hook, letting integration tests wire extra services
+// (e.g. the Story 50.1 agent run/result stores) behind the REAL middleware
+// chain.
+func setupAuthTestServerWithConfig(t *testing.T, mutate func(*RouterConfig)) (*httptest.Server, *auth.Service) {
 	// Create fake Kubernetes clients
 	k8sClient := fake.NewSimpleClientset()
 	scheme := runtime.NewScheme()
@@ -184,6 +192,9 @@ func setupAuthTestServer(t *testing.T) (*httptest.Server, *auth.Service) {
 	// Create router with auth service
 	routerConfig := RouterConfig{
 		AuthService: authSvc,
+	}
+	if mutate != nil {
+		mutate(&routerConfig)
 	}
 
 	routerResult := NewRouterWithConfig(nil, nil, nil, nil, routerConfig)

@@ -1,0 +1,103 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# rgd-builder-agent — wraps the Knodex RGD Builder kagent Agent (the agent the
+# RGD Builder page invokes to generate ResourceGraphDefinitions from natural
+# language). Deploy ONE instance per cluster, normally into the kagent
+# namespace: the agent's MCP tool reference (RemoteMCPServer
+# kagent-tool-server) resolves in the Agent's OWN namespace, and that server
+# ships with the kagent install there.
+#
+# Visibility: knodex.io/catalog:"true" is the single publishing gateway (the
+# watcher only ingests annotated RGDs). schema.kind == KnodexAgentTemplate then
+# routes it to the Agents → Templates page and keeps it out of the main
+# catalog list — kind decides WHERE a published RGD surfaces, the annotation
+# decides WHETHER it is published at all.
+#
+# The modelConfig picker mirrors kagent-agent.yaml: a paired name+namespace
+# externalRef renders a ModelConfig dropdown in the Deploy form, and kagent
+# resolves spec.declarative.modelConfig by NAME in the Agent's own namespace —
+# pick a ModelConfig in the namespace you deploy into.
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: kagent-rgd-builder-agent
+  labels:
+    knodex.io/package: agents
+  annotations:
+    knodex.io/catalog: "true"
+    knodex.io/description: "Deploy the Knodex RGD Builder agent — generates cluster-grounded KRO ResourceGraphDefinitions from natural language"
+    knodex.io/tags: "ai,agent,kagent,rgd-builder"
+    knodex.io/category: "ai-agents"
+    knodex.io/property-order: '{"": ["agentName", "externalRef"]}'
+spec:
+  schema:
+    apiVersion: v1alpha1
+    group: agents.knodex.io
+    kind: KnodexAgentTemplate
+    spec:
+      externalRef:
+        modelConfig:
+          name: string | default="" description="ModelConfig in the agent's namespace"
+          namespace: string | default="kagent" description="Namespace of the ModelConfig"
+  resources:
+    - id: modelConfigRef
+      externalRef:
+        apiVersion: kagent.dev/v1alpha2
+        kind: ModelConfig
+        metadata:
+          name: ${schema.spec.externalRef.modelConfig.name}
+          namespace: ${schema.spec.externalRef.modelConfig.namespace}
+
+    # No metadata.namespace — inherits the instance's namespace.
+    - id: agent
+      template:
+        apiVersion: kagent.dev/v1alpha2
+        kind: Agent
+        metadata:
+          name: ${schema.metadata.name}
+          labels:
+            app.kubernetes.io/managed-by: knodex
+        spec:
+          description: "Generates cluster-grounded KRO ResourceGraphDefinitions from natural language"
+          type: Declarative
+          declarative:
+            modelConfig: ${schema.spec.externalRef.modelConfig.name}
+            systemMessage: |
+              You are the Knodex RGD Builder. You generate KRO ResourceGraphDefinition
+              (RGD) manifests (`apiVersion: kro.run/v1alpha1`,
+              `kind: ResourceGraphDefinition`) from natural-language requirements.
+
+              RULES — follow strictly:
+              1. BEFORE generating anything, call `k8s_get_available_api_resources` to
+                 learn which API resources and CRDs exist in THIS cluster. Never skip
+                 this step.
+              2. Reference ONLY apiVersion/kind pairs present in that introspection
+                 result. NEVER invent or assume a CRD exists.
+              3. If no available resource matches part of the request, do NOT generate
+                 a spec for that part. Respond with an explanation in exactly this
+                 style: "No matching CRDs found for: <requirement> — available
+                 options: <closest relevant resources from the cluster>".
+              4. When you produce a spec, output exactly ONE fenced ```yaml code block
+                 containing a complete, deployable ResourceGraphDefinition (schema
+                 section + resources with CEL references). Brief prose before/after
+                 the block is allowed; never split the spec across blocks.
+              5. Do not claim the spec was validated against policies — validation
+                 happens in Knodex after you respond. You may consult existing
+                 Gatekeeper constraints (via `k8s_get_resources` with
+                 `resourceType=constraints`) to avoid producing obviously
+                 non-compliant specs, but never assert compliance.
+              6. Every resource template in `spec.resources` MUST carry
+                 `metadata.annotations` with
+                 `knodex.io/generated-from: "<the specific requirement fragment that
+                 produced this resource>"` — the fragment of the user's request that
+                 led to that resource, not the whole prompt, so traceability stays
+                 granular per resource.
+            tools:
+              - type: McpServer
+                mcpServer:
+                  apiGroup: kagent.dev
+                  kind: RemoteMCPServer
+                  name: kagent-tool-server
+                  toolNames:
+                    - k8s_get_available_api_resources
+                    - k8s_get_resources

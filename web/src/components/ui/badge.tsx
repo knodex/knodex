@@ -18,6 +18,9 @@ const badgeVariants = cva(
         destructive:
           "border-transparent bg-destructive text-destructive-foreground hover:bg-destructive/80",
         outline: "text-foreground",
+        // Soft tinted chip: primary hue at low opacity with matching text.
+        // Intentionally rounded-md (not full) for a rectangular pill look.
+        soft: "border-transparent bg-primary/10 text-primary rounded-md",
       },
     },
     defaultVariants: {

@@ -13,6 +13,7 @@ vi.mock('@/hooks/useRGDs', () => ({
 
 vi.mock('@/hooks/useCompliance', () => ({
   useViolationCount: () => ({ data: 0 }),
+  useComplianceSummary: () => ({ data: undefined }),
   isEnterprise: () => false,
 }));
 

@@ -18,6 +18,7 @@ import {
   filterClearButtonClasses,
 } from "@/components/ui/filter-bar";
 import { FilterChip, FilterChipDot, filterChipClasses } from "@/components/ui/filter-chip";
+import { FiltersDropdown } from "@/components/ui/filters-dropdown";
 
 export interface InstanceFilterState {
   search: string;
@@ -114,6 +115,10 @@ export function InstanceFilters({
     [filters]
   );
 
+  // Non-search active filters drive the FiltersDropdown count badge.
+  const activeFilterCount =
+    (filters.rgd ? 1 : 0) + (filters.health ? 1 : 0) + (filters.scope ? 1 : 0);
+
   return (
     <div className="space-y-3">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-2">
@@ -143,91 +148,103 @@ export function InstanceFilters({
           )}
         </div>
 
-        {/* Linear-style filter chips */}
-        <div className="flex flex-wrap gap-2 sm:flex-nowrap">
-          {/* RGD chip */}
-          <Select
-            value={filters.rgd || ALL_VALUE}
-            onValueChange={handleRgdChange}
-          >
-            <SelectTrigger
-              className={cn(
-                filterChipClasses(filters.rgd ? "active" : "idle"),
-                "min-w-[140px]"
-              )}
-              aria-label="Filter by RGD"
-            >
-              <span className="inline-flex items-center gap-1.5 truncate">
-                {filters.rgd && <FilterChipDot />}
-                <span className="truncate">{filters.rgd || "All RGDs"}</span>
-              </span>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL_VALUE}>All RGDs</SelectItem>
-              {availableRgds.filter(rgd => rgd).map((rgd) => (
-                <SelectItem key={rgd} value={rgd} className="text-xs">
-                  {rgd}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        {/* Collapsed filter chips — single Filters button with popover */}
+        <FiltersDropdown activeCount={activeFilterCount}>
+          <div className="flex flex-col items-start gap-2">
+            <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground/70">
+              Filter by
+            </span>
 
-          {/* Health chip */}
-          <Select
-            value={filters.health || ALL_VALUE}
-            onValueChange={handleHealthChange}
-          >
-            <SelectTrigger
-              className={cn(
-                filterChipClasses(filters.health ? "active" : "idle"),
-                "min-w-[120px]"
-              )}
-              aria-label="Filter by health"
+            {/* RGD chip */}
+            <Select
+              value={filters.rgd || ALL_VALUE}
+              onValueChange={handleRgdChange}
             >
-              <span className="inline-flex items-center gap-1.5 truncate">
-                {filters.health && <FilterChipDot />}
-                <span className="truncate">{filters.health || "All health"}</span>
-              </span>
-            </SelectTrigger>
-            <SelectContent>
-              {HEALTH_OPTIONS.map((opt) => (
-                <SelectItem
-                  key={opt.value || ALL_VALUE}
-                  value={opt.value || ALL_VALUE}
-                  className="text-xs"
-                >
-                  {opt.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          {/* Scope chip */}
-          <Select
-            value={filters.scope || ALL_SCOPE_VALUE}
-            onValueChange={handleScopeChange}
-          >
-            <SelectTrigger
-              className={cn(
-                filterChipClasses(filters.scope ? "active" : "idle"),
-                "min-w-[140px]"
-              )}
-              aria-label="Filter by scope"
-            >
-              <span className="inline-flex items-center gap-1.5 truncate">
-                {filters.scope && <FilterChipDot />}
-                <span className="truncate">
-                  {SCOPE_LABEL[filters.scope] || "All scopes"}
+              <SelectTrigger
+                className={cn(
+                  filterChipClasses(filters.rgd ? "active" : "idle"),
+                  "max-w-[220px]"
+                )}
+                aria-label="Filter by RGD"
+              >
+                <span className="inline-flex items-center gap-1.5 truncate">
+                  {filters.rgd && <FilterChipDot />}
+                  <span className="truncate">
+                    {filters.rgd ? `RGD: ${filters.rgd}` : "RGD"}
+                  </span>
                 </span>
-              </span>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL_SCOPE_VALUE}>All scopes</SelectItem>
-              <SelectItem value="namespaced" className="text-xs">Namespaced</SelectItem>
-              <SelectItem value="cluster" className="text-xs">Cluster-Scoped</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL_VALUE}>All RGDs</SelectItem>
+                {availableRgds.filter(rgd => rgd).map((rgd) => (
+                  <SelectItem key={rgd} value={rgd} className="text-xs">
+                    {rgd}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            {/* Health chip */}
+            <Select
+              value={filters.health || ALL_VALUE}
+              onValueChange={handleHealthChange}
+            >
+              <SelectTrigger
+                className={cn(
+                  filterChipClasses(filters.health ? "active" : "idle"),
+                  "max-w-[220px]"
+                )}
+                aria-label="Filter by health"
+              >
+                <span className="inline-flex items-center gap-1.5 truncate">
+                  {filters.health && <FilterChipDot />}
+                  <span className="truncate">
+                    {filters.health ? `Health: ${filters.health}` : "Health"}
+                  </span>
+                </span>
+              </SelectTrigger>
+              <SelectContent>
+                {HEALTH_OPTIONS.map((opt) => (
+                  <SelectItem
+                    key={opt.value || ALL_VALUE}
+                    value={opt.value || ALL_VALUE}
+                    className="text-xs"
+                  >
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            {/* Scope chip */}
+            <Select
+              value={filters.scope || ALL_SCOPE_VALUE}
+              onValueChange={handleScopeChange}
+            >
+              <SelectTrigger
+                className={cn(
+                  filterChipClasses(filters.scope ? "active" : "idle"),
+                  "max-w-[220px]"
+                )}
+                aria-label="Filter by scope"
+              >
+                <span className="inline-flex items-center gap-1.5 truncate">
+                  {filters.scope && <FilterChipDot />}
+                  <span className="truncate">
+                    {filters.scope
+                      ? `Scope: ${SCOPE_LABEL[filters.scope]}`
+                      : "Scope"}
+                  </span>
+                </span>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL_SCOPE_VALUE}>All scopes</SelectItem>
+                <SelectItem value="namespaced" className="text-xs">Namespaced</SelectItem>
+                <SelectItem value="cluster" className="text-xs">Cluster-Scoped</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </FiltersDropdown>
       </div>
 
       {/* Active Filters Indicator */}

@@ -180,16 +180,30 @@ describe('TopBar - Breadcrumb chrome', () => {
   it('always renders the ⌘K trigger (callback is required)', () => {
     renderTopBar();
 
-    expect(screen.getByTestId('cmd-k-trigger')).toBeInTheDocument();
+    expect(screen.getByTestId('cmdk-trigger')).toBeInTheDocument();
   });
 
   it('clicking the ⌘K trigger invokes the command-palette callback', () => {
     const onOpen = vi.fn();
     renderTopBar({ onCommandPaletteOpen: onOpen });
 
-    fireEvent.click(screen.getByTestId('cmd-k-trigger'));
+    fireEvent.click(screen.getByTestId('cmdk-trigger'));
 
     expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders the CmdK trigger inline (no absolute positioning) with a flex-1 spacer sibling', () => {
+    renderTopBar();
+
+    const trigger = screen.getByTestId('cmdk-trigger');
+    const wrapper = trigger.parentElement;
+    expect(wrapper).not.toBeNull();
+    expect(wrapper?.className).not.toMatch(/absolute/);
+    expect(wrapper?.className).toContain('min-w-[220px]');
+
+    const header = document.querySelector('header');
+    const spacer = header?.querySelector('div.flex-1[aria-hidden="true"]');
+    expect(spacer).not.toBeNull();
   });
 
   it('does not render the connection pill (Live indicator removed)', () => {
@@ -222,10 +236,10 @@ describe('TopBar - Breadcrumb chrome', () => {
     expect(trigger).toHaveAttribute('aria-label', 'Open navigation menu');
   });
 
-  it('shifts left padding from 260px → 64px when sidebar collapses', () => {
+  it('anchors left edge to the sidebar width (260px → 64px) so it does not overlay the sidebar header', () => {
     const { rerender } = renderTopBar();
     let header = document.querySelector('header');
-    expect(header?.className).toContain('lg:pl-[260px]');
+    expect(header?.className).toContain('lg:left-[260px]');
 
     rerender(
       <QueryClientProvider client={createQueryClient()}>
@@ -235,7 +249,7 @@ describe('TopBar - Breadcrumb chrome', () => {
       </QueryClientProvider>
     );
     header = document.querySelector('header');
-    expect(header?.className).toContain('lg:pl-16');
-    expect(header?.className).not.toContain('lg:pl-[260px]');
+    expect(header?.className).toContain('lg:left-16');
+    expect(header?.className).not.toContain('lg:left-[260px]');
   });
 });

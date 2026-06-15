@@ -68,10 +68,26 @@ const apiClient = axios.create({
 // In production, the HttpOnly cookie is the primary auth mechanism. The Bearer header
 // serves as a fallback for E2E tests (which inject tokens into localStorage) and
 // API-key clients that don't use cookies.
+//
+// Also stamps X-Knodex-Project with the caller's currently-selected project so
+// namespace-keyed resources (secrets and any future ones) can record an "audit
+// lens" on their server-side audit events without coupling the URL to a
+// project. The header is omitted when the user is on "All Projects"
+// (currentProject === null) — empty lens means the audit row is unscoped.
 apiClient.interceptors.request.use((config) => {
   const token = typeof window !== 'undefined' ? localStorage.getItem('jwt_token') : null;
   if (token && !config.headers.Authorization) {
     config.headers.Authorization = `Bearer ${token}`;
+  }
+
+  try {
+    const currentProject = useUserStore.getState().currentProject;
+    if (currentProject) {
+      config.headers["X-Knodex-Project"] = currentProject;
+    }
+  } catch {
+    // Store access failures (SSR / partially-mocked test contexts) are
+    // non-fatal — the audit lens is informational.
   }
   return config;
 });

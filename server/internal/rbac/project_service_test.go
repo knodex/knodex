@@ -229,7 +229,7 @@ func newTestProjectSpec() ProjectSpec {
 				Policies: []string{
 					"p, proj:test:admin, applications, *, test/*, allow",
 				},
-				Groups: []string{"user:admin-user"},
+				Teams: []string{"admin-team"},
 			},
 			{
 				Name:        "viewer",
@@ -237,7 +237,7 @@ func newTestProjectSpec() ProjectSpec {
 				Policies: []string{
 					"p, proj:test:viewer, applications, get, test/*, allow",
 				},
-				Groups: []string{"user:viewer-user"},
+				Teams: []string{"viewer-team"},
 			},
 		},
 	}
@@ -274,8 +274,8 @@ func newTestUnstructuredProject(name string) *unstructured.Unstructured {
 						"policies": []interface{}{
 							"p, proj:test:admin, applications, *, test/*, allow",
 						},
-						"groups": []interface{}{
-							"user:admin-user",
+						"teams": []interface{}{
+							"admin-team",
 						},
 					},
 					map[string]interface{}{
@@ -284,8 +284,8 @@ func newTestUnstructuredProject(name string) *unstructured.Unstructured {
 						"policies": []interface{}{
 							"p, proj:test:viewer, applications, get, test/*, allow",
 						},
-						"groups": []interface{}{
-							"user:viewer-user",
+						"teams": []interface{}{
+							"viewer-team",
 						},
 					},
 				},
@@ -886,6 +886,11 @@ func TestProjectService_GetUserRole(t *testing.T) {
 			tt.mockSetup(mockResource)
 
 			svc := NewProjectService(nil, mockClient, "knodex-system")
+			// Resolver maps "admin-team" → ["user:admin-user"], "viewer-team" → ["user:viewer-user"]
+			svc.SetTeamResolver(fakeTeamResolver{
+				"admin-team":  {"user:admin-user"},
+				"viewer-team": {"user:viewer-user"},
+			})
 
 			role, err := svc.GetUserRole(context.Background(), tt.projectID, tt.userID)
 
@@ -1231,26 +1236,26 @@ func TestProjectService_UpdateRole(t *testing.T) {
 }
 
 // ==============================================
-// AddGroupToRole Tests
+// UpdateRole (Teams binding) Tests
 // ==============================================
 
-func TestProjectService_AddGroupToRole(t *testing.T) {
+func TestProjectService_UpdateRoleTeams(t *testing.T) {
 	tests := []struct {
 		name          string
 		projectID     string
 		roleName      string
-		groupName     string
+		updatedTeams  []string
 		updatedBy     string
 		mockSetup     func(*MockNamespaceableResourceInterface)
 		expectError   bool
 		errorContains string
 	}{
 		{
-			name:      "successful add group",
-			projectID: "test-project",
-			roleName:  "admin",
-			groupName: "user:new-admin",
-			updatedBy: "admin-user",
+			name:         "successful update role teams",
+			projectID:    "test-project",
+			roleName:     "admin",
+			updatedTeams: []string{"admin-team", "platform-team"},
+			updatedBy:    "admin-user",
 			mockSetup: func(m *MockNamespaceableResourceInterface) {
 				m.On("Get", mock.Anything, "test-project", mock.Anything, mock.Anything).
 					Return(newTestUnstructuredProject("test-project"), nil)
@@ -1260,24 +1265,11 @@ func TestProjectService_AddGroupToRole(t *testing.T) {
 			expectError: false,
 		},
 		{
-			name:      "group already exists in role",
-			projectID: "test-project",
-			roleName:  "admin",
-			groupName: "user:admin-user", // Already in fixture
-			updatedBy: "admin-user",
-			mockSetup: func(m *MockNamespaceableResourceInterface) {
-				m.On("Get", mock.Anything, "test-project", mock.Anything, mock.Anything).
-					Return(newTestUnstructuredProject("test-project"), nil)
-			},
-			expectError:   true,
-			errorContains: "already in role",
-		},
-		{
-			name:      "role not found",
-			projectID: "test-project",
-			roleName:  "nonexistent-role",
-			groupName: "user:new-user",
-			updatedBy: "admin-user",
+			name:         "role not found",
+			projectID:    "test-project",
+			roleName:     "nonexistent-role",
+			updatedTeams: []string{"some-team"},
+			updatedBy:    "admin-user",
 			mockSetup: func(m *MockNamespaceableResourceInterface) {
 				m.On("Get", mock.Anything, "test-project", mock.Anything, mock.Anything).
 					Return(newTestUnstructuredProject("test-project"), nil)
@@ -1294,7 +1286,12 @@ func TestProjectService_AddGroupToRole(t *testing.T) {
 
 			svc := NewProjectService(nil, mockClient, "knodex-system")
 
-			result, err := svc.AddGroupToRole(context.Background(), tt.projectID, tt.roleName, tt.groupName, tt.updatedBy)
+			updatedRole := ProjectRole{
+				Name:     tt.roleName,
+				Policies: []string{"p, proj:test-project:" + tt.roleName + ", applications, *, test/*, allow"},
+				Teams:    tt.updatedTeams,
+			}
+			result, err := svc.UpdateRole(context.Background(), tt.projectID, tt.roleName, updatedRole, tt.updatedBy)
 
 			if tt.expectError {
 				assert.Error(t, err)
@@ -1430,6 +1427,11 @@ func TestProjectService_GetUserProjectsByGroup(t *testing.T) {
 			tt.mockSetup(mockResource)
 
 			svc := NewProjectService(nil, mockClient, "knodex-system")
+			// admin-team resolves to the "user:admin-user" OIDC group used in the fixture
+			svc.SetTeamResolver(fakeTeamResolver{
+				"admin-team":  {"user:admin-user"},
+				"viewer-team": {"user:viewer-user"},
+			})
 
 			result, err := svc.GetUserProjectsByGroup(context.Background(), tt.userGroups)
 

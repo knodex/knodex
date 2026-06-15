@@ -27,45 +27,39 @@ import (
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 )
 
-// Helper function to create an ArgoCD-aligned project spec for integration tests
-func createIntegrationTestProjectSpec(projectID, description string, userGroups map[string]string) ProjectSpec {
-	roles := []ProjectRole{
-		{
-			Name:        "platform-admin",
-			Description: "Full access to project resources",
-			Policies: []string{
-				fmt.Sprintf("p, proj:%s:platform-admin, *, *, %s/*, allow", projectID, projectID),
-			},
-			Groups: []string{},
-		},
-		{
-			Name:        "developer",
-			Description: "Deploy and manage instances within the project",
-			Policies: []string{
-				fmt.Sprintf("p, proj:%s:developer, applications, *, %s/*, allow", projectID, projectID),
-				fmt.Sprintf("p, proj:%s:developer, repositories, get, %s/*, allow", projectID, projectID),
-			},
-			Groups: []string{},
-		},
-		{
-			Name:        "viewer",
-			Description: "Read-only access to project resources",
-			Policies: []string{
-				fmt.Sprintf("p, proj:%s:viewer, *, get, %s/*, allow", projectID, projectID),
-			},
-			Groups: []string{},
-		},
+// Helper function to create an ArgoCD-aligned project spec for integration tests.
+// When userGroups is non-empty, each user is bound to their role via a generated Team;
+// the returned fakeTeamResolver resolves those teams. Access control for mock-enforcer
+// tests is handled separately via setUserProjects etc.
+func createIntegrationTestProjectSpec(projectID, description string, userGroups map[string]string) (ProjectSpec, fakeTeamResolver) {
+	resolver := fakeTeamResolver{}
+
+	roleUserGroups := make(map[string][]string)
+	for userID, roleName := range userGroups {
+		roleUserGroups[roleName] = append(roleUserGroups[roleName], fmt.Sprintf("user:%s", userID))
 	}
 
-	// Add user groups to their respective roles
-	for userID, role := range userGroups {
-		userGroup := fmt.Sprintf("user:%s", userID)
-		for i := range roles {
-			if roles[i].Name == role {
-				roles[i].Groups = append(roles[i].Groups, userGroup)
-				break
-			}
+	makeRole := func(name, desc string, policies []string) ProjectRole {
+		role := ProjectRole{Name: name, Description: desc, Policies: policies}
+		if users, ok := roleUserGroups[name]; ok {
+			teamName := fmt.Sprintf("%s-%s-members", projectID, name)
+			role.Teams = []string{teamName}
+			resolver[teamName] = users
 		}
+		return role
+	}
+
+	roles := []ProjectRole{
+		makeRole("platform-admin", "Full access to project resources", []string{
+			fmt.Sprintf("p, proj:%s:platform-admin, *, *, %s/*, allow", projectID, projectID),
+		}),
+		makeRole("developer", "Deploy and manage instances within the project", []string{
+			fmt.Sprintf("p, proj:%s:developer, applications, *, %s/*, allow", projectID, projectID),
+			fmt.Sprintf("p, proj:%s:developer, repositories, get, %s/*, allow", projectID, projectID),
+		}),
+		makeRole("viewer", "Read-only access to project resources", []string{
+			fmt.Sprintf("p, proj:%s:viewer, *, get, %s/*, allow", projectID, projectID),
+		}),
 	}
 
 	return ProjectSpec{
@@ -79,7 +73,7 @@ func createIntegrationTestProjectSpec(projectID, description string, userGroups 
 			{Group: "*", Kind: "*"},
 		},
 		Roles: roles,
-	}
+	}, resolver
 }
 
 // Helper function to get the first destination namespace from a project
@@ -106,7 +100,7 @@ func TestIntegration_UserProjectVisibility(t *testing.T) {
 	user2ID := "user2-789"
 
 	// Create three projects
-	project1Spec := createIntegrationTestProjectSpec("project-one", "Project One", map[string]string{
+	project1Spec, _ := createIntegrationTestProjectSpec("project-one", "Project One", map[string]string{
 		user1ID: "developer",
 	})
 	project1, err := services.projectService.CreateProject(ctx, "project-one", project1Spec, globalAdminID)
@@ -114,7 +108,7 @@ func TestIntegration_UserProjectVisibility(t *testing.T) {
 		t.Fatalf("Failed to create project1: %v", err)
 	}
 
-	project2Spec := createIntegrationTestProjectSpec("project-two", "Project Two", map[string]string{
+	project2Spec, _ := createIntegrationTestProjectSpec("project-two", "Project Two", map[string]string{
 		user1ID: "developer",
 	})
 	project2, err := services.projectService.CreateProject(ctx, "project-two", project2Spec, globalAdminID)
@@ -122,7 +116,7 @@ func TestIntegration_UserProjectVisibility(t *testing.T) {
 		t.Fatalf("Failed to create project2: %v", err)
 	}
 
-	project3Spec := createIntegrationTestProjectSpec("project-three", "Project Three", map[string]string{
+	project3Spec, _ := createIntegrationTestProjectSpec("project-three", "Project Three", map[string]string{
 		user2ID: "developer",
 	})
 	project3, err := services.projectService.CreateProject(ctx, "project-three", project3Spec, globalAdminID)
@@ -194,7 +188,7 @@ func TestIntegration_NamespaceFiltering(t *testing.T) {
 	user1ID := "user1-ns"
 
 	// Create projects with namespaces
-	project1Spec := createIntegrationTestProjectSpec("instance-alpha", "Instance Test Alpha", map[string]string{
+	project1Spec, _ := createIntegrationTestProjectSpec("instance-alpha", "Instance Test Alpha", map[string]string{
 		user1ID: "developer",
 	})
 	project1, err := services.projectService.CreateProject(ctx, "instance-alpha", project1Spec, globalAdminID)
@@ -202,7 +196,7 @@ func TestIntegration_NamespaceFiltering(t *testing.T) {
 		t.Fatalf("Failed to create project1: %v", err)
 	}
 
-	project2Spec := createIntegrationTestProjectSpec("instance-beta", "Instance Test Beta", map[string]string{})
+	project2Spec, _ := createIntegrationTestProjectSpec("instance-beta", "Instance Test Beta", map[string]string{})
 	project2, err := services.projectService.CreateProject(ctx, "instance-beta", project2Spec, globalAdminID)
 	if err != nil {
 		t.Fatalf("Failed to create project2: %v", err)
@@ -256,11 +250,12 @@ func TestIntegration_UserRoleRetrieval(t *testing.T) {
 	viewerUserID := "viewer-user"
 
 	// Create project with different users in different roles
-	projectSpec := createIntegrationTestProjectSpec("role-test-project", "Role Test Project", map[string]string{
+	projectSpec, resolver := createIntegrationTestProjectSpec("role-test-project", "Role Test Project", map[string]string{
 		adminUserID:     "platform-admin",
 		developerUserID: "developer",
 		viewerUserID:    "viewer",
 	})
+	services.projectService.SetTeamResolver(resolver)
 	project, err := services.projectService.CreateProject(ctx, "role-test-project", projectSpec, "system")
 	if err != nil {
 		t.Fatalf("Failed to create project: %v", err)
@@ -317,13 +312,13 @@ func TestIntegration_GlobalAdminNamespaceAccess(t *testing.T) {
 	globalAdminID := "global-admin-user"
 
 	// Create multiple projects
-	project1Spec := createIntegrationTestProjectSpec("global-ns-project-1", "Global Admin NS Project 1", nil)
+	project1Spec, _ := createIntegrationTestProjectSpec("global-ns-project-1", "Global Admin NS Project 1", nil)
 	project1, err := services.projectService.CreateProject(ctx, "global-ns-project-1", project1Spec, "system")
 	if err != nil {
 		t.Fatalf("Failed to create project1: %v", err)
 	}
 
-	project2Spec := createIntegrationTestProjectSpec("global-ns-project-2", "Global Admin NS Project 2", nil)
+	project2Spec, _ := createIntegrationTestProjectSpec("global-ns-project-2", "Global Admin NS Project 2", nil)
 	project2, err := services.projectService.CreateProject(ctx, "global-ns-project-2", project2Spec, "system")
 	if err != nil {
 		t.Fatalf("Failed to create project2: %v", err)
@@ -387,11 +382,12 @@ func TestIntegration_UserPermissions(t *testing.T) {
 	viewerUserID := "perm-viewer-user"
 
 	// Create project with different roles
-	projectSpec := createIntegrationTestProjectSpec("perm-test-project", "Permission Test Project", map[string]string{
+	projectSpec, resolver := createIntegrationTestProjectSpec("perm-test-project", "Permission Test Project", map[string]string{
 		adminUserID:     "platform-admin",
 		developerUserID: "developer",
 		viewerUserID:    "viewer",
 	})
+	services.projectService.SetTeamResolver(resolver)
 	project, err := services.projectService.CreateProject(ctx, "perm-test-project", projectSpec, "system")
 	if err != nil {
 		t.Fatalf("Failed to create project: %v", err)
@@ -478,7 +474,7 @@ func TestIntegration_NamespacesWithGroups(t *testing.T) {
 				Name:        "developer",
 				Description: "Developer role",
 				Policies:    []string{"p, proj:oidc-ns-project:developer, applications, *, oidc-ns-project/*, allow"},
-				Groups:      []string{"engineering-team"}, // OIDC group mapping
+				Teams:       []string{"engineering-team"}, // Team binding (engineering-team Team CRD)
 			},
 		},
 	}
@@ -527,7 +523,7 @@ func TestIntegration_CacheInvalidation(t *testing.T) {
 	userID := "cache-test-user"
 
 	// Create a project
-	projectSpec := createIntegrationTestProjectSpec("cache-project", "Cache Test Project", map[string]string{
+	projectSpec, _ := createIntegrationTestProjectSpec("cache-project", "Cache Test Project", map[string]string{
 		userID: "developer",
 	})
 	project, err := services.projectService.CreateProject(ctx, "cache-project", projectSpec, "system")

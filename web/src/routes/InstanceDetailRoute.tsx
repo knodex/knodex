@@ -4,17 +4,19 @@
 import { useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { InstanceDetailView } from "@/components/instances";
+import { InstanceDetailSkeleton } from "@/components/instances/instance-detail-skeleton";
 import { useInstance } from "@/hooks/useInstances";
 import { useAnnouncements } from "@/hooks/useAnnouncements";
-import { Loader2, AlertCircle } from "@/lib/icons";
+import { AlertCircle } from "@/lib/icons";
 
 /**
- * URL params for /instances/group/:group/(ns/:namespace|cluster)/:kind/:name.
+ * URL params for /instances/:group/:version/((:namespace/:kind/:name)|(:kind/:name)).
  * Cluster-scoped routes do not bind :namespace; we detect that variant by its
- * absence rather than by an empty-string sentinel.
+ * absence rather than by an empty-string sentinel, matching the K8s API convention.
  */
 type InstanceRouteParams = {
   group: string;
+  version: string;
   namespace?: string;
   kind: string;
   name: string;
@@ -43,11 +45,9 @@ export default function InstanceDetailRoute() {
   }, [navigate, announce]);
 
   if (isLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
-    );
+    // Skeleton mirrors InstanceDetailView's exact layout (header card + tab
+    // bar + tabpanel) so the page doesn't reflow when data lands.
+    return <InstanceDetailSkeleton />;
   }
 
   if (error || !instance) {

@@ -1,6 +1,7 @@
 // Copyright 2026 Knodex Authors
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { createContext, useContext } from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -55,8 +56,12 @@ vi.mock("@/components/ui/dialog", () => ({
   ),
 }));
 
-// Mock Radix UI Select
-let selectOnValueChange: ((value: string) => void) | undefined;
+// Mock Radix UI Select. Uses a React Context so each <Select> has its own
+// onValueChange — necessary now that the dialog renders multiple Selects
+// (project, namespace, rotation). A previous module-level variable approach
+// would have the last-rendered Select silently capture clicks on options
+// belonging to earlier Selects.
+const SelectMockCtx = createContext<((value: string) => void) | undefined>(undefined);
 vi.mock("@/components/ui/select", () => ({
   Select: ({
     children,
@@ -65,10 +70,11 @@ vi.mock("@/components/ui/select", () => ({
     children: React.ReactNode;
     value: string;
     onValueChange: (value: string) => void;
-  }) => {
-    selectOnValueChange = onValueChange;
-    return <div data-testid="select">{children}</div>;
-  },
+  }) => (
+    <SelectMockCtx.Provider value={onValueChange}>
+      <div data-testid="select">{children}</div>
+    </SelectMockCtx.Provider>
+  ),
   SelectTrigger: ({ children }: { children: React.ReactNode }) => (
     <button role="combobox">{children}</button>
   ),
@@ -84,15 +90,18 @@ vi.mock("@/components/ui/select", () => ({
   }: {
     children: React.ReactNode;
     value: string;
-  }) => (
-    <div
-      role="option"
-      data-testid={`select-option-${value}`}
-      onClick={() => selectOnValueChange?.(value)}
-    >
-      {children}
-    </div>
-  ),
+  }) => {
+    const onValueChange = useContext(SelectMockCtx);
+    return (
+      <div
+        role="option"
+        data-testid={`select-option-${value}`}
+        onClick={() => onValueChange?.(value)}
+      >
+        {children}
+      </div>
+    );
+  },
 }));
 
 const createTestQueryClient = () =>
@@ -161,8 +170,8 @@ describe("CreateSecretDialog", () => {
     fireEvent.click(screen.getByText("Create"));
 
     await waitFor(() => {
+      // Namespace is the URL-routed access boundary — no project param.
       expect(mockMutateAsync).toHaveBeenCalledWith({
-        project: "alpha",
         name: "my-secret",
         namespace: "alpha-ns",
         data: { API_KEY: "secret-123" },

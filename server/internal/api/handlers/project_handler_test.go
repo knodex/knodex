@@ -1068,7 +1068,7 @@ func TestProjectHandler_UpdateProject_GlobalAdminCanUpdateRoles(t *testing.T) {
 			{
 				Name:     "admin",
 				Policies: []string{"p, proj:my-project:admin, instances, *, my-project/*, allow"},
-				Groups:   []string{"engineering-admins"},
+				Teams:    []string{"engineering-admins"},
 			},
 		},
 	}
@@ -1509,13 +1509,13 @@ func TestProjectHandler_CreateProjectWithRoles(t *testing.T) {
 				Name:        "admin",
 				Description: "Full project management access",
 				Policies:    []string{"p, proj:my-project:admin, projects, *, my-project, allow"},
-				Groups:      []string{"team-admins"},
+				Teams:       []string{"team-admins"},
 			},
 			{
 				Name:        "developer",
 				Description: "Deploy and manage instances",
 				Policies:    []string{"p, proj:my-project:developer, instances, *, my-project/*, allow"},
-				Groups:      []string{"team-devs"},
+				Teams:       []string{"team-devs"},
 			},
 		},
 	}
@@ -1551,8 +1551,8 @@ func TestProjectHandler_CreateProjectWithRoles(t *testing.T) {
 	if projectResp.Roles[1].Name != "developer" {
 		t.Errorf("expected second role name 'developer', got '%s'", projectResp.Roles[1].Name)
 	}
-	if len(projectResp.Roles[0].Groups) != 1 || projectResp.Roles[0].Groups[0] != "team-admins" {
-		t.Errorf("expected admin role groups ['team-admins'], got %v", projectResp.Roles[0].Groups)
+	if len(projectResp.Roles[0].Teams) != 1 || projectResp.Roles[0].Teams[0] != "team-admins" {
+		t.Errorf("expected admin role groups ['team-admins'], got %v", projectResp.Roles[0].Teams)
 	}
 }
 

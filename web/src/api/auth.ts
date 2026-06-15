@@ -151,6 +151,21 @@ export interface AccountInfoResponse {
   issuer: string;
   tokenExpiresAt: number;
   tokenIssuedAt: number;
+  /**
+   * Whether the user is an org admin: true iff role:serveradmin ∈ casbinRoles
+   * (granted at login via the operator globalAdmin mapping). Defaults false
+   * (read-only).
+   */
+  isOrgAdmin: boolean;
+  /**
+   * The caller's effective application role (story 17.1) — the "member" baseline
+   * of the two-axis model (app-role ⊥ project-roles). Derived server-side from
+   * Casbin state: `'serveradmin'` iff role:serveradmin ∈ casbinRoles, else
+   * `'member'`. `member` is a pure display value, never a Casbin subject (NFR-T1).
+   * Typed as `string` (not a closed union) to tolerate a future `auditor` tier
+   * without a breaking client change. Read by the "My Access" self-view.
+   */
+  applicationRole: string;
 }
 
 /**

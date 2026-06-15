@@ -44,64 +44,26 @@
   font-display: swap;
 }
 
-@import "./styles/tokens.css";
+/* Shared design primitives — consumed from the @knodex/design-tokens npm
+ * workspace package (the cross-repo source of truth, generated from
+ * web/src/design-tokens/tokens.json). See design-system-bridge.md. */
+@import "@knodex/design-tokens/css/tokens.css";
 @import "./styles/animations.css";
 
 @import "tailwindcss";
 
 :root {
-  /* Brand Signature Gradient */
-  --gradient-brand: linear-gradient(135deg, #2dd4bf 0%, #8b5cf6 100%);
-  --gradient-brand-subtle: linear-gradient(135deg, rgba(45, 212, 191, 0.1) 0%, rgba(139, 92, 246, 0.1) 100%);
+  /* ── Framework-semantic layer (per-repo) ──
+   * Brand gradients and the raw color palette (teal/violet/blue/rose/amber/gray
+   * ramps) now live in @knodex/design-tokens and are imported above via
+   * css/tokens.css. The shadcn HSL aliases below are knodex-ee's React/Tailwind
+   * component layer; they stay per-repo (knodex-cloud-v2 uses its own Next.js
+   * component layer) but consume the shared primitives. See design-system-bridge.md. */
 
-  /* Core Brand Colors - Vibrant palette from presentation */
-  --teal-50: #f0fdfa;
-  --teal-100: #ccfbf1;
-  --teal-400: #2dd4bf;
-  --teal-500: #14b8a6;
-  --teal-600: #0d9488;
-  --teal: #2dd4bf;
-  --teal-dark: #14b8a6;
-  --teal-light: #99f6e4;
-
-  --violet-50: #f5f3ff;
-  --violet-100: #ede9fe;
-  --violet-400: #a78bfa;
-  --violet-500: #8b5cf6;
-  --violet-600: #7c3aed;
-  --violet: #8b5cf6;
-  --violet-light: #c4b5fd;
-
-  --blue-50: #eff6ff;
-  --blue-100: #dbeafe;
-  --blue-400: #60a5fa;
-  --blue-500: #3b82f6;
-  --blue-600: #2563eb;
-  --blue: #3b82f6;
-
-  --rose-50: #fff1f2;
-  --rose-100: #ffe4e6;
-  --rose-400: #fb7185;
-  --rose-500: #f43f5e;
-  --rose-600: #e11d48;
-
-  --amber-50: #fffbeb;
-  --amber-100: #fef3c7;
-  --amber-400: #fbbf24;
-  --amber-500: #f59e0b;
-  --amber-600: #d97706;
-
-  /* Gray/Slate scale - cleaner than stone */
-  --gray-50: #f9fafb;
-  --gray-100: #f3f4f6;
-  --gray-200: #e5e7eb;
-  --gray-300: #d1d5db;
-  --gray-400: #9ca3af;
-  --gray-500: #6b7280;
-  --gray-600: #4b5563;
-  --gray-700: #374151;
-  --gray-800: #1f2937;
-  --gray-900: #111827;
+  /* Tell the UA which color scheme to use for native form controls (date
+   * pickers, scrollbars, etc.) — without this, native widgets render with
+   * the browser-default light UA stylesheet even when our theme is dark. */
+  color-scheme: light;
 
   /* ShadCN Light Mode - Clean Gray palette */
   --background: 210 20% 98%;         /* Very light gray: #f9fafb */
@@ -183,6 +145,10 @@
 }
 
 .dark {
+  /* Switch native form controls (date picker, scrollbars, file input chrome)
+   * to the dark UA stylesheet so they remain legible on our navy background. */
+  color-scheme: dark;
+
   /* ShadCN Dark Mode — Deep navy with lifted cards */
   --background: 227 26% 11%;         /* Deep navy: #141722 */
   --foreground: 210 20% 98%;         /* Gray-50: #f9fafb */
@@ -1084,5 +1050,15 @@
 
   .bg-radial-violet-bottom {
     background: radial-gradient(ellipse at bottom right, hsl(263 70% 60% / 0.06), transparent 50%);
+  }
+
+  /* Login backdrop: teal top + violet bottom-right radials over base surface.
+     The single-radial classes above each set the `background` shorthand, so
+     they cannot compose on one element — this combines both in one declaration. */
+  .bg-radial-login {
+    background:
+      radial-gradient(ellipse at top, hsl(168 80% 59% / 0.08), transparent 50%),
+      radial-gradient(ellipse at bottom right, hsl(263 70% 60% / 0.06), transparent 50%),
+      hsl(var(--background));
   }
 }

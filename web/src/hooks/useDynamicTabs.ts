@@ -7,6 +7,10 @@ export interface Tab<T extends string> {
   id: T;
   label: string;
   icon: React.ReactNode;
+  /** Optional count pill rendered after the label (e.g. "6/7", "16"). */
+  count?: string;
+  /** "warn" renders the pill in the error tint (e.g. failing resources). */
+  countVariant?: "default" | "warn";
 }
 
 export interface ConditionalTab<T extends string> {

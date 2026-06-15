@@ -35,6 +35,11 @@ rules:
   - apiGroups: ["kro.run"]
     resources: ["*"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # KRO-generated agent instance CRDs (knodexagentmodelconfigs etc) — created
+  # directly, not via the kro.run group; the global "*" rule below only grants get/list.
+  - apiGroups: ["agents.knodex.io"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   # Manage ConfigMaps and Secrets for auth (account storage) and child resources view
   - apiGroups: [""]
     resources: ["configmaps", "secrets"]
@@ -98,6 +103,18 @@ rules:
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["create", "get", "list", "update", "delete"]
+  # Namespace-scoped Team CRD (Epic D): the TeamWatcher observes Teams in this
+  # install namespace to resolve roles[].teams[] into project RBAC; the
+  # cloud-tenant team-bridge materializes federated Team mirrors here on
+  # managed-team create/delete. Each Knodex install operates only on its own
+  # namespace, so two installs in different namespaces cannot read each other's
+  # Teams even via RBAC misconfiguration.
+  - apiGroups: ["knodex.io"]
+    resources: ["teams"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["knodex.io"]
+    resources: ["teams/status"]
+    verbs: ["get", "update", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

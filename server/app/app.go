@@ -23,6 +23,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -48,10 +49,15 @@ import (
 	"github.com/knodex/knodex/server/internal/bootstrap"
 	"github.com/knodex/knodex/server/internal/clients"
 	"github.com/knodex/knodex/server/internal/config"
+	db "github.com/knodex/knodex/server/internal/database"
 	"github.com/knodex/knodex/server/internal/deployment"
 	"github.com/knodex/knodex/server/internal/drift"
+	"github.com/knodex/knodex/server/internal/groups"
 	"github.com/knodex/knodex/server/internal/health"
 	"github.com/knodex/knodex/server/internal/history"
+	identitypg "github.com/knodex/knodex/server/internal/identity/postgres"
+	"github.com/knodex/knodex/server/internal/kagent"
+	"github.com/knodex/knodex/server/internal/kagent/runs"
 	"github.com/knodex/knodex/server/internal/kro"
 	krodiff "github.com/knodex/knodex/server/internal/kro/diff"
 	kroschema "github.com/knodex/knodex/server/internal/kro/schema"
@@ -100,6 +106,22 @@ type CategoryInitFunc func(rgdWatcher *watcher.RGDWatcher) services.CategoryServ
 // Organization field (Phase 1: every event uses cfg.Organization).
 type AuditRecorderInitFunc func(ctx context.Context, k8sClient kubernetes.Interface, namespace string, defaultOrg string) audit.Recorder
 
+// AgentRunStoreWrapFunc is the signature for the EE agent-run-store audit
+// decorator (Story 49.5). In EE builds it wraps the OSS run store so every
+// successful Create/Update additionally emits an audit event through the
+// shared recorder; in OSS builds it is the identity function (zero Postgres
+// interaction in the run path). Applied in Run() at the one point where both
+// the run store and the audit recorder exist.
+type AgentRunStoreWrapFunc func(inner runs.Store, recorder audit.Recorder) runs.Store
+
+// AgentSpecValidatorInitFunc is the signature for the EE agent spec
+// validator (Story 50.3): in EE builds it constructs the Gatekeeper
+// AdmissionReview validator for the RGD Builder completion path; in OSS
+// builds it returns nil (no policy validation). Invoked in
+// initEnterpriseServices AFTER the compliance init so gatekeeper's service
+// registration has run.
+type AgentSpecValidatorInitFunc func(k8sCfg *config.Kubernetes, license services.LicenseService) handlers.AgentSpecValidator
+
 // AuditLoginMiddlewareInitFunc is the signature for enterprise audit login middleware initialization.
 // In EE builds, this creates an AuditService + AuditConfigWatcher and returns the login middleware.
 // Returns nil in OSS builds (login routes are not wrapped with audit middleware).
@@ -120,6 +142,24 @@ type AuditAPIServiceInitFunc func(ctx context.Context, k8sClient kubernetes.Inte
 // In OSS builds, returns nil, nil (no-op — zero database dependency).
 type DatabaseManagerInitFunc func(ctx context.Context, cfg *config.Config) (io.Closer, error)
 
+// SeatReconcilerInitFunc is the signature for the EE license seat reconciler
+// initialization. Story 15.2 (R5-2): the reconciler reads the canonical identity
+// roster via IdentityService.BilledSeatCount (entitlement-based, uniform), runs
+// its first poll synchronously so GetSeatUsage is populated before the first
+// HTTP request, wires itself into the LicenseService via SetUsageProvider, and
+// returns the reconciler's Run loop for app.Run to launch on runCtx. In OSS /
+// EE-builds-without-Postgres (nil identitySvc), it returns nil and the license
+// service keeps returning the cold-start sentinel.
+//
+// orgID is the static single-org scope (cfg.Organization) used for metrics labels.
+type SeatReconcilerInitFunc func(licSvc services.LicenseService, identitySvc services.IdentityService, orgID string, logger *slog.Logger) func(context.Context)
+
+// IdentityHooksInitFunc builds the post-commit identity hooks (Story 15.2 AC16).
+// On EE it returns audit-emitting hooks bound to the recorder; on OSS it returns
+// the zero-value (no emission). The composition root is the only edition-aware
+// place (AC24).
+type IdentityHooksInitFunc func(recorder audit.Recorder, logger *slog.Logger) services.IdentityHooks
+
 // App is the composable application container for the Knodex server.
 // Create with New(), configure enterprise services via setters, then call Run().
 type App struct {
@@ -139,10 +179,45 @@ type App struct {
 	violationHistoryInitFunc     ViolationHistoryInitFunc
 	categoryInitFunc             CategoryInitFunc
 	auditRecorderInitFunc        AuditRecorderInitFunc
+	agentRunStoreWrapFunc        AgentRunStoreWrapFunc
+	agentSpecValidatorInitFunc   AgentSpecValidatorInitFunc
 	auditLoginMiddlewareInitFunc AuditLoginMiddlewareInitFunc
 	auditMiddlewareInitFunc      AuditMiddlewareInitFunc
 	auditAPIServiceInitFunc      AuditAPIServiceInitFunc
 	databaseManagerInitFunc      DatabaseManagerInitFunc
+	seatReconcilerInitFunc       SeatReconcilerInitFunc
+	identityHooksInitFunc        IdentityHooksInitFunc
+
+	// identitySourceKind is the federated_identities.source_kind stamped on JIT
+	// rows ("oidc_jit"). Set from the composition root (AC24).
+	identitySourceKind string
+
+	// identityService is the composed canonical user-persistence port (Story 15.2).
+	// Built in Run() from the database manager's identity pool and stored here for
+	// Story 15.2a's router wiring (the Users API). Nil until the pool is up.
+	identityService services.IdentityService
+
+	// teamStore holds the in-memory Team CRD lookup table (team name → OIDC
+	// groups) populated by the cluster-scoped TeamWatcher. Story 10.2 injects
+	// it into the policy generator to resolve roles[].teams[]. It is a passive
+	// lookup table and is NOT wired into Casbin in this story.
+	teamStore *rbac.TeamStore
+
+	// teamService provides cluster-scoped Team CRUD for the operator-gated
+	// /api/v1/teams API (Story 10.4). Writes mutate the cluster object; the
+	// teamStore-backed TeamWatcher above re-resolves policies automatically.
+	teamService rbac.TeamServiceInterface
+
+	// agentRunStore persists agent invocation run records (Story 49.4). OSS
+	// defaults to the Redis store in Run(); EE (49.5) overlays a Postgres
+	// implementation via SetAgentRunStore — the same seam as SetLicenseService.
+	agentRunStore runs.Store
+
+	// agentSpecValidator validates RGD Builder output against Gatekeeper
+	// policy (Story 50.3). Built in initEnterpriseServices from the EE init
+	// func; nil in OSS builds and on EE construction failure — the invoke
+	// handler is nil-safe.
+	agentSpecValidator handlers.AgentSpecValidator
 }
 
 // New creates a new App with the given configuration.
@@ -159,6 +234,14 @@ func New(cfg *config.Config) *App {
 // Must be called before Run(). Defaults to NoopLicenseService if not set.
 func (a *App) SetLicenseService(svc services.LicenseService) {
 	a.licenseService = svc
+}
+
+// SetAgentRunStore sets the agent run record store (Story 49.4 / 49.5 EE
+// seam). Must be called before Run(). When unset, Run() defaults to the
+// Redis-backed OSS store (nil when Redis is unavailable — handlers fail
+// soft/closed accordingly).
+func (a *App) SetAgentRunStore(s runs.Store) {
+	a.agentRunStore = s
 }
 
 // SetComplianceInitFunc registers a factory function for creating the compliance service.
@@ -183,6 +266,24 @@ func (a *App) SetCategoryInitFunc(fn CategoryInitFunc) {
 // In OSS builds, the factory returns nil (handlers skip audit recording).
 func (a *App) SetAuditRecorderInitFunc(fn AuditRecorderInitFunc) {
 	a.auditRecorderInitFunc = fn
+}
+
+// SetAgentRunStoreWrapFunc registers the build-tag-dispatched agent-run-store
+// audit decorator (Story 49.5). In EE builds the wrap layers audit emission
+// over the run store; in OSS builds it is the identity function. The direct
+// SetAgentRunStore setter stays untouched — the wrap composes over whatever
+// store is present when Run() applies it.
+func (a *App) SetAgentRunStoreWrapFunc(fn AgentRunStoreWrapFunc) {
+	a.agentRunStoreWrapFunc = fn
+}
+
+// SetAgentSpecValidatorInitFunc registers the build-tag-dispatched agent
+// spec validator factory (Story 50.3). In EE builds it builds the Gatekeeper
+// AdmissionReview validator; in OSS builds it returns nil. Invoked inside
+// initEnterpriseServices AFTER the compliance init (gatekeeper.RegisterService
+// must have run for the validator to see constraint metadata).
+func (a *App) SetAgentSpecValidatorInitFunc(fn AgentSpecValidatorInitFunc) {
+	a.agentSpecValidatorInitFunc = fn
 }
 
 // SetAuditLoginMiddlewareInitFunc registers a factory function for creating the audit login middleware.
@@ -213,6 +314,35 @@ func (a *App) SetDatabaseManagerInitFunc(fn DatabaseManagerInitFunc) {
 	a.databaseManagerInitFunc = fn
 }
 
+// SetSeatReconcilerInitFunc registers a factory for the EE license seat
+// reconciler (STORY-465 AC #9). In EE builds the factory wires the reconciler
+// into the license service (SetUsageProvider) and returns its Run loop; in OSS
+// builds the factory returns nil (the license service keeps returning the
+// cold-start sentinel). Invoked during Run() AFTER the audit recorder init —
+// which is the call that constructs the shared seat store on top of the audit
+// pool (AC #2 same-transaction wiring).
+func (a *App) SetSeatReconcilerInitFunc(fn SeatReconcilerInitFunc) {
+	a.seatReconcilerInitFunc = fn
+}
+
+// SetIdentityHooksInitFunc registers the factory for the post-commit identity
+// hooks (Story 15.2). EE wires audit-emitting hooks; OSS wires the zero-value.
+func (a *App) SetIdentityHooksInitFunc(fn IdentityHooksInitFunc) {
+	a.identityHooksInitFunc = fn
+}
+
+// SetIdentitySourceKind sets the federated_identities.source_kind for JIT rows
+// (build-tag constant from the composition root — AC24).
+func (a *App) SetIdentitySourceKind(kind string) {
+	a.identitySourceKind = kind
+}
+
+// IdentityService returns the composed canonical user-persistence port, or nil
+// before Run() builds it. Exposed for Story 15.2a's Users API router wiring.
+func (a *App) IdentityService() services.IdentityService {
+	return a.identityService
+}
+
 // SetOrganizationFilter sets the organization filter for enterprise catalog filtering.
 // In EE builds, this is set to cfg.Organization. In OSS builds, this is empty (no filtering).
 func (a *App) SetOrganizationFilter(org string) {
@@ -223,6 +353,13 @@ func (a *App) SetOrganizationFilter(org string) {
 // It handles graceful shutdown on SIGINT/SIGTERM.
 func (a *App) Run(ctx context.Context) error { //nolint:gocyclo // orchestration function inherently complex
 	cfg := a.cfg
+
+	// NOTE (story 12.1): the story-8.11 claims-parity boot probe
+	// (auth.VerifyClaimsParityAtBoot) was retired here. Per ADR
+	// adr-cloud-team-membership-keycloak-groups (Accepted), cloud tokens carry
+	// team groups only — sourced natively by Keycloak's group-membership mapper —
+	// so Knodex no longer fabricates kx-org-*/kx-proj-* claims and the three-place
+	// formatGroups invariant (and its boot probe) no longer exists.
 
 	orgSource := "default"
 	if _, ok := os.LookupEnv("KNODEX_ORGANIZATION"); ok {
@@ -290,6 +427,24 @@ func (a *App) Run(ctx context.Context) error { //nolint:gocyclo // orchestration
 		// Create project service scoped to Knodex namespace
 		projectService = rbac.NewProjectService(k8sClient, dynamicClient, cfg.KnodexNamespace)
 		slog.Info("project service initialized", "namespace", cfg.KnodexNamespace)
+
+		// Create the in-memory Team CRD lookup table (team name → OIDC groups)
+		// BEFORE the policy enforcer / project service consume it, so it can be
+		// injected as the TeamResolver (Story 10.2 roles[].teams[] → groups). The
+		// cluster-scoped TeamWatcher (created below) populates it. Independent of
+		// Casbin: a Team yields no policy on its own — it only resolves to groups.
+		a.teamStore = rbac.NewTeamStore()
+		projectService.SetTeamResolver(a.teamStore)
+		slog.Info("team store initialized and wired into project service as team resolver")
+
+		// Namespace-scoped Team CRUD service backing the operator-gated
+		// /api/v1/teams API (Story 10.4). Symmetric with ProjectService —
+		// writes mutate the Team object in the install namespace; the
+		// TeamWatcher (created below) observes the change and the debounced
+		// SyncPolicies re-resolves roles[].teams[] — no second re-sync path
+		// is added (NFR-T1).
+		a.teamService = rbac.NewTeamService(dynamicClient, cfg.KnodexNamespace)
+		slog.Info("team service initialized", "namespace", cfg.KnodexNamespace)
 
 		// Create namespace service for listing cluster namespaces matching project policies
 		namespaceService = rbac.NewNamespaceService(k8sClient, projectService)
@@ -360,6 +515,13 @@ func (a *App) Run(ctx context.Context) error { //nolint:gocyclo // orchestration
 				peOpts = append(peOpts, roleStoreOpt)
 			}
 
+			// Inject the team resolver so roles[].teams[] are expanded into OIDC
+			// groups when generating Casbin grouping policies (Story 10.2). Teams
+			// resolve to groups only — no separate team enforcement (NFR-T1).
+			if a.teamStore != nil {
+				peOpts = append(peOpts, rbac.WithTeamResolver(a.teamStore))
+			}
+
 			// Create Redis-backed authorization cache for cross-replica consistency.
 			// Always uses Redis when available; gracefully degrades to in-memory fallback if Redis fails at runtime.
 			if redisClient != nil {
@@ -408,6 +570,40 @@ func (a *App) Run(ctx context.Context) error { //nolint:gocyclo // orchestration
 		}
 	}
 
+	// Create the cluster-scoped Team CRD watcher. Its in-memory store was created
+	// above (a.teamStore) so it could be injected as the TeamResolver into the
+	// policy enforcer + project service. Independent of Casbin: a Team produces
+	// no policy on its own (Story 10.2 resolves roles[].teams[] → groups →
+	// policies). When a team's groups change or it is deleted, OnChange triggers
+	// a coalesced Casbin policy re-sync so bound projects reflect the new groups.
+	var teamWatcher rbac.TeamWatcher
+	// teamChangeCh coalesces team-change signals; a single drainer goroutine
+	// (started in the watcher-start section, where runCtx exists) debounces them
+	// into at most one SyncPolicies per window. Buffered size 1 = coalescing.
+	var teamChangeCh chan struct{}
+	if dynamicClient != nil && a.teamStore != nil {
+		teamWatcherConfig := rbac.TeamWatcherConfig{
+			ResyncPeriod: rbac.DefaultTeamWatcherResyncPeriod,
+			Logger:       slog.Default(),
+		}
+		// Only wire re-sync when there is an enforcer to re-sync; otherwise the
+		// store still populates but no policy regeneration is needed.
+		if policyEnforcer != nil {
+			teamChangeCh = make(chan struct{}, 1)
+			teamWatcherConfig.OnChange = func(teamName string) {
+				// Non-blocking enqueue: must not block the informer goroutine. If a
+				// signal is already pending, coalesce (the drainer re-syncs ALL
+				// projects, so one pending signal covers any number of changes).
+				select {
+				case teamChangeCh <- struct{}{}:
+				default:
+				}
+			}
+		}
+		teamWatcher = rbac.NewTeamWatcher(dynamicClient, a.teamStore, cfg.KnodexNamespace, teamWatcherConfig)
+		slog.Info("team watcher created", "namespace", cfg.KnodexNamespace)
+	}
+
 	// Create permission service with unified cache
 	if projectService != nil && policyEnforcer != nil {
 		permissionService = rbac.NewPermissionService(rbac.PermissionServiceConfig{
@@ -421,6 +617,7 @@ func (a *App) Run(ctx context.Context) error { //nolint:gocyclo // orchestration
 	// Initialize auth service with AccountStore (ArgoCD pattern)
 	var authService *auth.Service
 	var accountStore *auth.AccountStore
+	var observedGroupsStore *groups.RedisStore // Story 10.3: nil when Redis unavailable
 	if k8sClient != nil && projectService != nil && redisClient != nil {
 		namespace := cfg.Log.Namespace
 		if namespace == "" {
@@ -453,7 +650,7 @@ func (a *App) Run(ctx context.Context) error { //nolint:gocyclo // orchestration
 					"namespace", namespace,
 					"hint", "either fix the underlying error (often a missing Secret RBAC permission) or set server.auth.localLogin.enabled=false",
 				)
-				os.Exit(1)
+				return fmt.Errorf("admin password bootstrap failed: %w", err)
 			}
 			adminPassword = pw
 			if wasGenerated {
@@ -476,31 +673,46 @@ func (a *App) Run(ctx context.Context) error { //nolint:gocyclo // orchestration
 		oidcProviders := ssoProviders
 
 		authConfig := &auth.Config{
-			JWTExpiry:          cfg.Auth.JWTExpiry,
-			LocalAdminUsername: cfg.Auth.AdminUsername,
-			LocalAdminPassword: adminPassword,
-			LocalLoginEnabled:  cfg.Auth.LocalLoginEnabled,
-			OIDCEnabled:        cfg.Auth.OIDCEnabled,
-			OIDCProviders:      oidcProviders,
+			JWTExpiry:                 cfg.Auth.JWTExpiry,
+			LocalAdminUsername:        cfg.Auth.AdminUsername,
+			LocalAdminPassword:        adminPassword,
+			LocalLoginEnabled:         cfg.Auth.LocalLoginEnabled,
+			OIDCEnabled:               cfg.Auth.OIDCEnabled,
+			OIDCProviders:             oidcProviders,
+			BootstrapProjectName:      cfg.BootstrapProjectName,
+			BootstrapProjectNamespace: cfg.BootstrapProjectNamespace,
 		}
 
 		var authErr error
 		authService, authErr = auth.NewService(authConfig, accountStore, projectService, k8sClient, redisClient, casbinEnforcer)
 		if authErr != nil {
 			slog.Error("failed to create auth service - server cannot start without authentication", "error", authErr)
-			os.Exit(1)
+			return fmt.Errorf("auth service initialization failed: %w", authErr)
 		}
 		slog.Info("auth service initialized",
 			"oidc_enabled", cfg.Auth.OIDCEnabled,
 			"oidc_providers", len(oidcProviders),
 			"casbin_enabled", casbinEnforcer != nil,
 		)
+
+		// Story 10.3: passive observed-groups discovery. Record the distinct OIDC
+		// group strings seen at login (in auth.Service.GenerateTokenWithGroups) so
+		// the team/role editor can offer a typeahead of real groups. Backed by the
+		// same Redis client; guarded on redisClient != nil like auth construction.
+		if redisClient != nil {
+			observedGroupsStore = groups.NewRedisStore(redisClient)
+			authService.SetObservedGroupsStore(observedGroupsStore)
+			slog.Info("observed-groups discovery store initialized")
+		}
 	} else if redisClient == nil {
 		slog.Warn("Redis client not available, authentication services disabled")
 	}
 
 	// Initialize OIDC service (if OIDC is enabled)
 	var oidcService *auth.OIDCService
+	// Hoisted so the identity service (built after the audit recorder, below) can
+	// inject the ObserveLogin adapter via SetIdentityObserver (Story 15.2).
+	var oidcProvisioningService *auth.OIDCProvisioningService
 	if cfg.Auth.OIDCEnabled && authService != nil && redisClient != nil && projectService != nil {
 		authConfig := &auth.Config{
 			JWTExpiry:     cfg.Auth.JWTExpiry,
@@ -511,7 +723,7 @@ func (a *App) Run(ctx context.Context) error { //nolint:gocyclo // orchestration
 		groupMapper := auth.NewGroupMapper(cfg.Auth.OIDCGroupMappings)
 		authService.SetGroupMapper(groupMapper)
 
-		oidcProvisioningService := auth.NewOIDCProvisioningService(projectService, groupMapper, casbinEnforcer, cfg.Auth.DefaultRole)
+		oidcProvisioningService = auth.NewOIDCProvisioningService(projectService, groupMapper, casbinEnforcer, cfg.Auth.DefaultRole)
 
 		var err error
 		// Pass policyEnforcer as RolePersister: persists OIDC roles to Redis and
@@ -649,6 +861,53 @@ func (a *App) Run(ctx context.Context) error { //nolint:gocyclo // orchestration
 	// Initialize enterprise services using init functions (monorepo build-tag bridge)
 	auditRecorder := a.initEnterpriseServices(cfg, rgdWatcher, wsHub, redisClient, k8sClient)
 
+	// Build the canonical identity store (Story 15.2). Edition awareness enters
+	// ONLY here (AC24): SourceKind is a build-tag constant; Hooks are EE
+	// audit-emitting or OSS zero-value. The store is the single IdentityService
+	// impl on every edition, backed by the database manager's identity pool. When
+	// the pool is unavailable the service stays nil and ObserveLogin/seat counting
+	// degrade gracefully (the startup fail-fast in InitDatabaseManager — AC22 —
+	// means a nil pool here only happens in tests / OSS-without-DB unit paths).
+	if mgr := db.GetManager(); mgr != nil && mgr.IdentityPool() != nil {
+		hooks := services.IdentityHooks{}
+		if a.identityHooksInitFunc != nil {
+			hooks = a.identityHooksInitFunc(auditRecorder, logger)
+		}
+		sourceKind := a.identitySourceKind
+		if sourceKind == "" {
+			sourceKind = services.SourceKindOIDCJIT
+		}
+		a.identityService = identitypg.New(mgr.IdentityPool(), identitypg.Config{
+			SourceKind: sourceKind,
+			Hooks:      hooks,
+			Logger:     logger,
+			OrgID:      cfg.Organization,
+		})
+		slog.Info("identity store initialized", "source_kind", sourceKind, "org_id", cfg.Organization)
+
+		// Inject the ObserveLogin adapter into the OIDC provisioning service so a
+		// successful login materializes the canonical user (best-effort; never
+		// fails the login). The flat adapter avoids an auth→services import cycle.
+		if oidcProvisioningService != nil {
+			identitySvc := a.identityService
+			org := cfg.Organization
+			oidcProvisioningService.SetIdentityObserver(func(ctx context.Context, issuer, sub, email, displayName string, emailVerified bool) error {
+				_, err := identitySvc.ObserveLogin(ctx, services.ObserveLoginParams{
+					OrgID:         org,
+					Issuer:        issuer,
+					Sub:           sub,
+					Email:         email,
+					DisplayName:   displayName,
+					EmailVerified: emailVerified,
+					ProviderKind:  "oidc",
+				})
+				return err
+			})
+		}
+	} else {
+		slog.Warn("identity store not initialized: database manager/identity pool unavailable")
+	}
+
 	// Create repository secret watcher for declarative audit trail.
 	// Uses the same credential namespace as the repository service (cfg.Log.Namespace).
 	var repoWatcher *oldwatcher.RepositoryWatcher
@@ -710,6 +969,45 @@ func (a *App) Run(ctx context.Context) error { //nolint:gocyclo // orchestration
 	// Create shared drift detection service (used by both CRUD handler and InstanceTracker callback)
 	driftSvc := drift.NewService(redisClient, slog.Default(), cfg.Organization)
 
+	// Story 10.3: expose the observed-groups store to the router as a List-er
+	// interface. Declared as the interface (not the concrete *RedisStore) so a nil
+	// store yields a true nil interface — the handler then returns an empty list.
+	var observedGroupsLister handlers.ObservedGroupsLister
+	if observedGroupsStore != nil {
+		observedGroupsLister = observedGroupsStore
+	}
+
+	// Story 49.1: kagent presence checker for the /agents hub. Declared as the
+	// handler interface so a missing K8s client yields a true nil — the status
+	// endpoint then reports a degraded payload instead of failing.
+	var kagentChecker handlers.KagentPresenceChecker
+	if k8sClient != nil {
+		kagentChecker = kagent.NewChecker(k8sClient.Discovery(), cfg.KagentControllerBaseURL)
+	}
+
+	// Story 49.4: agent run store + A2A invoker. The store defaults to the
+	// Redis-backed OSS implementation unless an overlay injected one via
+	// SetAgentRunStore (the 49.5 EE seam). The A2A client reuses the same
+	// kagent controller base URL as the presence checker — no new config.
+	if a.agentRunStore == nil && redisClient != nil {
+		a.agentRunStore = runs.NewRedisStore(redisClient)
+	}
+	// Story 49.5: apply the EE audit decorator (identity in OSS builds) at the
+	// one point where both the run store and the audit recorder exist.
+	if a.agentRunStoreWrapFunc != nil {
+		a.agentRunStore = a.agentRunStoreWrapFunc(a.agentRunStore, auditRecorder)
+	}
+	agentInvoker := kagent.NewA2AClient(cfg.KagentControllerBaseURL)
+
+	// Story 50.1: full-result store for the built-in conversational lane.
+	// Deliberately NOT behind the 49.5 EE seam — results are ephemeral
+	// conversation payloads outside audit scope. Declared as the interface so
+	// a missing Redis client yields a true nil (503/404 fail paths).
+	var agentRunResultStore runs.ResultStore
+	if redisClient != nil {
+		agentRunResultStore = runs.NewRedisResultStore(redisClient)
+	}
+
 	// Create API server
 	routerResult := api.NewRouterWithConfig(healthChecker, rgdWatcher, instanceTracker, schemaExtractor, api.RouterConfig{
 		SPAHandler:              static.SPAHandler(),
@@ -723,7 +1021,10 @@ func (a *App) Run(ctx context.Context) error { //nolint:gocyclo // orchestration
 		PermissionService:       permissionService,
 		PolicyEnforcer:          policyEnforcer,
 		PolicyCacheManager:      policyCacheManager,
+		ObservedGroupsStore:     observedGroupsLister, // Story 10.3 (nil interface when Redis unavailable)
 		ProjectService:          projectService,
+		TeamService:             a.teamService,       // Story 10.4 (nil when dynamic client unavailable)
+		IdentityService:         a.IdentityService(), // Story 15.8: operator Users API over the canonical roster
 		HistoryService:          historyService,
 		NamespaceService:        namespaceService,
 		K8sClient:               k8sClient,
@@ -750,6 +1051,11 @@ func (a *App) Run(ctx context.Context) error { //nolint:gocyclo // orchestration
 		DiffService:             diffService,
 		RemoteWatcher:           remoteWatcher,
 		DynamicClient:           dynamicClient,
+		KagentChecker:           kagentChecker,        // Story 49.1: kagent presence for the /agents hub (nil without K8s client)
+		AgentRunStore:           a.agentRunStore,      // Story 49.4: run history store (nil without Redis → fail-soft/closed)
+		AgentInvoker:            agentInvoker,         // Story 49.4: kagent A2A invocation client
+		AgentRunResultStore:     agentRunResultStore,  // Story 50.1: full-result store for built-in conversations (nil without Redis)
+		AgentSpecValidator:      a.agentSpecValidator, // Story 50.3: EE Gatekeeper policy validation of generated specs (nil in OSS)
 	})
 
 	server := &http.Server{
@@ -824,6 +1130,64 @@ func (a *App) Run(ctx context.Context) error { //nolint:gocyclo // orchestration
 			slog.Error("failed to start policy cache manager", "error", err)
 		} else {
 			slog.Info("policy cache manager started (watcher + background sync)")
+		}
+	}
+
+	// Start the cluster-scoped Team CRD watcher (populates the TeamStore).
+	if teamWatcher != nil {
+		go func() {
+			if err := teamWatcher.Start(runCtx); err != nil {
+				slog.Error("team watcher stopped with error", "error", err)
+			}
+		}()
+		slog.Info("team watcher started")
+	}
+
+	// Drainer goroutine: when a Team changes (groups updated or team deleted),
+	// the watcher's OnChange enqueues a signal; we debounce a burst and re-sync
+	// all project policies so Casbin grouping policies reflect the new team→group
+	// resolution (Story 10.2 AC #3/#6). A coarse "re-sync all on any team change"
+	// is fine at pre-release scale. Runs off the informer goroutine so OnChange
+	// never blocks the watcher.
+	if teamChangeCh != nil && policyEnforcer != nil {
+		go func() {
+			const teamChangeDebounce = 2 * time.Second
+			for {
+				select {
+				case <-runCtx.Done():
+					return
+				case <-teamChangeCh:
+					// Debounce: coalesce a burst (e.g. the informer's initial list)
+					// into a single re-sync.
+					timer := time.NewTimer(teamChangeDebounce)
+					select {
+					case <-runCtx.Done():
+						timer.Stop()
+						return
+					case <-timer.C:
+					}
+					if err := policyEnforcer.SyncPolicies(runCtx); err != nil {
+						slog.Warn("team-change policy re-sync failed", "error", err)
+					} else {
+						slog.Info("team-change policy re-sync completed")
+					}
+				}
+			}
+		}()
+		slog.Info("team-change policy re-sync drainer started")
+	}
+
+	// Start the EE license seat reconciler (STORY-465 AC #9, build-tag dispatch).
+	// Returns nil in OSS / EE-without-Postgres builds. In EE builds the factory
+	// constructs the SeatReconciler on the shared seat store (created by the
+	// audit recorder init above), wires it into the LicenseService via
+	// SetUsageProvider, and runs the first poll synchronously so GetSeatUsage
+	// is populated before the first HTTP request. The returned Run loop drives
+	// the 5-minute ticker on runCtx.
+	if a.seatReconcilerInitFunc != nil {
+		if run := a.seatReconcilerInitFunc(a.licenseService, a.identityService, cfg.Organization, logger); run != nil {
+			go run(runCtx)
+			slog.Info("license seat reconciler started")
 		}
 	}
 
@@ -978,20 +1342,25 @@ func (a *App) Run(ctx context.Context) error { //nolint:gocyclo // orchestration
 	}
 
 	// Start server in goroutine
+	serverErrCh := make(chan error, 1)
 	go func() {
 		slog.Info("starting server", "address", cfg.Server.Address)
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			slog.Error("server failed", "error", err)
-			os.Exit(1)
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serverErrCh <- err
 		}
 	}()
 
-	// Wait for interrupt signal for graceful shutdown
+	// Wait for interrupt signal or server error for graceful shutdown
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	sig := <-quit
+	defer signal.Stop(quit)
 
-	slog.Info("received shutdown signal", "signal", sig.String())
+	select {
+	case sig := <-quit:
+		slog.Info("received shutdown signal", "signal", sig.String())
+	case serverErr := <-serverErrCh:
+		slog.Error("server error, initiating shutdown", "error", serverErr)
+	}
 	slog.Info("shutting down server...")
 
 	// Cancel context to stop watchers
@@ -1117,6 +1486,16 @@ func (a *App) initEnterpriseServices(
 	}
 	if a.complianceService != nil {
 		slog.Info("compliance service initialized (enterprise feature)")
+	}
+
+	// Agent spec validator (Story 50.3): MUST run AFTER the compliance init —
+	// it reads the gatekeeper service the compliance init registered. Nil in
+	// OSS builds and on EE construction failure (the handler is nil-safe).
+	if a.agentSpecValidatorInitFunc != nil {
+		a.agentSpecValidator = a.agentSpecValidatorInitFunc(&cfg.Kubernetes, a.licenseService)
+	}
+	if a.agentSpecValidator != nil {
+		slog.Info("agent spec validator initialized (enterprise feature)")
 	}
 
 	// Violation history service: use direct setter if set, else call init func

@@ -1,0 +1,21 @@
+# CI fixture — AC #2 path (d) + AC #3: auto-detect guard (external DSN ⇒ embedded off).
+#
+# postgresql.enabled is LEFT at its default (true), but an external supply
+# (externalPostgresql.existingSecret) is present. The auto-detect guard must
+# therefore suppress the embedded subchart's PARENT resources: the chart must NOT
+# render the embedded DSN Secret (<release>-knodex-postgres-url), and DATABASE_URL
+# must resolve to the EXTERNAL Secret — not a conflicting embedded DSN.
+#
+# (Note: the Bitnami subchart's own StatefulSet is gated by the static
+# `condition: postgresql.enabled` and would still render here; production
+# operators set postgresql.enabled=false — see values-external-postgresql.yaml.
+# This fixture specifically proves the guard suppresses the chart-owned embedded
+# DSN and points DATABASE_URL at the external Secret. Contrast with
+# values-postgres-forceenable.yaml.)
+#
+# Used in CI via:
+#   helm template knodex ./deploy/charts/knodex \
+#     --values ./deploy/charts/knodex/ci/values-postgres-autodetect.yaml
+
+externalPostgresql:
+  existingSecret: "my-external-db-secret"

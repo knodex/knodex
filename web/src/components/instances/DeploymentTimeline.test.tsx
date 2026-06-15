@@ -181,26 +181,18 @@ describe("DeploymentTimeline", () => {
     expect(commitLink).toHaveAttribute("rel", "noopener noreferrer");
   });
 
-  it("toggles expansion when header is clicked", () => {
+  it("renders timeline content directly without a collapse toggle", () => {
     setupMocks();
 
     render(<DeploymentTimeline group="apps.example.com" namespace="test-ns" kind="WebApp" name="test-instance" />, {
       wrapper: createWrapper(),
     });
 
-    // Initially expanded — node labels visible
+    // Content is always visible — the tab's sole content no longer self-collapses
     expect(screen.getByText("Created")).toBeInTheDocument();
 
-    // Click header to collapse
-    const header = screen.getByRole("button", { name: /deployment history/i });
-    fireEvent.click(header);
-
-    // Events should be hidden
-    expect(screen.queryByText("Created")).not.toBeInTheDocument();
-
-    // Click again to expand
-    fireEvent.click(header);
-    expect(screen.getByText("Created")).toBeInTheDocument();
+    // The title is no longer a toggle button
+    expect(screen.queryByRole("button", { name: /deployment history/i })).not.toBeInTheDocument();
   });
 
   it("renders empty state when no events", () => {

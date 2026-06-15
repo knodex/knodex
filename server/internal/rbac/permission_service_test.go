@@ -201,46 +201,39 @@ func setupTestServices() (*ProjectService, *PermissionService, *mockPermissionPo
 	return projectService, permService, policyEnforcer
 }
 
-// createPermissionTestProjectSpec creates an ArgoCD-aligned ProjectSpec for permission tests
-// The roleAssignments map userID to their role name (platform-admin, developer, viewer)
-func createPermissionTestProjectSpec(projectID string, roleAssignments map[string]string) ProjectSpec {
-	roles := []ProjectRole{
-		{
-			Name:        "platform-admin",
-			Description: "Full access to project resources",
-			Policies: []string{
-				fmt.Sprintf("p, proj:%s:platform-admin, *, *, %s/*, allow", projectID, projectID),
-			},
-			Groups: []string{},
-		},
-		{
-			Name:        "developer",
-			Description: "Deploy and manage instances within the project",
-			Policies: []string{
-				fmt.Sprintf("p, proj:%s:developer, applications, *, %s/*, allow", projectID, projectID),
-				fmt.Sprintf("p, proj:%s:developer, repositories, get, %s/*, allow", projectID, projectID),
-			},
-			Groups: []string{},
-		},
-		{
-			Name:        "viewer",
-			Description: "Read-only access to project resources",
-			Policies: []string{
-				fmt.Sprintf("p, proj:%s:viewer, *, get, %s/*, allow", projectID, projectID),
-			},
-			Groups: []string{},
-		},
+// createPermissionTestProjectSpec creates an ArgoCD-aligned ProjectSpec for permission tests.
+// roleAssignments maps userID to their role name. Returns the spec and a team resolver that
+// resolves the generated team names to the user groups ("user:{userID}").
+func createPermissionTestProjectSpec(projectID string, roleAssignments map[string]string) (ProjectSpec, fakeTeamResolver) {
+	resolver := fakeTeamResolver{}
+
+	// Build a map: roleName → []string{"user:uid1", "user:uid2", ...}
+	roleUserGroups := make(map[string][]string)
+	for userID, roleName := range roleAssignments {
+		roleUserGroups[roleName] = append(roleUserGroups[roleName], fmt.Sprintf("user:%s", userID))
 	}
 
-	// Assign users to roles via OIDC groups
-	for userID, roleName := range roleAssignments {
-		userGroup := fmt.Sprintf("user:%s", userID)
-		for i := range roles {
-			if roles[i].Name == roleName {
-				roles[i].Groups = append(roles[i].Groups, userGroup)
-				break
-			}
+	makeRole := func(name, desc string, policies []string) ProjectRole {
+		role := ProjectRole{Name: name, Description: desc, Policies: policies}
+		if users, ok := roleUserGroups[name]; ok {
+			teamName := fmt.Sprintf("%s-%s-members", projectID, name)
+			role.Teams = []string{teamName}
+			resolver[teamName] = users
 		}
+		return role
+	}
+
+	roles := []ProjectRole{
+		makeRole("platform-admin", "Full access to project resources", []string{
+			fmt.Sprintf("p, proj:%s:platform-admin, *, *, %s/*, allow", projectID, projectID),
+		}),
+		makeRole("developer", "Deploy and manage instances within the project", []string{
+			fmt.Sprintf("p, proj:%s:developer, applications, *, %s/*, allow", projectID, projectID),
+			fmt.Sprintf("p, proj:%s:developer, repositories, get, %s/*, allow", projectID, projectID),
+		}),
+		makeRole("viewer", "Read-only access to project resources", []string{
+			fmt.Sprintf("p, proj:%s:viewer, *, get, %s/*, allow", projectID, projectID),
+		}),
 	}
 
 	return ProjectSpec{
@@ -254,7 +247,7 @@ func createPermissionTestProjectSpec(projectID string, roleAssignments map[strin
 			{Group: "*", Kind: "*"},
 		},
 		Roles: roles,
-	}
+	}, resolver
 }
 
 func TestGetUserProjects(t *testing.T) {
@@ -265,14 +258,14 @@ func TestGetUserProjects(t *testing.T) {
 
 	// Create multiple projects
 	projectID1 := "project-1"
-	spec1 := createPermissionTestProjectSpec(projectID1, map[string]string{})
+	spec1, _ := createPermissionTestProjectSpec(projectID1, map[string]string{})
 	project1, err := projectService.CreateProject(ctx, projectID1, spec1, "system")
 	if err != nil {
 		t.Fatalf("Failed to create project1: %v", err)
 	}
 
 	projectID2 := "project-2"
-	spec2 := createPermissionTestProjectSpec(projectID2, map[string]string{})
+	spec2, _ := createPermissionTestProjectSpec(projectID2, map[string]string{})
 	project2, err := projectService.CreateProject(ctx, projectID2, spec2, "system")
 	if err != nil {
 		t.Fatalf("Failed to create project2: %v", err)
@@ -317,9 +310,10 @@ func TestGetUserRole(t *testing.T) {
 
 	// Create project with user as platform-admin using ArgoCD-aligned spec
 	projectID := "test-project"
-	spec := createPermissionTestProjectSpec(projectID, map[string]string{
+	spec, resolver := createPermissionTestProjectSpec(projectID, map[string]string{
 		userID: "platform-admin",
 	})
+	projectService.SetTeamResolver(resolver)
 	project, err := projectService.CreateProject(ctx, projectID, spec, "system")
 	if err != nil {
 		t.Fatalf("Failed to create project: %v", err)
@@ -358,9 +352,10 @@ func TestGetUserPermissions(t *testing.T) {
 
 	// Create project with user as developer using ArgoCD-aligned spec
 	projectID := "test-project"
-	spec := createPermissionTestProjectSpec(projectID, map[string]string{
+	spec, resolver := createPermissionTestProjectSpec(projectID, map[string]string{
 		userID: "developer",
 	})
+	projectService.SetTeamResolver(resolver)
 	project, err := projectService.CreateProject(ctx, projectID, spec, "system")
 	if err != nil {
 		t.Fatalf("Failed to create project: %v", err)
@@ -421,7 +416,7 @@ func TestCacheInvalidation_ViaPermissionService(t *testing.T) {
 	// Create test user reference and project
 	userID := "cache-test-user"
 	projectID := "cache-test-project"
-	spec := createPermissionTestProjectSpec(projectID, map[string]string{
+	spec, _ := createPermissionTestProjectSpec(projectID, map[string]string{
 		userID: "developer",
 	})
 	project, err := projectService.CreateProject(ctx, projectID, spec, "system")
@@ -453,9 +448,10 @@ func TestGetUserPermissions_ExtendedCases(t *testing.T) {
 	// Create test project with admin user
 	userID := "admin-user-ext"
 	projectID := "getuserpermissions-project"
-	spec := createPermissionTestProjectSpec(projectID, map[string]string{
+	spec, resolver := createPermissionTestProjectSpec(projectID, map[string]string{
 		userID: "platform-admin",
 	})
+	projectService.SetTeamResolver(resolver)
 	project, err := projectService.CreateProject(ctx, projectID, spec, "system")
 	if err != nil {
 		t.Fatalf("Failed to create project: %v", err)
@@ -551,7 +547,7 @@ func TestGetUserProjects_MissingProject(t *testing.T) {
 
 	// Create one real project
 	projectID := "existing-project"
-	spec := createPermissionTestProjectSpec(projectID, map[string]string{})
+	spec, _ := createPermissionTestProjectSpec(projectID, map[string]string{})
 	project, err := projectService.CreateProject(ctx, projectID, spec, "system")
 	if err != nil {
 		t.Fatalf("Failed to create project: %v", err)
@@ -627,7 +623,7 @@ func TestGetUserPermissions_NonExistentUser(t *testing.T) {
 				Name:        "platform-admin",
 				Description: "Admin role",
 				Policies:    []string{fmt.Sprintf("p, proj:%s:platform-admin, *, *, %s/*, allow", projectID, projectID)},
-				Groups:      []string{"admin:system"},
+				Teams:       []string{"system-admins"},
 			},
 		},
 	}
@@ -668,7 +664,7 @@ func TestGetUserPermissions_NonMember(t *testing.T) {
 				Name:        "platform-admin",
 				Description: "Admin role",
 				Policies:    []string{fmt.Sprintf("p, proj:%s:platform-admin, *, *, %s/*, allow", projectID, projectID)},
-				Groups:      []string{"admin:system"},
+				Teams:       []string{"system-admins"},
 			},
 		},
 	}

@@ -82,9 +82,9 @@ describe("DeleteSecretDialog", () => {
 
     await user.click(screen.getByRole("button", { name: "Delete Secret" }));
 
+    // Namespace is the URL-routed access boundary — no project param.
     expect(mockMutateAsync).toHaveBeenCalledWith({
       name: "db-credentials",
-      project: "alpha",
       namespace: "alpha-ns",
     });
     expect(props.onOpenChange).toHaveBeenCalledWith(false);

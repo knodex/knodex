@@ -42,7 +42,7 @@ test.describe('Global Admin - WebSocket Real-Time Updates', () => {
     });
 
     // Set up WebSocket message listener
-    const wsMessages: any[] = [];
+    const _wsMessages: any[] = [];
 
     await page.evaluate((wsUrl) => {
       // Store WebSocket messages in window for test access

@@ -248,6 +248,29 @@ deploy_example_rgds() {
     log_success "Example RGDs deployed"
 }
 
+# Deploy agent RGDs (deploy/charts/knodex/files/agents/: kagent-agent,
+# model-config, model-provider-config, rgd-builder-agent — all KRO RGDs;
+# also shipped by the chart via kagent.rgds.enabled).
+# Conditional: KRO cannot process an RGD whose produced kind's CRD is absent,
+# so only apply when the kagent Agent CRD exists (QA clusters have no kagent).
+deploy_agents() {
+    cd "${PROJECT_DIR}"
+
+    if [ ! -d "deploy/charts/knodex/files/agents" ]; then
+        log_warn "Agents directory not found, skipping..."
+        return 0
+    fi
+
+    if ! kubectl get crd agents.kagent.dev &> /dev/null; then
+        log_info "kagent CRD (agents.kagent.dev) not present — skipping agent RGDs"
+        return 0
+    fi
+
+    log_info "Deploying agent RGDs..."
+    kubectl apply -f deploy/charts/knodex/files/agents/
+    log_success "Agent RGDs deployed"
+}
+
 # Deploy example Projects (RBAC)
 deploy_example_projects() {
     log_info "Deploying example Projects..."
@@ -453,6 +476,7 @@ case "${1:-deploy}" in
         deploy_app
         deploy_mock_oidc
         deploy_example_rgds
+        deploy_agents
         deploy_example_projects
         deploy_example_gatekeeper
         verify_fixtures
@@ -464,6 +488,7 @@ case "${1:-deploy}" in
         deploy_app
         deploy_mock_oidc
         deploy_example_rgds
+        deploy_agents
         deploy_example_projects
         deploy_example_gatekeeper
         verify_fixtures

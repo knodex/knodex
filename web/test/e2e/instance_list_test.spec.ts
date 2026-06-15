@@ -89,8 +89,9 @@ test.describe('Instance List View', () => {
       }
     }
 
-    // Health status badge should be visible in table view
-    await expect(page.getByText('Healthy').first()).toBeVisible({ timeout: 10000 })
+    // Health is now a colored stripe on the first cell; the row exposes it via
+    // an aria-label ("Health: Healthy") rather than visible badge text (story 48.3).
+    await expect(page.getByLabel(/Health: Healthy/).first()).toBeVisible({ timeout: 10000 })
   })
 
   test('shows RGD name for each instance', async ({ page }) => {
@@ -176,8 +177,7 @@ test.describe('Instance Detail View', () => {
   })
 
   test('displays instance namespace', async ({ page }) => {
-    // Use exact match to avoid matching breadcrumb "production/prod-db-1"
-    await expect(page.getByText('production', { exact: true })).toBeVisible()
+    await expect(page.getByTestId('instance-header-card').getByText('production', { exact: true })).toBeVisible()
   })
 
   test('navigating back returns to instances list', async ({ page }) => {

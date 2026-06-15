@@ -41,7 +41,7 @@ export function useUpdateFlash<T>(
     const currStr = JSON.stringify(value);
 
     if (prevStr !== currStr) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- Intentional flash trigger on value change detection
+       
       triggerFlash();
     }
 

@@ -12,21 +12,20 @@ import (
 	kroadapter "github.com/knodex/knodex/server/internal/kro/graph"
 	"github.com/knodex/knodex/server/internal/kro/parser"
 	kroschema "github.com/knodex/knodex/server/internal/kro/schema"
-	"github.com/knodex/knodex/server/internal/kro/watcher"
 	"github.com/knodex/knodex/server/internal/models"
 	"github.com/knodex/knodex/server/internal/rbac"
 )
 
 // SchemaHandler handles schema-related HTTP requests
 type SchemaHandler struct {
-	watcher        *watcher.RGDWatcher
-	extractor      *kroschema.Extractor
+	watcher        RGDReader
+	extractor      SchemaExtractor
 	resourceParser *parser.ResourceParser
 	policyEnforcer rbac.Authorizer
 }
 
 // NewSchemaHandler creates a new schema handler
-func NewSchemaHandler(w *watcher.RGDWatcher, e *kroschema.Extractor) *SchemaHandler {
+func NewSchemaHandler(w RGDReader, e SchemaExtractor) *SchemaHandler {
 	return &SchemaHandler{
 		watcher:        w,
 		extractor:      e,
@@ -105,6 +104,13 @@ func (h *SchemaHandler) GetSchema(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !found {
+		response.NotFound(w, "RGD", name)
+		return
+	}
+
+	// Non-catalog RGDs are not user-facing — 404 to hide existence (mirrors the
+	// gate on the catalog/graph/deploy endpoints; same source of truth).
+	if !rgd.IsCatalog() {
 		response.NotFound(w, "RGD", name)
 		return
 	}

@@ -108,9 +108,11 @@ test.describe("Settings Access RBAC", () => {
 
       // Should stay on settings page and see Projects header
       expect(page.url()).toContain("/projects");
-      await expect(page.locator('h1:has-text("Projects")')).toBeVisible({
-        timeout: 10000,
-      });
+      // Story 48.12: page identity moved from sr-only h1 → topbar breadcrumb leaf.
+      await expect(page.getByTestId("topbar-breadcrumb-leaf")).toHaveText(
+        "Projects",
+        { timeout: 10000 }
+      );
 
       // Should NOT see Access Denied message
       const accessDenied = page.locator("text=Access Denied");
@@ -132,9 +134,11 @@ test.describe("Settings Access RBAC", () => {
 
       // Should stay on settings page and see Repositories header
       expect(page.url()).toContain("/repositories");
-      await expect(page.locator('h1:has-text("Repositories")')).toBeVisible({
-        timeout: 10000,
-      });
+      // Story 48.12: page identity moved from sr-only h1 → topbar breadcrumb leaf.
+      await expect(page.getByTestId("topbar-breadcrumb-leaf")).toHaveText(
+        "Repositories",
+        { timeout: 10000 }
+      );
 
       // Should NOT see Access Denied message
       const accessDenied = page.locator("text=Access Denied");
@@ -162,7 +166,8 @@ test.describe("Settings Access RBAC", () => {
       // If API returns 403, should see Access Denied message
       // Otherwise may see project list (depends on actual permissions)
       const accessDenied = page.locator("text=Access Denied");
-      const projectsHeader = page.locator('h1:has-text("Projects")');
+      // Story 48.12: projects header moved from sr-only h1 → topbar breadcrumb leaf.
+      const projectsHeader = page.getByTestId("topbar-breadcrumb-leaf");
 
       // Either Access Denied is shown OR projects are visible (based on actual API response)
       const hasAccessDenied = await accessDenied.isVisible();
@@ -272,7 +277,7 @@ test.describe("Settings Access RBAC", () => {
   });
 
   test.describe("Project Detail Tabs", () => {
-    test("Global Admin sees Overview and Roles tabs (no Policies)", async ({
+    test("Global Admin sees Overview and Access tabs (no Policies)", async ({
       page,
       auth,
     }) => {
@@ -290,9 +295,9 @@ test.describe("Settings Access RBAC", () => {
         const overviewTab = page.getByRole("tab", { name: /overview/i });
         await expect(overviewTab).toBeVisible();
 
-        // Should see Roles tab
-        const rolesTab = page.getByRole("tab", { name: /roles/i });
-        await expect(rolesTab).toBeVisible();
+        // Should see the Access tab (team-centric authorization; formerly "Roles")
+        const accessTab = page.getByRole("tab", { name: /access/i });
+        await expect(accessTab).toBeVisible();
 
         // Should NOT see Policies tab (simplified)
         const policiesTab = page.getByRole("tab", { name: /policies/i });
@@ -383,8 +388,9 @@ test.describe("Repository Section 403 Handling", () => {
     expect(page.url()).toContain("/repositories");
 
     // Page should show either repositories or Access Denied based on API response
-    const reposHeader = page.locator('h1:has-text("Repositories")');
-    await expect(reposHeader).toBeVisible({ timeout: 10000 });
+    // Story 48.12: repositories header moved from sr-only h1 → topbar breadcrumb leaf.
+    const reposHeader = page.getByTestId("topbar-breadcrumb-leaf");
+    await expect(reposHeader).toHaveText("Repositories", { timeout: 10000 });
 
     await page.screenshot({
       path: "../test-results/e2e/screenshots/rbac/repositories-non-admin.png",
@@ -520,7 +526,7 @@ test.describe("Create Project Button RBAC", () => {
       });
 
     // Should see Create button (exact match to avoid matching "Create" modal submit button)
-    const createButton = page.getByRole("button", { name: "Create", exact: true });
+    const createButton = page.getByRole("button", { name: "New project", exact: true });
     await expect(createButton).toBeVisible();
 
     await page.screenshot({
@@ -547,7 +553,7 @@ test.describe("Create Project Button RBAC", () => {
     expect(page.url()).toContain("/projects");
 
     // Create button should NOT be visible for non-admin
-    const createButton = page.getByRole("button", { name: "Create", exact: true });
+    const createButton = page.getByRole("button", { name: "New project", exact: true });
     await expect(createButton).not.toBeVisible();
 
     await page.screenshot({

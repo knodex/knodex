@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { useState } from "react";
-import { Copy, Check } from "@/lib/icons";
 import { useProjectResources } from "@/hooks/useProjects";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { CopyButton } from "@/components/ui/copy-button";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
@@ -73,23 +73,12 @@ export function ProjectResourcesTab({ project, active = true }: ProjectResources
   );
   const [selectedResource, setSelectedResource] =
     useState<AggregatedResource | null>(null);
-  const [copied, setCopied] = useState(false);
 
   const { data, isLoading, error } = useProjectResources(
     project.name,
     activeKind,
     active
   );
-
-  const handleCopy = async (text: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Clipboard access may be blocked in non-HTTPS or restricted environments
-    }
-  };
 
   const unreachableClusters = Object.entries(data?.clusterStatus ?? {}).filter(
     ([, status]) => status.phase === "unreachable"
@@ -232,21 +221,13 @@ export function ProjectResourcesTab({ project, active = true }: ProjectResources
           </SheetHeader>
           <div className="mt-4 space-y-4">
             <div className="flex justify-end">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() =>
-                  selectedResource &&
-                  handleCopy(resourceToYaml(selectedResource))
-                }
-              >
-                {copied ? (
-                  <Check className="h-4 w-4 mr-1" />
-                ) : (
-                  <Copy className="h-4 w-4 mr-1" />
-                )}
-                {copied ? "Copied" : "Copy"}
-              </Button>
+              {selectedResource && (
+                <CopyButton
+                  text={resourceToYaml(selectedResource)}
+                  label="Copy"
+                  iconClassName="h-4 w-4 mr-1"
+                />
+              )}
             </div>
             <pre className="text-xs font-mono overflow-auto rounded-md bg-muted p-4">
               {selectedResource && resourceToYaml(selectedResource)}
