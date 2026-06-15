@@ -15,10 +15,10 @@ function renderAt(path: string, ui?: React.ReactNode) {
         <Route path="/catalog/:rgdName" element={ui ?? <Breadcrumbs />} />
         <Route path="/catalog" element={ui ?? <Breadcrumbs />} />
         <Route path="/instances" element={ui ?? <Breadcrumbs />} />
-        <Route path="/instances/group/:group/ns/:namespace/:kind/:name" element={ui ?? <Breadcrumbs />} />
-        <Route path="/instances/group/:group/cluster/:kind/:name" element={ui ?? <Breadcrumbs />} />
-        <Route path="/instances/:namespace/:kind/:name" element={ui ?? <Breadcrumbs />} />
+        <Route path="/instances/:group/:version/:namespace/:kind/:name" element={ui ?? <Breadcrumbs />} />
+        <Route path="/instances/:group/:version/:kind/:name" element={ui ?? <Breadcrumbs />} />
         <Route path="/secrets" element={ui ?? <Breadcrumbs />} />
+        <Route path="/compliance/violations" element={ui ?? <Breadcrumbs />} />
         <Route path="/settings/repositories" element={ui ?? <Breadcrumbs />} />
         <Route path="/settings/license" element={ui ?? <Breadcrumbs />} />
         <Route path="/repositories" element={ui ?? <Breadcrumbs />} />
@@ -70,10 +70,12 @@ describe('Breadcrumbs', () => {
     expect(screen.getByText('Deploy')).toBeInTheDocument();
   });
 
-  it('renders instance crumb for /instances/:namespace/:kind/:name', () => {
-    renderAt('/instances/alpha/MyDB/my-instance', <Breadcrumbs leadingSlot={<span>chip</span>} />);
+  it('renders instance crumbs for /instances/:group/:version/:namespace/:kind/:name', () => {
+    renderAt('/instances/kro.run/v1alpha1/alpha/MyDB/my-instance', <Breadcrumbs leadingSlot={<span>chip</span>} />);
     expect(screen.getByText('Instances')).toBeInTheDocument();
-    expect(screen.getByText('alpha/MyDB/my-instance')).toBeInTheDocument();
+    expect(screen.getByText('alpha')).toBeInTheDocument();
+    expect(screen.getByText('MyDB')).toBeInTheDocument();
+    expect(screen.getByText('my-instance')).toBeInTheDocument();
   });
 
   it('renders Settings/Repositories crumb for /settings/repositories', () => {
@@ -105,6 +107,30 @@ describe('Breadcrumbs', () => {
     const ol = screen.getByTestId('breadcrumbs').querySelector('ol');
     expect(ol).toBeInTheDocument();
     expect(ol?.querySelectorAll('li').length).toBeGreaterThan(0);
+  });
+});
+
+describe('Breadcrumbs — leaf data-testid (Story 48.12)', () => {
+  it('marks the last (non-clickable) crumb with data-testid="topbar-breadcrumb-leaf"', () => {
+    renderAt('/catalog', <Breadcrumbs hideHome />);
+    const leaf = screen.getByTestId('topbar-breadcrumb-leaf');
+    expect(leaf).toHaveTextContent('Catalog');
+  });
+
+  it('does not mark intermediate (clickable) crumbs with the leaf testid', () => {
+    renderAt('/catalog/categories/database', <Breadcrumbs hideHome />);
+    const leaf = screen.getByTestId('topbar-breadcrumb-leaf');
+    expect(leaf).toHaveTextContent('database');
+    // Catalog should be the clickable link (not the leaf).
+    expect(screen.getByRole('link', { name: 'Catalog' })).toBeInTheDocument();
+  });
+});
+
+describe('Breadcrumbs — Compliance Violations branch (Story 48.12)', () => {
+  it('renders Compliance + Violations crumbs for /compliance/violations', () => {
+    renderAt('/compliance/violations', <Breadcrumbs hideHome />);
+    expect(screen.getByText('Compliance')).toBeInTheDocument();
+    expect(screen.getByTestId('topbar-breadcrumb-leaf')).toHaveTextContent('Violations');
   });
 });
 
@@ -155,24 +181,35 @@ describe('Breadcrumbs — safe URL decoding', () => {
   });
 });
 
-describe('Breadcrumbs — instance label format', () => {
-  it('renders namespace/kind/name for namespace-scoped instances', () => {
+describe('Breadcrumbs — instance crumb format', () => {
+  it('renders namespace and kind chips plus the name leaf for namespace-scoped instances', () => {
     renderAt(
-      '/instances/group/myGroup/ns/alpha/MyDB/my-instance',
+      '/instances/kro.run/v1alpha1/alpha/MyDB/my-instance',
       <Breadcrumbs leadingSlot={<span>chip</span>} />,
     );
     expect(screen.getByText('Instances')).toBeInTheDocument();
-    expect(screen.getByText('alpha/MyDB/my-instance')).toBeInTheDocument();
+    expect(screen.getByText('alpha')).toBeInTheDocument();
+    expect(screen.getByText('MyDB')).toBeInTheDocument();
+    // the instance name is the leaf crumb
+    expect(screen.getByTestId('topbar-breadcrumb-leaf')).toHaveTextContent('my-instance');
   });
 
-  it('renders kind/name without leading slash for cluster-scoped instances', () => {
+  it('omits the namespace chip for cluster-scoped instances', () => {
     renderAt(
-      '/instances/group/myGroup/cluster/Pod/pod-1',
+      '/instances/kro.run/v1alpha1/Pod/pod-1',
       <Breadcrumbs leadingSlot={<span>chip</span>} />,
     );
     expect(screen.getByText('Instances')).toBeInTheDocument();
-    expect(screen.getByText('Pod/pod-1')).toBeInTheDocument();
-    // Regression guard: no leading slash on cluster-scoped label
-    expect(screen.queryByText('/Pod/pod-1')).not.toBeInTheDocument();
+    expect(screen.getByText('Pod')).toBeInTheDocument();
+    expect(screen.getByTestId('topbar-breadcrumb-leaf')).toHaveTextContent('pod-1');
+  });
+
+  it('decodes percent-encoded instance segments', () => {
+    renderAt(
+      '/instances/kro.run/v1alpha1/team%20a/MyDB/my%20instance',
+      <Breadcrumbs leadingSlot={<span>chip</span>} />,
+    );
+    expect(screen.getByText('team a')).toBeInTheDocument();
+    expect(screen.getByTestId('topbar-breadcrumb-leaf')).toHaveTextContent('my instance');
   });
 });
