@@ -273,6 +273,42 @@ func TestGroupByNodeID(t *testing.T) {
 	}
 }
 
+// Statusless resources (ConfigMap, Secret, ...) carry HealthNone but are ready by
+// definition once they exist — they MUST count toward ReadyCount so the instance
+// "X/Y ready" rollup doesn't show a false "3/4" warning. Regression for the
+// ConfigMap-never-ready bug.
+func TestGroupByNodeID_HealthNoneCountsAsReady(t *testing.T) {
+	children := []models.ChildResource{
+		{Name: "app-config", NodeID: "config", Kind: "ConfigMap", Health: models.HealthNone},
+		{Name: "app-deploy", NodeID: "deploy", Kind: "Deployment", Health: models.HealthHealthy},
+	}
+
+	groups := groupByNodeID(children)
+
+	byNode := map[string]models.ChildResourceGroup{}
+	for _, g := range groups {
+		byNode[g.NodeID] = g
+	}
+
+	cfg := byNode["config"]
+	if cfg.Count != 1 || cfg.ReadyCount != 1 {
+		t.Errorf("configmap group = %d/%d ready, want 1/1", cfg.ReadyCount, cfg.Count)
+	}
+	if cfg.Health != models.HealthNone {
+		t.Errorf("configmap group health = %q, want %q", cfg.Health, models.HealthNone)
+	}
+
+	// Aggregate rollup across all groups should be fully ready.
+	var total, ready int
+	for _, g := range groups {
+		total += g.Count
+		ready += g.ReadyCount
+	}
+	if ready != total {
+		t.Errorf("aggregate rollup = %d/%d ready, want all ready", ready, total)
+	}
+}
+
 func TestDeriveChildHealth(t *testing.T) {
 	tests := []struct {
 		name string
